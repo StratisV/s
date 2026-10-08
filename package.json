@@ -1,0 +1,41 @@
+{
+  "name": "home-os",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "home.os: a radically simple household maintenance tracker",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:db": "node scripts/test-db.mjs",
+    "test:e2e": "playwright test",
+    "icons": "node scripts/make-icons.mjs"
+  },
+  "dependencies": {
+    "@fontsource-variable/figtree": "^5.3.0",
+    "@fontsource/nunito": "^5.3.0",
+    "@supabase/supabase-js": "^2.58.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^22.18.0",
+    "@types/pg": "^8.15.5",
+    "@types/react": "^18.3.24",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "http_ece": "^1.2.0",
+    "jsdom": "^26.1.0",
+    "pg": "^8.16.3",
+    "supabase": "^2.120.0",
+    "typescript": "~5.9.2",
+    "vite": "^6.3.6",
+    "vitest": "^3.2.4"
+  }
+}

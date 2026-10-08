@@ -1,0 +1,91 @@
+.viewport {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  display: flex;
+  justify-content: center;
+}
+
+/* Phone-width column; on wider screens the app stays centred. */
+.column {
+  position: relative;
+  width: 100%;
+  max-width: 600px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.splash {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+}
+
+.error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+  text-align: center;
+  color: var(--label-secondary);
+}
+
+.error button {
+  color: var(--tint);
+  font-weight: 600;
+}
+
+.main {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  transition: background-color 0s linear var(--sheet-duration);
+}
+
+/* Behind a page sheet the screen goes black and the stage is pushed back. */
+.main[data-pushed] {
+  background: #000;
+  transition-delay: 0s;
+}
+
+.stage {
+  --stage-scale: 0.9104;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  transform-origin: 50% 0;
+  transition:
+    transform var(--sheet-duration) var(--sheet-ease),
+    border-radius var(--sheet-duration) var(--sheet-ease);
+}
+
+.main[data-pushed] .stage {
+  transform: translateY(calc(var(--sheet-top) - 12px)) scale(var(--stage-scale));
+  border-radius: 14px 14px 0 0;
+}
+
+.dim {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--sheet-duration) var(--sheet-ease);
+}
+
+.main[data-pushed] .dim {
+  opacity: 0.22;
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage,
+  .dim {
+    transition-duration: 1ms;
+  }
+}

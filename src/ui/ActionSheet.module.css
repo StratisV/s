@@ -1,0 +1,114 @@
+.root {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  font-family: var(--font-text);
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.2);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.root[data-shown] .backdrop {
+  opacity: 1;
+}
+
+.sheet {
+  position: relative;
+  width: 100%;
+  max-width: 600px;
+  padding: 0 8px calc(8px + var(--bottom-inset));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transform: translateY(110%);
+  transition: transform 0.3s var(--sheet-ease);
+}
+
+.root[data-shown] .sheet {
+  transform: translateY(0);
+}
+
+.group {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-radius: 22px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  padding: 14px 16px 13px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.title {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  letter-spacing: -0.08px;
+  color: var(--label-secondary);
+}
+
+.message {
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.08px;
+  color: var(--label-secondary);
+}
+
+.action {
+  min-height: 57px;
+  padding: 0 16px;
+  font-size: 20px;
+  letter-spacing: -0.45px;
+  color: var(--tint);
+  border-top: 0.5px solid var(--separator);
+}
+
+.header + .action,
+.action:first-child {
+  border-top: 0;
+}
+
+.header + .action {
+  border-top: 0.5px solid var(--separator);
+}
+
+.action[data-destructive] {
+  color: var(--destructive);
+}
+
+.action:active,
+.cancel:active {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.cancel {
+  min-height: 57px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.45px;
+  color: var(--tint);
+  align-items: center;
+  justify-content: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet,
+  .backdrop {
+    transition-duration: 1ms;
+  }
+}

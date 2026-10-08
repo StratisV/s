@@ -1,0 +1,70 @@
+.screen {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: var(--top-inset) 0 calc(60px + var(--bottom-inset));
+}
+
+.scroll[data-tabbar] {
+  padding-bottom: 128px;
+}
+
+.nav {
+  height: var(--nav-row);
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.avatarButton {
+  border-radius: 50%;
+  display: grid;
+}
+
+.avatarButton:active {
+  opacity: 0.7;
+}
+
+/* Scroll-edge fade: solid under the status bar, then fades out. */
+.fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: calc(var(--top-inset) + 14px);
+  background: linear-gradient(var(--bg) calc(var(--top-inset) * 0.95), rgba(242, 242, 247, 0));
+  z-index: 4;
+  pointer-events: none;
+}
+
+.titleBlock {
+  padding: 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  margin: 0;
+  font-size: 34px;
+  line-height: 41px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label-secondary);
+}

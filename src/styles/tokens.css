@@ -1,0 +1,58 @@
+/* home.os design tokens (design/README.md "Design tokens"). */
+:root {
+  /* Colours */
+  --bg: #f2f2f7;
+  --card: #ffffff;
+  --avatar-bg: #e5e5ea;
+  --label: #000000;
+  --label-secondary: #6e6e73;
+  --label-tertiary: #3c3c43;
+  --label-strong: #1c1c1e;
+  --separator: rgba(60, 60, 67, 0.16);
+  --tint: #007aff;
+  --destructive: #d70015;
+  --fill-tertiary: rgba(118, 118, 128, 0.12);
+  --toggle-on: #34c759;
+
+  --rag-red: #ff3b30;
+  --rag-amber: #ff9500;
+  --rag-green: #34c759;
+  --rag-red-tint: rgba(255, 59, 48, 0.12);
+  --rag-amber-tint: rgba(255, 149, 0, 0.14);
+  --rag-green-tint: rgba(52, 199, 89, 0.14);
+  --rag-red-text: #d70015;
+  --rag-amber-text: #c93400;
+  --rag-green-text: #248a3d;
+
+  /* Type */
+  --font-text: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', 'Figtree Variable', system-ui,
+    sans-serif;
+  --font-rounded: ui-rounded, 'SF Pro Rounded', 'Nunito', -apple-system, system-ui, sans-serif;
+
+  /* Radii */
+  --r-emoji: 16px;
+  --r-rag: 20px;
+  --r-card: 24px;
+  --r-sheet-card: 26px;
+  --r-button: 27px;
+  --r-tab: 31px;
+  --r-sheet: 38px;
+
+  /* Shadows */
+  --shadow-glass: 0 1px 3px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.08);
+  --shadow-add: 0 6px 18px rgba(0, 122, 255, 0.35);
+  --shadow-segment: 0 3px 8px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+
+  /* Layout. The OS draws the status bar; we only respect the safe areas. */
+  --top-inset: env(safe-area-inset-top, 0px);
+  --bottom-inset: env(safe-area-inset-bottom, 0px);
+  --nav-row: 52px;
+  --tabbar-bottom: 22px;
+  --tabbar-height: 62px;
+  /* Page sheet top edge; the pushed-back screen peeks 12px above it. */
+  --sheet-top: max(var(--top-inset), 24px);
+
+  /* Motion (iOS sheet curve) */
+  --sheet-duration: 480ms;
+  --sheet-ease: cubic-bezier(0.32, 0.72, 0, 1);
+}

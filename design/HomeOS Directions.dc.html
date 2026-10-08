@@ -1,0 +1,1186 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400;500;600;700&family=Nunito:wght@600;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400..600,0..1,0&icon_names=add,calendar_today,check,chevron_right,close,home,inbox,notifications,person,person_off,pie_chart,repeat,schedule&display=block">
+<style>*{box-sizing:border-box}body{margin:0;background:#EFEDE8;font-family:system-ui,sans-serif}a{color:#1a1a1a}a:hover{color:#555}*{scrollbar-width:none}*::-webkit-scrollbar{display:none}.dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.08);scroll-margin-top:16px}.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 16px}.dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#1a1a1a;color:#fff;border-radius:4px;text-decoration:none}.dv-tname{font:600 13px/1.2 system-ui,sans-serif;color:#1a1a1a}.dv-opts{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}.dv-opt{flex:none;display:flex;flex-direction:column;gap:9px;scroll-margin-top:16px}.dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#1a1a1a;border-radius:5px;text-decoration:none}.dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 12px/1.3 system-ui,sans-serif;color:rgba(0,0,0,.6)}.dv-card{max-width:100%;background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden}.dv-opt:target .dv-oid{background:#2a78d6;color:#fff}.dv-next{margin:22px 0 0;font:12px/1.5 system-ui,sans-serif;color:rgba(0,0,0,.5)}</style>
+</helmet>
+<section class="dv-turn" id="t3">
+<div class="dv-thd"><a class="dv-tid" href="#t3">3</a><span class="dv-tname">Radically simpler <a class="dv-oid" href="#2a">2a</a></span></div>
+<div style="max-width:900px;margin:0 0 28px;font:14px/1.5 system-ui,sans-serif;color:#3a3a3a">Removed the filter tiles, counts, icons and extra rows. Home is just areas and items. Each row shows status, title, note, who and when. Two tabs; your profile sits behind the avatar. Push reminders move to a single setting instead of a row on every item.</div>
+<div class="dv-opts">
+<div class="dv-opt" id="3a">
+<div class="dv-olabel"><a class="dv-oid" href="#3a">3a</a>Light, Apple-style, nothing extra. Tap Mark as Done.</div>
+<div class="dv-card" style="padding:28px;display:flex;gap:28px;background:#F7F7F9">
+
+<div style="display:flex;flex-direction:column;gap:12px">
+<span style="font:600 11px ui-monospace,Menlo,monospace;letter-spacing:0.06em;color:rgba(0,0,0,0.45)">HOME</span>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+<div style="height:100%;position:relative;overflow:hidden;background:#F2F2F7;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Figtree',system-ui,sans-serif;color:#000000;-webkit-font-smoothing:antialiased">
+<div style="position:absolute;inset:0;overflow-y:auto;padding:54px 0 128px">
+<div style="height:52px;padding:0 16px;display:flex;align-items:center;justify-content:flex-end">
+<span style="width:38px;height:38px;border-radius:50%;background:#E5E5EA;display:grid;place-items:center;font-size:22px;line-height:1">{{ meEmoji }}</span>
+</div>
+<div style="padding:0 20px;display:flex;flex-direction:column;gap:2px">
+<span style="font-size:34px;line-height:41px;font-weight:700;letter-spacing:-0.02em">Home</span>
+<span style="font-size:17px;letter-spacing:-0.4px;color:#6E6E73">21 Alderbrook Road</span>
+</div>
+<div style="padding:16px 16px 0">{{ homeScene }}</div>
+<sc-for list="{{ areas }}" as="a" hint-placeholder-count="3">
+<div>
+<div style="padding:24px 20px 8px;font-size:20px;line-height:25px;font-weight:600;letter-spacing:-0.3px">{{ a.name }}</div>
+<div style="margin:0 16px;background:#FFFFFF;border-radius:24px;overflow:hidden">
+<sc-for list="{{ a.items }}" as="it" hint-placeholder-count="2">
+<div style="display:flex;gap:14px;padding:0 18px 0 16px">
+<span style="flex:none;width:22px;height:22px;margin-top:13px;border-radius:50%;border:2px solid {{ it.aRing }};background:{{ it.aTint }}"></span>
+<div style="flex:1;min-width:0;padding:12px 0 13px;border-top:0.5px solid {{ it.sepA }};display:flex;flex-direction:column;gap:2px">
+<span style="font-size:17px;line-height:22px;letter-spacing:-0.4px">{{ it.title }}</span>
+<sc-if value="{{ it.hasComment }}"><span style="font-size:15px;line-height:20px;letter-spacing:-0.2px;color:#6E6E73;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">{{ it.comment }}</span></sc-if>
+<span style="margin-top:3px;font-size:13px;color:#6E6E73">{{ it.whoE }} · <span style="color:{{ it.aDue }};font-weight:{{ it.dueBW }}">{{ it.dateOnly }}</span></span>
+</div>
+</div>
+</sc-for>
+<sc-if value="{{ a.empty }}"><div style="padding:13px 18px;font-size:17px;color:#6E6E73">Nothing to do</div></sc-if>
+</div>
+</div>
+</sc-for>
+</div>
+<div style="position:absolute;left:0;right:0;top:0;height:58px;background:linear-gradient(#F2F2F7 55%, rgba(242,242,247,0));z-index:4;pointer-events:none"></div>
+<div style="position:absolute;left:16px;right:16px;bottom:22px;z-index:6;display:flex;justify-content:space-between;align-items:center">
+<div style="width:190px;height:62px;border-radius:31px;background:rgba(255,255,255,0.72);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border:0.5px solid rgba(0,0,0,0.06);box-shadow:0 1px 3px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.08), inset 1.5px 1.5px 1px rgba(255,255,255,0.75);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:4px">
+<span style="border-radius:27px;background:rgba(0,0,0,0.06);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;color:#007AFF">Home</span>
+<span style="border-radius:27px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;color:#1C1C1E">Stats</span>
+</div>
+<span style="flex:none;width:62px;height:62px;border-radius:50%;background:#007AFF;box-shadow:0 6px 18px rgba(0,122,255,0.35);display:grid;place-items:center;color:#FFFFFF"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:32px;font-variation-settings:'wght' 500">add</span></span>
+</div>
+</div>
+</x-import>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:12px">
+<span style="font:600 11px ui-monospace,Menlo,monospace;letter-spacing:0.06em;color:rgba(0,0,0,0.45)">ITEM</span>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ true }}" hint-size="402px,874px">
+<div style="height:100%;position:relative;overflow:hidden;background:#000000;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Figtree',system-ui,sans-serif;color:#000000;-webkit-font-smoothing:antialiased">
+<div style="position:absolute;top:50px;left:18px;right:18px;height:40px;border-radius:14px 14px 0 0;background:#BDBDC2"></div>
+<div style="position:absolute;top:62px;left:0;right:0;bottom:0;background:#F2F2F7;border-radius:38px 38px 0 0;overflow:hidden;display:flex;flex-direction:column">
+<div style="flex:none;display:grid;grid-template-columns:44px 1fr 44px;align-items:center;padding:14px 16px 6px">
+<span style="width:44px;height:44px;border-radius:50%;background:#FFFFFF;box-shadow:0 1px 3px rgba(0,0,0,0.08);display:grid;place-items:center;color:#1C1C1E"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:22px;font-variation-settings:'wght' 600">close</span></span>
+<span></span>
+<span style="width:44px;height:44px;border-radius:50%;background:#007AFF;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:24px;font-variation-settings:'wght' 600">check</span></span>
+</div>
+<div style="flex:1;min-height:0;overflow-y:auto;padding:14px 16px 40px;display:grid;align-content:start;grid-auto-rows:max-content;gap:20px">
+<div style="padding:0 4px;display:flex;flex-direction:column;gap:6px">
+<span style="font-size:28px;line-height:34px;font-weight:700;letter-spacing:-0.02em">Heaters not working</span>
+<span style="font-size:17px;line-height:23px;letter-spacing:-0.3px;color:#6E6E73">No heat since the weekend. Engineer needs booking.</span>
+</div>
+<div style="background:#FFFFFF;border-radius:26px;padding:7px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px">
+<div style="height:52px;border-radius:20px;background:rgba(255,59,48,0.10);display:flex;align-items:center;justify-content:center;gap:8px;font-size:17px;font-weight:600;color:#D70015"><span style="width:12px;height:12px;border-radius:50%;background:#FF3B30"></span>Red</div>
+<div style="height:52px;border-radius:20px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:17px;color:#3C3C43"><span style="width:12px;height:12px;border-radius:50%;background:#FF9500"></span>Amber</div>
+<div style="height:52px;border-radius:20px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:17px;color:#3C3C43"><span style="width:12px;height:12px;border-radius:50%;background:#34C759"></span>Green</div>
+</div>
+<div style="background:#FFFFFF;border-radius:26px;padding:0 18px">
+<div style="min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+<span style="font-size:17px;letter-spacing:-0.4px">Due</span>
+<span style="font-size:17px;letter-spacing:-0.4px;color:#D70015">Tue 6 Oct · 2 days late</span>
+</div>
+<div style="min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:0.5px solid rgba(60,60,67,0.16)">
+<span style="font-size:17px;letter-spacing:-0.4px">Assigned to</span>
+<span style="font-size:17px;letter-spacing:-0.4px;color:#6E6E73">🦆 Shea</span>
+</div>
+<div style="min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:0.5px solid rgba(60,60,67,0.16)">
+<span style="font-size:17px;letter-spacing:-0.4px">Repeat</span>
+<span style="font-size:17px;letter-spacing:-0.4px;color:#6E6E73">Never</span>
+</div>
+<div style="min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:0.5px solid rgba(60,60,67,0.16)">
+<span style="font-size:17px;letter-spacing:-0.4px">Notify</span>
+<span style="font-size:17px;letter-spacing:-0.4px;color:#6E6E73">1 day before</span>
+</div>
+</div>
+<div onClick="{{ celebrate }}" style="height:54px;border-radius:27px;background:#007AFF;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:600;letter-spacing:-0.4px;cursor:pointer;user-select:none;transition:transform .12s ease" style-active="transform:scale(0.96)">Mark as Done</div>
+<div style="text-align:center;font-size:17px;letter-spacing:-0.4px;color:#D70015;padding:4px 0">Delete</div>
+</div>
+</div>
+{{ confetti }}
+</div>
+</x-import>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:12px">
+<span style="font:600 11px ui-monospace,Menlo,monospace;letter-spacing:0.06em;color:rgba(0,0,0,0.45)">STATS</span>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+<div style="height:100%;position:relative;overflow:hidden;background:#F2F2F7;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Figtree',system-ui,sans-serif;color:#000000;-webkit-font-smoothing:antialiased">
+<div style="position:absolute;inset:0;overflow-y:auto;padding:54px 0 128px">
+<div style="height:52px;padding:0 16px;display:flex;align-items:center;justify-content:flex-end">
+<span style="width:38px;height:38px;border-radius:50%;background:#E5E5EA;display:grid;place-items:center;font-size:22px;line-height:1">{{ meEmoji }}</span>
+</div>
+<div style="padding:0 20px">
+<span style="font-size:34px;line-height:41px;font-weight:700;letter-spacing:-0.02em">Stats</span>
+</div>
+<div style="margin:18px 16px 0;padding:3px;border-radius:100px;background:rgba(118,118,128,0.12);display:grid;grid-template-columns:repeat(2,minmax(0,1fr))">
+<span onClick="{{ setMonth }}" style="height:38px;border-radius:100px;display:flex;align-items:center;justify-content:center;font-size:15px;letter-spacing:-0.2px;cursor:pointer;background:{{ ap.mBg }};box-shadow:{{ ap.mSh }};font-weight:{{ ap.mW }}">This Month</span>
+<span onClick="{{ setLife }}" style="height:38px;border-radius:100px;display:flex;align-items:center;justify-content:center;font-size:15px;letter-spacing:-0.2px;cursor:pointer;background:{{ ap.lBg }};box-shadow:{{ ap.lSh }};font-weight:{{ ap.lW }}">Lifetime</span>
+</div>
+<div style="display:flex;justify-content:center;padding:36px 0 32px">
+<div style="position:relative;width:220px;height:220px">
+{{ donutL }}
+<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
+<span style="font-family:ui-rounded,'SF Pro Rounded','Nunito',-apple-system,system-ui,sans-serif;font-size:54px;font-weight:700;line-height:1;letter-spacing:-0.02em">{{ st.total }}</span>
+<span style="font-size:15px;color:#6E6E73">done</span>
+</div>
+</div>
+</div>
+<div style="margin:0 16px;background:#FFFFFF;border-radius:24px;padding:0 18px">
+<sc-for list="{{ rowsAP }}" as="r" hint-placeholder-count="3">
+<div style="min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:0.5px solid {{ r.sepA }}">
+<span style="display:flex;align-items:center;gap:12px;font-size:17px;letter-spacing:-0.4px"><span style="width:36px;height:36px;border-radius:50%;background:#F2F2F7;box-shadow:inset 0 0 0 2.5px {{ r.vl }};display:grid;place-items:center;font-size:20px;line-height:1">{{ r.emo }}</span>{{ r.name }}</span>
+<span style="font-size:17px;font-weight:600;letter-spacing:-0.4px">{{ r.n }}</span>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="position:absolute;left:0;right:0;top:0;height:58px;background:linear-gradient(#F2F2F7 55%, rgba(242,242,247,0));z-index:4;pointer-events:none"></div>
+<div style="position:absolute;left:16px;right:16px;bottom:22px;z-index:6;display:flex;justify-content:space-between;align-items:center">
+<div style="width:190px;height:62px;border-radius:31px;background:rgba(255,255,255,0.72);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border:0.5px solid rgba(0,0,0,0.06);box-shadow:0 1px 3px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.08), inset 1.5px 1.5px 1px rgba(255,255,255,0.75);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:4px">
+<span style="border-radius:27px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;color:#1C1C1E">Home</span>
+<span style="border-radius:27px;background:rgba(0,0,0,0.06);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;color:#007AFF">Stats</span>
+</div>
+<span style="flex:none;width:62px;height:62px;border-radius:50%;background:#007AFF;box-shadow:0 6px 18px rgba(0,122,255,0.35);display:grid;place-items:center;color:#FFFFFF"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:32px;font-variation-settings:'wght' 500">add</span></span>
+</div>
+</div>
+</x-import>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:12px">
+<span style="font:600 11px ui-monospace,Menlo,monospace;letter-spacing:0.06em;color:rgba(0,0,0,0.45)">PROFILE · TAP AN EMOJI</span>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+<div style="height:100%;position:relative;overflow:hidden;background:#F2F2F7;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Figtree',system-ui,sans-serif;color:#000000;-webkit-font-smoothing:antialiased">
+<div style="position:absolute;inset:0;overflow-y:auto;padding:54px 0 60px">
+<div style="height:52px;padding:0 20px;display:flex;align-items:center;justify-content:flex-end">
+<span style="font-size:17px;font-weight:600;letter-spacing:-0.4px;color:#007AFF">Done</span>
+</div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:4px 20px 0">
+<span style="width:112px;height:112px;border-radius:50%;background:#FFFFFF;box-shadow:0 2px 12px rgba(0,0,0,0.06);display:grid;place-items:center;font-size:62px;line-height:1">{{ meEmoji }}</span>
+<span style="margin-top:6px;font-size:28px;line-height:34px;font-weight:700;letter-spacing:-0.02em">Stratis</span>
+<span style="font-size:15px;color:#6E6E73">Signed in with Google</span>
+</div>
+<div style="padding:30px 20px 8px;font-size:20px;line-height:25px;font-weight:600;letter-spacing:-0.3px">Your emoji</div>
+<div style="margin:0 16px;background:#FFFFFF;border-radius:24px;padding:10px;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px">
+<sc-for list="{{ emojiGrid }}" as="em" hint-placeholder-count="24">
+<span onClick="{{ em.onClick }}" style="height:52px;border-radius:16px;display:grid;place-items:center;font-size:30px;line-height:1;cursor:pointer;user-select:none;background:{{ em.bg }};box-shadow:{{ em.ring }}">{{ em.e }}</span>
+</sc-for>
+</div>
+<div style="padding:10px 20px 0;font-size:13px;color:#6E6E73">Shown next to your name on items and in Stats.</div>
+</div>
+</div>
+</x-import>
+</div>
+
+</div>
+</div>
+</div>
+<p class="dv-next">Try next: "build <a class="dv-oid" href="#3a">3a</a> as the full app" · "<a class="dv-oid" href="#3a">3a</a> without the notes on the list" · "<a class="dv-oid" href="#3a">3a</a> in dark mode"</p>
+</section>
+<section class="dv-turn" id="t2">
+<div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">Apple-grade polish, light and dark</span></div>
+<div style="max-width:900px;margin:0 0 28px;font:14px/1.5 system-ui,sans-serif;color:#3a3a3a">Rebuilt on iOS 26 conventions: SF Pro type, large titles, inset grouped lists, Settings-style detail rows, and a floating Liquid Glass tab bar with a separate add button. The status circle carries the RAG colour and is also what you tap to mark an item done. SF Pro shows on Apple devices; other browsers fall back to a similar sans. Same data as <a class="dv-oid" href="#t1">turn 1</a>; the Stats toggle works.</div>
+<div class="dv-opts">
+
+<div class="dv-opt" id="2a">
+<div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>Light: calm and native, in the spirit of Reminders and Settings.</div>
+<div class="dv-card" style="padding:28px;display:flex;gap:28px;background:#F7F7F9">
+
+<div style="display:flex;flex-direction:column;gap:12px">
+<span style="font:600 11px ui-monospace,Menlo,monospace;letter-spacing:0.06em;color:rgba(0,0,0,0.45)">HOME</span>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+<div style="height:100%;position:relative;overflow:hidden;background:#F2F2F7;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Figtree',system-ui,sans-serif;color:#000000;-webkit-font-smoothing:antialiased">
+<div style="position:absolute;inset:0;overflow-y:auto;padding:54px 0 128px">
+<div style="height:52px;padding:0 16px;display:flex;align-items:center;justify-content:flex-end">
+<span style="width:36px;height:36px;border-radius:50%;background:#0071E3;color:#FFFFFF;display:grid;place-items:center;font-size:15px;font-weight:600;box-shadow:0 0 0 3px #FFFFFF, 0 2px 6px rgba(0,0,0,0.14)">S</span>
+</div>
+<div style="padding:0 20px;display:flex;flex-direction:column;gap:2px">
+<span style="font-size:34px;line-height:41px;font-weight:700;letter-spacing:-0.02em">Home</span>
+<span style="font-size:15px;color:#6E6E73">Updated today at 18:40 by Stratis</span>
+</div>
+<div style="padding:18px 16px 0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+<div style="background:#FFFFFF;border-radius:22px;padding:12px 16px 12px 12px;display:flex;flex-direction:column;gap:10px">
+<div style="display:flex;align-items:center;justify-content:space-between"><span style="width:32px;height:32px;border-radius:50%;background:#FF3B30;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';-webkit-font-smoothing:antialiased;font-size:20px;font-variation-settings:'FILL' 1, 'wght' 500">schedule</span></span><span style="font-family:ui-rounded,'SF Pro Rounded','Nunito',-apple-system,system-ui,sans-serif;font-size:28px;font-weight:700;line-height:1">1</span></div>
+<span style="font-size:15px;font-weight:600;color:#6E6E73">Missed</span>
+</div>
+<div style="background:#FFFFFF;border-radius:22px;padding:12px 16px 12px 12px;display:flex;flex-direction:column;gap:10px">
+<div style="display:flex;align-items:center;justify-content:space-between"><span style="width:32px;height:32px;border-radius:50%;background:#007AFF;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';-webkit-font-smoothing:antialiased;font-size:20px;font-variation-settings:'FILL' 1, 'wght' 500">person</span></span><span style="font-family:ui-rounded,'SF Pro Rounded','Nunito',-apple-system,system-ui,sans-serif;font-size:28px;font-weight:700;line-height:1">4</span></div>
+<span style="font-size:15px;font-weight:600;color:#6E6E73">Mine</span>
+</div>
+<div style="background:#FFFFFF;border-radius:22px;padding:12px 16px 12px 12px;display:flex;flex-direction:column;gap:10px">
+<div style="display:flex;align-items:center;justify-content:space-between"><span style="width:32px;height:32px;border-radius:50%;background:#8E8E93;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';-webkit-font-smoothing:antialiased;font-size:20px;font-variation-settings:'FILL' 1, 'wght' 500">person_off</span></span><span style="font-family:ui-rounded,'SF Pro Rounded','Nunito',-apple-system,system-ui,sans-serif;font-size:28px;font-weight:700;line-height:1">3</span></div>
+<span style="font-size:15px;font-weight:600;color:#6E6E73">Unassigned</span>
+</div>
+<div style="background:#FFFFFF;border-radius:22px;padding:12px 16px 12px 12px;display:flex;flex-direction:column;gap:10px">
+<div style="display:flex;align-items:center;justify-content:space-between"><span style="width:32px;height:32px;border-radius:50%;background:#1C1C1E;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';-webkit-font-smoothing:antialiased;font-size:20px;font-variation-settings:'FILL' 1, 'wght' 500">inbox</span></span><span style="font-family:ui-rounded,'SF Pro Rounded','Nunito',-apple-system,system-ui,sans-serif;font-size:28px;font-weight:700;line-height:1">13</span></div>
+<span style="font-size:15px;font-weight:600;color:#6E6E73">All open</span>
+</div>
+</div>
+<sc-for list="{{ areas }}" as="a" hint-placeholder-count="3">
+<div>
+<div style="display:flex;align-items:baseline;justify-content:space-between;padding:26px 20px 8px">
+<span style="font-size:22px;line-height:28px;font-weight:700;letter-spacing:-0.01em">{{ a.name }}</span>
+<span style="font-size:17px;color:#6E6E73">{{ a.countLabel }}</span>
+</div>
+<div style="margin:0 16px;background:#FFFFFF;border-radius:24px;overflow:hidden">
+<sc-for list="{{ a.items }}" as="it" hint-placeholder-count="2">
+<div style="display:flex;gap:12px;padding:0 16px 0 14px">
+<span style="flex:none;width:24px;height:24px;margin-top:12px;border-radius:50%;border:2px solid {{ it.aRing }};background:{{ it.aTint }}"></span>
+<div style="flex:1;min-width:0;padding:12px 0 13px;border-top:0.5px solid {{ it.sepA }};display:flex;flex-direction:column;gap:3px">
+<span style="font-size:17px;line-height:22px;letter-spacing:-0.4px">{{ it.title }}</span>
+<sc-if value="{{ it.hasComment }}"><span style="font-size:15px;line-height:20px;letter-spacing:-0.2px;color:#6E6E73;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">{{ it.comment }}</span></sc-if>
+<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-top:4px;font-size:13px;color:#6E6E73">
+<span style="display:flex;align-items:center;gap:4px;color:{{ it.aDue }};font-weight:{{ it.dueBW }}"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:15px;font-variation-settings:'wght' 500">calendar_today</span>{{ it.dateOnly }}</span>
+<span style="display:flex;align-items:center;gap:5px">
+<sc-if value="{{ it.hasWho }}"><span style="width:18px;height:18px;border-radius:50%;background:{{ it.av }};color:#FFFFFF;font-size:10px;font-weight:700;display:grid;place-items:center">{{ it.initial }}</span></sc-if>
+<sc-if value="{{ it.noWho }}"><span style="width:16px;height:16px;border-radius:50%;border:1.5px dashed #AEAEB2"></span></sc-if>
+<span>{{ it.who }}</span>
+</span>
+<sc-if value="{{ it.hasRepeat }}"><span style="display:flex;align-items:center;gap:3px"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:15px;font-variation-settings:'wght' 500">repeat</span>{{ it.repeat }}</span></sc-if>
+</div>
+</div>
+</div>
+</sc-for>
+<sc-if value="{{ a.empty }}"><div style="padding:14px 18px;font-size:17px;color:#6E6E73">No open items</div></sc-if>
+</div>
+</div>
+</sc-for>
+</div>
+<div style="position:absolute;left:0;right:0;top:0;height:58px;background:linear-gradient(#F2F2F7 55%, rgba(242,242,247,0));z-index:4;pointer-events:none"></div>
+<div style="position:absolute;left:16px;right:16px;bottom:22px;z-index:6;display:flex;gap:10px;align-items:center">
+<div style="flex:1;height:62px;border-radius:31px;background:rgba(255,255,255,0.72);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border:0.5px solid rgba(0,0,0,0.06);box-shadow:0 1px 3px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.08), inset 1.5px 1.5px 1px rgba(255,255,255,0.75);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:4px">
+<span style="border-radius:27px;background:rgba(0,0,0,0.06);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:#007AFF"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:26px;font-variation-settings:'FILL' 1, 'wght' 500">home</span><span style="font-size:10.5px;font-weight:600">Home</span></span>
+<span style="border-radius:27px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:#1C1C1E"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:26px;font-variation-settings:'wght' 500">pie_chart</span><span style="font-size:10.5px;font-weight:600">Stats</span></span>
+<span style="border-radius:27px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:#1C1C1E"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:26px;font-variation-settings:'wght' 500">person</span><span style="font-size:10.5px;font-weight:600">Me</span></span>
+</div>
+<span style="flex:none;width:62px;height:62px;border-radius:50%;background:rgba(255,255,255,0.72);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border:0.5px solid rgba(0,0,0,0.06);box-shadow:0 1px 3px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.08), inset 1.5px 1.5px 1px rgba(255,255,255,0.75);display:grid;place-items:center;color:#007AFF"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:32px;font-variation-settings:'wght' 500">add</span></span>
+</div>
+</div>
+</x-import>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:12px">
+<span style="font:600 11px ui-monospace,Menlo,monospace;letter-spacing:0.06em;color:rgba(0,0,0,0.45)">ITEM</span>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ true }}" hint-size="402px,874px">
+<div style="height:100%;position:relative;overflow:hidden;background:#000000;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Figtree',system-ui,sans-serif;color:#000000;-webkit-font-smoothing:antialiased">
+<div style="position:absolute;top:50px;left:18px;right:18px;height:40px;border-radius:14px 14px 0 0;background:#BDBDC2"></div>
+<div style="position:absolute;top:62px;left:0;right:0;bottom:0;background:#F2F2F7;border-radius:38px 38px 0 0;overflow:hidden;display:flex;flex-direction:column">
+<div style="flex:none;display:grid;grid-template-columns:44px 1fr 44px;align-items:center;padding:14px 16px 6px">
+<span style="width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,0.9);box-shadow:0 1px 3px rgba(0,0,0,0.08), inset 1px 1px 0 #FFFFFF;display:grid;place-items:center;color:#1C1C1E"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:22px;font-variation-settings:'wght' 600">close</span></span>
+<span style="text-align:center;font-size:17px;font-weight:600;letter-spacing:-0.4px">Edit Item</span>
+<span style="width:44px;height:44px;border-radius:50%;background:#007AFF;color:#FFFFFF;display:grid;place-items:center;box-shadow:0 3px 10px rgba(0,122,255,0.35)"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:24px;font-variation-settings:'wght' 600">check</span></span>
+</div>
+<div style="flex:1;min-height:0;overflow-y:auto;padding:10px 16px 40px;display:grid;align-content:start;grid-auto-rows:max-content;gap:22px">
+<div style="background:#FFFFFF;border-radius:26px;padding:16px 18px 18px;display:flex;flex-direction:column;gap:6px">
+<span style="font-size:22px;line-height:28px;font-weight:600;letter-spacing:-0.3px">Heaters not working</span>
+<span style="font-size:17px;line-height:23px;letter-spacing:-0.3px;color:#3C3C43">No heat since the weekend. Engineer needs booking.</span>
+</div>
+<div style="display:flex;flex-direction:column;gap:7px">
+<span style="padding:0 18px;font-size:13px;color:#6E6E73;text-transform:uppercase;letter-spacing:0.02em">Status</span>
+<div style="background:#FFFFFF;border-radius:26px;padding:7px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px">
+<div style="border-radius:20px;background:rgba(255,59,48,0.10);padding:14px 6px 12px;display:flex;flex-direction:column;align-items:center;gap:8px">
+<span style="width:30px;height:30px;border-radius:50%;background:#FF3B30;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:20px;font-variation-settings:'wght' 600">check</span></span>
+<span style="font-size:15px;font-weight:600;color:#D70015">Urgent</span>
+</div>
+<div style="border-radius:20px;padding:14px 6px 12px;display:flex;flex-direction:column;align-items:center;gap:8px">
+<span style="width:30px;height:30px;border-radius:50%;border:2.5px solid #FF9500"></span>
+<span style="font-size:15px;font-weight:500;color:#3C3C43">Attention</span>
+</div>
+<div style="border-radius:20px;padding:14px 6px 12px;display:flex;flex-direction:column;align-items:center;gap:8px">
+<span style="width:30px;height:30px;border-radius:50%;border:2.5px solid #34C759"></span>
+<span style="font-size:15px;font-weight:500;color:#3C3C43">Fine</span>
+</div>
+</div>
+</div>
+<div style="background:#FFFFFF;border-radius:26px;overflow:hidden">
+<div style="display:flex;align-items:center;gap:12px;padding:0 16px">
+<span style="flex:none;width:30px;height:30px;border-radius:8px;background:#FF3B30;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:18px;font-variation-settings:'FILL' 1, 'wght' 500">calendar_today</span></span>
+<div style="flex:1;min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+<span style="font-size:17px;letter-spacing:-0.4px">Due date</span>
+<span style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:600;color:#D70015;background:rgba(255,59,48,0.12);border-radius:7px;padding:3px 7px">2 days late</span><span style="font-size:17px;letter-spacing:-0.4px;color:#D70015">Tue 6 Oct</span></span>
+</div>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:0 12px 0 16px">
+<span style="flex:none;width:30px;height:30px;border-radius:8px;background:#007AFF;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:19px;font-variation-settings:'FILL' 1, 'wght' 500">person</span></span>
+<div style="flex:1;min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:0.5px solid rgba(60,60,67,0.16)">
+<span style="font-size:17px;letter-spacing:-0.4px">Assigned to</span>
+<span style="display:flex;align-items:center;gap:7px;color:#6E6E73"><span style="width:22px;height:22px;border-radius:50%;background:#A550D9;color:#FFFFFF;font-size:11px;font-weight:700;display:grid;place-items:center">S</span><span style="font-size:17px;letter-spacing:-0.4px">Shea</span><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:20px;color:#C7C7CC;font-variation-settings:'wght' 600">chevron_right</span></span>
+</div>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:0 12px 0 16px">
+<span style="flex:none;width:30px;height:30px;border-radius:8px;background:#8E8E93;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:19px;font-variation-settings:'wght' 600">repeat</span></span>
+<div style="flex:1;min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:0.5px solid rgba(60,60,67,0.16)">
+<span style="font-size:17px;letter-spacing:-0.4px">Repeat</span>
+<span style="display:flex;align-items:center;gap:4px;color:#6E6E73"><span style="font-size:17px;letter-spacing:-0.4px">Never</span><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:20px;color:#C7C7CC;font-variation-settings:'wght' 600">chevron_right</span></span>
+</div>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:0 12px 0 16px">
+<span style="flex:none;width:30px;height:30px;border-radius:8px;background:#5856D6;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:19px;font-variation-settings:'FILL' 1, 'wght' 500">home</span></span>
+<div style="flex:1;min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:0.5px solid rgba(60,60,67,0.16)">
+<span style="font-size:17px;letter-spacing:-0.4px">Area</span>
+<span style="display:flex;align-items:center;gap:4px;color:#6E6E73"><span style="font-size:17px;letter-spacing:-0.4px">Hallway</span><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:20px;color:#C7C7CC;font-variation-settings:'wght' 600">chevron_right</span></span>
+</div>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:0 12px 0 16px">
+<span style="flex:none;width:30px;height:30px;border-radius:8px;background:#FF9500;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:19px;font-variation-settings:'FILL' 1, 'wght' 500">notifications</span></span>
+<div style="flex:1;min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:0.5px solid rgba(60,60,67,0.16)">
+<span style="font-size:17px;letter-spacing:-0.4px">Push reminder</span>
+<span style="display:flex;align-items:center;gap:4px;color:#6E6E73"><span style="font-size:17px;letter-spacing:-0.4px">1 day before</span><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:20px;color:#C7C7CC;font-variation-settings:'wght' 600">chevron_right</span></span>
+</div>
+</div>
+</div>
+<div style="height:54px;border-radius:27px;background:#007AFF;color:#FFFFFF;display:flex;align-items:center;justify-content:center;gap:8px;font-size:17px;font-weight:600;letter-spacing:-0.4px;box-shadow:0 4px 14px rgba(0,122,255,0.30)"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:22px;font-variation-settings:'wght' 600">check</span>Mark as Done</div>
+<div style="height:52px;border-radius:26px;background:#FFFFFF;color:#D70015;display:flex;align-items:center;justify-content:center;font-size:17px;letter-spacing:-0.4px">Delete Item</div>
+<div style="text-align:center;font-size:13px;color:#6E6E73">Added by Stratis on 2 Oct · Updated today</div>
+</div>
+</div>
+</div>
+</x-import>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:12px">
+<span style="font:600 11px ui-monospace,Menlo,monospace;letter-spacing:0.06em;color:rgba(0,0,0,0.45)">STATS</span>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+<div style="height:100%;position:relative;overflow:hidden;background:#F2F2F7;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Figtree',system-ui,sans-serif;color:#000000;-webkit-font-smoothing:antialiased">
+<div style="position:absolute;inset:0;overflow-y:auto;padding:54px 0 128px">
+<div style="height:52px;padding:0 16px;display:flex;align-items:center;justify-content:flex-end">
+<span style="width:36px;height:36px;border-radius:50%;background:#0071E3;color:#FFFFFF;display:grid;place-items:center;font-size:15px;font-weight:600;box-shadow:0 0 0 3px #FFFFFF, 0 2px 6px rgba(0,0,0,0.14)">S</span>
+</div>
+<div style="padding:0 20px;display:flex;flex-direction:column;gap:2px">
+<span style="font-size:34px;line-height:41px;font-weight:700;letter-spacing:-0.02em">Stats</span>
+<span style="font-size:15px;color:#6E6E73">Tasks done by each person</span>
+</div>
+<div style="margin:18px 16px 0;padding:3px;border-radius:100px;background:rgba(118,118,128,0.12);display:grid;grid-template-columns:repeat(2,minmax(0,1fr))">
+<span onClick="{{ setMonth }}" style="height:38px;border-radius:100px;display:flex;align-items:center;justify-content:center;font-size:15px;letter-spacing:-0.2px;cursor:pointer;background:{{ ap.mBg }};box-shadow:{{ ap.mSh }};font-weight:{{ ap.mW }}">This Month</span>
+<span onClick="{{ setLife }}" style="height:38px;border-radius:100px;display:flex;align-items:center;justify-content:center;font-size:15px;letter-spacing:-0.2px;cursor:pointer;background:{{ ap.lBg }};box-shadow:{{ ap.lSh }};font-weight:{{ ap.lW }}">Lifetime</span>
+</div>
+<div style="margin:16px 16px 0;background:#FFFFFF;border-radius:26px;padding:26px 18px 6px;display:flex;flex-direction:column;align-items:center">
+<div style="position:relative;width:220px;height:220px;margin-bottom:20px">
+{{ donutL }}
+<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
+<span style="font-family:ui-rounded,'SF Pro Rounded','Nunito',-apple-system,system-ui,sans-serif;font-size:54px;font-weight:700;line-height:1;letter-spacing:-0.02em">{{ st.total }}</span>
+<span style="font-size:15px;color:#6E6E73">{{ st.center }}</span>
+</div>
+</div>
+<div style="align-self:stretch;display:flex;flex-direction:column">
+<sc-for list="{{ rowsAP }}" as="r" hint-placeholder-count="3">
+<div style="display:flex;align-items:center;gap:12px">
+<span style="flex:none;width:30px;height:30px;border-radius:50%;background:{{ r.av }};color:#FFFFFF;display:grid;place-items:center;font-size:13px;font-weight:700">{{ r.initial }}</span>
+<div style="flex:1;min-height:52px;display:flex;align-items:center;justify-content:space-between;border-top:0.5px solid rgba(60,60,67,0.16)">
+<span style="display:flex;align-items:center;gap:8px;font-size:17px;letter-spacing:-0.4px"><span style="width:9px;height:9px;border-radius:50%;background:{{ r.vl }}"></span>{{ r.name }}</span>
+<span style="display:flex;align-items:baseline;gap:10px"><span style="font-size:15px;color:#6E6E73">{{ r.pct }}</span><span style="min-width:30px;text-align:right;font-family:ui-rounded,'SF Pro Rounded','Nunito',-apple-system,system-ui,sans-serif;font-size:22px;font-weight:700">{{ r.n }}</span></span>
+</div>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="display:flex;align-items:baseline;justify-content:space-between;padding:26px 20px 8px"><span style="font-size:22px;line-height:28px;font-weight:700;letter-spacing:-0.01em">Recently done</span></div>
+<div style="margin:0 16px;background:#FFFFFF;border-radius:24px;overflow:hidden">
+<sc-for list="{{ recentAP }}" as="rc" hint-placeholder-count="3">
+<div style="display:flex;gap:12px;padding:0 16px 0 14px">
+<span style="flex:none;width:24px;height:24px;margin-top:12px;border-radius:50%;background:{{ rc.av }};color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:16px;font-variation-settings:'wght' 600">check</span></span>
+<div style="flex:1;min-width:0;padding:12px 0;border-top:0.5px solid {{ rc.sepA }};display:flex;flex-direction:column;gap:2px">
+<span style="font-size:17px;line-height:22px;letter-spacing:-0.4px">{{ rc.title }}</span>
+<span style="font-size:13px;color:#6E6E73">{{ rc.meta }}</span>
+</div>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="position:absolute;left:0;right:0;top:0;height:58px;background:linear-gradient(#F2F2F7 55%, rgba(242,242,247,0));z-index:4;pointer-events:none"></div>
+<div style="position:absolute;left:16px;right:16px;bottom:22px;z-index:6;display:flex;gap:10px;align-items:center">
+<div style="flex:1;height:62px;border-radius:31px;background:rgba(255,255,255,0.72);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border:0.5px solid rgba(0,0,0,0.06);box-shadow:0 1px 3px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.08), inset 1.5px 1.5px 1px rgba(255,255,255,0.75);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:4px">
+<span style="border-radius:27px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:#1C1C1E"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:26px;font-variation-settings:'wght' 500">home</span><span style="font-size:10.5px;font-weight:600">Home</span></span>
+<span style="border-radius:27px;background:rgba(0,0,0,0.06);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:#007AFF"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:26px;font-variation-settings:'FILL' 1, 'wght' 500">pie_chart</span><span style="font-size:10.5px;font-weight:600">Stats</span></span>
+<span style="border-radius:27px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:#1C1C1E"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:26px;font-variation-settings:'wght' 500">person</span><span style="font-size:10.5px;font-weight:600">Me</span></span>
+</div>
+<span style="flex:none;width:62px;height:62px;border-radius:50%;background:rgba(255,255,255,0.72);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border:0.5px solid rgba(0,0,0,0.06);box-shadow:0 1px 3px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.08), inset 1.5px 1.5px 1px rgba(255,255,255,0.75);display:grid;place-items:center;color:#007AFF"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:32px;font-variation-settings:'wght' 500">add</span></span>
+</div>
+</div>
+</x-import>
+</div>
+
+</div>
+</div>
+
+<div class="dv-opt" id="2b">
+<div class="dv-olabel"><a class="dv-oid" href="#2b">2b</a>Dark: vivid status colours on black, rounded numerals in the spirit of Fitness.</div>
+<div class="dv-card" style="padding:28px;display:flex;gap:28px;background:#F7F7F9">
+
+<div style="display:flex;flex-direction:column;gap:12px">
+<span style="font:600 11px ui-monospace,Menlo,monospace;letter-spacing:0.06em;color:rgba(0,0,0,0.45)">HOME</span>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ true }}" hint-size="402px,874px">
+<div style="height:100%;position:relative;overflow:hidden;background:#000000;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Figtree',system-ui,sans-serif;color:#FFFFFF;-webkit-font-smoothing:antialiased">
+<div style="position:absolute;inset:0;overflow-y:auto;padding:54px 0 128px">
+<div style="height:52px;padding:0 16px;display:flex;align-items:center;justify-content:flex-end">
+<span style="width:36px;height:36px;border-radius:50%;background:#0071E3;color:#FFFFFF;display:grid;place-items:center;font-size:15px;font-weight:600;box-shadow:0 0 0 3px #1C1C1E">S</span>
+</div>
+<div style="padding:0 20px;display:flex;flex-direction:column;gap:2px">
+<span style="font-size:13px;font-weight:600;letter-spacing:0.02em;text-transform:uppercase;color:rgba(235,235,245,0.6)">Thursday 8 October</span>
+<span style="font-size:34px;line-height:41px;font-weight:700;letter-spacing:-0.02em">Home</span>
+</div>
+<div style="margin:16px 16px 0;background:#1C1C1E;border-radius:26px;padding:16px 18px 18px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px">
+<div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:15px;font-weight:600;color:#FF453A">Urgent</span><span style="font-family:ui-rounded,'SF Pro Rounded','Nunito',-apple-system,system-ui,sans-serif;font-size:40px;font-weight:700;line-height:1.05;color:#FF453A">1</span></div>
+<div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:15px;font-weight:600;color:#FF9F0A">Attention</span><span style="font-family:ui-rounded,'SF Pro Rounded','Nunito',-apple-system,system-ui,sans-serif;font-size:40px;font-weight:700;line-height:1.05;color:#FF9F0A">5</span></div>
+<div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:15px;font-weight:600;color:#30D158">Fine</span><span style="font-family:ui-rounded,'SF Pro Rounded','Nunito',-apple-system,system-ui,sans-serif;font-size:40px;font-weight:700;line-height:1.05;color:#30D158">7</span></div>
+</div>
+<div style="margin:12px 16px 0;background:rgba(255,69,58,0.16);border-radius:22px;padding:14px 12px 14px 14px;display:flex;align-items:center;gap:12px">
+<span style="flex:none;width:38px;height:38px;border-radius:50%;background:#FF453A;color:#000000;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:23px;font-variation-settings:'FILL' 1, 'wght' 500">schedule</span></span>
+<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+<span style="font-size:17px;font-weight:600;letter-spacing:-0.4px">1 missed deadline</span>
+<span style="font-size:15px;color:rgba(235,235,245,0.7)">Heaters not working · 2 days late</span>
+</div>
+<span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:22px;color:rgba(235,235,245,0.45);font-variation-settings:'wght' 600">chevron_right</span>
+</div>
+<sc-for list="{{ areas }}" as="a" hint-placeholder-count="3">
+<div>
+<div style="display:flex;align-items:baseline;justify-content:space-between;padding:26px 20px 8px">
+<span style="font-size:22px;line-height:28px;font-weight:700;letter-spacing:-0.01em">{{ a.name }}</span>
+<span style="font-size:17px;color:rgba(235,235,245,0.6)">{{ a.countLabel }}</span>
+</div>
+<div style="margin:0 16px;background:#1C1C1E;border-radius:24px;overflow:hidden">
+<sc-for list="{{ a.items }}" as="it" hint-placeholder-count="2">
+<div style="padding:0 14px 0 16px">
+<div style="padding:13px 0;border-top:0.5px solid {{ it.sepD }};display:flex;flex-direction:column;gap:3px">
+<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+<span style="font-size:17px;font-weight:600;line-height:22px;letter-spacing:-0.4px">{{ it.title }}</span>
+<span style="flex:none;height:24px;padding:0 10px;border-radius:12px;background:{{ it.dTint }};color:{{ it.dRing }};font-size:13px;font-weight:600;display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:{{ it.dRing }}"></span>{{ it.label }}</span>
+</div>
+<sc-if value="{{ it.hasComment }}"><span style="font-size:15px;line-height:20px;letter-spacing:-0.2px;color:rgba(235,235,245,0.6);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">{{ it.comment }}</span></sc-if>
+<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-top:4px;font-size:13px;color:rgba(235,235,245,0.6)">
+<span style="display:flex;align-items:center;gap:4px;color:{{ it.dDue }};font-weight:{{ it.dueBW }}"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:15px;font-variation-settings:'wght' 500">calendar_today</span>{{ it.dateOnly }}</span>
+<span style="display:flex;align-items:center;gap:5px">
+<sc-if value="{{ it.hasWho }}"><span style="width:18px;height:18px;border-radius:50%;background:{{ it.av }};color:#FFFFFF;font-size:10px;font-weight:700;display:grid;place-items:center">{{ it.initial }}</span></sc-if>
+<sc-if value="{{ it.noWho }}"><span style="width:16px;height:16px;border-radius:50%;border:1.5px dashed rgba(235,235,245,0.4)"></span></sc-if>
+<span>{{ it.who }}</span>
+</span>
+<sc-if value="{{ it.hasRepeat }}"><span style="display:flex;align-items:center;gap:3px"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:15px;font-variation-settings:'wght' 500">repeat</span>{{ it.repeat }}</span></sc-if>
+</div>
+</div>
+</div>
+</sc-for>
+<sc-if value="{{ a.empty }}"><div style="padding:14px 18px;font-size:17px;color:rgba(235,235,245,0.6)">No open items</div></sc-if>
+</div>
+</div>
+</sc-for>
+</div>
+<div style="position:absolute;left:0;right:0;top:0;height:58px;background:linear-gradient(#000000 55%, rgba(0,0,0,0));z-index:4;pointer-events:none"></div>
+<div style="position:absolute;left:16px;right:16px;bottom:22px;z-index:6;display:flex;gap:10px;align-items:center">
+<div style="flex:1;height:62px;border-radius:31px;background:rgba(37,37,40,0.72);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border:0.5px solid rgba(255,255,255,0.12);box-shadow:0 8px 24px rgba(0,0,0,0.4), inset 1px 1px 0 rgba(255,255,255,0.10);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:4px">
+<span style="border-radius:27px;background:rgba(255,255,255,0.10);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:#0A84FF"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:26px;font-variation-settings:'FILL' 1, 'wght' 500">home</span><span style="font-size:10.5px;font-weight:600">Home</span></span>
+<span style="border-radius:27px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:#FFFFFF"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:26px;font-variation-settings:'wght' 500">pie_chart</span><span style="font-size:10.5px;font-weight:600">Stats</span></span>
+<span style="border-radius:27px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:#FFFFFF"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:26px;font-variation-settings:'wght' 500">person</span><span style="font-size:10.5px;font-weight:600">Me</span></span>
+</div>
+<span style="flex:none;width:62px;height:62px;border-radius:50%;background:rgba(37,37,40,0.72);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border:0.5px solid rgba(255,255,255,0.12);box-shadow:0 8px 24px rgba(0,0,0,0.4), inset 1px 1px 0 rgba(255,255,255,0.10);display:grid;place-items:center;color:#0A84FF"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:32px;font-variation-settings:'wght' 500">add</span></span>
+</div>
+</div>
+</x-import>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:12px">
+<span style="font:600 11px ui-monospace,Menlo,monospace;letter-spacing:0.06em;color:rgba(0,0,0,0.45)">ITEM</span>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ true }}" hint-size="402px,874px">
+<div style="height:100%;position:relative;overflow:hidden;background:#000000;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Figtree',system-ui,sans-serif;color:#FFFFFF;-webkit-font-smoothing:antialiased">
+<div style="position:absolute;top:50px;left:18px;right:18px;height:40px;border-radius:14px 14px 0 0;background:#2C2C2E;opacity:0.7"></div>
+<div style="position:absolute;top:62px;left:0;right:0;bottom:0;background:#1C1C1E;border-radius:38px 38px 0 0;overflow:hidden;display:flex;flex-direction:column">
+<div style="flex:none;display:grid;grid-template-columns:44px 1fr 44px;align-items:center;padding:14px 16px 6px">
+<span style="width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,0.12);box-shadow:inset 1px 1px 0 rgba(255,255,255,0.12);display:grid;place-items:center;color:#FFFFFF"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:22px;font-variation-settings:'wght' 600">close</span></span>
+<span style="text-align:center;font-size:17px;font-weight:600;letter-spacing:-0.4px">Edit Item</span>
+<span style="width:44px;height:44px;border-radius:50%;background:#0A84FF;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:24px;font-variation-settings:'wght' 600">check</span></span>
+</div>
+<div style="flex:1;min-height:0;overflow-y:auto;padding:10px 16px 40px;display:grid;align-content:start;grid-auto-rows:max-content;gap:22px">
+<div style="background:#2C2C2E;border-radius:26px;padding:16px 18px 18px;display:flex;flex-direction:column;gap:6px">
+<span style="font-size:22px;line-height:28px;font-weight:600;letter-spacing:-0.3px">Heaters not working</span>
+<span style="font-size:17px;line-height:23px;letter-spacing:-0.3px;color:rgba(235,235,245,0.7)">No heat since the weekend. Engineer needs booking.</span>
+</div>
+<div style="display:flex;flex-direction:column;gap:7px">
+<span style="padding:0 18px;font-size:13px;color:rgba(235,235,245,0.6);text-transform:uppercase;letter-spacing:0.02em">Status</span>
+<div style="background:#2C2C2E;border-radius:26px;overflow:hidden">
+<div style="display:flex;align-items:center;gap:14px;padding:0 16px">
+<span style="flex:none;width:14px;height:14px;border-radius:50%;background:#FF453A;box-shadow:0 0 0 4px rgba(255,69,58,0.22)"></span>
+<div style="flex:1;min-height:60px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+<div style="display:flex;flex-direction:column;gap:1px"><span style="font-size:17px;font-weight:600;letter-spacing:-0.4px">Urgent</span><span style="font-size:13px;color:rgba(235,235,245,0.6)">Broken, unsafe or blocking</span></div>
+<span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:24px;color:#0A84FF;font-variation-settings:'wght' 600">check</span>
+</div>
+</div>
+<div style="display:flex;align-items:center;gap:14px;padding:0 16px">
+<span style="flex:none;width:14px;height:14px;border-radius:50%;background:#FF9F0A"></span>
+<div style="flex:1;min-height:60px;display:flex;flex-direction:column;justify-content:center;gap:1px;border-top:0.5px solid rgba(84,84,88,0.55)"><span style="font-size:17px;letter-spacing:-0.4px">Needs attention</span><span style="font-size:13px;color:rgba(235,235,245,0.6)">Not urgent, but it needs doing</span></div>
+</div>
+<div style="display:flex;align-items:center;gap:14px;padding:0 16px">
+<span style="flex:none;width:14px;height:14px;border-radius:50%;background:#30D158"></span>
+<div style="flex:1;min-height:60px;display:flex;flex-direction:column;justify-content:center;gap:1px;border-top:0.5px solid rgba(84,84,88,0.55)"><span style="font-size:17px;letter-spacing:-0.4px">Fine</span><span style="font-size:13px;color:rgba(235,235,245,0.6)">Sorted for now or on track</span></div>
+</div>
+</div>
+</div>
+<div style="background:#2C2C2E;border-radius:26px;overflow:hidden">
+<div style="display:flex;align-items:center;gap:12px;padding:0 16px">
+<span style="flex:none;width:30px;height:30px;border-radius:8px;background:#FF453A;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:18px;font-variation-settings:'FILL' 1, 'wght' 500">calendar_today</span></span>
+<div style="flex:1;min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+<span style="font-size:17px;letter-spacing:-0.4px">Due date</span>
+<span style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:600;color:#FF453A;background:rgba(255,69,58,0.18);border-radius:7px;padding:3px 7px">2 days late</span><span style="font-size:17px;letter-spacing:-0.4px;color:#FF453A">Tue 6 Oct</span></span>
+</div>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:0 12px 0 16px">
+<span style="flex:none;width:30px;height:30px;border-radius:8px;background:#0A84FF;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:19px;font-variation-settings:'FILL' 1, 'wght' 500">person</span></span>
+<div style="flex:1;min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:0.5px solid rgba(84,84,88,0.55)">
+<span style="font-size:17px;letter-spacing:-0.4px">Assigned to</span>
+<span style="display:flex;align-items:center;gap:7px;color:rgba(235,235,245,0.6)"><span style="width:22px;height:22px;border-radius:50%;background:#A550D9;color:#FFFFFF;font-size:11px;font-weight:700;display:grid;place-items:center">S</span><span style="font-size:17px;letter-spacing:-0.4px">Shea</span><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:20px;color:rgba(235,235,245,0.3);font-variation-settings:'wght' 600">chevron_right</span></span>
+</div>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:0 12px 0 16px">
+<span style="flex:none;width:30px;height:30px;border-radius:8px;background:#636366;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:19px;font-variation-settings:'wght' 600">repeat</span></span>
+<div style="flex:1;min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:0.5px solid rgba(84,84,88,0.55)">
+<span style="font-size:17px;letter-spacing:-0.4px">Repeat</span>
+<span style="display:flex;align-items:center;gap:4px;color:rgba(235,235,245,0.6)"><span style="font-size:17px;letter-spacing:-0.4px">Never</span><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:20px;color:rgba(235,235,245,0.3);font-variation-settings:'wght' 600">chevron_right</span></span>
+</div>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:0 12px 0 16px">
+<span style="flex:none;width:30px;height:30px;border-radius:8px;background:#5E5CE6;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:19px;font-variation-settings:'FILL' 1, 'wght' 500">home</span></span>
+<div style="flex:1;min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:0.5px solid rgba(84,84,88,0.55)">
+<span style="font-size:17px;letter-spacing:-0.4px">Area</span>
+<span style="display:flex;align-items:center;gap:4px;color:rgba(235,235,245,0.6)"><span style="font-size:17px;letter-spacing:-0.4px">Hallway</span><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:20px;color:rgba(235,235,245,0.3);font-variation-settings:'wght' 600">chevron_right</span></span>
+</div>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:0 12px 0 16px">
+<span style="flex:none;width:30px;height:30px;border-radius:8px;background:#FF9F0A;color:#FFFFFF;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:19px;font-variation-settings:'FILL' 1, 'wght' 500">notifications</span></span>
+<div style="flex:1;min-height:52px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:0.5px solid rgba(84,84,88,0.55)">
+<span style="font-size:17px;letter-spacing:-0.4px">Push reminder</span>
+<span style="display:flex;align-items:center;gap:4px;color:rgba(235,235,245,0.6)"><span style="font-size:17px;letter-spacing:-0.4px">1 day before</span><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:20px;color:rgba(235,235,245,0.3);font-variation-settings:'wght' 600">chevron_right</span></span>
+</div>
+</div>
+</div>
+<div style="height:54px;border-radius:27px;background:#FFFFFF;color:#000000;display:flex;align-items:center;justify-content:center;gap:8px;font-size:17px;font-weight:600;letter-spacing:-0.4px"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:22px;font-variation-settings:'wght' 600">check</span>Mark as Done</div>
+<div style="height:52px;border-radius:26px;background:#2C2C2E;color:#FF453A;display:flex;align-items:center;justify-content:center;font-size:17px;letter-spacing:-0.4px">Delete Item</div>
+<div style="text-align:center;font-size:13px;color:rgba(235,235,245,0.6)">Added by Stratis on 2 Oct · Updated today</div>
+</div>
+</div>
+</div>
+</x-import>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:12px">
+<span style="font:600 11px ui-monospace,Menlo,monospace;letter-spacing:0.06em;color:rgba(0,0,0,0.45)">STATS</span>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ true }}" hint-size="402px,874px">
+<div style="height:100%;position:relative;overflow:hidden;background:#000000;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue','Figtree',system-ui,sans-serif;color:#FFFFFF;-webkit-font-smoothing:antialiased">
+<div style="position:absolute;inset:0;overflow-y:auto;padding:54px 0 128px">
+<div style="height:52px;padding:0 16px;display:flex;align-items:center;justify-content:flex-end">
+<span style="width:36px;height:36px;border-radius:50%;background:#0071E3;color:#FFFFFF;display:grid;place-items:center;font-size:15px;font-weight:600;box-shadow:0 0 0 3px #1C1C1E">S</span>
+</div>
+<div style="padding:0 20px;display:flex;flex-direction:column;gap:2px">
+<span style="font-size:13px;font-weight:600;letter-spacing:0.02em;text-transform:uppercase;color:rgba(235,235,245,0.6)">Tasks done by each person</span>
+<span style="font-size:34px;line-height:41px;font-weight:700;letter-spacing:-0.02em">Stats</span>
+</div>
+<div style="margin:18px 16px 0;padding:3px;border-radius:100px;background:rgba(118,118,128,0.24);display:grid;grid-template-columns:repeat(2,minmax(0,1fr))">
+<span onClick="{{ setMonth }}" style="height:38px;border-radius:100px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;letter-spacing:-0.2px;cursor:pointer;background:{{ apd.mBg }}">This Month</span>
+<span onClick="{{ setLife }}" style="height:38px;border-radius:100px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;letter-spacing:-0.2px;cursor:pointer;background:{{ apd.lBg }}">Lifetime</span>
+</div>
+<div style="display:flex;justify-content:center;padding:30px 0 8px">
+<div style="position:relative;width:248px;height:248px">
+{{ donutD }}
+<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
+<span style="font-family:ui-rounded,'SF Pro Rounded','Nunito',-apple-system,system-ui,sans-serif;font-size:64px;font-weight:700;line-height:1;letter-spacing:-0.02em">{{ st.total }}</span>
+<span style="font-size:15px;color:rgba(235,235,245,0.6)">{{ st.center }}</span>
+</div>
+</div>
+</div>
+<div style="margin:22px 16px 0;background:#1C1C1E;border-radius:26px;padding:16px 18px 18px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px">
+<sc-for list="{{ rowsAP }}" as="r" hint-placeholder-count="3">
+<div style="display:flex;flex-direction:column;gap:2px">
+<span style="font-size:15px;font-weight:600;color:{{ r.vd }}">{{ r.name }}</span>
+<span style="font-family:ui-rounded,'SF Pro Rounded','Nunito',-apple-system,system-ui,sans-serif;font-size:40px;font-weight:700;line-height:1.05;color:{{ r.vd }}">{{ r.n }}</span>
+<span style="font-size:13px;color:rgba(235,235,245,0.6)">{{ r.pct }} of tasks</span>
+</div>
+</sc-for>
+</div>
+<div style="display:flex;align-items:baseline;justify-content:space-between;padding:26px 20px 8px"><span style="font-size:22px;line-height:28px;font-weight:700;letter-spacing:-0.01em">Recently done</span></div>
+<div style="margin:0 16px;background:#1C1C1E;border-radius:24px;overflow:hidden">
+<sc-for list="{{ recentAP }}" as="rc" hint-placeholder-count="3">
+<div style="display:flex;gap:12px;padding:0 16px 0 14px">
+<span style="flex:none;width:24px;height:24px;margin-top:12px;border-radius:50%;background:{{ rc.vd }};color:#000000;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:16px;font-variation-settings:'wght' 600">check</span></span>
+<div style="flex:1;min-width:0;padding:12px 0;border-top:0.5px solid {{ rc.sepD }};display:flex;flex-direction:column;gap:2px">
+<span style="font-size:17px;line-height:22px;letter-spacing:-0.4px">{{ rc.title }}</span>
+<span style="font-size:13px;color:rgba(235,235,245,0.6)">{{ rc.meta }}</span>
+</div>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="position:absolute;left:0;right:0;top:0;height:58px;background:linear-gradient(#000000 55%, rgba(0,0,0,0));z-index:4;pointer-events:none"></div>
+<div style="position:absolute;left:16px;right:16px;bottom:22px;z-index:6;display:flex;gap:10px;align-items:center">
+<div style="flex:1;height:62px;border-radius:31px;background:rgba(37,37,40,0.72);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border:0.5px solid rgba(255,255,255,0.12);box-shadow:0 8px 24px rgba(0,0,0,0.4), inset 1px 1px 0 rgba(255,255,255,0.10);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:4px">
+<span style="border-radius:27px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:#FFFFFF"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:26px;font-variation-settings:'wght' 500">home</span><span style="font-size:10.5px;font-weight:600">Home</span></span>
+<span style="border-radius:27px;background:rgba(255,255,255,0.10);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:#0A84FF"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:26px;font-variation-settings:'FILL' 1, 'wght' 500">pie_chart</span><span style="font-size:10.5px;font-weight:600">Stats</span></span>
+<span style="border-radius:27px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:#FFFFFF"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:26px;font-variation-settings:'wght' 500">person</span><span style="font-size:10.5px;font-weight:600">Me</span></span>
+</div>
+<span style="flex:none;width:62px;height:62px;border-radius:50%;background:rgba(37,37,40,0.72);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border:0.5px solid rgba(255,255,255,0.12);box-shadow:0 8px 24px rgba(0,0,0,0.4), inset 1px 1px 0 rgba(255,255,255,0.10);display:grid;place-items:center;color:#0A84FF"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:32px;font-variation-settings:'wght' 500">add</span></span>
+</div>
+</div>
+</x-import>
+</div>
+
+</div>
+</div>
+
+</div>
+<p class="dv-next">Try next: "build <a class="dv-oid" href="#2a">2a</a> as the full app" · "<a class="dv-oid" href="#2a">2a</a> with the summary card and missed banner from <a class="dv-oid" href="#2b">2b</a>" · "<a class="dv-oid" href="#2b">2b</a>, but it follows the phone's light/dark setting"</p>
+</section>
+<section class="dv-turn" id="t1">
+<div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Three visual directions: Home list and Stats</span></div>
+<div style="max-width:900px;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px 40px;margin:0 0 28px;font:14px/1.5 system-ui,sans-serif;color:#3a3a3a">
+<div><b>Set from your answers.</b> One list grouped by area. Red = urgent or broken, amber = needs attention, green = fine. Done is a separate tap. Some items repeat. Everyone gets the same weekly household email; push sends a reminder the day before a deadline and an alert when one is missed.</div>
+<div><b>Demo data</b> uses your areas plus the items and people from your screenshot (Stratis, Shea, Ela), with Stratis signed in. Content is identical in all three, so only the look changes. The Stats toggle works.</div>
+</div>
+<div class="dv-opts">
+
+<div class="dv-opt" id="1a">
+<div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Notes: closest to your current list. Text first, coloured squares, no cards.</div>
+<div class="dv-card" style="padding:28px;display:flex;gap:28px;background:#F7F6F3">
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+<div style="height:100%;position:relative;overflow:hidden;background:#FBFAF8;font-family:'Helvetica Neue',Helvetica,system-ui,sans-serif;color:#1C1B19">
+<div style="position:absolute;inset:0;overflow-y:auto;padding:62px 0 112px">
+<div style="padding:10px 22px 0;display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+<div style="display:flex;flex-direction:column;gap:4px">
+<span style="font-size:34px;font-weight:700;letter-spacing:-0.02em">Home</span>
+<span style="font-size:15px;color:#6B665E">Last updated 8 Oct 26 by Stratis</span>
+</div>
+<span style="flex:none;width:44px;height:44px;border-radius:50%;background:#1C1B19;color:#FFFFFF;display:grid;place-items:center;margin-top:4px"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';-webkit-font-smoothing:antialiased;font-size:26px">add</span></span>
+</div>
+<div style="padding:14px 22px 0;display:flex;flex-wrap:wrap;gap:6px 14px;font-size:14px;color:#55504A">
+<span style="color:#B42318;font-weight:700">1 missed</span>
+<span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#E0412F"></span>1 urgent</span>
+<span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#EE8B2C"></span>5 need attention</span>
+<span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#3FA45B"></span>7 fine</span>
+</div>
+<sc-for list="{{ areas }}" as="a" hint-placeholder-count="4">
+<div style="padding:24px 22px 0">
+<div style="font-size:20px;font-weight:700;letter-spacing:-0.01em;padding-bottom:8px;border-bottom:1px solid #E7E3DC">{{ a.name }}</div>
+<sc-for list="{{ a.items }}" as="it" hint-placeholder-count="2">
+<div style="display:flex;gap:12px;padding:12px 0;border-bottom:1px solid #EFECE6">
+<span style="flex:none;width:16px;height:16px;border-radius:3px;margin-top:2px;background:{{ it.sq }}"></span>
+<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">
+<div style="font-size:16px;line-height:1.38;text-wrap:pretty"><span style="font-weight:600">{{ it.title }}</span><sc-if value="{{ it.hasComment }}"><span style="color:#55504A">: {{ it.comment }}</span></sc-if></div>
+<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font-size:13.5px;color:#6B665E">
+<span>{{ it.who }}</span>
+<span style="color:{{ it.dueA }};font-weight:{{ it.dueW }}">{{ it.due }}</span>
+<sc-if value="{{ it.hasRepeat }}"><span style="display:flex;align-items:center;gap:3px"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:15px">repeat</span>{{ it.repeat }}</span></sc-if>
+</div>
+</div>
+</div>
+</sc-for>
+<sc-if value="{{ a.empty }}"><div style="padding:12px 0;font-size:15px;color:#6B665E;border-bottom:1px solid #EFECE6">Nothing open</div></sc-if>
+</div>
+</sc-for>
+</div>
+<div style="position:absolute;left:0;right:0;bottom:0;z-index:5;padding:6px 12px 30px;background:rgba(251,250,248,0.95);border-top:1px solid #E7E3DC;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))">
+<span style="height:44px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#1C1B19">Home</span>
+<span style="height:44px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:500;color:#6B665E">Stats</span>
+<span style="height:44px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:500;color:#6B665E">Me</span>
+</div>
+</div>
+</x-import>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+<div style="height:100%;position:relative;overflow:hidden;background:#FBFAF8;font-family:'Helvetica Neue',Helvetica,system-ui,sans-serif;color:#1C1B19">
+<div style="position:absolute;inset:0;overflow-y:auto;padding:62px 0 112px">
+<div style="padding:10px 22px 0;display:flex;flex-direction:column;gap:4px">
+<span style="font-size:34px;font-weight:700;letter-spacing:-0.02em">Stats</span>
+<span style="font-size:15px;color:#6B665E">Tasks done by each person</span>
+</div>
+<div style="margin:18px 22px 0;padding:2px;border-radius:10px;background:#EEEBE5;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))">
+<span onClick="{{ setMonth }}" style="height:42px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;cursor:pointer;background:{{ ta.mBg }};color:{{ ta.mFg }};box-shadow:{{ ta.mSh }}">This month</span>
+<span onClick="{{ setLife }}" style="height:42px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;cursor:pointer;background:{{ ta.lBg }};color:{{ ta.lFg }};box-shadow:{{ ta.lSh }}">Lifetime</span>
+</div>
+<div style="display:flex;justify-content:center;padding:32px 0 16px"><span style="width:236px;height:236px;border-radius:50%;background:{{ pieA }}"></span></div>
+<div style="text-align:center;font-size:16px;font-weight:600">{{ st.caption }}</div>
+<div style="padding:18px 22px 0">
+<sc-for list="{{ st.rows }}" as="r" hint-placeholder-count="3">
+<div style="display:flex;align-items:center;gap:12px;padding:13px 0;border-bottom:1px solid #EFECE6">
+<span style="flex:none;width:14px;height:14px;border-radius:3px;background:{{ r.li }}"></span>
+<span style="flex:1;font-size:17px">{{ r.name }}</span>
+<span style="font-size:15px;color:#6B665E">{{ r.pct }}</span>
+<span style="min-width:36px;text-align:right;font-size:17px;font-weight:700">{{ r.n }}</span>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="position:absolute;left:0;right:0;bottom:0;z-index:5;padding:6px 12px 30px;background:rgba(251,250,248,0.95);border-top:1px solid #E7E3DC;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))">
+<span style="height:44px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:500;color:#6B665E">Home</span>
+<span style="height:44px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#1C1B19">Stats</span>
+<span style="height:44px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:500;color:#6B665E">Me</span>
+</div>
+</div>
+</x-import>
+</div>
+</div>
+
+<div class="dv-opt" id="1b">
+<div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Soft cards: one card per area, avatars, quick filters for Mine, Missed and Unassigned.</div>
+<div class="dv-card" style="padding:28px;display:flex;gap:28px;background:#F7F6F3">
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+<div style="height:100%;position:relative;overflow:hidden;background:#F6F4EF;font-family:'Figtree',system-ui,sans-serif;color:#1F1C18">
+<div style="position:absolute;inset:0;overflow-y:auto;padding:62px 0 124px">
+<div style="padding:8px 20px 0;display:flex;align-items:flex-end;gap:12px">
+<div style="flex:1;display:flex;flex-direction:column;gap:2px">
+<span style="font-size:14px;font-weight:600;color:#736C63">Thursday 8 October</span>
+<span style="font-size:32px;font-weight:800;letter-spacing:-0.025em;line-height:1.15">Home</span>
+</div>
+<span style="flex:none;width:44px;height:44px;border-radius:50%;background:#1F1C18;color:#FFFFFF;display:grid;place-items:center;margin-bottom:2px"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:26px">add</span></span>
+</div>
+<div style="padding:6px 20px 0;font-size:15px;color:#5E5850">13 open · 1 missed · 3 unassigned</div>
+<div style="margin:16px 16px 0;padding:3px;border-radius:15px;background:#ECE8E1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px">
+<span style="height:42px;border-radius:12px;background:#FFFFFF;box-shadow:0 1px 2px rgba(0,0,0,0.08);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700">All</span>
+<span style="height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:#5E5850">Mine</span>
+<span style="height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;gap:5px;font-size:14px;font-weight:600;color:#5E5850">Missed<span style="width:6px;height:6px;border-radius:50%;background:#DC3B34"></span></span>
+<span style="height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:#5E5850">Unassigned</span>
+</div>
+<div style="padding:16px 16px 0;display:flex;flex-direction:column;gap:12px">
+<sc-for list="{{ areas }}" as="a" hint-placeholder-count="3">
+<div style="background:#FFFFFF;border:1px solid #E9E4DB;border-radius:22px;overflow:hidden">
+<div style="display:flex;align-items:center;gap:8px;padding:8px 4px 0 18px">
+<span style="flex:1;display:flex;align-items:baseline;gap:8px"><span style="font-size:18px;font-weight:700;letter-spacing:-0.01em">{{ a.name }}</span><span style="font-size:15px;font-weight:600;color:#736C63">{{ a.countLabel }}</span></span>
+<span style="width:44px;height:44px;display:grid;place-items:center;color:#736C63"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:22px">add</span></span>
+</div>
+<sc-for list="{{ a.items }}" as="it" hint-placeholder-count="2">
+<div style="display:flex;gap:12px;align-items:flex-start;padding:12px 4px 12px 18px;border-top:1px solid {{ it.sep }}">
+<span style="flex:none;width:12px;height:12px;border-radius:50%;margin-top:5px;background:{{ it.dot }};box-shadow:0 0 0 3px {{ it.tint }}"></span>
+<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">
+<span style="font-size:16px;font-weight:600;line-height:1.3">{{ it.title }}</span>
+<sc-if value="{{ it.hasComment }}"><span style="font-size:14px;line-height:1.4;color:#5E5850;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">{{ it.comment }}</span></sc-if>
+<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:2px;font-size:13px;font-weight:500;color:#736C63">
+<span style="color:{{ it.dueB }};font-weight:{{ it.dueBW }}">{{ it.due }}</span>
+<span style="display:flex;align-items:center;gap:6px">
+<sc-if value="{{ it.hasWho }}"><span style="width:20px;height:20px;border-radius:50%;background:{{ it.li }};color:#FFFFFF;font-size:10.5px;font-weight:800;display:grid;place-items:center">{{ it.initial }}</span></sc-if>
+<sc-if value="{{ it.noWho }}"><span style="width:18px;height:18px;border-radius:50%;border:1.5px dashed #A8A196"></span></sc-if>
+<span>{{ it.who }}</span>
+</span>
+<sc-if value="{{ it.hasRepeat }}"><span style="display:flex;align-items:center;gap:3px"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:15px">repeat</span>{{ it.repeat }}</span></sc-if>
+</div>
+</div>
+<span style="flex:none;width:44px;height:44px;display:grid;place-items:center;margin-top:-8px"><span style="width:26px;height:26px;border-radius:50%;border:2px solid #D6D0C6"></span></span>
+</div>
+</sc-for>
+<sc-if value="{{ a.empty }}"><div style="padding:2px 18px 16px;font-size:14px;color:#736C63">Nothing open here.</div></sc-if>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="position:absolute;left:0;right:0;top:0;height:60px;background:linear-gradient(#F6F4EF 60%, rgba(246,244,239,0));z-index:4;pointer-events:none"></div>
+<div style="position:absolute;left:20px;right:20px;bottom:24px;z-index:6;height:64px;border-radius:32px;background:rgba(255,255,255,0.82);backdrop-filter:blur(18px) saturate(180%);-webkit-backdrop-filter:blur(18px) saturate(180%);box-shadow:0 8px 24px rgba(40,30,20,0.12), 0 0 0 0.5px rgba(0,0,0,0.08);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:5px;gap:4px">
+<span style="border-radius:27px;background:rgba(31,28,24,0.07);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#1F1C18"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:24px;font-variation-settings:'FILL' 1">home</span><span style="font-size:11.5px;font-weight:700">Home</span></span>
+<span style="border-radius:27px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#736C63"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:24px">pie_chart</span><span style="font-size:11.5px;font-weight:600">Stats</span></span>
+<span style="border-radius:27px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#736C63"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:24px">person</span><span style="font-size:11.5px;font-weight:600">Me</span></span>
+</div>
+</div>
+</x-import>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+<div style="height:100%;position:relative;overflow:hidden;background:#F6F4EF;font-family:'Figtree',system-ui,sans-serif;color:#1F1C18">
+<div style="position:absolute;inset:0;overflow-y:auto;padding:62px 0 124px">
+<div style="padding:8px 20px 0;display:flex;flex-direction:column;gap:2px">
+<span style="font-size:14px;font-weight:600;color:#736C63">Tasks done by each person</span>
+<span style="font-size:32px;font-weight:800;letter-spacing:-0.025em;line-height:1.15">Stats</span>
+</div>
+<div style="margin:16px 16px 0;padding:3px;border-radius:15px;background:#ECE8E1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px">
+<span onClick="{{ setMonth }}" style="height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;cursor:pointer;background:{{ ta.mBg }};color:{{ ta.mFg }};box-shadow:{{ ta.mSh }}">This month</span>
+<span onClick="{{ setLife }}" style="height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;cursor:pointer;background:{{ ta.lBg }};color:{{ ta.lFg }};box-shadow:{{ ta.lSh }}">Lifetime</span>
+</div>
+<div style="padding:14px 16px 0;display:flex;flex-direction:column;gap:12px">
+<div style="background:#FFFFFF;border:1px solid #E9E4DB;border-radius:24px;padding:24px 16px 6px;display:flex;flex-direction:column;align-items:center">
+<div style="width:228px;height:228px;border-radius:50%;background:{{ pieB }};display:grid;place-items:center;margin-bottom:18px">
+<div style="width:140px;height:140px;border-radius:50%;background:#FFFFFF;display:flex;flex-direction:column;align-items:center;justify-content:center">
+<span style="font-size:46px;font-weight:800;letter-spacing:-0.03em;line-height:1">{{ st.total }}</span>
+<span style="font-size:14px;font-weight:600;color:#736C63">{{ st.center }}</span>
+</div>
+</div>
+<div style="align-self:stretch;display:flex;flex-direction:column">
+<sc-for list="{{ st.rows }}" as="r" hint-placeholder-count="3">
+<div style="display:flex;align-items:center;gap:12px;padding:11px 4px;border-top:1px solid #F0ECE5">
+<span style="flex:none;width:32px;height:32px;border-radius:50%;background:{{ r.li }};color:#FFFFFF;display:grid;place-items:center;font-size:14px;font-weight:800">{{ r.initial }}</span>
+<span style="flex:1;font-size:16px;font-weight:600">{{ r.name }}</span>
+<span style="font-size:14px;font-weight:600;color:#736C63">{{ r.pct }}</span>
+<span style="min-width:34px;text-align:right;font-size:20px;font-weight:800">{{ r.n }}</span>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="background:#FFFFFF;border:1px solid #E9E4DB;border-radius:24px;padding:16px 18px 4px">
+<div style="font-size:16px;font-weight:700;padding-bottom:6px">Recently done</div>
+<sc-for list="{{ st.recent }}" as="rc" hint-placeholder-count="3">
+<div style="display:flex;gap:12px;align-items:flex-start;padding:11px 0;border-top:1px solid #F0ECE5">
+<span style="flex:none;width:10px;height:10px;border-radius:50%;margin-top:6px;background:{{ rc.li }}"></span>
+<div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+<span style="font-size:15px;font-weight:600">{{ rc.title }}</span>
+<span style="font-size:13px;color:#736C63">{{ rc.meta }}</span>
+</div>
+</div>
+</sc-for>
+</div>
+</div>
+</div>
+<div style="position:absolute;left:0;right:0;top:0;height:60px;background:linear-gradient(#F6F4EF 60%, rgba(246,244,239,0));z-index:4;pointer-events:none"></div>
+<div style="position:absolute;left:20px;right:20px;bottom:24px;z-index:6;height:64px;border-radius:32px;background:rgba(255,255,255,0.82);backdrop-filter:blur(18px) saturate(180%);-webkit-backdrop-filter:blur(18px) saturate(180%);box-shadow:0 8px 24px rgba(40,30,20,0.12), 0 0 0 0.5px rgba(0,0,0,0.08);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:5px;gap:4px">
+<span style="border-radius:27px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#736C63"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:24px">home</span><span style="font-size:11.5px;font-weight:600">Home</span></span>
+<span style="border-radius:27px;background:rgba(31,28,24,0.07);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#1F1C18"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:24px;font-variation-settings:'FILL' 1">pie_chart</span><span style="font-size:11.5px;font-weight:700">Stats</span></span>
+<span style="border-radius:27px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#736C63"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:24px">person</span><span style="font-size:11.5px;font-weight:600">Me</span></span>
+</div>
+</div>
+</x-import>
+</div>
+</div>
+
+<div class="dv-opt" id="1c">
+<div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Status board: dark, counts up top, missed items pinned first.</div>
+<div class="dv-card" style="padding:28px;display:flex;gap:28px;background:#F7F6F3">
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ true }}" hint-size="402px,874px">
+<div style="height:100%;position:relative;overflow:hidden;background:#151311;font-family:'Instrument Sans',system-ui,sans-serif;color:#F2EEE8">
+<div style="position:absolute;inset:0;overflow-y:auto;padding:62px 0 124px">
+<div style="padding:10px 20px 0;display:flex;flex-direction:column;gap:6px">
+<div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:0.1em;color:#A39C92"><span>HOMEOS</span><span>THU 08 OCT</span></div>
+<div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+<span style="font-size:36px;font-weight:700;letter-spacing:-0.03em">Home</span>
+<span style="flex:none;width:44px;height:44px;border-radius:14px;background:#F2EEE8;color:#151311;display:grid;place-items:center"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:26px">add</span></span>
+</div>
+</div>
+<div style="padding:16px 16px 0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px">
+<div style="background:oklch(0.27 0.06 27);border-radius:16px;padding:12px 12px 10px;display:flex;flex-direction:column;gap:6px"><span style="font-size:28px;font-weight:700;line-height:1;color:oklch(0.74 0.16 27)">1</span><span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.08em;color:#D7CFC6">MISSED</span></div>
+<div style="background:#211E1B;border-radius:16px;padding:12px 12px 10px;display:flex;flex-direction:column;gap:6px"><span style="font-size:28px;font-weight:700;line-height:1;color:oklch(0.70 0.17 27)">1</span><span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.08em;color:#A39C92">URGENT</span></div>
+<div style="background:#211E1B;border-radius:16px;padding:12px 12px 10px;display:flex;flex-direction:column;gap:6px"><span style="font-size:28px;font-weight:700;line-height:1;color:oklch(0.80 0.14 75)">5</span><span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.08em;color:#A39C92">ATTENTION</span></div>
+<div style="background:#211E1B;border-radius:16px;padding:12px 12px 10px;display:flex;flex-direction:column;gap:6px"><span style="font-size:28px;font-weight:700;line-height:1;color:oklch(0.75 0.14 150)">7</span><span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.08em;color:#A39C92">FINE</span></div>
+</div>
+<div style="padding:22px 16px 0">
+<div style="display:flex;justify-content:space-between;padding:0 4px 10px;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:0.1em;color:oklch(0.74 0.16 27)"><span>MISSED DEADLINE</span><span>01</span></div>
+<sc-for list="{{ missed }}" as="m" hint-placeholder-count="1">
+<div style="background:oklch(0.24 0.05 27);border:1px solid oklch(0.40 0.10 27);border-radius:18px;padding:14px 16px;display:flex;flex-direction:column;gap:6px">
+<div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><span style="font-size:17px;font-weight:600">{{ m.title }}</span><span style="flex:none;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:0.04em;color:oklch(0.76 0.15 27)">2 DAYS LATE</span></div>
+<span style="font-size:14px;line-height:1.45;color:#D7CFC6">{{ m.comment }}</span>
+<span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;letter-spacing:0.04em;color:#B5ADA3">{{ m.areaCaps }} · {{ m.whoC }} · WAS DUE TUE 06 OCT</span>
+</div>
+</sc-for>
+</div>
+<sc-for list="{{ areas }}" as="a" hint-placeholder-count="3">
+<div style="padding:24px 20px 0">
+<div style="display:flex;justify-content:space-between;padding-bottom:8px;border-bottom:1px solid #2B2724;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:0.1em;color:#A39C92"><span>{{ a.caps }}</span><span>{{ a.countPad }}</span></div>
+<sc-for list="{{ a.items }}" as="it" hint-placeholder-count="2">
+<div style="display:flex;gap:14px;padding:14px 0;border-bottom:1px solid #24211E">
+<span style="flex:none;width:28px;height:28px;border-radius:9px;background:{{ it.dBg }};display:grid;place-items:center"><span style="width:10px;height:10px;border-radius:50%;background:{{ it.dDot }};box-shadow:0 0 10px {{ it.dDot }}"></span></span>
+<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">
+<span style="font-size:16px;font-weight:600;line-height:1.3">{{ it.title }}</span>
+<sc-if value="{{ it.hasComment }}"><span style="font-size:14px;line-height:1.45;color:#BDB5AB">{{ it.comment }}</span></sc-if>
+<div style="display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:2px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;letter-spacing:0.04em;color:#A39C92">
+<span>{{ it.whoC }}</span>
+<span style="color:{{ it.dueC }}">{{ it.dueCaps }}</span>
+<sc-if value="{{ it.hasRepeat }}"><span>↻ {{ it.repeatCaps }}</span></sc-if>
+</div>
+</div>
+</div>
+</sc-for>
+<sc-if value="{{ a.empty }}"><div style="padding:14px 0;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:0.08em;color:#8F887E;border-bottom:1px solid #24211E">NOTHING OPEN</div></sc-if>
+</div>
+</sc-for>
+</div>
+<div style="position:absolute;left:0;right:0;top:0;height:60px;background:linear-gradient(#151311 60%, rgba(21,19,17,0));z-index:4;pointer-events:none"></div>
+<div style="position:absolute;left:20px;right:20px;bottom:24px;z-index:6;height:64px;border-radius:22px;background:rgba(36,33,30,0.94);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid #34302C;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:6px;gap:6px">
+<span style="border-radius:16px;background:#F2EEE8;color:#151311;display:flex;align-items:center;justify-content:center;gap:6px;font-size:14px;font-weight:700"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:22px;font-variation-settings:'FILL' 1">home</span>Home</span>
+<span style="border-radius:16px;color:#A39C92;display:flex;align-items:center;justify-content:center;gap:6px;font-size:14px;font-weight:600"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:22px">pie_chart</span>Stats</span>
+<span style="border-radius:16px;color:#A39C92;display:flex;align-items:center;justify-content:center;gap:6px;font-size:14px;font-weight:600"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:22px">person</span>Me</span>
+</div>
+</div>
+</x-import>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ true }}" hint-size="402px,874px">
+<div style="height:100%;position:relative;overflow:hidden;background:#151311;font-family:'Instrument Sans',system-ui,sans-serif;color:#F2EEE8">
+<div style="position:absolute;inset:0;overflow-y:auto;padding:62px 0 124px">
+<div style="padding:10px 20px 0;display:flex;flex-direction:column;gap:6px">
+<div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:0.1em;color:#A39C92"><span>HOMEOS</span><span>{{ st.monoPeriod }}</span></div>
+<span style="font-size:36px;font-weight:700;letter-spacing:-0.03em">Stats</span>
+</div>
+<div style="margin:16px 16px 0;padding:4px;border-radius:16px;background:#211E1B;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px">
+<span onClick="{{ setMonth }}" style="height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;cursor:pointer;background:{{ tc.mBg }};color:{{ tc.mFg }}">This month</span>
+<span onClick="{{ setLife }}" style="height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;cursor:pointer;background:{{ tc.lBg }};color:{{ tc.lFg }}">Lifetime</span>
+</div>
+<div style="display:flex;justify-content:center;padding:30px 0 26px">
+<div style="width:248px;height:248px;border-radius:50%;background:{{ pieC }};display:grid;place-items:center">
+<div style="width:156px;height:156px;border-radius:50%;background:#151311;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px">
+<span style="font-size:52px;font-weight:700;letter-spacing:-0.03em;line-height:1">{{ st.total }}</span>
+<span style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.1em;color:#A39C92">{{ st.monoCenter }}</span>
+</div>
+</div>
+</div>
+<div style="padding:0 20px;display:flex;flex-direction:column;gap:16px">
+<sc-for list="{{ st.rows }}" as="r" hint-placeholder-count="3">
+<div style="display:flex;flex-direction:column;gap:8px">
+<div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px">
+<span style="font-size:18px;font-weight:600">{{ r.name }}</span>
+<span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#A39C92"><span style="font-size:20px;font-weight:600;color:#F2EEE8">{{ r.n }}</span> · {{ r.pct }}</span>
+</div>
+<span style="display:block;height:8px;border-radius:4px;background:#24211E;overflow:hidden"><span style="display:block;height:100%;border-radius:4px;width:{{ r.pct }};background:{{ r.dk }}"></span></span>
+</div>
+</sc-for>
+</div>
+<div style="padding:28px 20px 0">
+<div style="padding-bottom:8px;border-bottom:1px solid #2B2724;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:0.1em;color:#A39C92">RECENTLY DONE</div>
+<sc-for list="{{ st.recent }}" as="rc" hint-placeholder-count="3">
+<div style="display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px solid #24211E">
+<span style="flex:none;width:10px;height:10px;border-radius:50%;margin-top:6px;background:{{ rc.dk }}"></span>
+<div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+<span style="font-size:15px;font-weight:600">{{ rc.title }}</span>
+<span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;letter-spacing:0.04em;color:#A39C92">{{ rc.metaCaps }}</span>
+</div>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="position:absolute;left:0;right:0;top:0;height:60px;background:linear-gradient(#151311 60%, rgba(21,19,17,0));z-index:4;pointer-events:none"></div>
+<div style="position:absolute;left:20px;right:20px;bottom:24px;z-index:6;height:64px;border-radius:22px;background:rgba(36,33,30,0.94);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid #34302C;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:6px;gap:6px">
+<span style="border-radius:16px;color:#A39C92;display:flex;align-items:center;justify-content:center;gap:6px;font-size:14px;font-weight:600"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:22px">home</span>Home</span>
+<span style="border-radius:16px;background:#F2EEE8;color:#151311;display:flex;align-items:center;justify-content:center;gap:6px;font-size:14px;font-weight:700"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:22px;font-variation-settings:'FILL' 1">pie_chart</span>Stats</span>
+<span style="border-radius:16px;color:#A39C92;display:flex;align-items:center;justify-content:center;gap:6px;font-size:14px;font-weight:600"><span style="font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';font-size:22px">person</span>Me</span>
+</div>
+</div>
+</x-import>
+</div>
+</div>
+
+</div>
+<p class="dv-next">Try next: "build <a class="dv-oid" href="#1b">1b</a>" · "<a class="dv-oid" href="#1a">1a</a> with the filters and avatars from <a class="dv-oid" href="#1b">1b</a>" · "<a class="dv-oid" href="#1c">1c</a> in light mode"</p>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { mode: 'month', burst: null, emoji: { s: '🦔', h: '🦆', e: '🦊' } };
+
+  homeScene() {
+    const loop = (frames, dur) => el => {
+      if (!el || el._a) return;
+      el._a = true;
+      el.animate(frames, { duration: dur, iterations: Infinity, direction: 'alternate', easing: 'ease-in-out' });
+    };
+    const E = (txt, style, ref) => React.createElement('span', { ref, style: Object.assign({ position: 'absolute', lineHeight: 1 }, style) }, txt);
+    return React.createElement('div', {
+      style: { position: 'relative', height: 150, borderRadius: 24, overflow: 'hidden', background: 'linear-gradient(#EAF3FF 0%, #F6FAFF 66%, #DCEFD6 66%, #CFE8C8 100%)' },
+    },
+      React.createElement('span', { style: { position: 'absolute', right: 28, top: 22, width: 28, height: 28, borderRadius: '50%', background: '#FFD66B', boxShadow: '0 0 0 9px rgba(255,214,107,0.22)' } }),
+      E('🏡', { left: '50%', bottom: 30, fontSize: 88, transform: 'translateX(-50%)' }),
+      E('🦆', { left: 'calc(50% - 102px)', bottom: 16, fontSize: 40 }, loop([{ transform: 'translateY(0) rotate(-3deg)' }, { transform: 'translateY(-5px) rotate(3deg)' }], 850)),
+      E('🦔', { left: 'calc(50% + 60px)', bottom: 16, fontSize: 38 }, loop([{ transform: 'rotate(-5deg)' }, { transform: 'rotate(5deg)' }], 1300))
+    );
+  }
+
+  componentWillUnmount() { clearTimeout(this._bt); }
+
+  celebrate(e) {
+    const layer = this._layer; if (!layer) return;
+    const lr = layer.getBoundingClientRect(), br = e.currentTarget.getBoundingClientRect();
+    const s = lr.width / (layer.offsetWidth || lr.width) || 1;
+    const ox = (br.left + br.width / 2 - lr.left) / s, oy = (br.top + br.height / 2 - lr.top) / s;
+    const now = Date.now();
+    const parts = Array.from({ length: 36 }, (_, i) => ({
+      id: now + '-' + i,
+      e: Math.random() < 0.5 ? '🦔' : '🦆',
+      vx: (Math.random() * 2 - 1) * 280,
+      vy: -(700 + Math.random() * 500),
+      size: 24 + Math.random() * 20,
+      spin: (Math.random() * 2 - 1) * 420,
+      dur: 1700 + Math.random() * 900,
+      delay: Math.random() * 160,
+    }));
+    this.setState({ burst: { id: now, ox, oy, parts } });
+    clearTimeout(this._bt);
+    this._bt = setTimeout(() => this.setState({ burst: null }), 3000);
+  }
+
+  confettiLayer() {
+    const b = this.state.burst;
+    const anim = p => el => {
+      if (!el || el._anim) return;
+      el._anim = true;
+      const g = 1500, T = p.dur / 1000, frames = [];
+      for (let k = 0; k <= 12; k++) {
+        const t = T * k / 12, x = p.vx * t, y = p.vy * t + 0.5 * g * t * t;
+        frames.push({ transform: 'translate(-50%,-50%) translate(' + x + 'px,' + y + 'px) rotate(' + (p.spin * k / 12) + 'deg) scale(' + (k === 0 ? 0.2 : 1) + ')', opacity: k <= 9 ? 1 : (12 - k) / 3 });
+      }
+      el.animate(frames, { duration: p.dur, delay: p.delay, easing: 'linear', fill: 'both' });
+    };
+    return React.createElement('div', {
+      ref: el => { this._layer = el; },
+      style: { position: 'absolute', inset: 0, zIndex: 40, pointerEvents: 'none', overflow: 'hidden' },
+    }, b ? b.parts.map(p => React.createElement('span', {
+      key: p.id, ref: anim(p),
+      style: { position: 'absolute', left: b.ox, top: b.oy, fontSize: p.size, lineHeight: 1, transform: 'translate(-50%,-50%) scale(0.2)', opacity: 0, willChange: 'transform' },
+    }, p.e)) : null);
+  }
+
+  renderVals() {
+    const L = {
+      red: { dot: '#DC3B34', tint: '#FBE9E7', sq: '#E0412F' },
+      amber: { dot: '#E8A13A', tint: '#FCF1DE', sq: '#EE8B2C' },
+      green: { dot: '#3E9E62', tint: '#E5F3EA', sq: '#3FA45B' },
+    };
+    const D = { red: 'oklch(0.70 0.17 27)', amber: 'oklch(0.80 0.14 75)', green: 'oklch(0.75 0.14 150)' };
+    const Dbg = { red: 'oklch(0.30 0.07 27)', amber: 'oklch(0.31 0.05 75)', green: 'oklch(0.29 0.04 150)' };
+    const people = [
+      { id: 's', name: 'Stratis', li: 'oklch(0.52 0.13 300)', dk: 'oklch(0.74 0.13 300)', month: 4, life: 58 },
+      { id: 'h', name: 'Shea', li: 'oklch(0.52 0.13 250)', dk: 'oklch(0.74 0.12 250)', month: 2, life: 37 },
+      { id: 'e', name: 'Ela', li: 'oklch(0.52 0.12 195)', dk: 'oklch(0.76 0.11 195)', month: 1, life: 16 },
+    ];
+    const P = {}; people.forEach(p => { P[p.id] = p; });
+    const raw = [
+      ['Kitchen', [
+        ['Kitchen paper', 'green', 'Restocked.', 's', 'Due Thu 5 Nov', false, 'Monthly'],
+        ['Olive oil', 'green', 'Restocked, 5L tin is in the pantry.', 's', 'Due Thu 12 Nov', false, 'Monthly'],
+      ]],
+      ['Living Room', [
+        ['Mirror lights not level', 'amber', 'One is 3cm higher. We need to bring someone in to make it even.', null, 'Due Tue 20 Oct', false, ''],
+      ]],
+      ['Bathroom Small', [
+        ['Re-seal around the shower', 'amber', 'Mould starting in the corner.', 'h', 'Due Sat 24 Oct', false, ''],
+      ]],
+      ['Bathroom Large', [
+        ['Shower draining slowly', 'amber', 'Tried the plunger, still slow.', 'h', 'Due Wed 14 Oct', false, ''],
+      ]],
+      ['Bedroom Small', []],
+      ['Bedroom Large', [
+        ['Wardrobe door hinge', 'green', 'Works, but squeaks.', 's', 'Due Sat 31 Oct', false, ''],
+      ]],
+      ['Garden', [
+        ['Garden room wall panel', 'amber', 'Collapsed where it was cut for the AC. Solved for now, but the solution is not the most elegant.', 's', 'Due Fri 30 Oct', false, ''],
+        ['Give away the old firepit', 'green', 'Ela will take it, she has a garden. She will confirm next week.', 'e', 'Due Thu 15 Oct', false, ''],
+      ]],
+      ['Garden Lounge', [
+        ['Clean cushions before winter', 'green', '', 'e', 'Due Sat 31 Oct', false, ''],
+      ]],
+      ['Jacuzzi', [
+        ['Water test strips running low', 'amber', 'Order a new pack.', null, 'Due Mon 12 Oct', false, ''],
+        ['Change the filter', 'green', '', 'h', 'Due Tue 20 Oct', false, 'Monthly'],
+      ]],
+      ['Hallway', [
+        ['Heaters not working', 'red', 'No heat since the weekend. Engineer needs booking.', 'h', 'Missed · Tue 6 Oct', true, ''],
+      ]],
+      ['Front garden', [
+        ['Trim the hedges', 'green', '', null, 'Due Mon 2 Nov', false, 'Every 3 months'],
+      ]],
+    ];
+    const AP = {
+      L: { red: '#FF3B30', amber: '#FF9500', green: '#34C759' },
+      LTint: { red: 'rgba(255,59,48,0.12)', amber: 'rgba(255,149,0,0.14)', green: 'rgba(52,199,89,0.14)' },
+      D: { red: '#FF453A', amber: '#FF9F0A', green: '#30D158' },
+      DTint: { red: 'rgba(255,69,58,0.18)', amber: 'rgba(255,159,10,0.18)', green: 'rgba(48,209,88,0.16)' },
+      short: { red: 'Urgent', amber: 'Attention', green: 'Fine' },
+    };
+    const PC = { s: { av: '#0071E3', vl: '#007AFF', vd: '#0A84FF' }, h: { av: '#A550D9', vl: '#AF52DE', vd: '#BF5AF2' }, e: { av: '#0F8B8D', vl: '#30B0C7', vd: '#40C8E0' } };
+    const mk = (row, i, areaName) => {
+      const [title, rag, comment, who, due, missed, repeat] = row;
+      const p = who ? P[who] : null;
+      return {
+        title, comment, hasComment: !!comment,
+        sq: L[rag].sq, dot: L[rag].dot, tint: L[rag].tint, dDot: D[rag], dBg: Dbg[rag],
+        who: p ? p.name : 'Unassigned', hasWho: !!p, noWho: !p, initial: p ? p.name[0] : '',
+        li: p ? p.li : 'transparent', whoC: p ? p.name.toUpperCase() : 'UNASSIGNED',
+        due, dueCaps: due.toUpperCase(),
+        dueA: missed ? '#B42318' : '#6B665E', dueW: missed ? 700 : 400,
+        dueB: missed ? '#A52A24' : '#736C63', dueBW: missed ? 700 : 500,
+        dueC: missed ? 'oklch(0.76 0.15 27)' : '#A39C92',
+        repeat, repeatCaps: repeat.toUpperCase(), hasRepeat: !!repeat,
+        sep: i === 0 ? 'transparent' : '#F0ECE5',
+        missed, areaCaps: areaName.toUpperCase(),
+        aRing: AP.L[rag], aTint: AP.LTint[rag], dRing: AP.D[rag], dTint: AP.DTint[rag], label: AP.short[rag],
+        dateOnly: missed ? due : due.replace('Due ', ''),
+        aDue: missed ? '#D70015' : '#6E6E73', dDue: missed ? '#FF453A' : 'rgba(235,235,245,0.6)',
+        av: p ? PC[who].av : 'transparent',
+        whoE: p ? this.state.emoji[who] + ' ' + p.name : 'Unassigned',
+        sepA: i === 0 ? 'transparent' : 'rgba(60,60,67,0.16)', sepD: i === 0 ? 'transparent' : 'rgba(84,84,88,0.55)',
+      };
+    };
+    const areas = raw.map(([name, items]) => ({
+      name, caps: name.toUpperCase(),
+      countLabel: items.length ? String(items.length) : '',
+      countPad: String(items.length).padStart(2, '0'),
+      items: items.map((r, i) => mk(r, i, name)),
+      empty: items.length === 0,
+    }));
+    const missed = [];
+    areas.forEach(a => a.items.forEach(it => { if (it.missed) missed.push(it); }));
+
+    const month = this.state.mode === 'month';
+    const key = month ? 'month' : 'life';
+    const total = people.reduce((n, p) => n + p[key], 0);
+    const pie = (gap, col) => {
+      let acc = 0; const st = [];
+      people.forEach(p => {
+        const a = acc / total * 100; acc += p[key]; const b = acc / total * 100;
+        st.push(p[col] + ' ' + a + '% ' + (b - 0.7) + '%', gap + ' ' + (b - 0.7) + '% ' + b + '%');
+      });
+      return 'conic-gradient(' + st.join(', ') + ')';
+    };
+    const rows = people.map(p => ({ name: p.name, initial: p.name[0], li: p.li, dk: p.dk, n: p[key], pct: Math.round(p[key] / total * 100) + '%' }));
+    const recent = [
+      ['Install the new firepit', 'Garden · Ela · Tue 6 Oct', 'e'],
+      ['Kitchen paper', 'Kitchen · Stratis · Mon 5 Oct', 's'],
+      ['Bleed the radiators', 'Hallway · Shea · Sat 3 Oct', 'h'],
+    ].map(([title, meta, w]) => ({ title, meta, metaCaps: meta.toUpperCase(), li: P[w].li, dk: P[w].dk }));
+
+    const seg = (on, dark) => dark
+      ? { bg: on ? '#F2EEE8' : 'transparent', fg: on ? '#151311' : '#A39C92' }
+      : { bg: on ? '#FFFFFF' : 'transparent', fg: on ? '#1C1B19' : '#5E5850', sh: on ? '0 1px 3px rgba(0,0,0,0.10)' : 'none' };
+    const am = seg(month, false), al = seg(!month, false), cm = seg(month, true), cl = seg(!month, true);
+
+    const donut = (col, size, sw) => {
+      const r = (size - sw) / 2, C = 2 * Math.PI * r, g = 9; let acc = 0;
+      const kids = people.map((p, i) => {
+        const len = Math.max(0.01, p[key] / total * C - g - sw);
+        const el = React.createElement('circle', { key: i, cx: size / 2, cy: size / 2, r, fill: 'none', stroke: PC[p.id][col], strokeWidth: sw, strokeLinecap: 'round', strokeDasharray: len + ' ' + (C - len), strokeDashoffset: -(acc / total * C + (g + sw) / 2) });
+        acc += p[key];
+        return el;
+      });
+      return React.createElement('svg', { width: size, height: size, viewBox: '0 0 ' + size + ' ' + size, style: { display: 'block', transform: 'rotate(-90deg)' } }, kids);
+    };
+    const rowsAP = people.map((p, i) => ({ emo: this.state.emoji[p.id], sepA: i === 0 ? 'transparent' : 'rgba(60,60,67,0.16)', name: p.name, initial: p.name[0], n: p[key], pct: Math.round(p[key] / total * 100) + '%', av: PC[p.id].av, vl: PC[p.id].vl, vd: PC[p.id].vd }));
+    const recentAP = [
+      ['Install the new firepit', 'Garden · Ela · Tue 6 Oct', 'e'],
+      ['Kitchen paper', 'Kitchen · Stratis · Mon 5 Oct', 's'],
+      ['Bleed the radiators', 'Hallway · Shea · Sat 3 Oct', 'h'],
+    ].map(([title, meta, w], i) => ({ title, meta, av: PC[w].av, vd: PC[w].vd, sepA: i === 0 ? 'transparent' : 'rgba(60,60,67,0.16)', sepD: i === 0 ? 'transparent' : 'rgba(84,84,88,0.55)' }));
+    const apOn = { bg: '#FFFFFF', sh: '0 3px 8px rgba(0,0,0,0.12), 0 0 0 0.5px rgba(0,0,0,0.04)', w: 600 };
+    const apOff = { bg: 'transparent', sh: 'none', w: 500 };
+    const am2 = month ? apOn : apOff, al2 = month ? apOff : apOn;
+    return {
+      confetti: this.confettiLayer(), celebrate: e => this.celebrate(e),
+      homeScene: this.homeScene(),
+      meEmoji: this.state.emoji.s,
+      emojiGrid: ['🦔','🦆','🦊','🐻','🐼','🐨','🐸','🐢','🐙','🦉','🐝','🦋','🐱','🐶','🐰','🦁','🐧','🐳','🌻','🌵','🍄','🌈','⭐','🔥'].map(e => {
+        const on = this.state.emoji.s === e;
+        return { e, bg: on ? 'rgba(0,122,255,0.10)' : 'transparent', ring: on ? 'inset 0 0 0 2.5px #007AFF' : 'none', onClick: () => this.setState(s => ({ emoji: Object.assign({}, s.emoji, { s: e }) })) };
+      }),
+      donutL: donut('vl', 220, 26), donutD: donut('vd', 248, 30), rowsAP, recentAP,
+      ap: { mBg: am2.bg, mSh: am2.sh, mW: am2.w, lBg: al2.bg, lSh: al2.sh, lW: al2.w },
+      apd: { mBg: month ? '#636366' : 'transparent', lBg: month ? 'transparent' : '#636366' },
+      areas, missed,
+      pieA: pie('#FBFAF8', 'li'), pieB: pie('#FFFFFF', 'li'), pieC: pie('#151311', 'dk'),
+      st: {
+        total, rows, recent,
+        caption: month ? total + ' tasks done in October' : total + ' tasks done since March 2026',
+        center: month ? 'done in October' : 'done all time',
+        monoCenter: month ? 'DONE · OCTOBER' : 'DONE · ALL TIME',
+        monoPeriod: month ? 'OCT 2026' : 'SINCE MAR 2026',
+      },
+      ta: { mBg: am.bg, mFg: am.fg, mSh: am.sh, lBg: al.bg, lFg: al.fg, lSh: al.sh },
+      tc: { mBg: cm.bg, mFg: cm.fg, lBg: cl.bg, lFg: cl.fg },
+      setMonth: () => this.setState({ mode: 'month' }),
+      setLife: () => this.setState({ mode: 'life' }),
+    };
+  }
+}
+</script>
+</body>
+</html>

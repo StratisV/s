@@ -1,0 +1,38 @@
+.layer {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.panel {
+  position: absolute;
+  top: var(--sheet-top);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--bg);
+  border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  outline: none;
+  transform: translateY(105%);
+  transition: transform var(--sheet-duration) var(--sheet-ease);
+  will-change: transform;
+}
+
+.panel[data-shown] {
+  transform: translateY(0);
+}
+
+.panel[data-dragging] {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    transition-duration: 1ms;
+  }
+}
