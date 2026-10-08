@@ -1,0 +1,71 @@
+.scene {
+  position: relative;
+  border-radius: var(--r-card);
+  overflow: hidden;
+  background: linear-gradient(#eaf3ff 0%, #f6faff 66%, #dcefd6 66%, #cfe8c8 100%);
+  user-select: none;
+}
+
+.sun {
+  position: absolute;
+  right: 28px;
+  top: 22px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #ffd66b;
+  box-shadow: 0 0 0 9px rgba(255, 214, 107, 0.22);
+}
+
+.house,
+.duck,
+.hedgehog {
+  position: absolute;
+  line-height: 1;
+}
+
+.house {
+  left: 50%;
+  bottom: 30px;
+  font-size: 88px;
+  transform: translateX(-50%);
+}
+
+.duck {
+  left: calc(50% - 102px);
+  bottom: 16px;
+  font-size: 40px;
+  animation: duck 850ms ease-in-out infinite alternate;
+}
+
+.hedgehog {
+  left: calc(50% + 60px);
+  bottom: 16px;
+  font-size: 38px;
+  animation: hedgehog 1300ms ease-in-out infinite alternate;
+}
+
+@keyframes duck {
+  from {
+    transform: translateY(0) rotate(-3deg);
+  }
+  to {
+    transform: translateY(-5px) rotate(3deg);
+  }
+}
+
+@keyframes hedgehog {
+  from {
+    transform: rotate(-5deg);
+  }
+  to {
+    transform: rotate(5deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .duck,
+  .hedgehog {
+    animation: none;
+  }
+}

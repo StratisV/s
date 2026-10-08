@@ -50,7 +50,7 @@
   --tabbar-bottom: 22px;
   --tabbar-height: 62px;
   /* Page sheet top edge; the pushed-back screen peeks 12px above it. */
-  --sheet-top: max(var(--top-inset), 24px);
+  --sheet-top: max(calc(var(--top-inset) + 8px), 24px);
 
   /* Motion (iOS sheet curve) */
   --sheet-duration: 480ms;

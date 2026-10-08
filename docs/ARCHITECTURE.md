@@ -31,7 +31,8 @@ src/
   lib/backend/demo.ts      localStorage backend (no env vars, e2e tests)
   lib/push.ts              Web Push subscribe/unsubscribe + iOS install detection
   lib/sw-register.ts       service worker registration
-  ui/                      shared primitives: Screen, Sheet, ActionSheet, Toggle, Avatar, Toast, Confetti, icons
+  ui/                      shared primitives: Screen, Sheet, ActionSheet, Toggle, Avatar, Toast, Confetti, HomeScene, icons
+  lib/preview.ts           `?frame` simulates the 54px status bar inset for screenshots
   screens/home/            Home screen, item rows, home scene, floating tab bar
   screens/item/            Item sheet (edit / new)
   screens/stats/           Stats screen + donut

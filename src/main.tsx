@@ -5,9 +5,12 @@ import '@fontsource/nunito/700.css';
 import './styles/global.css';
 import App from './App';
 import { createBackend } from './lib/backend';
+import { applyPreviewInset } from './lib/preview';
 import { registerServiceWorker } from './lib/sw-register';
 import { HomeProvider } from './state/HomeProvider';
 import { ConfettiProvider } from './ui/Confetti';
+
+applyPreviewInset();
 
 const root = createRoot(document.getElementById('root')!);
 
