@@ -12,6 +12,11 @@ export function Welcome({ enter }: { enter: Enter }) {
   const { backend, signIn, showToast, pendingInvite } = useHome();
   const [busy, setBusy] = useState(false);
 
+  // Back from Google with an error (cancelled, or the provider failed): say so once.
+  useEffect(() => {
+    if (backend.takeAuthError()) showToast("Couldn't sign in with Google. Try again.");
+  }, [backend, showToast]);
+
   // Coming back from Google with the browser's Back button restores this page as it was.
   useEffect(() => {
     const onShow = (e: PageTransitionEvent) => {

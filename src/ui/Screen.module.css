@@ -27,8 +27,17 @@
 }
 
 .avatarButton {
+  position: relative;
   border-radius: 50%;
   display: grid;
+}
+
+/* The avatar is drawn at 38px; the tap target reaches 44px. */
+.avatarButton::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
 }
 
 .avatarButton:active {

@@ -1,4 +1,5 @@
 import { useState, type ReactNode, type Ref, type UIEvent } from 'react';
+import { ChevronLeftIcon } from '../../ui/icons';
 import styles from './NavPage.module.css';
 
 interface NavPageProps {
@@ -40,5 +41,23 @@ export function NavPage({ leading, trailing, inlineTitle, scrollRef, children }:
         {children}
       </div>
     </div>
+  );
+}
+
+/** The iOS back button for a pushed page: chevron and the previous page's title. */
+export function BackButton({
+  label,
+  onClick,
+  buttonRef,
+}: {
+  label: string;
+  onClick(): void;
+  buttonRef?: Ref<HTMLButtonElement>;
+}) {
+  return (
+    <button ref={buttonRef} type="button" className={styles.back} onClick={onClick}>
+      <ChevronLeftIcon size={22} strokeWidth={2.6} />
+      {label}
+    </button>
   );
 }

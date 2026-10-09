@@ -53,6 +53,28 @@ export async function reopen(page: Page): Promise<void> {
   await page.goto('/');
 }
 
+/** Where the demo backend keeps its data (src/lib/backend/demo.ts). */
+export const DEMO_STORAGE_KEY = 'homeos.demo.v1';
+
+/**
+ * Leaves only the named areas (and their items) in the stored demo household, then
+ * reopens the app. An empty list gives a household without areas, a state one person
+ * can't reach through the UI (the last area can't be deleted) but two people can.
+ */
+export async function keepOnlyAreas(page: Page, names: string[]): Promise<void> {
+  await page.evaluate(
+    ([key, keep]) => {
+      const doc = JSON.parse(localStorage.getItem(key)!);
+      const ids = new Set(doc.areas.filter((a: { name: string }) => keep.includes(a.name)).map((a: { id: string }) => a.id));
+      doc.areas = doc.areas.filter((a: { id: string }) => ids.has(a.id));
+      doc.items = doc.items.filter((i: { area_id: string }) => ids.has(i.area_id));
+      localStorage.setItem(key, JSON.stringify(doc));
+    },
+    [DEMO_STORAGE_KEY, names] as const,
+  );
+  await reopen(page);
+}
+
 export function homeScreen(page: Page): Locator {
   return page.getByRole('region', { name: 'Home', exact: true });
 }

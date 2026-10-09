@@ -33,3 +33,10 @@ export function canSave(draft: ItemDraft): boolean {
 export function singleLine(text: string): string {
   return text.replace(/[ \t]*[\r\n]+[ \t]*/g, ' ');
 }
+
+/** At most `max` UTF-16 units (what maxLength counts), without splitting an emoji in two. */
+export function clip(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const code = text.charCodeAt(max - 1);
+  return text.slice(0, code >= 0xd800 && code <= 0xdbff ? max - 1 : max);
+}

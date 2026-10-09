@@ -48,6 +48,16 @@
   font-weight: 600;
 }
 
+/* A second, smaller line under a step. */
+.hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
+}
+
 .share {
   display: inline-grid;
   vertical-align: -3px;

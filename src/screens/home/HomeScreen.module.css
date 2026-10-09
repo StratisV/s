@@ -33,3 +33,65 @@
   letter-spacing: 0;
   color: var(--label-secondary);
 }
+
+/* No areas left: one white card with a way to add one. */
+.noAreas {
+  margin: 24px 16px 0;
+  background: var(--card);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+.noAreasText {
+  margin: 0;
+  padding: 14px 18px 13px;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
+}
+
+.noAreasText strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  color: var(--label);
+}
+
+.noAreasButton {
+  position: relative;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  font-size: 17px;
+  letter-spacing: -0.4px;
+  text-align: left;
+  color: var(--tint);
+  /* Keyboard focus scrolls it clear of the top fade and the floating tab bar. */
+  scroll-margin: calc(var(--top-inset) + 16px) 0 112px;
+}
+
+.noAreasButton::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 18px;
+  right: 18px;
+  border-top: 0.5px solid var(--separator);
+  pointer-events: none;
+}
+
+.noAreasButton:active {
+  background: var(--avatar-bg);
+}
+
+.noAreasButton:focus-visible {
+  outline: 2px solid var(--tint);
+  outline-offset: -2px;
+  border-radius: 14px;
+}

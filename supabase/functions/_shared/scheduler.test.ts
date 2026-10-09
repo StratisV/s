@@ -121,6 +121,8 @@ function config(over: Partial<SchedulerConfig> & Pick<SchedulerConfig, 'fetch'>)
     appUrl: APP,
     vapid,
     resend: { apiKey: 're_x', from: 'home.os <home@example.com>' },
+    // The test devices live on push.example.com instead of a real push service.
+    pushHosts: ['push.example.com'],
     sleep: async (ms) => {
       sleeps.push(ms);
     },
@@ -267,7 +269,7 @@ describe('runScheduler: weekly email', () => {
     const store = new MemoryStore(w.data, []);
     const net = network();
     const summary = await runScheduler(store, config({ fetch: net.impl }), { now: NOW });
-    expect(summary.email).toEqual({ enabled: true, planned: 2, sent: 2, alreadySent: 0, failed: 0 });
+    expect(summary.email).toEqual({ enabled: true, planned: 2, sent: 2, alreadySent: 0, failed: 0, deferred: 0 });
     const sent = net.calls.filter((c) => c.url === RESEND_URL);
     expect(sent.map((c) => JSON.parse(c.init.body as string).to[0]).sort()).toEqual([w.shea.email, w.stratis.email].sort());
     expect((sent[0].init.headers as Record<string, string>)['Idempotency-Key']).toMatch(/^weekly\/.+\/2026-10-12$/);
@@ -370,5 +372,156 @@ describe('runScheduler: configuration and dry runs', () => {
     };
     await runScheduler(store, config({ fetch: network().impl }), { now: NOW, dry: true });
     expect(since).toEqual(new Date('2026-10-04T07:00:00Z'));
+  });
+});
+
+describe('runScheduler: slow push services and untrusted endpoints', () => {
+  /** Due tomorrow, unassigned: a reminder for Stratis (two phones) and Shea (one phone). */
+  function dueTomorrow() {
+    const w = world();
+    w.data.items = [item(w.kitchen, { title: 'Kitchen paper', due_date: '2026-10-13', notify: 'day_before' })];
+    const store = new MemoryStore(w.data, [w.devices.stratisA.sub, w.devices.stratisB.sub, w.devices.shea.sub]);
+    return { w, store };
+  }
+
+  /** Like network(), but requests to `hang` never get an answer and ignore every abort. */
+  function hangingNetwork(hang: string) {
+    const net = network();
+    const impl = (url: string, init: RequestInit) =>
+      url === `https://push.example.com/${hang}` ? new Promise<Response>(() => {}) : net.impl(url, init);
+    return { ...net, impl };
+  }
+
+  /** Requests to `slow` only end when their signal aborts (the time limit or the deadline). */
+  function abortableNetwork(slow: (url: string) => boolean) {
+    const net = network();
+    const impl = (url: string, init: RequestInit) => {
+      if (!slow(url)) return net.impl(url, init);
+      net.calls.push({ url, init });
+      return new Promise<Response>((_, reject) => {
+        const signal = init.signal as AbortSignal;
+        if (signal.aborted) reject(signal.reason);
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    };
+    return { ...net, impl };
+  }
+
+  it('a push endpoint that never answers does not hold up the weekly email or the summary', async () => {
+    const { w, store } = dueTomorrow();
+    const net = hangingNetwork('shea');
+    const started = Date.now();
+
+    const summary = await runScheduler(store, config({ fetch: net.impl, deadlineMs: 100, graceMs: 20 }), { now: NOW });
+
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(summary.timedOut).toBe(true);
+    expect(summary.email).toMatchObject({ planned: 2, sent: 2, failed: 0, deferred: 0 });
+    expect(net.calls.filter((c) => c.url === RESEND_URL)).toHaveLength(2);
+    // Stratis got the reminder; Shea's is reported as still running.
+    expect(summary.push).toMatchObject({ planned: 2, sent: 1, failed: 1, deferred: 0 });
+    expect(summary.errors).toContainEqual(expect.stringMatching(new RegExp(`${w.shea.id}: still running`)));
+  });
+
+  it('gives each push request a time limit; a timed-out send is retried by the next run', async () => {
+    const { w, store } = dueTomorrow();
+    const net = abortableNetwork((url) => url.endsWith('/shea'));
+
+    const summary = await runScheduler(store, config({ fetch: net.impl, requestTimeoutMs: 20 }), { now: NOW });
+
+    expect(summary.timedOut).toBe(false);
+    expect(summary.push).toMatchObject({ sent: 1, failed: 1, deferred: 0 });
+    expect(summary.email.sent).toBe(2);
+    expect(summary.errors).toContainEqual(expect.stringMatching(new RegExp(`to ${w.shea.id}: .*(timed out|timeout|aborted)`, 'i')));
+    // Shea's claim was released, so the next run tries again.
+    expect(store.log.filter((r) => r.kind === 'reminder').map((r) => r.member_id)).toEqual([w.stratis.id]);
+    expect(store.subs).toHaveLength(3);
+  });
+
+  it('at the deadline it stops starting pushes and releases the claim of the one it aborted', async () => {
+    const { store } = dueTomorrow();
+    // Every push waits until it is aborted; one at a time.
+    const net = abortableNetwork((url) => url !== RESEND_URL);
+
+    const summary = await runScheduler(
+      store,
+      config({ fetch: net.impl, concurrency: 1, deadlineMs: 50, requestTimeoutMs: 10_000 }),
+      { now: NOW },
+    );
+
+    expect(summary.timedOut).toBe(true);
+    expect(summary.push).toMatchObject({ planned: 2, sent: 0, failed: 1, deferred: 1 });
+    expect(summary.errors).toContainEqual(expect.stringMatching(/deadline/));
+    expect(summary.email.sent).toBe(2);
+    expect(store.log.filter((r) => r.kind === 'reminder')).toEqual([]);
+    // Only the first message (Stratis, two phones) was started and aborted; Shea's never was.
+    expect(net.pushCalls().map((c) => c.url).sort()).toEqual([
+      'https://push.example.com/stratis-a',
+      'https://push.example.com/stratis-b',
+    ]);
+  });
+
+  it('at the deadline it stops starting emails and releases the claim of the one it aborted', async () => {
+    const w = world();
+    const store = new MemoryStore(w.data, []);
+    const net = abortableNetwork((url) => url === RESEND_URL);
+
+    const summary = await runScheduler(store, config({ fetch: net.impl, deadlineMs: 50 }), { now: NOW });
+
+    expect(summary.timedOut).toBe(true);
+    expect(summary.email).toMatchObject({ planned: 2, sent: 0, failed: 1, deferred: 1 });
+    expect(store.log).toEqual([]);
+    expect(net.calls.filter((c) => c.url === RESEND_URL)).toHaveLength(1);
+  });
+
+  it('still sends the weekly email when loading push subscriptions fails', async () => {
+    const { store } = dueTomorrow();
+    store.pushSubs = async () => {
+      throw new Error('push_subs unavailable');
+    };
+    const net = network();
+    const summary = await runScheduler(store, config({ fetch: net.impl }), { now: NOW });
+    expect(summary.email.sent).toBe(2);
+    expect(summary.push).toMatchObject({ planned: 2, sent: 0, deferred: 0 });
+    expect(summary.errors).toEqual(['push: push_subs unavailable']);
+    expect(net.pushCalls()).toEqual([]);
+  });
+
+  it('never contacts an endpoint outside the push service allowlist, and deletes it', async () => {
+    const { w, store } = dueTomorrow();
+    const internal = { ...w.devices.shea.sub, id: 'sub-internal', endpoint: 'https://169.254.169.254/latest/meta-data/' };
+    const plain = { ...w.devices.shea.sub, id: 'sub-http', endpoint: 'http://push.example.com/shea' };
+    store.subs = [w.devices.stratisA.sub, internal, plain];
+    const net = network();
+
+    const summary = await runScheduler(store, config({ fetch: net.impl, resend: null }), { now: NOW });
+
+    expect(net.pushCalls().map((c) => c.url)).toEqual(['https://push.example.com/stratis-a']);
+    expect(summary.push).toMatchObject({ sent: 1, failed: 1 });
+    expect(summary.push.devices).toEqual({ sent: 1, failed: 2, removed: 2 });
+    expect(store.subs.map((s) => s.id)).toEqual([w.devices.stratisA.sub.id]);
+    expect(summary.errors).toEqual([
+      expect.stringMatching(/sub-internal: endpoint is not a known push service/),
+      expect.stringMatching(/sub-http: endpoint is not a known push service/),
+    ]);
+  });
+
+  it('only contacts the real push services by default', async () => {
+    const { store } = dueTomorrow();
+    const net = network();
+    const summary = await runScheduler(store, config({ fetch: net.impl, resend: null, pushHosts: undefined }), { now: NOW });
+    // push.example.com is not a browser push service: nothing is sent and the rows go.
+    expect(net.pushCalls()).toEqual([]);
+    expect(summary.push.devices.removed).toBe(3);
+    expect(store.subs).toEqual([]);
+  });
+
+  it('does not follow redirects and passes a signal on every request', async () => {
+    const { store } = dueTomorrow();
+    const net = network();
+    await runScheduler(store, config({ fetch: net.impl }), { now: NOW });
+    expect(net.calls.length).toBeGreaterThan(0);
+    for (const c of net.calls) expect(c.init.signal).toBeInstanceOf(AbortSignal);
+    for (const c of net.pushCalls()) expect(c.init.redirect).toBe('manual');
   });
 });

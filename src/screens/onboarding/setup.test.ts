@@ -1,5 +1,13 @@
-import { DEFAULT_AREAS } from '../../lib/constants';
-import { cleanAreaNames, initialHomeDraft, MAX_NAME, suggestedName } from './setup';
+import { DEFAULT_AREAS, TEXT_LIMITS } from '../../lib/constants';
+import {
+  cleanAreaNames,
+  initialHomeDraft,
+  MAX_ADDRESS,
+  MAX_AREA_NAME,
+  MAX_HOUSEHOLD_NAME,
+  MAX_NAME,
+  suggestedName,
+} from './setup';
 
 describe('cleanAreaNames', () => {
   const rows = (...names: string[]) => names.map((name, i) => ({ key: String(i), name }));
@@ -50,5 +58,16 @@ describe('suggestedName', () => {
 
   it('fits the name field', () => {
     expect(suggestedName('x'.repeat(100))).toHaveLength(MAX_NAME);
+  });
+});
+
+describe('input limits', () => {
+  it('match the app-wide limits the database enforces', () => {
+    expect([MAX_NAME, MAX_HOUSEHOLD_NAME, MAX_ADDRESS, MAX_AREA_NAME]).toEqual([
+      TEXT_LIMITS.memberName,
+      TEXT_LIMITS.householdName,
+      TEXT_LIMITS.address,
+      TEXT_LIMITS.areaName,
+    ]);
   });
 });

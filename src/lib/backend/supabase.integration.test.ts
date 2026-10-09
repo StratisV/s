@@ -135,6 +135,13 @@ describe('SupabaseBackend offline: mapping helpers', () => {
     expect(toBackendError(pg('JWT expired', 'PGRST303'), 401).code).toBe('not_signed_in');
     expect(toBackendError({ message: 'TypeError: fetch failed', code: '' }, 0).code).toBe('network');
     expect(toBackendError(new TypeError('Load failed')).code).toBe('network');
+    const tooLong = toBackendError(
+      pg('new row for relation "items" violates check constraint "items_title_length"', '23514'),
+      400,
+    );
+    expect([tooLong.code, tooLong.message]).toEqual(['unknown', 'invalid_input: items_title_length']);
+    const unnamed = toBackendError(pg('value too long', '23514'), 400);
+    expect([unnamed.code, unnamed.message]).toEqual(['unknown', 'invalid_input: value too long']);
     const other = toBackendError(pg('duplicate key value violates unique constraint', '23505'), 409);
     expect([other.code, other.message]).toEqual(['unknown', 'duplicate key value violates unique constraint']);
     const same = new BackendError('already_member');
@@ -894,6 +901,36 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     expect((await loadA()).items.some((i) => i.id === created.id)).toBe(false);
   });
 
+  it('refuses text over the database limits (TEXT_LIMITS), changing nothing', async () => {
+    const before = await loadA();
+    const kitchen = area(before, 'Kitchen');
+    const over = (limit: number, c = 'x') => c.repeat(limit + 1);
+    // Postgres reports a check violation naming the constraint; the backend maps it to 'unknown'.
+    const refused = (p: Promise<unknown>, constraint: string) => rejectsWith(p, 'unknown', new RegExp(constraint));
+
+    await refused(A().createItem(hidA, draft({ area_id: kitchen.id, title: over(200) })), 'items_title_length');
+    await refused(A().createItem(hidA, draft({ area_id: kitchen.id, note: over(4000) })), 'items_note_length');
+    const longest = await A().createItem(
+      hidA,
+      draft({ area_id: kitchen.id, title: 'x'.repeat(200), note: 'y'.repeat(4000) }),
+    );
+    await refused(B().updateItem(longest.id, { title: over(200) }), 'items_title_length');
+    await refused(B().updateItem(longest.id, { note: over(4000) }), 'items_note_length');
+    await refused(B().updateMember(memberA, { name: over(40) }), 'members_name_length');
+    await refused(B().updateMember(memberA, { emoji: over(16, '🦔') }), 'members_emoji_length');
+    await refused(B().updateHousehold(hidA, { name: over(60) }), 'households_name_length');
+    await refused(B().updateHousehold(hidA, { address: over(120) }), 'households_address_length');
+    await refused(B().createArea(hidA, over(60)), 'areas_name_length');
+    await refused(B().renameArea(kitchen.id, over(60)), 'areas_name_length');
+
+    const after = await loadA();
+    expect(after.household).toEqual(before.household);
+    expect(after.members).toEqual(before.members);
+    expect(after.areas).toEqual(before.areas);
+    expect(after.items.find((i) => i.id === longest.id)).toMatchObject({ title: 'x'.repeat(200), note: 'y'.repeat(4000) });
+    await A().deleteItem(longest.id);
+  });
+
   it('completes items and undoes completions', async () => {
     let data = await loadA();
     const tz = data.household.timezone;
@@ -984,9 +1021,21 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
       'not_found',
     );
 
-    // Another account on the same browser takes the endpoint over.
-    await B().savePushSubscription(memberB, { endpoint, keys: { p256dh: 'p3', auth: 'a3' } });
-    expect(await rows()).toEqual([{ member_id: memberB, user_id: people.b.userId, p256dh: 'p3', auth: 'a3' }]);
+    // Knowing someone's endpoint is not enough to take it over: their row stays.
+    await rejectsWith(B().savePushSubscription(memberB, { endpoint, keys: { p256dh: 'p3', auth: 'a3' } }), 'not_found');
+    expect(await rows()).toEqual([{ member_id: memberA, user_id: people.a.userId, p256dh: 'p2', auth: 'a2' }]);
+    // Another account on the same browser (the same subscription keys) takes it over.
+    await B().savePushSubscription(memberB, { endpoint, keys: { p256dh: 'p2', auth: 'a2' } });
+    expect(await rows()).toEqual([{ member_id: memberB, user_id: people.b.userId, p256dh: 'p2', auth: 'a2' }]);
+
+    // Only https endpoints are stored (the scheduler POSTs to them).
+    for (const bad of ['http://127.0.0.1:54321/rest/v1/', 'javascript:alert(1)', `https://push.example/${'x'.repeat(2048)}`]) {
+      await rejectsWith(
+        A().savePushSubscription(memberA, { endpoint: bad, keys: { p256dh: 'p', auth: 'a' } }),
+        'unknown',
+        /push_subs_endpoint_https/,
+      );
+    }
 
     // A can only delete their own rows.
     await A().deletePushSubscription(endpoint);

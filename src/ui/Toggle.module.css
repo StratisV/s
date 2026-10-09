@@ -8,6 +8,13 @@
   transition: background 0.25s ease;
 }
 
+/* The switch is drawn at the native 51x31; the tap target is 44px tall. */
+.toggle::before {
+  content: '';
+  position: absolute;
+  inset: -7px 0;
+}
+
 .toggle[data-on] {
   background: var(--toggle-on);
 }

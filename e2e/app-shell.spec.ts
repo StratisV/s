@@ -57,7 +57,8 @@ test.describe('App shell', () => {
     await sheet.getByLabel('Title', { exact: true }).fill('Paint the fence');
     await sheet.getByRole('button', { name: 'Close' }).click();
     const confirm = await confirmation(page, 'Discard this item?');
-    await expect(confirm.getByRole('button', { name: 'Discard Changes' })).toBeFocused();
+    // Focus starts on the least destructive choice.
+    await expect(confirm.getByRole('button', { name: 'Keep Editing' })).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(confirm).toHaveCount(0);
     await expect(sheet.getByLabel('Title', { exact: true })).toHaveValue('Paint the fence');

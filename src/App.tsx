@@ -38,6 +38,43 @@ function ErrorScreen({ message }: { message: string }) {
   );
 }
 
+function isFocusVisible(el: Element): boolean {
+  try {
+    return el.matches(':focus-visible');
+  } catch {
+    return false; // engines without :focus-visible
+  }
+}
+
+interface FocusReturn {
+  target: HTMLElement;
+  /** Fallbacks if the target's row is gone (completed or deleted): the rows after it, then before it. */
+  nearby: HTMLElement[];
+}
+
+/**
+ * The focused control in the stage, if it was focused from the keyboard. A tap
+ * leaves nothing to return to, so closing never scrolls or rings a row.
+ */
+function takeFocusReturn(stage: HTMLElement | null): FocusReturn | null {
+  const el = document.activeElement;
+  if (!stage || !(el instanceof HTMLElement) || !stage.contains(el) || !isFocusVisible(el)) return null;
+  const rows = Array.from(stage.querySelectorAll<HTMLElement>('[data-item-open]'));
+  const i = rows.indexOf(el);
+  const nearby = i < 0 ? [] : [...rows.slice(i + 1), ...rows.slice(0, i).reverse()];
+  return { target: el, nearby };
+}
+
+function restoreFocus({ target, nearby }: FocusReturn, stage: HTMLElement) {
+  // Only when focus was left behind (on the page, or in the closing sheet).
+  const active = document.activeElement;
+  if (active && active !== document.body && !active.closest('[role="dialog"]')) return;
+  const next =
+    [target, ...nearby].find((el) => el.isConnected && stage.contains(el)) ??
+    stage.querySelector<HTMLElement>('button[aria-label="New item"]');
+  next?.focus({ preventScroll: true });
+}
+
 function MainApp() {
   const [tab, setTab] = useState<Tab>('home');
   const [sheetTarget, setSheetTarget] = useState<ItemSheetTarget | null>(null);
@@ -58,10 +95,26 @@ function MainApp() {
     return () => ro.disconnect();
   }, []);
 
+  // Where keyboard focus was when the Item sheet opened. Taken before the stage
+  // goes inert below (effects run in order), which would blur it.
+  const sheetReturn = useRef<FocusReturn | null>(null);
+  useEffect(() => {
+    if (sheetOpen) sheetReturn.current = takeFocusReturn(stageRef.current);
+  }, [sheetOpen]);
+
   // While a sheet or the Profile cover is up, the screen behind can't be focused or tapped.
   const covered = sheetOpen || profileOpen;
   useEffect(() => {
     if (stageRef.current) stageRef.current.inert = covered;
+  }, [covered]);
+
+  // Once the stage is interactive again, focus goes back to the row (or the + button).
+  // The Profile cover returns focus itself (ProfileScreen).
+  useEffect(() => {
+    if (covered) return;
+    const ret = sheetReturn.current;
+    sheetReturn.current = null;
+    if (ret && stageRef.current) restoreFocus(ret, stageRef.current);
   }, [covered]);
 
   const openSheet = useCallback((target: ItemSheetTarget) => {

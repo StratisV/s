@@ -1,24 +1,19 @@
-/* iOS back button: chevron + previous title, 44px tall. */
-.back {
-  height: 44px;
-  margin-left: -14px;
-  padding: 0 8px 0 6px;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 17px;
-  line-height: 22px;
-  letter-spacing: -0.4px;
-  color: var(--tint);
-  border-radius: 12px;
-}
-
-.back:active {
-  opacity: 0.5;
-}
-
 .details {
   margin-top: 18px;
+}
+
+/* People: avatar with the member colour ring (as in the Stats legend), name, chevron. */
+.personName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.you {
+  flex: none;
+  color: var(--label-secondary);
 }
 
 /* Right-aligned value you can edit in place. */

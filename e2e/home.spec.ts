@@ -2,12 +2,16 @@ import {
   area,
   areaHeadings,
   DEFAULT_AREAS,
+  DEMO_STORAGE_KEY,
   detailValue,
   expect,
   homeScreen,
+  keepOnlyAreas,
   meta,
   openItem,
+  openNewItem,
   openSeeded,
+  profile,
   ring,
   row,
   rowButton,
@@ -88,6 +92,63 @@ test.describe('Home', () => {
     await expect(done).toHaveCount(0);
   });
 
+  test('Ctrl+Z undoes a completion from the keyboard', async ({ page }) => {
+    await ring(page, 'Mirror lights not level').click();
+    await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
+    const done = toast(page, 'Marked as done');
+    await expect(done.getByRole('button', { name: 'Undo' })).toHaveAttribute('aria-keyshortcuts', 'Meta+Z Control+Z');
+    await page.keyboard.press('Control+z');
+    await expect(ring(page, 'Mirror lights not level')).toBeVisible();
+    await expect(done).toHaveCount(0);
+    // Nothing left to undo: another Ctrl+Z changes nothing.
+    await page.keyboard.press('Control+z');
+    await expect(ring(page, 'Mirror lights not level')).toBeVisible();
+  });
+
+  test('the toast stays while Undo has keyboard focus', async ({ page }) => {
+    await ring(page, 'Shower draining slowly').click();
+    const done = toast(page, 'Marked as done');
+    const undo = done.getByRole('button', { name: 'Undo' });
+    await undo.focus();
+    await page.clock.runFor(6_000);
+    await expect(done).toBeVisible();
+    await page.keyboard.press('Enter');
+    await expect(ring(page, 'Shower draining slowly')).toBeVisible();
+    await expect(done).toHaveCount(0);
+  });
+
+  test('two rings tapped 12ms apart both stay done', async ({ page }) => {
+    // One-off items, so a completed one leaves Home. A load that started before the
+    // second tap must not put the second item back once it lands.
+    const pairs = [
+      ['Mirror lights not level', 'Re-seal around the shower'],
+      ['Shower draining slowly', 'Wardrobe door hinge'],
+      ['Garden room wall panel', 'Give away the old firepit'],
+      ['Water test strips running low', 'Heaters not working'],
+    ];
+    for (let round = 0; round < 3; round++) {
+      if (round > 0) await openSeeded(page);
+      for (const [a, b] of pairs) {
+        await page.evaluate(async ([a, b]) => {
+          const ringFor = (title: string) =>
+            document.querySelector<HTMLElement>(`[aria-label="Mark ${title} as done"]`);
+          ringFor(a)!.click();
+          await new Promise((resolve) => setTimeout(resolve, 12));
+          ringFor(b)!.click();
+        }, [a, b]);
+        await page.waitForTimeout(1_000);
+        // Checked once, without waiting: a stale load would have put a row back by now.
+        expect(await ring(page, a).count(), `round ${round}: ${a}`).toBe(0);
+        expect(await ring(page, b).count(), `round ${round}: ${b}`).toBe(0);
+      }
+      const stored = await page.evaluate(
+        (key) => JSON.parse(localStorage.getItem(key)!).items.filter((i: { status: string }) => i.status === 'done').length,
+        DEMO_STORAGE_KEY,
+      );
+      expect(stored).toBe(pairs.length * 2);
+    }
+  });
+
   test('the toast goes away by itself after about 4 seconds', async ({ page }) => {
     await ring(page, 'Water test strips running low').click();
     const done = toast(page, 'Marked as done');
@@ -158,6 +219,29 @@ test.describe('Home', () => {
     await expect(avatar).toHaveText('🦔');
     await avatar.click();
     await expect(page.getByRole('dialog', { name: 'Profile' })).toBeVisible();
+  });
+});
+
+test.describe('Without areas', () => {
+  test('Home says where to add one, and the new-item sheet says why it can’t save', async ({ page }) => {
+    // Another member deleted the last areas at the same time (one person can't: see profile.spec.ts).
+    await keepOnlyAreas(page, []);
+    const home = homeScreen(page);
+    await expect(home.getByText('No areas yet')).toBeVisible();
+    await expect(home.getByText(/Add one in Profile, under Household\.$/)).toBeVisible();
+    await expect(areaHeadings(page)).toHaveCount(0);
+
+    const sheet = await openNewItem(page);
+    await sheet.getByLabel('Title', { exact: true }).fill('Fix the gate latch');
+    const save = sheet.getByRole('button', { name: 'Save' });
+    await expect(save).toBeDisabled();
+    await expect(save).toHaveAccessibleDescription('Items live in an area. Add one in Profile, under Household.');
+    await sheet.getByRole('button', { name: 'Close' }).click();
+    await page.getByRole('alertdialog', { name: 'Discard this item?' }).getByRole('button', { name: 'Discard Changes' }).click();
+    await expect(sheet).toHaveCount(0);
+
+    await home.getByRole('button', { name: 'Open Profile' }).click();
+    await expect(profile(page)).toBeVisible();
   });
 });
 

@@ -36,7 +36,8 @@ src/
   screens/home/            Home screen, item rows, home scene, floating tab bar
   screens/item/            Item sheet (edit / new)
   screens/stats/           Stats screen + donut
-  screens/profile/         Profile (full-screen cover) + Household editor (pushed inside Profile)
+  screens/profile/         Profile (full-screen cover) + Household editor (pushed inside Profile, with
+                           People: each member's name and emoji on a page pushed on top)
   screens/onboarding/      Welcome, create profile, household create/join, notifications step
 public/                    manifest, service worker (sw.js), icons, favicon.ico (npm run icons)
 supabase/migrations/       schema, RLS, RPCs
@@ -71,7 +72,9 @@ All ids are `uuid default gen_random_uuid()`. Timestamps are `timestamptz defaul
 Triggers:
 - `items` BEFORE INSERT/UPDATE: set `household_id` from the area (so RLS checks the real
   household), reject an `assignee_id` from another household, set `updated_at = now()` and
-  `updated_by = current_member_id()` (and `created_by` on insert when null).
+  `updated_by = current_member_id()` (and `created_by` on insert when null). On UPDATE
+  `created_by` and `created_at` keep their values; only the on-delete-set-null cascade from
+  `members` may clear `created_by`.
 - `households` BEFORE UPDATE: `updated_at`, `updated_by`.
 
 Helper functions (`security definer`, `stable`, `set search_path = ''`):
@@ -140,8 +143,19 @@ Details beyond the list above (all covered by `supabase/tests`):
   `already_member` is checked.
 - The items trigger raises `not_found` for a missing area; on insert `created_by` is always the
   caller (the service role keeps what it sends).
-- A BEFORE INSERT trigger on `push_subs` replaces any stored row with the same endpoint, so a
-  phone that changes hands moves its subscription to the new account.
+- A BEFORE INSERT trigger on `push_subs` replaces a stored row with the same endpoint when it
+  is the caller's own or has the same keys (the same browser subscription), so a phone that
+  changes hands moves its subscription to the new account. Knowing someone else's endpoint is
+  not enough: the insert fails and their row stays.
+- Check constraints (SQLSTATE 23514; the client maps them to `unknown` /
+  `invalid_input: <constraint>`): `items.title` <= 200, `items.note` <= 4000, `members.name`
+  <= 40, `members.emoji` <= 16, `members.color` `#RRGGBB`, `households.name` <= 60,
+  `households.address` <= 120, `areas.name` <= 60, `push_subs.endpoint` https only and <= 2048,
+  `push_subs.p256dh` and `auth` <= 256, `push_subs.user_agent` <= 512 (the insert trigger cuts
+  longer values). Lengths are characters (Postgres `length()`); `TEXT_LIMITS` in
+  `src/lib/constants.ts` holds the same numbers and the inputs use them as `maxLength`.
+- View `scheduler_open_items` (`security_invoker`, service role only): open items with the note
+  whitespace-squashed and cut to 200 characters, read by the scheduler.
 - Internal helpers `next_due_date(text, date, date)` and `is_valid_timezone(text)` are not
   callable by clients.
 - Realtime DELETE events carry only the primary key (RLS tables), so clients reload on any event.
@@ -184,6 +198,16 @@ messages above (`network` for fetch failures).
 - Web Push: VAPID (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`), aes128gcm payload
   encryption with WebCrypto (`supabase/functions/_shared/webpush.ts`). 404/410 → delete the
   subscription. Payload JSON: `{ title, body, url, tag }`.
+- Pushes only go to https endpoints on the push service allowlist (`DEFAULT_PUSH_HOSTS` in
+  `supabase/functions/_shared/webpush.ts`: fcm.googleapis.com, updates.push.services.mozilla.com,
+  web.push.apple.com and *.push.apple.com, *.notify.windows.com). Any other stored endpoint is
+  never contacted and is deleted like a 404/410, and redirects are not followed.
+- Limits: every push and Resend request has a 10 s limit. Pushes and the weekly email run side
+  by side. 90 s after a run starts it stops starting sends, aborts those in flight (releasing
+  their claims) and returns its summary; the rest goes out on a later run. The summary carries
+  `timedOut` and a `deferred` count per channel (`push.deferred`, `email.deferred`).
+- Reads open items through the `scheduler_open_items` view, so apply the migrations before
+  deploying the function.
 
 ## Testing
 

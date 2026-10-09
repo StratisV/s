@@ -1,5 +1,5 @@
 import type { ItemDraft } from '../../lib/types';
-import { canSave, changedFields, isDirty, normalizeDraft, singleLine } from './draft';
+import { canSave, changedFields, clip, isDirty, normalizeDraft, singleLine } from './draft';
 
 const base: ItemDraft = {
   area_id: 'a1',
@@ -50,5 +50,13 @@ describe('item draft helpers', () => {
     expect(singleLine('Heaters\nnot working')).toBe('Heaters not working');
     expect(singleLine('Heaters  \r\n\n  not working')).toBe('Heaters not working');
     expect(singleLine('No breaks')).toBe('No breaks');
+  });
+
+  it('clips text to a length without splitting an emoji', () => {
+    expect(clip('Fix the gate', 20)).toBe('Fix the gate');
+    expect(clip('Fix the gate', 3)).toBe('Fix');
+    // '🦔' is two UTF-16 units: cutting through it drops the whole emoji.
+    expect(clip('ab🦔c', 3)).toBe('ab');
+    expect(clip('ab🦔c', 4)).toBe('ab🦔');
   });
 });

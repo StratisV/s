@@ -1,22 +1,28 @@
 import { useId, useMemo, useRef, useState, type Ref } from 'react';
+import { TEXT_LIMITS } from '../../lib/constants';
+import type { Member } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
-import { ChevronLeftIcon } from '../../ui/icons';
+import { Avatar } from '../../ui/Avatar';
+import { ChevronRightIcon } from '../../ui/icons';
 import { LargeTitle } from '../../ui/Screen';
 import { AreaList } from './AreaList';
 import { InlineText } from './InlineText';
-import { NavPage } from './NavPage';
+import { BackButton, NavPage } from './NavPage';
 import list from './List.module.css';
 import styles from './HouseholdEditor.module.css';
 
 interface HouseholdEditorProps {
   onBack(): void;
+  /** Pushes a member's page (name and emoji). */
+  onOpenPerson(memberId: string): void;
   backRef?: Ref<HTMLButtonElement>;
 }
 
-/** Household details and areas, pushed inside Profile. Every member can edit all of it. */
-export function HouseholdEditor({ onBack, backRef }: HouseholdEditorProps) {
-  const { data, updateHousehold } = useHousehold();
+/** Household details, people and areas, pushed inside Profile. Every member can edit all of it. */
+export function HouseholdEditor({ onBack, onOpenPerson, backRef }: HouseholdEditorProps) {
+  const { data, me, updateHousehold } = useHousehold();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const peopleHeadingId = useId();
   const areasHeadingId = useId();
   const { household } = data;
   const save = (patch: Parameters<typeof updateHousehold>[0]) => void updateHousehold(patch).catch(() => {});
@@ -25,12 +31,7 @@ export function HouseholdEditor({ onBack, backRef }: HouseholdEditorProps) {
     <NavPage
       scrollRef={scrollRef}
       inlineTitle="Household"
-      leading={
-        <button ref={backRef} type="button" className={styles.back} onClick={onBack}>
-          <ChevronLeftIcon size={22} strokeWidth={2.6} />
-          Profile
-        </button>
-      }
+      leading={<BackButton label="Profile" onClick={onBack} buttonRef={backRef} />}
     >
       <LargeTitle title="Household" />
       <div className={`${list.card} ${styles.details}`}>
@@ -41,7 +42,7 @@ export function HouseholdEditor({ onBack, backRef }: HouseholdEditorProps) {
             value={household.name}
             placeholder="Our home"
             autoCapitalize="words"
-            maxLength={60}
+            maxLength={TEXT_LIMITS.householdName}
             onCommit={(name) => save({ name })}
           />
         </label>
@@ -52,13 +53,24 @@ export function HouseholdEditor({ onBack, backRef }: HouseholdEditorProps) {
             value={household.address}
             placeholder="Optional"
             autoCapitalize="words"
-            maxLength={120}
+            maxLength={TEXT_LIMITS.address}
             allowBlank
             onCommit={(address) => save({ address })}
           />
         </label>
         <TimeZoneRow value={household.timezone} onChange={(timezone) => save({ timezone })} />
       </div>
+
+      <section aria-labelledby={peopleHeadingId}>
+        <h2 id={peopleHeadingId} className={list.header}>
+          People
+        </h2>
+        <div className={list.card}>
+          {data.members.map((member) => (
+            <PersonRow key={member.id} member={member} isMe={member.id === me.id} onOpen={onOpenPerson} />
+          ))}
+        </div>
+      </section>
 
       <section aria-labelledby={areasHeadingId}>
         <h2 id={areasHeadingId} className={list.header}>
@@ -67,6 +79,22 @@ export function HouseholdEditor({ onBack, backRef }: HouseholdEditorProps) {
         <AreaList scrollRef={scrollRef} />
       </section>
     </NavPage>
+  );
+}
+
+/** A member, as in the Stats legend, opening their name and emoji. */
+function PersonRow({ member, isMe, onOpen }: { member: Member; isMe: boolean; onOpen(memberId: string): void }) {
+  return (
+    <button type="button" className={list.row} data-member-row={member.id} onClick={() => onOpen(member.id)}>
+      <Avatar emoji={member.emoji} size={36} emojiSize={20} background="var(--bg)" ring={member.color} />
+      <span className={styles.personName}>{member.name}</span>
+      {isMe ? (
+        <span className={styles.you}>
+          <span className="visually-hidden">, </span>You
+        </span>
+      ) : null}
+      <ChevronRightIcon className={list.chevron} />
+    </button>
   );
 }
 

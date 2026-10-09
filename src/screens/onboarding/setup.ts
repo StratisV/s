@@ -1,13 +1,14 @@
 // Pure helpers for the setup steps (kept out of the components so they can be unit tested).
-import { DEFAULT_AREAS } from '../../lib/constants';
+import { DEFAULT_AREAS, TEXT_LIMITS } from '../../lib/constants';
 
 /** Default profile emoji (the README's first pick). */
 export const DEFAULT_EMOJI = '🦔';
 
-export const MAX_NAME = 40;
-export const MAX_HOUSEHOLD_NAME = 60;
-export const MAX_ADDRESS = 120;
-export const MAX_AREA_NAME = 40;
+/** Input limits: the same as Profile and the Household editor, and the database's. */
+export const MAX_NAME = TEXT_LIMITS.memberName;
+export const MAX_HOUSEHOLD_NAME = TEXT_LIMITS.householdName;
+export const MAX_ADDRESS = TEXT_LIMITS.address;
+export const MAX_AREA_NAME = TEXT_LIMITS.areaName;
 
 /** An area row in the create form. `key` is local only (stable across renames). */
 export interface AreaDraft {

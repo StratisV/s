@@ -117,6 +117,16 @@
   opacity: 1;
 }
 
+/* Under the details card when there is no area to save into (Save stays disabled). */
+.caption {
+  margin: -10px 0 0;
+  padding: 0 16px;
+  font-size: 13px;
+  line-height: 16px;
+  letter-spacing: normal;
+  color: var(--label-secondary);
+}
+
 /* ── Actions ───────────────────────────────────────────── */
 
 .done {

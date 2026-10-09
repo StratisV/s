@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './ActionSheet.module.css';
 
@@ -20,13 +20,20 @@ interface ActionSheetProps {
 /**
  * iOS action sheet (confirmations: delete item, discard changes, delete
  * area, sign out). Tapping the backdrop or Cancel calls onCancel.
+ *
+ * Keyboard: focus starts on Cancel (the least destructive choice), Tab stays
+ * inside, Escape cancels, and a held Enter cannot run into an action. When it
+ * closes, focus goes back to where it was, unless the chosen action moved it.
  */
 export function ActionSheet({ open, title, message, actions, cancelLabel = 'Cancel', onCancel }: ActionSheetProps) {
   const [mounted, setMounted] = useState(open);
   const [shown, setShown] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef(onCancel);
   cancelRef.current = onCancel;
+  const titleId = useId();
+  const messageId = useId();
 
   useEffect(() => {
     if (open) {
@@ -39,12 +46,19 @@ export function ActionSheet({ open, title, message, actions, cancelLabel = 'Canc
     return () => clearTimeout(t);
   }, [open]);
 
-  // Escape cancels; focus starts on the first action and Tab stays inside the sheet.
   useEffect(() => {
     if (!open || !mounted) return;
-    const buttons = () => Array.from(sheetRef.current?.querySelectorAll<HTMLButtonElement>('button') ?? []);
-    buttons()[0]?.focus({ preventScroll: true });
+    const sheet = sheetRef.current;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    cancelButtonRef.current?.focus({ preventScroll: true });
+    const buttons = () => Array.from(sheet?.querySelectorAll<HTMLButtonElement>('button') ?? []);
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && e.repeat) {
+        // Auto-repeat from the key that opened the sheet must not confirm it.
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (e.key === 'Escape') {
         e.stopPropagation(); // don't also close a sheet underneath
         cancelRef.current();
@@ -59,19 +73,41 @@ export function ActionSheet({ open, title, message, actions, cancelLabel = 'Canc
       list[next].focus();
     };
     window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      // Back where it was, unless the action already put focus somewhere else.
+      const active = document.activeElement;
+      const lost = !active || active === document.body || !!sheet?.contains(active);
+      if (lost && previous?.isConnected) previous.focus({ preventScroll: true });
+    };
   }, [open, mounted]);
 
   if (!mounted) return null;
   return createPortal(
     <div className={styles.root} data-shown={shown || undefined}>
       <div className={styles.backdrop} onClick={onCancel} />
-      <div ref={sheetRef} className={styles.sheet} role="alertdialog" aria-modal="true" aria-label={title ?? 'Confirm'}>
+      <div
+        ref={sheetRef}
+        className={styles.sheet}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
+        aria-label={title ? undefined : 'Confirm'}
+        aria-describedby={message ? messageId : undefined}
+      >
         <div className={styles.group}>
           {title || message ? (
             <div className={styles.header}>
-              {title ? <div className={styles.title}>{title}</div> : null}
-              {message ? <div className={styles.message}>{message}</div> : null}
+              {title ? (
+                <div id={titleId} className={styles.title}>
+                  {title}
+                </div>
+              ) : null}
+              {message ? (
+                <div id={messageId} className={styles.message}>
+                  {message}
+                </div>
+              ) : null}
             </div>
           ) : null}
           {actions.map((a) => (
@@ -86,7 +122,7 @@ export function ActionSheet({ open, title, message, actions, cancelLabel = 'Canc
             </button>
           ))}
         </div>
-        <button type="button" className={`${styles.group} ${styles.cancel}`} onClick={onCancel}>
+        <button ref={cancelButtonRef} type="button" className={`${styles.group} ${styles.cancel}`} onClick={onCancel}>
           {cancelLabel}
         </button>
       </div>

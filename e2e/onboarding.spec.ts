@@ -3,6 +3,7 @@ import {
   area,
   areaHeadings,
   DEFAULT_AREAS,
+  DEMO_STORAGE_KEY,
   expect,
   homeScreen,
   meta,
@@ -13,7 +14,33 @@ import {
   ring,
   settled,
   test,
+  type Page,
 } from './fixtures';
+
+/**
+ * An invite to the prototype household, opened by a new Google account (the demo account's
+ * member row is handed to someone else). Returns the token.
+ */
+async function inviteSomeoneNew(page: Page): Promise<string> {
+  await openSeeded(page);
+  return page.evaluate((key) => {
+    const doc = JSON.parse(localStorage.getItem(key)!);
+    const token = 'a'.repeat(32);
+    const me = doc.members.find((m: { user_id: string }) => m.user_id === doc.session);
+    doc.invites.push({
+      id: 'invite-1',
+      household_id: me.household_id,
+      token,
+      created_by: me.id,
+      created_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 14 * 86_400_000).toISOString(),
+    });
+    me.user_id = 'someone-else';
+    doc.session = null;
+    localStorage.setItem(key, JSON.stringify(doc));
+    return token;
+  }, DEMO_STORAGE_KEY);
+}
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
 
@@ -136,26 +163,8 @@ test.describe('Sign-in and setup', () => {
   });
 
   test('an invite link joins the existing household', async ({ page }) => {
-    // Someone in the prototype household made an invite...
-    await openSeeded(page);
-    const token = await page.evaluate(() => {
-      const doc = JSON.parse(localStorage.getItem('homeos.demo.v1')!);
-      const token = 'a'.repeat(32);
-      const me = doc.members.find((m: { user_id: string }) => m.user_id === doc.session);
-      doc.invites.push({
-        id: 'invite-1',
-        household_id: me.household_id,
-        token,
-        created_by: me.id,
-        created_at: new Date().toISOString(),
-        expires_at: new Date(Date.now() + 14 * 86_400_000).toISOString(),
-      });
-      // ...and the demo Google account belongs to someone new: hand the owner row to another account.
-      me.user_id = 'someone-else';
-      doc.session = null;
-      localStorage.setItem('homeos.demo.v1', JSON.stringify(doc));
-      return token;
-    });
+    // Someone in the prototype household made an invite, and someone new opens it.
+    const token = await inviteSomeoneNew(page);
 
     await page.goto(`/?invite=${token}`);
     await expect(page.getByText('You’ve been invited to join a home on home.os.')).toBeVisible();
@@ -197,6 +206,33 @@ test.describe('Sign-in and setup', () => {
       /Ela\s*1/,
       /Alex\s*0/,
     ]);
+  });
+
+  test('a valid invite can be turned down for a new home, also after a reload', async ({ page }) => {
+    const token = await inviteSomeoneNew(page);
+    await page.goto(`/?invite=${token}`);
+    await page.getByRole('button', { name: 'Continue with Google' }).click();
+    const profileStep = page.getByRole('region', { name: 'Your profile' });
+    await profileStep.getByRole('button', { name: 'Continue' }).click();
+
+    const join = page.getByRole('region', { name: 'Join Our home' });
+    await expect(join.getByRole('button', { name: 'Join' })).toBeVisible();
+    await join.getByRole('button', { name: 'Set up a new home instead' }).click();
+    const homeStep = page.getByRole('region', { name: 'Your home' });
+    await expect(homeStep.getByRole('button', { name: 'Create Home' })).toBeVisible();
+    // The invite is forgotten, so a reload does not bring Join back.
+    expect(await page.evaluate(() => localStorage.getItem('homeos.invite'))).toBeNull();
+
+    await reopen(page);
+    await profileStep.getByRole('button', { name: 'Continue' }).click();
+    await expect(homeStep.getByRole('button', { name: 'Create Home' })).toBeVisible();
+    await expect(page.getByRole('region', { name: /^Join / })).toHaveCount(0);
+
+    await homeStep.getByLabel('Name', { exact: true }).fill('The Flat');
+    await homeStep.getByRole('button', { name: 'Create Home' }).click();
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await expect(areaHeadings(page)).toHaveText(DEFAULT_AREAS);
+    await expect(homeScreen(page).getByText('21 Alderbrook Road')).toHaveCount(0);
   });
 
   test('an invite link opened by someone already at home just opens Home', async ({ page }) => {

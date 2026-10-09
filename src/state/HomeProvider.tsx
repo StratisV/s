@@ -52,6 +52,10 @@ export interface HomeContextValue {
   joinHousehold(input: JoinHouseholdInput): Promise<void>;
   refresh(): Promise<void>;
 
+  /**
+   * Edits below apply at once (optimistically). If the write fails, just that
+   * change is taken back, a toast says it was not saved, and the promise rejects.
+   */
   updateHousehold(patch: HouseholdPatch): Promise<void>;
   updateMember(id: string, patch: MemberPatch): Promise<void>;
   createArea(name: string): Promise<Area>;
@@ -68,12 +72,14 @@ export interface HomeContextValue {
   toast: ToastState | null;
   showToast(message: string, action?: ToastState['action']): void;
   dismissToast(): void;
+  /** While held (focus or a pointer on the toast) the toast does not hide; it gets a fresh ~4s after. */
+  holdToast(held: boolean): void;
 }
 
 const HomeContext = createContext<HomeContextValue | null>(null);
 
 const INVITE_KEY = 'homeos.invite';
-const TOAST_MS = 4000;
+export const TOAST_MS = 4000;
 
 function readInviteFromUrl(): string | null {
   try {
@@ -118,6 +124,76 @@ export function errorMessage(err: unknown): string {
   return 'Something went wrong. Try again.';
 }
 
+/** The toast for a failed edit: it was not saved (the screen shows it as before), and why. */
+export function notSavedMessage(err: unknown, verb: 'save' | 'undo' = 'save'): string {
+  const lead = `Couldn’t ${verb}.`;
+  if (err instanceof BackendError) {
+    switch (err.code) {
+      case 'network':
+        return `${lead} No connection.`;
+      case 'not_found':
+        return `${lead} That was removed by someone else.`;
+      case 'not_signed_in':
+        return `${lead} Please sign in again.`;
+    }
+  }
+  return `${lead} Try again.`;
+}
+
+// ── Optimistic changes ───────────────────────────────────
+
+type Revert = (cur: HouseholdData) => HouseholdData;
+
+/**
+ * An optimistic change: the new state, and how to take back only what it
+ * touched (so other edits made in the meantime survive a failed write).
+ * Returns null when there is nothing to change locally.
+ */
+type Change = (cur: HouseholdData) => { next: HouseholdData; revert: Revert } | null;
+
+/** The current values of `keys` in `row`, to put back on failure. */
+function pick<T extends object>(row: T, patch: Partial<T>): Partial<T> {
+  const before: Partial<T> = {};
+  for (const key of Object.keys(patch) as (keyof T)[]) before[key] = row[key];
+  return before;
+}
+
+function patchRow<T extends { id: string }>(rows: T[], id: string, patch: Partial<T>): T[] {
+  return rows.map((r) => (r.id === id ? { ...r, ...patch } : r));
+}
+
+/** Change some fields of one row; the revert restores just those fields. */
+function patchChange<K extends 'members' | 'areas' | 'items'>(
+  key: K,
+  id: string,
+  patch: Partial<HouseholdData[K][number]>,
+): Change {
+  type Row = HouseholdData[K][number];
+  return (cur) => {
+    const rows = cur[key] as Row[];
+    const row = rows.find((r) => r.id === id);
+    if (!row) return null;
+    const before = pick<Row>(row, patch);
+    return {
+      next: { ...cur, [key]: patchRow<Row>(rows, id, patch) },
+      revert: (c) => ({ ...c, [key]: patchRow<Row>(c[key] as Row[], id, before) }),
+    };
+  };
+}
+
+const withoutItem = (cur: HouseholdData, id: string): HouseholdData => ({
+  ...cur,
+  items: cur.items.filter((i) => i.id !== id),
+});
+
+/** Puts back rows that are missing (a refresh may already have brought them back). */
+function restoreRows<T extends { id: string }>(rows: T[], removed: T[]): T[] {
+  const missing = removed.filter((r) => !rows.some((x) => x.id === r.id));
+  return missing.length ? [...rows, ...missing] : rows;
+}
+
+const byPosition = (a: Area, b: Area) => a.position - b.position;
+
 export function HomeProvider({ backend, children }: { backend: Backend; children: ReactNode }) {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -127,7 +203,23 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
   const [toast, setToast] = useState<ToastState | null>(null);
   const [now, setNow] = useState(() => new Date());
   const householdIdRef = useRef<string | null>(null);
+  /** Always the data last set, so actions build on the newest state (not a render's copy). */
+  const dataRef = useRef<HouseholdData | null>(null);
+  const userRef = useRef<AuthUser | null>(null);
+
+  // Load ordering. Every load takes a number; a refresh only shows its result
+  // when nothing newer has been shown since it started. Starting or finishing
+  // a write, signing out and leaving a household all move `shownSeq` on, so a
+  // load already in flight can never bring back an older state.
+  const loadSeq = useRef(0);
+  const shownSeq = useRef(0);
+  const pendingWrites = useRef(0);
+  /** Bumped whenever the signed-in user is (re)decided; async work from before stops there. */
+  const epoch = useRef(0);
+
+  const toastRef = useRef<ToastState | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
+  const toastHeld = useRef(false);
   const toastSeq = useRef(0);
 
   const timeZone = data?.household.timezone;
@@ -142,55 +234,119 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
     return () => clearInterval(tick);
   }, []);
 
+  // ── Toast ──────────────────────────────────────────────
+
+  const armToastTimer = useCallback(() => {
+    clearTimeout(toastTimer.current);
+    const current = toastRef.current;
+    if (!current || toastHeld.current) return;
+    toastTimer.current = setTimeout(() => {
+      if (toastRef.current?.id !== current.id) return;
+      toastRef.current = null;
+      setToast(null);
+    }, TOAST_MS);
+  }, []);
+
   const dismissToast = useCallback(() => {
     clearTimeout(toastTimer.current);
+    toastRef.current = null;
     setToast(null);
   }, []);
 
-  const showToast = useCallback((message: string, action?: ToastState['action']) => {
-    clearTimeout(toastTimer.current);
-    const id = ++toastSeq.current;
-    setToast({ id, message, action });
-    toastTimer.current = setTimeout(() => setToast((t) => (t?.id === id ? null : t)), TOAST_MS);
-  }, []);
+  const showToast = useCallback(
+    (message: string, action?: ToastState['action']) => {
+      const next = { id: ++toastSeq.current, message, action };
+      toastRef.current = next;
+      setToast(next);
+      armToastTimer();
+    },
+    [armToastTimer],
+  );
+
+  const holdToast = useCallback(
+    (held: boolean) => {
+      if (toastHeld.current === held) return;
+      toastHeld.current = held;
+      if (held) clearTimeout(toastTimer.current);
+      else armToastTimer();
+    },
+    [armToastTimer],
+  );
 
   useEffect(() => () => clearTimeout(toastTimer.current), []);
 
+  // ── Loading ────────────────────────────────────────────
+
+  const commitData = useCallback((next: HouseholdData | null) => {
+    dataRef.current = next;
+    setData(next);
+  }, []);
+
+  /** Nothing loaded may land after this (signed out, or no household). */
+  const clearHousehold = useCallback(() => {
+    householdIdRef.current = null;
+    shownSeq.current = ++loadSeq.current;
+    commitData(null);
+  }, [commitData]);
+
+  /**
+   * Loads and shows the household. `force` (sign-in, create, join) always shows
+   * the result for the same session; a refresh is dropped when something newer
+   * has been shown since it started, or while a write is still in flight (the
+   * write starts its own refresh when it settles). Resolves to whether it was shown.
+   */
   const loadHousehold = useCallback(
-    async (hid: string) => {
+    async (hid: string, force: boolean): Promise<boolean> => {
+      const seq = ++loadSeq.current;
+      const session = epoch.current;
       const loaded = await backend.load(hid);
+      if (session !== epoch.current) return false;
+      if (!force && (seq <= shownSeq.current || pendingWrites.current > 0 || householdIdRef.current !== hid)) {
+        return false;
+      }
+      shownSeq.current = force ? ++loadSeq.current : seq;
       householdIdRef.current = hid;
-      setData(loaded);
-      return loaded;
+      commitData(loaded);
+      return true;
     },
-    [backend],
+    [backend, commitData],
   );
 
-  /** Decide the phase for a (possibly null) user. */
+  /** Decide the phase for a (possibly null) user. Resolves to the phase it settled on, or null if overtaken. */
   const bootstrap = useCallback(
-    async (u: AuthUser | null) => {
+    async (u: AuthUser | null): Promise<Phase['kind'] | null> => {
+      const session = ++epoch.current;
+      const previous = userRef.current;
+      userRef.current = u;
       setUser(u);
       if (!u) {
-        householdIdRef.current = null;
-        setData(null);
+        clearHousehold();
         setPhase({ kind: 'signedOut' });
-        return;
+        return 'signedOut';
+      }
+      // Someone else signed in (another tab): never show them the previous person's home.
+      if (previous && previous.id !== u.id) {
+        clearHousehold();
+        setPhase({ kind: 'loading' });
       }
       try {
         const hid = await backend.getMyHouseholdId();
+        if (session !== epoch.current) return null;
         if (!hid) {
-          householdIdRef.current = null;
-          setData(null);
+          clearHousehold();
           setPhase({ kind: 'onboarding', user: u });
-          return;
+          return 'onboarding';
         }
-        await loadHousehold(hid);
+        if (!(await loadHousehold(hid, true))) return null;
         setPhase({ kind: 'ready', user: u });
+        return 'ready';
       } catch (err) {
+        if (session !== epoch.current) return null;
         setPhase({ kind: 'error', message: errorMessage(err) });
+        return 'error';
       }
     },
-    [backend, loadHousehold],
+    [backend, loadHousehold, clearHousehold],
   );
 
   // Auth bootstrap + listener.
@@ -215,13 +371,14 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
     };
   }, [backend, bootstrap]);
 
-  const refresh = useCallback(async () => {
+  /** Reloads the household in the background. Resolves to whether fresh data was shown. */
+  const refresh = useCallback(async (): Promise<boolean> => {
     const hid = householdIdRef.current;
-    if (!hid) return;
+    if (!hid) return false;
     try {
-      await loadHousehold(hid);
+      return await loadHousehold(hid, false);
     } catch {
-      /* keep showing what we have; the next refresh will retry */
+      return false; // keep showing what we have; the next refresh will retry
     }
   }, [loadHousehold]);
 
@@ -260,54 +417,95 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
 
   /**
    * Applies an optimistic change, runs the backend call, then reloads.
-   * On failure: reload to resync and show an error toast, then rethrow.
+   * On failure: takes back just this change, says it was not saved, reloads
+   * to resync (when online), and rethrows.
    */
   const mutate = useCallback(
-    async <T,>(optimistic: ((d: HouseholdData) => HouseholdData) | null, op: () => Promise<T>): Promise<T> => {
-      if (optimistic) setData((d) => (d ? optimistic(d) : d));
+    async <T,>(change: Change | null, op: () => Promise<T>, verb: 'save' | 'undo' = 'save'): Promise<T> => {
+      const session = epoch.current;
+      // Loads already in flight started before this change: never show them.
+      shownSeq.current = ++loadSeq.current;
+      let revert: Revert | null = null;
+      const cur = dataRef.current;
+      const applied = change && cur ? change(cur) : null;
+      if (applied) {
+        revert = applied.revert;
+        commitData(applied.next);
+      }
+      pendingWrites.current += 1;
       try {
-        const result = await op();
-        void refresh();
-        return result;
+        return await op();
       } catch (err) {
-        void refresh();
-        showToast(errorMessage(err));
+        if (session === epoch.current) {
+          const now = dataRef.current;
+          if (revert && now) commitData(revert(now));
+          showToast(notSavedMessage(err, verb));
+        }
         throw err;
+      } finally {
+        pendingWrites.current -= 1;
+        // A load that started while the write was in flight may not include it.
+        shownSeq.current = ++loadSeq.current;
+        void refresh();
       }
     },
-    [refresh, showToast],
+    [commitData, refresh, showToast],
   );
 
   const requireData = useCallback((): HouseholdData => {
-    if (!data) throw new BackendError('not_found', 'No household loaded');
-    return data;
-  }, [data]);
+    const d = dataRef.current;
+    if (!d) throw new BackendError('not_found', 'No household loaded');
+    return d;
+  }, []);
 
   const me = useMemo(() => (data && user ? (data.members.find((m) => m.user_id === user.id) ?? null) : null), [data, user]);
 
   const value = useMemo<HomeContextValue>(() => {
     const completeItem = async (id: string) => {
-      const d = requireData();
-      const item = d.items.find((i) => i.id === id);
+      const item = requireData().items.find((i) => i.id === id);
       if (!item) return;
       const next = nextDueDate(item.repeat, item.due_date, today);
+      // A repeating item moves to its next date; a one-off leaves the list.
+      const done: Revert = (cur) =>
+        next ? { ...cur, items: patchRow(cur.items, id, { due_date: next }) } : withoutItem(cur, id);
+      const undone: Revert = (cur) =>
+        next
+          ? { ...cur, items: patchRow(cur.items, id, { due_date: item.due_date }) }
+          : { ...cur, items: restoreRows(cur.items, [item]) };
       const completionId = await mutate(
-        (cur) => ({
-          ...cur,
-          items: next
-            ? cur.items.map((i) => (i.id === id ? { ...i, due_date: next } : i))
-            : cur.items.filter((i) => i.id !== id),
-        }),
+        (cur) => ({ next: done(cur), revert: undone }),
         () => backend.completeItem(id),
       );
       showToast(next ? `Done. Next due ${next === today ? 'today' : formatDay(next, today)}` : 'Marked as done', {
         label: 'Undo',
         run: () => {
           dismissToast();
-          void mutate(null, () => backend.undoCompletion(completionId)).catch(() => {});
+          void mutate(
+            (cur) => ({ next: undone(cur), revert: done }),
+            () => backend.undoCompletion(completionId),
+            'undo',
+          ).catch(() => {});
         },
       });
     };
+
+    /**
+     * After a create or join succeeded: show the household. The household exists
+     * now, so if loading it fails the form must not come back (a second tap would
+     * only say "already part of a household"): show the error screen, whose
+     * Try again reloads straight into it.
+     */
+    const enterHousehold = async (u: AuthUser, session: number, hid: string) => {
+      try {
+        if (!(await loadHousehold(hid, true))) return;
+      } catch (err) {
+        if (session === epoch.current) setPhase({ kind: 'error', message: errorMessage(err) });
+        return;
+      }
+      if (session === epoch.current) setPhase({ kind: 'ready', user: u });
+    };
+
+    const isAlreadyMember = (err: unknown) => err instanceof BackendError && err.code === 'already_member';
 
     return {
       backend,
@@ -336,64 +534,98 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       },
       createHousehold: async (input) => {
         if (!user) throw new BackendError('not_signed_in');
-        const hid = await backend.createHousehold(input);
+        const session = epoch.current;
+        let hid: string;
+        try {
+          hid = await backend.createHousehold(input);
+        } catch (err) {
+          if (!isAlreadyMember(err) || session !== epoch.current) throw err;
+          // Most likely an earlier tap created it but its reply was lost: open that home.
+          setOnboardingTail(true);
+          const landed = await bootstrap(user);
+          if (landed !== 'ready') setOnboardingTail(false);
+          if (landed === 'onboarding') throw err;
+          return;
+        }
+        if (session !== epoch.current) return;
         setOnboardingTail(true);
-        await loadHousehold(hid);
-        setPhase({ kind: 'ready', user });
+        await enterHousehold(user, session, hid);
       },
       joinHousehold: async (input) => {
         if (!user) throw new BackendError('not_signed_in');
-        const hid = await backend.joinHousehold(input);
+        const session = epoch.current;
+        let hid: string;
+        try {
+          hid = await backend.joinHousehold(input);
+        } catch (err) {
+          if (!isAlreadyMember(err) || session !== epoch.current) throw err;
+          // A member of another home already (one household per person): open that one.
+          const landed = await bootstrap(user);
+          if (landed === 'onboarding') throw err;
+          if (landed === 'ready') showToast(errorMessage(err));
+          return;
+        }
+        if (session !== epoch.current) return;
         clearStoredInvite();
         setPendingInvite(null);
         setOnboardingTail(true);
-        await loadHousehold(hid);
-        setPhase({ kind: 'ready', user });
+        await enterHousehold(user, session, hid);
       },
-      refresh,
+      refresh: async () => {
+        await refresh();
+      },
 
       updateHousehold: (patch) => {
         const d = requireData();
         return mutate(
-          (cur) => ({ ...cur, household: { ...cur.household, ...patch } }),
+          (cur) => {
+            const before = pick(cur.household, patch);
+            return {
+              next: { ...cur, household: { ...cur.household, ...patch } },
+              revert: (c) => ({ ...c, household: { ...c.household, ...before } }),
+            };
+          },
           () => backend.updateHousehold(d.household.id, patch),
         );
       },
-      updateMember: (id, patch) =>
-        mutate(
-          (cur) => ({ ...cur, members: cur.members.map((m) => (m.id === id ? { ...m, ...patch } : m)) }),
-          () => backend.updateMember(id, patch),
-        ),
+      updateMember: (id, patch) => mutate(patchChange('members', id, patch), () => backend.updateMember(id, patch)),
       createArea: (name) => {
         const d = requireData();
         return mutate(null, () => backend.createArea(d.household.id, name));
       },
-      renameArea: (id, name) =>
-        mutate(
-          (cur) => ({ ...cur, areas: cur.areas.map((a) => (a.id === id ? { ...a, name } : a)) }),
-          () => backend.renameArea(id, name),
-        ),
+      renameArea: (id, name) => mutate(patchChange('areas', id, { name }), () => backend.renameArea(id, name)),
       deleteArea: (id) =>
         mutate(
-          (cur) => ({
-            ...cur,
-            areas: cur.areas.filter((a) => a.id !== id),
-            items: cur.items.filter((i) => i.area_id !== id),
-          }),
+          (cur) => {
+            const area = cur.areas.find((a) => a.id === id);
+            if (!area) return null;
+            const items = cur.items.filter((i) => i.area_id === id);
+            return {
+              next: { ...cur, areas: cur.areas.filter((a) => a.id !== id), items: cur.items.filter((i) => i.area_id !== id) },
+              revert: (c) => ({
+                ...c,
+                areas: restoreRows(c.areas, [area]).sort(byPosition),
+                items: restoreRows(c.items, items),
+              }),
+            };
+          },
           () => backend.deleteArea(id),
         ),
       reorderAreas: (orderedIds) => {
         const d = requireData();
         return mutate(
-          (cur) => ({
-            ...cur,
-            areas: orderedIds
-              .map((aid, position) => {
-                const a = cur.areas.find((x) => x.id === aid);
-                return a ? { ...a, position } : null;
-              })
-              .filter((a): a is Area => a !== null),
-          }),
+          (cur) => {
+            const before = new Map(cur.areas.map((a) => [a.id, a.position]));
+            const reposition = (areas: Area[], position: (a: Area) => number | undefined) =>
+              areas.map((a) => ({ ...a, position: position(a) ?? a.position })).sort(byPosition);
+            return {
+              next: {
+                ...cur,
+                areas: reposition(cur.areas, (a) => (orderedIds.includes(a.id) ? orderedIds.indexOf(a.id) : undefined)),
+              },
+              revert: (c) => ({ ...c, areas: reposition(c.areas, (a) => before.get(a.id)) }),
+            };
+          },
           () => backend.reorderAreas(d.household.id, orderedIds),
         );
       },
@@ -401,14 +633,14 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         const d = requireData();
         return mutate(null, () => backend.createItem(d.household.id, draft));
       },
-      updateItem: (id, patch) =>
-        mutate(
-          (cur) => ({ ...cur, items: cur.items.map((i) => (i.id === id ? { ...i, ...patch } : i)) }),
-          () => backend.updateItem(id, patch),
-        ),
+      updateItem: (id, patch) => mutate(patchChange('items', id, patch), () => backend.updateItem(id, patch)),
       deleteItem: (id) =>
         mutate(
-          (cur) => ({ ...cur, items: cur.items.filter((i) => i.id !== id) }),
+          (cur) => {
+            const item = cur.items.find((i) => i.id === id);
+            if (!item) return null;
+            return { next: withoutItem(cur, id), revert: (c) => ({ ...c, items: restoreRows(c.items, [item]) }) };
+          },
           () => backend.deleteItem(id),
         ),
       completeItem,
@@ -417,6 +649,7 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       toast,
       showToast,
       dismissToast,
+      holdToast,
     };
   }, [
     backend,
@@ -429,11 +662,13 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
     onboardingTail,
     refresh,
     loadHousehold,
+    bootstrap,
     mutate,
     requireData,
     toast,
     showToast,
     dismissToast,
+    holdToast,
   ]);
 
   return <HomeContext.Provider value={value}>{children}</HomeContext.Provider>;

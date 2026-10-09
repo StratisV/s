@@ -2,6 +2,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { useEffect, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DemoBackend, type StorageLike } from '../../lib/backend/demo';
+import { BackendError } from '../../lib/backend/types';
+import { TEXT_LIMITS } from '../../lib/constants';
 import { addDays } from '../../lib/logic/dates';
 import { HomeProvider, useHome, type HomeContextValue } from '../../state/HomeProvider';
 import { ConfettiProvider } from '../../ui/Confetti';
@@ -47,8 +49,9 @@ function Harness({ pick, onClose, expose }: { pick: PickTarget; onClose(): void;
   );
 }
 
-async function setup(pick: PickTarget) {
+async function setup(pick: PickTarget, prepare?: (backend: DemoBackend) => Promise<void>) {
   const backend = new DemoBackend({ storage: new MemoryStorage(), search: '?demo-seed=1', latency: 0 });
+  await prepare?.(backend);
   const onClose = vi.fn();
   let home!: HomeContextValue;
   render(
@@ -81,7 +84,9 @@ describe('ItemSheet (edit)', () => {
     const { dialog } = await setup(editing('Heaters not working'));
     expect(dialog.getAttribute('aria-label')).toBe('Edit item');
     expect((screen.getByLabelText('Title') as HTMLTextAreaElement).value).toBe('Heaters not working');
-    expect((screen.getByLabelText('Note') as HTMLTextAreaElement).value).toBe('No heat since the weekend. Engineer needs booking.');
+    expect((screen.getByLabelText('Note') as HTMLTextAreaElement).value).toBe(
+      'No heat since the weekend. Engineer needs booking.',
+    );
     expect((screen.getByRole('radio', { name: 'Red' }) as HTMLInputElement).checked).toBe(true);
     expect(value('Area')).toBe('Hallway');
     expect(value('Due')).toMatch(/ · 2 days late$/);
@@ -102,13 +107,53 @@ describe('ItemSheet (edit)', () => {
     expect(value('Due')).toBe('None');
     expect(value('Repeat')).toBe('Monthly');
     fireEvent.click(save());
-    expect(onClose).toHaveBeenCalledTimes(1);
     expect(update).toHaveBeenCalledWith(expect.any(String), {
       title: 'Heaters fixed',
       rag: 'green',
       due_date: null,
       repeat: 'monthly',
     });
+    // It closes once the change is saved.
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+
+  it('keeps the sheet and the draft when the change is not saved', async () => {
+    const { backend, onClose, home } = await setup(editing('Heaters not working'));
+    const update = vi.spyOn(backend, 'updateItem').mockRejectedValue(new BackendError('network'));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Heaters fixed' } });
+    fireEvent.click(screen.getByRole('radio', { name: 'Green' }));
+    fireEvent.click(save());
+    expect(save().getAttribute('aria-busy')).toBe('true');
+    await waitFor(() => expect(save().getAttribute('aria-busy')).toBeNull());
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    expect((screen.getByLabelText('Title') as HTMLTextAreaElement).value).toBe('Heaters fixed');
+    expect((screen.getByRole('radio', { name: 'Green' }) as HTMLInputElement).checked).toBe(true);
+    expect((save() as HTMLButtonElement).disabled).toBe(false);
+    // Home shows the item as it was, and a toast says why.
+    expect(home().data!.items.find((i) => i.id === update.mock.calls[0][0])).toMatchObject({
+      title: 'Heaters not working',
+      rag: 'red',
+    });
+    expect(home().toast?.message).toBe('Couldn’t save. No connection.');
+
+    // Back online: the same Save goes through.
+    update.mockRestore();
+    fireEvent.click(save());
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(home().data!.items.some((i) => i.title === 'Heaters fixed')).toBe(true);
+  });
+
+  it('limits the title and note length', async () => {
+    await setup(editing('Olive oil'));
+    const title = screen.getByLabelText('Title') as HTMLTextAreaElement;
+    const note = screen.getByLabelText('Note') as HTMLTextAreaElement;
+    expect(title.maxLength).toBe(TEXT_LIMITS.itemTitle);
+    expect(note.maxLength).toBe(TEXT_LIMITS.itemNote);
+    fireEvent.change(title, { target: { value: 'x'.repeat(TEXT_LIMITS.itemTitle + 50) } });
+    fireEvent.change(note, { target: { value: 'y'.repeat(TEXT_LIMITS.itemNote + 50) } });
+    expect(title.value).toHaveLength(TEXT_LIMITS.itemTitle);
+    expect(note.value).toHaveLength(TEXT_LIMITS.itemNote);
   });
 
   it('closes straight away without changes', async () => {
@@ -162,6 +207,48 @@ describe('ItemSheet (edit)', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1), { timeout: 1500 });
   });
 
+  it('stays open with the edits when Mark as Done cannot save them', async () => {
+    const { backend, onClose, home } = await setup(editing('Kitchen paper'));
+    vi.spyOn(backend, 'updateItem').mockRejectedValue(new BackendError('network'));
+    const complete = vi.spyOn(backend, 'completeItem');
+    fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'Two packs.' } });
+    const done = screen.getByRole('button', { name: 'Mark as Done' });
+    fireEvent.click(done);
+    await waitFor(() => expect(done.getAttribute('aria-disabled')).toBeNull());
+    await new Promise((r) => setTimeout(r, 800));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+    expect((screen.getByLabelText('Note') as HTMLTextAreaElement).value).toBe('Two packs.');
+    expect(home().toast?.message).toBe('Couldn’t save. No connection.');
+  });
+
+  it('stays open and keeps the item when completing fails', async () => {
+    const { backend, onClose, home } = await setup(editing('Olive oil'));
+    vi.spyOn(backend, 'completeItem').mockRejectedValue(new BackendError('network'));
+    const done = screen.getByRole('button', { name: 'Mark as Done' });
+    fireEvent.click(done);
+    await waitFor(() => expect(done.getAttribute('aria-disabled')).toBeNull());
+    await new Promise((r) => setTimeout(r, 800));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(home().data!.items.some((i) => i.title === 'Olive oil')).toBe(true);
+    expect(home().toast?.message).toBe('Couldn’t save. No connection.');
+  });
+
+  it('saves edits made before a failed completion only once', async () => {
+    const { backend, onClose } = await setup(editing('Olive oil'));
+    vi.spyOn(backend, 'completeItem').mockRejectedValue(new BackendError('network'));
+    const update = vi.spyOn(backend, 'updateItem');
+    fireEvent.click(screen.getByRole('radio', { name: 'Red' }));
+    const done = screen.getByRole('button', { name: 'Mark as Done' });
+    fireEvent.click(done);
+    await waitFor(() => expect(done.getAttribute('aria-disabled')).toBeNull());
+    expect(update).toHaveBeenCalledTimes(1);
+    // The edit is saved now, so closing does not ask to discard it.
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('closes when the item is removed elsewhere', async () => {
     const { onClose, home } = await setup(editing('Trim the hedges'));
     const id = home().data!.items.find((i) => i.title === 'Trim the hedges')!.id;
@@ -183,6 +270,27 @@ describe('ItemSheet (new)', () => {
     expect(value('Notify')).toBe('1 day before');
     expect(screen.queryByRole('button', { name: 'Mark as Done' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+  });
+
+  it('explains why Save stays disabled when there is no area', async () => {
+    await setup(
+      () => ({ kind: 'new' }),
+      async (backend) => {
+        const data = await backend.load((await backend.getMyHouseholdId())!);
+        for (const a of data.areas) await backend.deleteArea(a.id);
+      },
+    );
+    expect(value('Area')).toBe('None');
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Buy bulbs' } });
+    expect((save() as HTMLButtonElement).disabled).toBe(true);
+    const caption = screen.getByText('Items live in an area. Add one in Profile, under Household.');
+    expect(save().getAttribute('aria-describedby')).toBe(caption.id);
+  });
+
+  it('has no area caption when there are areas', async () => {
+    await setup(() => ({ kind: 'new' }));
+    expect(screen.queryByText(/Items live in an area/)).toBeNull();
+    expect(save().hasAttribute('aria-describedby')).toBe(false);
   });
 
   it('preselects the area it was opened from', async () => {

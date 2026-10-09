@@ -2,11 +2,13 @@ import { createECDH, createPublicKey, randomBytes, verify } from 'node:crypto';
 import ece from 'http_ece';
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_PUSH_HOSTS,
   MAX_PAYLOAD_BYTES,
   base64UrlDecode,
   base64UrlEncode,
   encryptPayload,
   generateVapidKeys,
+  isAllowedPushEndpoint,
   sendWebPush,
   vapidAuthorization,
   vapidJwt,
@@ -239,5 +241,115 @@ describe('sendWebPush', () => {
     const r = await sendWebPush(subscription, 'x', vapid, fakeFetch(403, 'BadJwtToken').impl);
     expect(r).toEqual({ status: 403, ok: false, gone: false, detail: 'BadJwtToken' });
     expect((await sendWebPush(subscription, 'x', vapid, fakeFetch(500).impl)).gone).toBe(false);
+  });
+});
+
+describe('push endpoint allowlist', () => {
+  it('accepts the endpoints real browsers hand out', () => {
+    for (const endpoint of [
+      'https://fcm.googleapis.com/fcm/send/dQw4w9WgXcQ:APA91bH',
+      'https://fcm.googleapis.com/wp/dQw4w9WgXcQ',
+      'https://updates.push.services.mozilla.com/wpush/v2/gAAAAABh',
+      'https://web.push.apple.com/QGuQyavXutnMH8',
+      'https://api.push.apple.com/3/device/abc',
+      'https://wns2-par02p.notify.windows.com/w/?token=BQYAAA',
+      'https://FCM.googleapis.com:443/fcm/send/x',
+    ]) {
+      expect(isAllowedPushEndpoint(endpoint), endpoint).toBe(true);
+    }
+  });
+
+  it('refuses everything else', () => {
+    for (const endpoint of [
+      'http://fcm.googleapis.com/fcm/send/x',
+      'https://fcm.googleapis.com:8443/fcm/send/x',
+      'https://user:pass@fcm.googleapis.com/fcm/send/x',
+      'https://fcm.googleapis.com.evil.example/fcm/send/x',
+      'https://evilfcm.googleapis.com/x',
+      'https://push.apple.com/x',
+      'https://notify.windows.com/x',
+      'https://xnotify.windows.com/x',
+      'https://permanently-removed.invalid/fcm/send/x',
+      'https://127.0.0.1/x',
+      'https://169.254.169.254/latest/meta-data/',
+      'http://kong:8000/functions/v1/scheduler',
+      'file:///etc/passwd',
+      'javascript:alert(1)',
+      'not a url',
+      '',
+    ]) {
+      expect(isAllowedPushEndpoint(endpoint), endpoint).toBe(false);
+    }
+  });
+
+  it('takes its own list of hosts', () => {
+    expect(isAllowedPushEndpoint('https://push.example.com/a', ['push.example.com'])).toBe(true);
+    expect(isAllowedPushEndpoint('https://a.push.example.com/a', ['*.push.example.com'])).toBe(true);
+    expect(isAllowedPushEndpoint('https://push.example.com/a', ['*.push.example.com'])).toBe(false);
+    expect(isAllowedPushEndpoint('https://fcm.googleapis.com/a', ['push.example.com'])).toBe(false);
+    expect(DEFAULT_PUSH_HOSTS).toContain('fcm.googleapis.com');
+  });
+});
+
+describe('sendWebPush: untrusted endpoints and time limits', () => {
+  it('never contacts an endpoint outside the allowlist and reports it as gone', async () => {
+    const vapid = await vapidKeys();
+    for (const endpoint of ['http://127.0.0.1:54321/rest/v1/', 'https://push.example.com/x', 'file:///etc/passwd']) {
+      const { subscription } = browser(endpoint);
+      const calls: string[] = [];
+      const result = await sendWebPush(subscription, 'x', vapid, async (url) => {
+        calls.push(url);
+        return new Response('', { status: 201 });
+      });
+      expect(result).toEqual({ status: 0, ok: false, gone: true, detail: 'endpoint is not a known push service' });
+      expect(calls).toEqual([]);
+    }
+  });
+
+  it('allowedHosts replaces the default list', async () => {
+    const { subscription } = browser('https://push.example.com/dev-1');
+    const calls: string[] = [];
+    const result = await sendWebPush(
+      subscription,
+      'x',
+      await vapidKeys(),
+      async (url) => {
+        calls.push(url);
+        return new Response('', { status: 201 });
+      },
+      { allowedHosts: ['push.example.com'] },
+    );
+    expect(result.ok).toBe(true);
+    expect(calls).toEqual(['https://push.example.com/dev-1']);
+  });
+
+  it('does not follow redirects: a 3xx is a failed send, not a delivery', async () => {
+    const { subscription } = browser();
+    let init: RequestInit | undefined;
+    const result = await sendWebPush(subscription, 'x', await vapidKeys(), async (_url, i) => {
+      init = i;
+      return new Response('', { status: 307, headers: { Location: 'http://169.254.169.254/' } });
+    });
+    expect(init?.redirect).toBe('manual');
+    expect(result).toMatchObject({ status: 307, ok: false, gone: false });
+  });
+
+  it('gives up after timeoutMs, and when its signal aborts', async () => {
+    const { subscription } = browser();
+    const vapid = await vapidKeys();
+    const waitForAbort = async (_url: string, init: RequestInit) =>
+      new Promise<Response>((_, reject) => {
+        const signal = init.signal as AbortSignal;
+        if (signal.aborted) reject(signal.reason);
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    const started = Date.now();
+    await expect(sendWebPush(subscription, 'x', vapid, waitForAbort, { timeoutMs: 30 })).rejects.toThrow(/timeout|aborted/i);
+    expect(Date.now() - started).toBeLessThan(5000);
+
+    const stop = new AbortController();
+    const pending = sendWebPush(subscription, 'x', vapid, waitForAbort, { signal: stop.signal });
+    stop.abort(new Error('the run reached its deadline'));
+    await expect(pending).rejects.toThrow('the run reached its deadline');
   });
 });

@@ -49,13 +49,30 @@ describe('ItemRow', () => {
 
   it('shows the title, note and meta, with the missed date marked', () => {
     const { row } = setup();
-    expect(row.textContent).toBe('Heaters not workingNo heat since the weekend.🦆 Shea · Missed · Tue 6 Oct');
+    expect(row.textContent).toBe('Heaters not working, Red.No heat since the weekend.🦆 Shea · Missed · Tue 6 Oct');
     expect(screen.getByText('Missed · Tue 6 Oct').hasAttribute('data-missed')).toBe(true);
   });
 
   it('leaves out a blank note and, without a due date, the date part', () => {
     const { row } = setup({ note: '  ' }, { who: 'Unassigned', date: null, missed: false });
-    expect(row.textContent).toBe('Heaters not workingUnassigned');
+    expect(row.textContent).toBe('Heaters not working, Red.Unassigned');
+  });
+
+  it('tells assistive tech the status after the title, without changing the ring name', () => {
+    for (const [rag, label] of [
+      ['red', 'Red'],
+      ['amber', 'Amber'],
+      ['green', 'Green'],
+    ] as const) {
+      const { row, ring, view } = setup({ rag });
+      const hidden = row.querySelector('.visually-hidden')!;
+      expect(hidden.textContent).toBe(`, ${label}.`);
+      // Inside the title, so the row keeps its title / note / meta lines.
+      expect(hidden.parentElement!.textContent).toBe(`Heaters not working, ${label}.`);
+      expect(row.querySelectorAll(':scope > span')).toHaveLength(3);
+      expect(ring.getAttribute('aria-label')).toBe('Mark Heaters not working as done');
+      view.unmount();
+    }
   });
 
   it('opens the item when the row is tapped', () => {

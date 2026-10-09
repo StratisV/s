@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
-import { NOTIFY_OPTIONS, REPEAT_OPTIONS } from '../../lib/constants';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { NOTIFY_OPTIONS, REPEAT_OPTIONS, TEXT_LIMITS } from '../../lib/constants';
 import { draftOf, dueDetail, memberLabel, newItemDraft } from '../../lib/logic/items';
 import type { ItemDraft, Notify, Repeat } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
@@ -10,7 +10,7 @@ import { Sheet } from '../../ui/Sheet';
 import type { ItemSheetTarget } from '../types';
 import { AutoGrowTextarea } from './AutoGrowTextarea';
 import { DateRow, DetailsCard, SelectRow } from './DetailRows';
-import { canSave, changedFields, isDirty, normalizeDraft, singleLine } from './draft';
+import { canSave, changedFields, clip, isDirty, normalizeDraft, singleLine } from './draft';
 import { RagPicker } from './RagPicker';
 import styles from './ItemSheet.module.css';
 
@@ -41,7 +41,7 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
   const item = itemId ? (data.items.find((i) => i.id === itemId) ?? null) : null;
   const areas = useMemo(() => [...data.areas].sort((a, b) => a.position - b.position), [data.areas]);
 
-  const [base] = useState<ItemDraft>(() => {
+  const [base, setBase] = useState<ItemDraft>(() => {
     if (item) return draftOf(item);
     // The area it was added from, otherwise the first area.
     const wanted = target.kind === 'new' ? target.areaId : undefined;
@@ -60,8 +60,7 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
   const latest = useRef({ home, onClose });
   latest.current = { home, onClose };
   const completingRef = useRef(false);
-  // Where focus was before a confirmation opened, to return to on cancel.
-  const returnFocus = useRef<HTMLElement | null>(null);
+  const noAreaId = useId();
 
   // A new item's area must still exist when it is saved.
   const areaId = areas.some((a) => a.id === draft.area_id) ? draft.area_id : (areas[0]?.id ?? '');
@@ -102,16 +101,9 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
     return () => panel.removeEventListener('focus', focusTitle);
   }, [isNew]);
 
-  const ask = (kind: Exclude<Confirm, null>) => {
-    returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setConfirm(kind);
-  };
-
-  const cancelConfirm = () => {
-    setConfirm(null);
-    const el = returnFocus.current;
-    if (el?.isConnected && document.activeElement !== el) el.focus({ preventScroll: true });
-  };
+  // The action sheet puts focus back where it was when it closes.
+  const ask = (kind: Exclude<Confirm, null>) => setConfirm(kind);
+  const cancelConfirm = () => setConfirm(null);
 
   const requestClose = () => {
     if (busy || confirm) return;
@@ -119,22 +111,22 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
     else close();
   };
 
+  /** Closes once the write is saved. If it fails the provider says so and the sheet stays, draft and all. */
   const save = async () => {
     if (busy || confirm || !savable) return;
-    if (isNew) {
-      setSaving(true);
-      try {
-        await home.createItem(normalizeDraft(effective));
-        close();
-      } catch {
-        // The provider shows the error; keep the sheet so nothing typed is lost.
-        setSaving(false);
-      }
+    const patch = changedFields(base, effective);
+    if (!isNew && (!itemId || !Object.keys(patch).length)) {
+      close();
       return;
     }
-    const patch = changedFields(base, effective);
-    if (itemId && Object.keys(patch).length) void home.updateItem(itemId, patch).catch(() => {});
-    close();
+    setSaving(true);
+    try {
+      if (isNew) await home.createItem(normalizeDraft(effective));
+      else await home.updateItem(itemId!, patch);
+      close();
+    } catch {
+      setSaving(false);
+    }
   };
 
   const markDone = (e: MouseEvent<HTMLButtonElement>) => {
@@ -143,20 +135,48 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
     setCompleting(true);
     fire(e.currentTarget);
     navigator.vibrate?.(10);
-    doneTimer.current = setTimeout(() => latest.current.onClose(), DONE_CLOSE_MS);
 
     // Save pending edits first (a blank title keeps the old one), then complete.
     const patch = changedFields(base, effective);
     if (!effective.title.trim()) delete patch.title;
+    let saved = Object.keys(patch).length === 0;
+    let burstOver = false;
+    let closed = false;
+    // Close once the burst has been seen and the edits are saved.
+    const closeWhenReady = () => {
+      if (closed || !burstOver || !saved || !completingRef.current) return;
+      closed = true;
+      latest.current.onClose();
+    };
+    // A write failed: the provider has said so and put the item back. Stay open.
+    const stop = () => {
+      if (closed) return;
+      clearTimeout(doneTimer.current);
+      completingRef.current = false;
+      setCompleting(false);
+    };
+    doneTimer.current = setTimeout(() => {
+      burstOver = true;
+      closeWhenReady();
+    }, DONE_CLOSE_MS);
+
     void (async () => {
-      if (Object.keys(patch).length) {
+      if (!saved) {
         try {
-          await home.updateItem(itemId, patch);
+          await latest.current.home.updateItem(itemId, patch);
         } catch {
-          /* the provider shows the error */
+          stop();
+          return;
         }
+        saved = true;
+        setBase((b) => ({ ...b, ...patch }));
+        closeWhenReady();
       }
-      await latest.current.home.completeItem(itemId).catch(() => {});
+      try {
+        await latest.current.home.completeItem(itemId);
+      } catch {
+        stop();
+      }
     })();
   };
 
@@ -206,6 +226,7 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
             onClick={() => void save()}
             disabled={!savable || saving}
             aria-busy={saving || undefined}
+            aria-describedby={areas.length === 0 ? noAreaId : undefined}
           >
             <CheckIcon size={24} strokeWidth={2.7} />
           </button>
@@ -217,10 +238,11 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
               ref={titleRef}
               className={styles.title}
               value={draft.title}
-              onChange={(e) => update({ title: singleLine(e.target.value) })}
+              onChange={(e) => update({ title: clip(singleLine(e.target.value), TEXT_LIMITS.itemTitle) })}
               onKeyDown={onTitleKeyDown}
               placeholder="Title"
               aria-label="Title"
+              maxLength={TEXT_LIMITS.itemTitle}
               enterKeyHint="next"
               autoCapitalize="sentences"
             />
@@ -228,9 +250,10 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
               ref={noteRef}
               className={styles.note}
               value={draft.note}
-              onChange={(e) => update({ note: e.target.value })}
+              onChange={(e) => update({ note: clip(e.target.value, TEXT_LIMITS.itemNote) })}
               placeholder="Add a note"
               aria-label="Note"
+              maxLength={TEXT_LIMITS.itemNote}
               autoCapitalize="sentences"
             />
           </div>
@@ -272,6 +295,12 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
               onChange={(notify) => update({ notify })}
             />
           </DetailsCard>
+
+          {areas.length === 0 ? (
+            <p id={noAreaId} className={styles.caption}>
+              Items live in an area. Add one in Profile, under Household.
+            </p>
+          ) : null}
 
           {!isNew ? (
             <>

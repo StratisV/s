@@ -90,7 +90,7 @@ function useEnterDirection(view: View): Enter {
 
 /** Everything typed during setup, kept while moving between steps and reset on sign-out. */
 function useSetupState(user: AuthUser | null, inviteToken: string | null) {
-  const { signOut, showToast, backend } = useHome();
+  const { signOut, showToast, backend, dismissInvite } = useHome();
   const [step, setStep] = useState<'profile' | 'household'>('profile');
   // name: null until edited, so it follows the Google name once we know it.
   const [profileEdit, setProfileEdit] = useState<{ name: string | null; emoji: string }>({
@@ -153,7 +153,11 @@ function useSetupState(user: AuthUser | null, inviteToken: string | null) {
     inviteDeclined,
     recheckInvite: () => setInviteAttempt((n) => n + 1),
     markInviteInvalid: () => setInvite({ status: 'invalid' }),
-    declineInvite: () => setInviteDeclined(true),
+    // Forgotten for good, so a reload doesn't bring the Join screen back.
+    declineInvite: () => {
+      setInviteDeclined(true);
+      dismissInvite();
+    },
     signingOut,
     signOut: async () => {
       if (signingOut) return;

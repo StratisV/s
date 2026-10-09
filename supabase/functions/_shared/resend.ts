@@ -1,5 +1,7 @@
 // Sends one email through Resend's HTTP API (https://resend.com/docs/api-reference/emails).
 
+import { REQUEST_TIMEOUT_MS, requestSignal } from './http.ts';
+
 export interface EmailMessage {
   to: string;
   subject: string;
@@ -21,6 +23,10 @@ export interface SendEmailOptions {
    * (where the first attempt may have gone through) does not send twice.
    */
   idempotencyKey?: string;
+  /** Time limit for the request in ms. Default REQUEST_TIMEOUT_MS (10 s). */
+  timeoutMs?: number;
+  /** Aborts the request early (the scheduler passes its run deadline). */
+  signal?: AbortSignal;
 }
 
 export interface SendEmailResult {
@@ -36,6 +42,10 @@ type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 export const RESEND_URL = 'https://api.resend.com/emails';
 
+/**
+ * Never throws for HTTP errors (the result says what happened); throws for a network
+ * failure, the time limit or an abort.
+ */
 export async function sendEmail(
   message: EmailMessage,
   config: ResendConfig,
@@ -58,6 +68,7 @@ export async function sendEmail(
       html: message.html,
       text: message.text,
     }),
+    signal: requestSignal(options.timeoutMs ?? REQUEST_TIMEOUT_MS, options.signal),
   });
 
   let data: Record<string, unknown> = {};

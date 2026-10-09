@@ -69,6 +69,8 @@ export function NotificationsStep({ enter }: { enter: Enter }) {
                 <ShareIcon size={19} />
               </span>{' '}
               in Safari
+              {/* iOS 26's compact Safari keeps Share in the ••• menu. */}
+              <span className={styles.hint}>If you don’t see it, tap ••• first.</span>
             </span>
           </li>
           <li className={styles.step}>
@@ -76,7 +78,7 @@ export function NotificationsStep({ enter }: { enter: Enter }) {
               2
             </span>
             <span className={styles.stepText}>
-              Choose <strong>Add to Home Screen</strong>
+              Scroll down and choose <strong>Add to Home Screen</strong>
             </span>
           </li>
           <li className={styles.step}>

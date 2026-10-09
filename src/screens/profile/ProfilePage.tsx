@@ -1,5 +1,5 @@
 import { useId, useState, type Ref } from 'react';
-import { APP_NAME } from '../../lib/constants';
+import { APP_NAME, TEXT_LIMITS } from '../../lib/constants';
 import { errorMessage, useHousehold } from '../../state/HomeProvider';
 import { ActionSheet } from '../../ui/ActionSheet';
 import { Avatar } from '../../ui/Avatar';
@@ -75,7 +75,7 @@ export function ProfilePage({ onDone, onOpenHousehold, householdRowRef }: Profil
           onCommit={(name) => void updateMember(me.id, { name }).catch(() => {})}
           aria-label="Your name"
           autoCapitalize="words"
-          maxLength={40}
+          maxLength={TEXT_LIMITS.memberName}
         />
         <span className={styles.account}>{backend.kind === 'demo' ? 'Demo account' : 'Signed in with Google'}</span>
       </div>

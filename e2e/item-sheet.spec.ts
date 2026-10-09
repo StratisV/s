@@ -12,10 +12,18 @@ import {
   ring,
   row,
   rowButton,
+  tabs,
   test,
   titlesIn,
   toast,
+  type Locator,
 } from './fixtures';
+
+/** Focuses a control as the keyboard would (so it matches :focus-visible). */
+async function keyboardFocus(control: Locator): Promise<void> {
+  await control.focus();
+  await expect.poll(() => control.evaluate((el) => el.matches(':focus-visible'))).toBe(true);
+}
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
 
@@ -143,7 +151,9 @@ test.describe('Item sheet: edit', () => {
     const sheet = await openItem(page, 'Wardrobe door hinge');
     await sheet.getByRole('button', { name: 'Delete' }).click();
     const confirm = await confirmation(page, 'Delete this item?');
-    await expect(confirm).toContainText('It will be removed for everyone in the household.');
+    await expect(confirm).toHaveAccessibleDescription('It will be removed for everyone in the household.');
+    // Focus starts on Cancel, not on the destructive action.
+    await expect(confirm.getByRole('button', { name: 'Cancel' })).toBeFocused();
     await confirm.getByRole('button', { name: 'Cancel' }).click();
     await expect(confirm).toHaveCount(0);
     await expect(sheet).toBeVisible();
@@ -270,6 +280,83 @@ test.describe('Item sheet: keyboard', () => {
     await page.keyboard.press('Control+Enter');
     await expect(sheet).toHaveCount(0);
     await expect(row(page, 'Clean the gutters')).toContainText('Before the leaves fall.');
+  });
+
+  test('closing the sheet with Escape puts keyboard focus back where it was', async ({ page }) => {
+    const open = rowButton(page, 'Olive oil');
+    await keyboardFocus(open);
+    await page.keyboard.press('Enter');
+    const sheet = itemSheet(page);
+    await expect(sheet).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(sheet).toHaveCount(0);
+    await expect(open).toBeFocused();
+
+    // The same for the + button.
+    const add = tabs(page).getByRole('button', { name: 'New item' });
+    await keyboardFocus(add);
+    await page.keyboard.press('Enter');
+    const fresh = itemSheet(page, 'New item');
+    await expect(fresh.getByLabel('Title', { exact: true })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(fresh).toHaveCount(0);
+    await expect(add).toBeFocused();
+  });
+
+  test('after Mark as Done, keyboard focus moves to the next row', async ({ page }) => {
+    await keyboardFocus(rowButton(page, 'Heaters not working'));
+    await page.keyboard.press('Enter');
+    const sheet = itemSheet(page);
+    await expect(sheet).toBeFocused();
+    const done = sheet.getByRole('button', { name: 'Mark as Done' });
+    await done.focus();
+    await page.keyboard.press('Enter');
+    await expect(sheet).toHaveCount(0);
+    await expect(ring(page, 'Heaters not working')).toHaveCount(0);
+    await expect(rowButton(page, 'Trim the hedges')).toBeFocused();
+  });
+
+  test('the delete confirmation starts on Cancel, gives focus back, and ignores a held Enter', async ({ page }) => {
+    await keyboardFocus(rowButton(page, 'Wardrobe door hinge'));
+    await page.keyboard.press('Enter');
+    const sheet = itemSheet(page);
+    await expect(sheet).toBeFocused();
+    const del = sheet.getByRole('button', { name: 'Delete' });
+    await keyboardFocus(del);
+    await page.keyboard.press('Enter');
+    const confirm = await confirmation(page, 'Delete this item?');
+    const cancel = confirm.getByRole('button', { name: 'Cancel' });
+    await expect(cancel).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(confirm).toHaveCount(0);
+    await expect(del).toBeFocused();
+
+    // Holding Enter on Delete: the first press opens the confirmation, the repeats do nothing.
+    await page.keyboard.down('Enter');
+    await page.keyboard.down('Enter');
+    await page.keyboard.down('Enter');
+    await page.keyboard.up('Enter');
+    const again = await confirmation(page, 'Delete this item?');
+    await expect(again.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await expect(sheet).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(again).toHaveCount(0);
+    await expect(sheet.getByLabel('Title', { exact: true })).toHaveValue('Wardrobe door hinge');
+  });
+
+  test('the title and note stop at their length limits', async ({ page }) => {
+    const sheet = await openNewItem(page);
+    const title = sheet.getByLabel('Title', { exact: true });
+    const note = sheet.getByLabel('Note', { exact: true });
+    await expect(title).toHaveAttribute('maxlength', '200');
+    await expect(note).toHaveAttribute('maxlength', '4000');
+    await title.fill('x'.repeat(250));
+    await expect(title).toHaveValue('x'.repeat(200));
+    await note.fill('y'.repeat(4100));
+    await expect(note).toHaveValue('y'.repeat(4000));
+    await sheet.getByRole('button', { name: 'Save' }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(ring(page, 'x'.repeat(200))).toBeVisible();
   });
 
   test('a pasted title with line breaks becomes one line', async ({ page }) => {

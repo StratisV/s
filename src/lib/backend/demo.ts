@@ -6,7 +6,7 @@
 //   ?demo-seed=1   wipe, sign in as Stratis, and recreate the prototype household
 //   ?demo-reset=1  wipe everything (signed out, no household)
 
-import { DEFAULT_ADDRESS, DEFAULT_AREAS, MEMBER_COLORS, SEED_ITEMS } from '../constants';
+import { DEFAULT_ADDRESS, DEFAULT_AREAS, MEMBER_COLORS, SEED_ITEMS, TEXT_LIMITS } from '../constants';
 import { addDays, addMonths, daysBetween, deviceTimeZone, parseISODate, todayIn, zonedParts } from '../logic/dates';
 import { nextDueDate } from '../logic/items';
 import type {
@@ -169,6 +169,15 @@ export interface DemoBackendOptions {
 const INVITE_DAYS = 14;
 const DAY_MS = 86_400_000;
 
+/**
+ * The database's size and format limits (supabase/migrations/20261009000100_hardening.sql)
+ * beyond TEXT_LIMITS. Lengths count characters (code points), like Postgres length().
+ */
+const PUSH_ENDPOINT_MAX = 2048;
+const PUSH_KEY_MAX = 256;
+const USER_AGENT_MAX = 512;
+const HTTPS_URL = /^https:\/\/\S+$/;
+
 function emptyDoc(): DemoDoc {
   return {
     version: 1,
@@ -253,6 +262,17 @@ function requireText(value: string | undefined, what: string): string {
   const v = (value ?? '').trim();
   if (!v) throw invalidInput(what);
   return v;
+}
+
+/** Characters as Postgres length() counts them (code points, so an emoji is one). */
+function charCount(value: string): number {
+  return Array.from(value).length;
+}
+
+/** The database's check constraints: too long is invalid_input, like a check violation. */
+function withinLimit(value: string, max: number, what: string): string {
+  if (charCount(value) > max) throw invalidInput(`${what} is longer than ${max} characters`);
+  return value;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -501,8 +521,8 @@ export class DemoBackend implements Backend {
 
     const household: HouseholdRow = {
       id: uuid(),
-      name: requireText(input.name, 'name'),
-      address: (input.address ?? '').trim(),
+      name: withinLimit(requireText(input.name, 'name'), TEXT_LIMITS.householdName, 'name'),
+      address: withinLimit((input.address ?? '').trim(), TEXT_LIMITS.address, 'address'),
       timezone,
       weekly_email_day: 1,
       weekly_email_time: '08:00',
@@ -516,9 +536,13 @@ export class DemoBackend implements Backend {
       id: uuid(),
       household_id: household.id,
       user_id: user.id,
-      name: (input.memberName ?? '').trim() || user.name.trim() || user.email.split('@')[0] || 'Me',
+      name: withinLimit(
+        (input.memberName ?? '').trim() || user.name.trim() || user.email.split('@')[0] || 'Me',
+        TEXT_LIMITS.memberName,
+        'name',
+      ),
       email: user.email,
-      emoji: input.memberEmoji || '🦔',
+      emoji: withinLimit(input.memberEmoji || '🦔', TEXT_LIMITS.memberEmoji, 'emoji'),
       color: MEMBER_COLORS[0],
       role: 'owner',
       weekly_email: true,
@@ -549,6 +573,7 @@ export class DemoBackend implements Backend {
     for (const raw of input.areas) {
       const name = raw.trim();
       if (!name) continue;
+      withinLimit(name, TEXT_LIMITS.areaName, 'area name');
       const area: AreaRow = {
         id: uuid(),
         household_id: household.id,
@@ -567,8 +592,8 @@ export class DemoBackend implements Backend {
         id: uuid(),
         household_id: household.id,
         area_id: area.id,
-        title: seed.title.trim(),
-        note: seed.note ?? '',
+        title: withinLimit(seed.title.trim(), TEXT_LIMITS.itemTitle, 'title'),
+        note: withinLimit(seed.note ?? '', TEXT_LIMITS.itemNote, 'note'),
         rag: seed.rag,
         due_date: seed.due_in_days === null ? null : addDays(today, seed.due_in_days),
         assignee_id: seed.demo_assignee ? people[seed.demo_assignee].id : null,
@@ -667,9 +692,13 @@ export class DemoBackend implements Backend {
         id: uuid(),
         household_id: invite.household_id,
         user_id: user.id,
-        name: (input.memberName ?? '').trim() || user.name.trim() || user.email.split('@')[0] || 'Me',
+        name: withinLimit(
+          (input.memberName ?? '').trim() || user.name.trim() || user.email.split('@')[0] || 'Me',
+          TEXT_LIMITS.memberName,
+          'name',
+        ),
         email: user.email,
-        emoji: input.memberEmoji || '🦔',
+        emoji: withinLimit(input.memberEmoji || '🦔', TEXT_LIMITS.memberEmoji, 'emoji'),
         color: MEMBER_COLORS[count % MEMBER_COLORS.length],
         role: 'member',
         weekly_email: true,
@@ -721,8 +750,11 @@ export class DemoBackend implements Backend {
     return this.mutate((doc) => {
       const me = this.memberOf(doc, id);
       const h = this.householdIn(doc, id);
-      if (patch.name !== undefined) h.name = requireText(patch.name, 'name');
-      if (patch.address !== undefined) h.address = patch.address.trim();
+      // A refused patch changes nothing: run() only stores the document when fn succeeds.
+      if (patch.name !== undefined) {
+        h.name = withinLimit(requireText(patch.name, 'name'), TEXT_LIMITS.householdName, 'name');
+      }
+      if (patch.address !== undefined) h.address = withinLimit(patch.address.trim(), TEXT_LIMITS.address, 'address');
       if (patch.timezone !== undefined) {
         if (!isValidZone(patch.timezone)) throw invalidInput('timezone');
         h.timezone = patch.timezone;
@@ -737,8 +769,10 @@ export class DemoBackend implements Backend {
       const me = this.meIn(doc);
       const member = doc.members.find((m) => m.id === id && m.household_id === me.household_id);
       if (!member) throw new BackendError('not_found');
-      if (patch.name !== undefined) member.name = requireText(patch.name, 'name');
-      if (patch.emoji !== undefined) member.emoji = requireText(patch.emoji, 'emoji');
+      if (patch.name !== undefined) {
+        member.name = withinLimit(requireText(patch.name, 'name'), TEXT_LIMITS.memberName, 'name');
+      }
+      if (patch.emoji !== undefined) member.emoji = withinLimit(requireText(patch.emoji, 'emoji'), TEXT_LIMITS.memberEmoji, 'emoji');
       if (patch.weekly_email !== undefined) member.weekly_email = patch.weekly_email;
       if (patch.push_enabled !== undefined) member.push_enabled = patch.push_enabled;
     });
@@ -751,7 +785,7 @@ export class DemoBackend implements Backend {
       const area: AreaRow = {
         id: uuid(),
         household_id: householdId,
-        name: requireText(name, 'name'),
+        name: withinLimit(requireText(name, 'name'), TEXT_LIMITS.areaName, 'name'),
         position: siblings.length ? Math.max(...siblings.map((a) => a.position)) + 1 : 0,
         created_at: this.stamp(),
       };
@@ -763,7 +797,7 @@ export class DemoBackend implements Backend {
   renameArea(id: string, name: string): Promise<void> {
     return this.mutate((doc) => {
       const area = this.areaIn(doc, this.meIn(doc), id);
-      area.name = requireText(name, 'name');
+      area.name = withinLimit(requireText(name, 'name'), TEXT_LIMITS.areaName, 'name');
     });
   }
 
@@ -803,8 +837,8 @@ export class DemoBackend implements Backend {
         id: uuid(),
         household_id: area.household_id,
         area_id: area.id,
-        title: requireText(draft.title, 'title'),
-        note: draft.note ?? '',
+        title: withinLimit(requireText(draft.title, 'title'), TEXT_LIMITS.itemTitle, 'title'),
+        note: withinLimit(draft.note ?? '', TEXT_LIMITS.itemNote, 'note'),
         rag: draft.rag,
         due_date: draft.due_date,
         assignee_id: draft.assignee_id,
@@ -828,8 +862,10 @@ export class DemoBackend implements Backend {
       const item = this.itemIn(doc, me, id);
       const next: ItemRow = { ...item };
       if (patch.area_id !== undefined) next.area_id = this.areaIn(doc, me, patch.area_id).id;
-      if (patch.title !== undefined) next.title = requireText(patch.title, 'title');
-      if (patch.note !== undefined) next.note = patch.note;
+      if (patch.title !== undefined) {
+        next.title = withinLimit(requireText(patch.title, 'title'), TEXT_LIMITS.itemTitle, 'title');
+      }
+      if (patch.note !== undefined) next.note = withinLimit(patch.note, TEXT_LIMITS.itemNote, 'note');
       if (patch.rag !== undefined) next.rag = patch.rag;
       if (patch.due_date !== undefined) next.due_date = patch.due_date;
       if (patch.assignee_id !== undefined) next.assignee_id = patch.assignee_id;
@@ -904,17 +940,35 @@ export class DemoBackend implements Backend {
       const user = this.userIn(doc);
       const me = this.meIn(doc);
       if (me.id !== memberId) throw new BackendError('not_found');
+      const endpoint = sub?.endpoint ?? '';
+      const p256dh = sub?.keys?.p256dh ?? '';
+      const auth = sub?.keys?.auth ?? '';
+      if (!endpoint || !p256dh || !auth) throw invalidInput('push subscription');
+      // push_subs_endpoint_https and push_subs_keys_length.
+      if (!HTTPS_URL.test(endpoint)) throw invalidInput('push endpoint must be an https URL');
+      withinLimit(endpoint, PUSH_ENDPOINT_MAX, 'push endpoint');
+      withinLimit(p256dh, PUSH_KEY_MAX, 'p256dh');
+      withinLimit(auth, PUSH_KEY_MAX, 'auth');
+      // The insert trigger only replaces a stored row with this endpoint when it is the
+      // caller's own or has the same keys (the same browser subscription). Anyone else's
+      // row stays, and the upsert fails on their RLS policy, which reads as not_found.
+      const taken = doc.push_subs.some(
+        (s) => s.endpoint === endpoint && s.user_id !== user.id && (s.p256dh !== p256dh || s.auth !== auth),
+      );
+      if (taken) throw new BackendError('not_found');
+      const userAgent = typeof navigator !== 'undefined' && navigator.userAgent ? navigator.userAgent : null;
       const row: PushSubRow = {
         id: uuid(),
         member_id: me.id,
         user_id: user.id,
-        endpoint: sub.endpoint,
-        p256dh: sub.keys.p256dh,
-        auth: sub.keys.auth,
-        user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
+        endpoint,
+        p256dh,
+        auth,
+        // Cut, not refused, like the trigger does.
+        user_agent: userAgent === null ? null : Array.from(userAgent).slice(0, USER_AGENT_MAX).join(''),
         created_at: this.stamp(),
       };
-      doc.push_subs = [...doc.push_subs.filter((s) => s.endpoint !== sub.endpoint), row];
+      doc.push_subs = [...doc.push_subs.filter((s) => s.endpoint !== endpoint), row];
     });
   }
 

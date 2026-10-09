@@ -7,6 +7,7 @@ import {
   expect,
   goToTab,
   homeScreen,
+  keepOnlyAreas,
   meta,
   openItem,
   openProfile,
@@ -150,12 +151,10 @@ test.describe('Profile', () => {
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(link);
   });
 
-  // App bug: HomeProvider applies refresh() results in arrival order, not request order
-  // (loadHousehold has no sequencing), so a load that started before a later edit can land
-  // after it and put the older value back on screen. The stored value is right; the UI stays
-  // stale until something else triggers a refresh. Two emoji taps ~12ms apart reproduce it
-  // within a few dozen rounds against the demo backend's 0-20ms simulated latency.
-  test.fixme('quick successive edits end on the last value', async ({ page }) => {
+  // Two emoji taps ~12ms apart: with the demo backend's 0-20ms simulated latency, a load
+  // that started before the second edit can finish after it. HomeProvider drops such stale
+  // loads, so the screen always ends on the last value.
+  test('quick successive edits end on the last value', async ({ page }) => {
     const dialog = await openProfile(page);
     const grid = dialog.getByRole('radiogroup', { name: 'Your emoji' });
     const pairs = [['🦊', '🐻'], ['🐼', '🐨'], ['🐸', '🐢'], ['🐙', '🦉'], ['🐝', '🦋']];
@@ -272,6 +271,38 @@ test.describe('Household editor', () => {
     await expect(areaHeadings(page)).toHaveText(expected);
   });
 
+  test('the last area cannot be deleted', async ({ page }) => {
+    await keepOnlyAreas(page, ['Kitchen', 'Garden']);
+    await expect(areaHeadings(page)).toHaveText(['Kitchen', 'Garden']);
+    const dialog = await openHouseholdEditor(page);
+    const caption = 'Items live in an area, so keep at least one.';
+    await expect(dialog.getByText(caption)).toHaveCount(0);
+
+    await dialog.getByRole('button', { name: 'Delete Garden', exact: true }).click();
+    await (await confirmation(page, 'Delete Garden?')).getByRole('button', { name: 'Delete Area' }).click();
+    await expect(areaNames(dialog)).toHaveCount(1);
+
+    const last = dialog.getByRole('button', { name: 'Delete Kitchen', exact: true });
+    await expect(last).toBeDisabled();
+    await expect(last).toHaveAccessibleDescription(caption);
+    await expect(dialog.getByText(caption)).toBeVisible();
+    await last.click({ force: true });
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+
+    // Adding an area makes the minus work again.
+    await dialog.getByRole('button', { name: 'Add Area' }).click();
+    await expect(areaNames(dialog).last()).toBeFocused();
+    await page.keyboard.type('Garage');
+    await page.keyboard.press('Enter');
+    await expect(last).toBeEnabled();
+    await expect(dialog.getByText(caption)).toHaveCount(0);
+
+    await dialog.getByRole('button', { name: 'Profile', exact: true }).click();
+    await closeProfile(page);
+    await expect(areaHeadings(page)).toHaveText(['Kitchen', 'Garage']);
+    await expect(homeScreen(page).getByText('No areas yet')).toHaveCount(0);
+  });
+
   test('reorders areas with the arrow keys on the grip', async ({ page }) => {
     const dialog = await openHouseholdEditor(page);
     const grip = dialog.getByRole('button', { name: 'Reorder Jacuzzi' });
@@ -316,6 +347,63 @@ test.describe('Household editor', () => {
   });
 });
 
+test.describe('People', () => {
+  test('lists everyone in the household; your own row says You', async ({ page }) => {
+    const dialog = await openHouseholdEditor(page);
+    const people = dialog.getByRole('region', { name: 'People' });
+    await expect(people.getByRole('button')).toHaveText(['🦔Stratis, You', '🦆Shea', '🦊Ela']);
+
+    await people.getByRole('button', { name: /Stratis/ }).click();
+    await expect(dialog.getByRole('heading', { name: 'Stratis', level: 1 })).toBeVisible();
+    await expect(dialog.getByRole('radiogroup', { name: 'Your emoji' }).last()).toBeVisible();
+    await page.keyboard.press('Escape'); // back to Household
+    await expect(people.getByRole('button', { name: /Stratis/ })).toBeFocused();
+  });
+
+  test('anyone can change another member’s name and emoji; Home and Stats follow', async ({ page }) => {
+    const dialog = await openHouseholdEditor(page);
+    const people = dialog.getByRole('region', { name: 'People' });
+    await people.getByRole('button', { name: /Shea/ }).click();
+    await expect(dialog.getByRole('heading', { name: 'Shea', level: 1 })).toBeVisible();
+    const back = dialog.getByRole('button', { name: 'Household', exact: true });
+    await expect(back).toBeFocused();
+    await settled(back);
+
+    // The member page is the last page in the cover; the Household editor under it is inert.
+    const name = dialog.getByRole('textbox', { name: 'Name', exact: true }).last();
+    await expect(name).toHaveValue('Shea');
+    await expect(name).toHaveAttribute('maxlength', '40');
+    await name.fill('Shay');
+    await name.press('Enter');
+    const grid = dialog.getByRole('radiogroup', { name: 'Emoji', exact: true });
+    await expect(grid.getByRole('radio', { name: '🦆' })).toBeChecked();
+    await grid.getByRole('radio', { name: '🐧' }).click();
+    await expect(grid.getByRole('radio', { name: '🐧' })).toBeChecked();
+    await expect(dialog.getByText('Shown next to their name on items and in Stats.')).toBeVisible();
+
+    await back.click();
+    const row = people.getByRole('button', { name: /Shay/ });
+    await expect(row).toHaveText('🐧Shay');
+    await expect(row).toBeFocused();
+    await dialog.getByRole('button', { name: 'Profile', exact: true }).click();
+    await closeProfile(page);
+
+    // Home: Shea's items show the new name and emoji; your own avatar is unchanged.
+    await expect(meta(page, 'Heaters not working')).toHaveText('🐧 Shay · Missed · Tue 6 Oct');
+    await expect(meta(page, 'Shower draining slowly')).toHaveText('🐧 Shay · Wed 14 Oct');
+    await expect(page.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🦔');
+
+    await goToTab(page, 'Stats');
+    const legend = statsScreen(page).getByRole('list', { name: 'Done per person' }).getByRole('listitem');
+    await expect(legend).toHaveText(['🦔Stratis4', '🐧Shay2', '🦊Ela1']);
+    await expect(statsScreen(page).getByRole('img', { name: /Stratis 4, Shay 2, Ela 1\.$/ })).toBeVisible();
+
+    // Stored, not just on screen.
+    await reopen(page);
+    await expect(meta(page, 'Heaters not working')).toHaveText('🐧 Shay · Missed · Tue 6 Oct');
+  });
+});
+
 test.describe('Sign out', () => {
   test('Sign Out returns to Welcome; signing in again restores the household', async ({ page }) => {
     // Something to recognise the household by.
@@ -328,6 +416,7 @@ test.describe('Sign out', () => {
     dialog = await openProfile(page);
     await dialog.getByRole('button', { name: 'Sign Out' }).click();
     const confirm = await confirmation(page, 'Sign out of home.os?');
+    await expect(confirm.getByRole('button', { name: 'Cancel' })).toBeFocused();
     await confirm.getByRole('button', { name: 'Cancel' }).click();
     await expect(confirm).toHaveCount(0);
     await expect(dialog).toBeVisible();

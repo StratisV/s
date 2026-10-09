@@ -10,6 +10,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from 'react';
+import { TEXT_LIMITS } from '../../lib/constants';
 import type { Area } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
 import { ActionSheet } from '../../ui/ActionSheet';
@@ -47,12 +48,14 @@ function moved(ids: string[], id: string, to: number): string[] {
 /**
  * The household's areas, edited in place: rename inline, delete with the
  * red minus (confirmed), reorder by dragging the grip (or arrow keys on it),
- * and "Add Area" at the end.
+ * and "Add Area" at the end. The last area can't be deleted: items need one.
  */
 export function AreaList({ scrollRef }: { scrollRef: RefObject<HTMLDivElement> }) {
   const { data, renameArea, deleteArea, reorderAreas, createArea } = useHousehold();
   const areas = data.areas;
   const hintId = useId();
+  const lastHintId = useId();
+  const onlyOne = areas.length === 1;
   const listRef = useRef<HTMLUListElement>(null);
   const proxyRef = useRef<HTMLInputElement>(null);
   const addRef = useRef<HTMLButtonElement>(null);
@@ -239,13 +242,15 @@ export function AreaList({ scrollRef }: { scrollRef: RefObject<HTMLDivElement> }
   };
 
   const askDelete = (area: Area) => {
+    if (areasRef.current.length <= 1) return;
     setConfirm({ area, items: data.items.filter((i) => i.area_id === area.id).length });
     setConfirmOpen(true);
   };
 
   const confirmDelete = () => {
     setConfirmOpen(false);
-    if (!confirm) return;
+    // Someone else may have deleted the others while the sheet was up.
+    if (!confirm || areasRef.current.length <= 1) return;
     const index = areas.findIndex((a) => a.id === confirm.area.id);
     void deleteArea(confirm.area.id).catch(() => {});
     // Keep keyboard focus nearby: the next row's delete button, or Add Area.
@@ -275,6 +280,8 @@ export function AreaList({ scrollRef }: { scrollRef: RefObject<HTMLDivElement> }
                 className={styles.delete}
                 data-delete={area.id}
                 aria-label={`Delete ${area.name}`}
+                aria-describedby={onlyOne ? lastHintId : undefined}
+                disabled={onlyOne}
                 onClick={() => askDelete(area)}
               >
                 <MinusCircleIcon size={22} />
@@ -286,7 +293,7 @@ export function AreaList({ scrollRef }: { scrollRef: RefObject<HTMLDivElement> }
                   value={area.name}
                   aria-label="Area name"
                   autoCapitalize="words"
-                  maxLength={60}
+                  maxLength={TEXT_LIMITS.areaName}
                   onCommit={(name) => void renameArea(area.id, name).catch(() => {})}
                 />
                 <button
@@ -318,6 +325,11 @@ export function AreaList({ scrollRef }: { scrollRef: RefObject<HTMLDivElement> }
         {/* Not read-only: iOS only raises the keyboard for an editable field. */}
         <input ref={proxyRef} className="visually-hidden" tabIndex={-1} aria-hidden="true" autoComplete="off" />
       </div>
+      {onlyOne ? (
+        <p id={lastHintId} className={list.caption}>
+          Items live in an area, so keep at least one.
+        </p>
+      ) : null}
       <span id={hintId} className="visually-hidden">
         Drag, or use the up and down arrow keys, to move this area.
       </span>

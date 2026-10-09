@@ -23,18 +23,40 @@ export function HomeScreen({ onOpenItem, onOpenProfile }: HomeScreenProps) {
       <div className={styles.scene}>
         <HomeScene height={150} />
       </div>
-      {sections.map(({ area, items }) => (
-        <AreaSection
-          key={area.id}
-          area={area}
-          items={items}
-          members={data.members}
-          today={today}
-          onOpenItem={onOpenItem}
-          onComplete={completeItem}
-        />
-      ))}
+      {sections.length ? (
+        sections.map(({ area, items }) => (
+          <AreaSection
+            key={area.id}
+            area={area}
+            items={items}
+            members={data.members}
+            today={today}
+            onOpenItem={onOpenItem}
+            onComplete={completeItem}
+          />
+        ))
+      ) : (
+        <NoAreas onOpenProfile={onOpenProfile} />
+      )}
     </Screen>
+  );
+}
+
+/**
+ * Every area was deleted (the Household editor keeps one, but two people can
+ * each delete one at the same time): say where to add one, since items need an area.
+ */
+function NoAreas({ onOpenProfile }: { onOpenProfile(): void }) {
+  return (
+    <div className={styles.noAreas}>
+      <p className={styles.noAreasText}>
+        <strong>No areas yet</strong>
+        Items live in an area, like Kitchen or Garden. Add one in Profile, under Household.
+      </p>
+      <button type="button" className={styles.noAreasButton} onClick={onOpenProfile}>
+        Open Profile
+      </button>
+    </div>
   );
 }
 

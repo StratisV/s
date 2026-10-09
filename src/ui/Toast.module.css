@@ -11,6 +11,12 @@
   pointer-events: none;
 }
 
+/* The live region: always in the page, as big as the toast (nothing when idle). */
+.region {
+  display: flex;
+  min-width: 0;
+}
+
 .wrap[data-top] {
   bottom: auto;
   top: calc(var(--top-inset) + 12px);
@@ -51,12 +57,14 @@
 
 .action {
   flex: none;
-  height: 36px;
+  /* A 44px tap target; the toast is 50px tall, so it still fits inside. */
+  height: 44px;
   padding: 0 14px;
-  border-radius: 18px;
+  border-radius: 22px;
   font-size: 15px;
   font-weight: 600;
-  color: #0a84ff;
+  /* Lighter than the system blue: 6:1 on the dark toast (#0A84FF was 3.8:1). */
+  color: #64b0ff;
 }
 
 .action:active {

@@ -13,6 +13,10 @@
 // ones that channel is skipped and the response says so. SUPABASE_URL and
 // SUPABASE_SERVICE_ROLE_KEY come from the platform. Optional RESEND_API_URL replaces
 // https://api.resend.com/emails (only for a local fake while testing).
+//
+// Pushes only go to the browser push services (DEFAULT_PUSH_HOSTS in ../_shared/webpush.ts;
+// a stored endpoint anywhere else is deleted), every request has a 10 s limit, and a run
+// stops starting new sends after 90 s so it always answers before pg_net gives up.
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { isAuthorized } from '../_shared/auth.ts';
@@ -80,11 +84,12 @@ function supabaseStore(url: string, serviceRoleKey: string): SchedulerStore {
         readAll<AreaRow>((a, b) =>
           db.from('areas').select('id,household_id,name,position').order('id').range(a, b),
         ),
+        // Open items with the note already cut to what the email shows (a view in
+        // supabase/migrations/20261009000100_hardening.sql), so a run never downloads full notes.
         readAll<ItemRow>((a, b) =>
           db
-            .from('items')
+            .from('scheduler_open_items')
             .select('id,household_id,area_id,title,note,rag,due_date,assignee_id,notify,status,created_at')
-            .eq('status', 'open')
             .order('id')
             .range(a, b),
         ),
@@ -191,8 +196,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (!dry) {
       const { push, email, errors } = summary;
       console.log(
-        `scheduler: push sent ${push.sent}/${push.planned} (already ${push.alreadySent}, no device ${push.noDevice}, failed ${push.failed})` +
-          `, email sent ${email.sent}/${email.planned} (already ${email.alreadySent}, failed ${email.failed})` +
+        `scheduler: push sent ${push.sent}/${push.planned} (already ${push.alreadySent}, no device ${push.noDevice}, failed ${push.failed}, deferred ${push.deferred})` +
+          `, email sent ${email.sent}/${email.planned} (already ${email.alreadySent}, failed ${email.failed}, deferred ${email.deferred})` +
+          (summary.timedOut ? '; reached the deadline, the rest goes out on the next run' : '') +
           (push.skipped ? `; push skipped: ${push.skipped}` : '') +
           (email.skipped ? `; email skipped: ${email.skipped}` : ''),
       );

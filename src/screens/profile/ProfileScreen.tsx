@@ -1,14 +1,16 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useHome } from '../../state/HomeProvider';
 import { HouseholdEditor } from './HouseholdEditor';
+import { PersonPage } from './PersonPage';
 import { ProfilePage } from './ProfilePage';
 import { SHEET_MS, usePresence } from './usePresence';
 import styles from './ProfileScreen.module.css';
 
 /**
  * Profile, a full-screen cover that slides up over the app (README
- * "4. Profile"). The Household editor is pushed inside it from the right.
- * Escape goes back from the editor, then closes. Unmounts once closed.
+ * "4. Profile"). The Household editor is pushed inside it from the right,
+ * and a member's page on top of that. Escape goes back one page at a time,
+ * then closes. Unmounts once closed.
  */
 export function ProfileScreen({ open, onClose }: { open: boolean; onClose(): void }) {
   const { mounted, shown } = usePresence(open, SHEET_MS);
@@ -22,14 +24,23 @@ const FOCUSABLE = 'button, input, select, textarea, a[href], [tabindex]';
 function ProfileCover({ open, shown, onClose }: { open: boolean; shown: boolean; onClose(): void }) {
   const [editorOpen, setEditorOpen] = useState(false);
   const editor = usePresence(editorOpen, SHEET_MS);
+  // The member page keeps its id while it slides out.
+  const [person, setPerson] = useState<{ id: string; open: boolean } | null>(null);
+  const personOpen = !!person?.open;
+  const personPage = usePresence(personOpen, SHEET_MS);
   const rootRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLDivElement>(null);
+  const personRef = useRef<HTMLDivElement>(null);
   const householdRowRef = useRef<HTMLButtonElement>(null);
   const backRef = useRef<HTMLButtonElement>(null);
+  const personBackRef = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
-  const state = useRef({ editorOpen, onClose });
-  state.current = { editorOpen, onClose };
+  const state = useRef({ editorOpen, personOpen, onClose });
+  state.current = { editorOpen, personOpen, onClose };
+
+  const openPerson = useCallback((id: string) => setPerson({ id, open: true }), []);
+  const closePerson = useCallback(() => setPerson((p) => (p ? { ...p, open: false } : p)), []);
 
   // Focus moves into the cover when it opens and back to the avatar when it closes.
   useLayoutEffect(() => {
@@ -39,10 +50,17 @@ function ProfileCover({ open, shown, onClose }: { open: boolean; shown: boolean;
     if (shown) rootRef.current?.focus({ preventScroll: true });
   }, [shown]);
   useEffect(() => {
-    if (!open) returnFocus.current?.focus({ preventScroll: true });
+    if (open) return;
+    // App makes the screen behind interactive again in its own effect, which runs
+    // after this one: focusing the avatar only works from the next frame.
+    const target = returnFocus.current;
+    const raf = requestAnimationFrame(() => {
+      if (target?.isConnected) target.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(raf);
   }, [open]);
 
-  // The page underneath the editor is inert; focus follows the push and the pop.
+  // The page underneath a pushed one is inert; focus follows the push and the pop.
   const wasPushed = useRef(false);
   useEffect(() => {
     if (profileRef.current) profileRef.current.inert = editorOpen;
@@ -53,6 +71,21 @@ function ProfileCover({ open, shown, onClose }: { open: boolean; shown: boolean;
     if (editor.shown) backRef.current?.focus({ preventScroll: true });
   }, [editor.shown]);
 
+  const personWasOpen = useRef(false);
+  useEffect(() => {
+    if (editorRef.current) editorRef.current.inert = personOpen;
+    if (!personOpen && personWasOpen.current && person) {
+      const rows = editorRef.current?.querySelectorAll<HTMLElement>('[data-member-row]') ?? [];
+      Array.from(rows)
+        .find((row) => row.dataset.memberRow === person.id)
+        ?.focus({ preventScroll: true });
+    }
+    personWasOpen.current = personOpen;
+  }, [personOpen, person]);
+  useEffect(() => {
+    if (personPage.shown) personBackRef.current?.focus({ preventScroll: true });
+  }, [personPage.shown]);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -60,17 +93,18 @@ function ProfileCover({ open, shown, onClose }: { open: boolean; shown: boolean;
       // An open action sheet handles its own Escape.
       if (document.querySelector('[role="alertdialog"]')) return;
       e.preventDefault();
-      if (state.current.editorOpen) setEditorOpen(false);
+      if (state.current.personOpen) closePerson();
+      else if (state.current.editorOpen) setEditorOpen(false);
       else state.current.onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
+  }, [open, closePerson]);
 
   // Keep Tab inside the visible page.
   const trapTab = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'Tab') return;
-    const page = editorOpen ? editorRef.current : profileRef.current;
+    const page = personOpen ? personRef.current : editorOpen ? editorRef.current : profileRef.current;
     if (!page) return;
     const items = Array.from(page.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
       (el) => el.tabIndex >= 0 && !(el as HTMLButtonElement).disabled && el.getClientRects().length > 0,
@@ -103,8 +137,18 @@ function ProfileCover({ open, shown, onClose }: { open: boolean; shown: boolean;
         <ProfilePage onDone={onClose} onOpenHousehold={() => setEditorOpen(true)} householdRowRef={householdRowRef} />
       </div>
       {editor.mounted ? (
-        <div ref={editorRef} className={`${styles.layer} ${styles.pushed}`} data-shown={editor.shown || undefined}>
-          <HouseholdEditor onBack={() => setEditorOpen(false)} backRef={backRef} />
+        <div
+          ref={editorRef}
+          className={`${styles.layer} ${styles.pushed}`}
+          data-shown={editor.shown || undefined}
+          data-covered={personPage.shown || undefined}
+        >
+          <HouseholdEditor onBack={() => setEditorOpen(false)} onOpenPerson={openPerson} backRef={backRef} />
+        </div>
+      ) : null}
+      {editor.mounted && person && personPage.mounted ? (
+        <div ref={personRef} className={`${styles.layer} ${styles.pushed}`} data-shown={personPage.shown || undefined}>
+          <PersonPage memberId={person.id} onBack={closePerson} backRef={personBackRef} />
         </div>
       ) : null}
     </div>

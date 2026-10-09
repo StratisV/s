@@ -74,7 +74,9 @@ Set the same three variables in your host's dashboard for production builds.
 2. Create a Resend API key at https://resend.com and verify the domain you will send from.
 3. Make up a long random secret for the scheduler and keep it for the next two steps:
    `openssl rand -hex 32`.
-4. Deploy the scheduler function and give it its secrets:
+4. Deploy the scheduler function and give it its secrets. The function reads a view that the
+   migrations create, so run `npx supabase db push` (step 1) first, and again before
+   redeploying the function after an update:
 
    ```bash
    npx supabase functions deploy scheduler --no-verify-jwt
@@ -127,6 +129,7 @@ database tests against it. The live backend suite runs with
 ## Permissions
 
 Everyone who belongs to a household can edit everything in it: the household's name,
-address and time zone, its areas, every item, completions (undo) and each other's profiles.
+address and time zone, its areas, every item, completions (undo) and each other's profiles
+(name and emoji, under **Profile → Household → People**).
 People outside the household can't see or change any of it. New people join only through an
 invite link (valid for 14 days).

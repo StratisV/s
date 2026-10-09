@@ -120,4 +120,6 @@ export const TEXT_LIMITS = {
   householdName: 60,
   address: 120,
   areaName: 60,
+  /** No input: emoji come from EMOJI_SET. The database still caps what a client can store. */
+  memberEmoji: 16,
 } as const;

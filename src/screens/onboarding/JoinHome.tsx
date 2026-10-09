@@ -25,7 +25,7 @@ interface JoinHomeProps {
   onRetry(): void;
   /** The invite turned out to be invalid or expired while joining. */
   onInvalid(): void;
-  /** "Set up a new home instead": continue to the create form. */
+  /** "Set up a new home instead": forget the invite and continue to the create form. */
   onCreateInstead(): void;
 }
 
@@ -84,6 +84,9 @@ export function JoinHome({ enter, token, check, profile, onBack, onRetry, onInva
           <PrimaryButton onClick={join} busy={busy} busyLabel="Joining">
             Join
           </PrimaryButton>
+          <button type="button" className={shared.textButton} onClick={onCreateInstead} disabled={busy}>
+            Set up a new home instead
+          </button>
         </div>
       </StepPage>
     );

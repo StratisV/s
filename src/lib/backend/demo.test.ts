@@ -41,6 +41,17 @@ async function rejectsWith(p: Promise<unknown>, code: string) {
   expect((err as BackendError).code).toBe(code);
 }
 
+/** A BackendError('unknown') whose message matches, as the database's check violations map. */
+async function rejectsWithMessage(p: Promise<unknown>, message: RegExp) {
+  const err = await p.then(
+    () => null,
+    (e: unknown) => e,
+  );
+  expect(err).toBeInstanceOf(BackendError);
+  expect((err as BackendError).code).toBe('unknown');
+  expect((err as BackendError).message).toMatch(message);
+}
+
 function input(over: Partial<CreateHouseholdInput> = {}): CreateHouseholdInput {
   const areas = over.areas ?? ['Kitchen', '  ', 'Garden', 'Jacuzzi'];
   return {
@@ -591,6 +602,144 @@ describe('push subscriptions', () => {
     await rejectsWith(b.savePushSubscription(data.members[1].id, sub), 'not_found');
     await b.deletePushSubscription(sub.endpoint);
     expect(storedDoc().push_subs).toEqual([]);
+  });
+});
+
+describe('push subscriptions: the database rules', () => {
+  const keys = { p256dh: 'p', auth: 'a' };
+
+  it('only takes https endpoints of at most 2048 characters and keys of at most 256', async () => {
+    const { b, me } = await setup();
+    for (const endpoint of [
+      'http://127.0.0.1:54321/rest/v1/',
+      'file:///etc/passwd',
+      'javascript:alert(1)',
+      'https://',
+      'https://fcm.googleapis.com/fcm send/x',
+      `https://fcm.googleapis.com/${'x'.repeat(2048)}`,
+    ]) {
+      await rejectsWithMessage(b.savePushSubscription(me.id, { endpoint, keys }), /^invalid_input: push endpoint/);
+    }
+    const ok = 'https://fcm.googleapis.com/';
+    await b.savePushSubscription(me.id, { endpoint: ok + 'x'.repeat(2048 - ok.length), keys });
+    await rejectsWithMessage(
+      b.savePushSubscription(me.id, { endpoint: `${ok}k`, keys: { p256dh: 'p'.repeat(257), auth: 'a' } }),
+      /^invalid_input: p256dh is longer than 256 characters$/,
+    );
+    await rejectsWithMessage(
+      b.savePushSubscription(me.id, { endpoint: `${ok}k`, keys: { p256dh: 'p', auth: 'a'.repeat(257) } }),
+      /^invalid_input: auth is longer than 256 characters$/,
+    );
+    expect(storedDoc().push_subs).toHaveLength(1);
+  });
+
+  it("cuts a long user agent to 512 characters", async () => {
+    const { b, me } = await setup();
+    vi.stubGlobal('navigator', { userAgent: 'U'.repeat(600) });
+    try {
+      await b.savePushSubscription(me.id, { endpoint: 'https://fcm.googleapis.com/ua', keys });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(storedDoc().push_subs[0].user_agent).toBe('U'.repeat(512));
+  });
+
+  it("moves an endpoint to another account only with the same keys", async () => {
+    const { b, hid, me } = await setup();
+    const endpoint = 'https://fcm.googleapis.com/fcm/send/shared';
+    await b.savePushSubscription(me.id, { endpoint, keys });
+    const token = await b.createInvite();
+
+    const bob = make({ user: BOB });
+    await bob.signInWithGoogle();
+    await bob.joinHousehold({ token, memberName: 'Bob', memberEmoji: '🐻' });
+    const bobMe = (await bob.load(hid)).members.find((m) => m.user_id === BOB.id)!;
+    // Knowing the endpoint is not enough.
+    await rejectsWith(bob.savePushSubscription(bobMe.id, { endpoint, keys: { p256dh: 'p2', auth: 'a2' } }), 'not_found');
+    expect(storedDoc().push_subs).toMatchObject([{ endpoint, user_id: DEMO_USER.id, p256dh: 'p', auth: 'a' }]);
+    // The same browser subscription (same keys) moves over.
+    await bob.savePushSubscription(bobMe.id, { endpoint, keys });
+    expect(storedDoc().push_subs).toMatchObject([{ endpoint, user_id: BOB.id, member_id: bobMe.id }]);
+  });
+});
+
+describe('text limits (the database check constraints)', () => {
+  const long = (n: number, c = 'x') => c.repeat(n);
+
+  it('items: title up to 200 characters, note up to 4000', async () => {
+    const { b, hid, data } = await setup();
+    const item = await b.createItem(hid, draft(data, { title: long(200), note: long(4000) }));
+    expect(item.title).toHaveLength(200);
+    await rejectsWithMessage(b.createItem(hid, draft(data, { title: long(201) })), /^invalid_input: title is longer than 200/);
+    await rejectsWithMessage(b.createItem(hid, draft(data, { note: long(4001) })), /^invalid_input: note is longer than 4000/);
+    await rejectsWithMessage(b.updateItem(item.id, { title: long(201) }), /^invalid_input: title/);
+    await rejectsWithMessage(b.updateItem(item.id, { note: long(4001), rag: 'green' }), /^invalid_input: note/);
+    const after = (await b.load(hid)).items.find((i) => i.id === item.id)!;
+    expect([after.title, after.note.length, after.rag]).toEqual([long(200), 4000, 'red']);
+  });
+
+  it('counts characters like Postgres: an emoji is one', async () => {
+    const { b, hid, data } = await setup();
+    const item = await b.createItem(hid, draft(data, { title: long(200, '🦔') }));
+    expect(Array.from(item.title)).toHaveLength(200);
+    await rejectsWithMessage(b.createItem(hid, draft(data, { title: long(201, '🦔') })), /^invalid_input: title/);
+  });
+
+  it('members: name up to 40, emoji up to 16', async () => {
+    const { b, hid, me } = await setup();
+    await b.updateMember(me.id, { name: long(40) });
+    await rejectsWithMessage(b.updateMember(me.id, { name: long(41) }), /^invalid_input: name is longer than 40/);
+    await b.updateMember(me.id, { emoji: '👨‍👩‍👧‍👦' });
+    await rejectsWithMessage(b.updateMember(me.id, { name: 'Ok', emoji: long(17, '🦔') }), /^invalid_input: emoji/);
+    const after = (await b.load(hid)).members[0];
+    expect([after.name, after.emoji]).toEqual([long(40), '👨‍👩‍👧‍👦']);
+  });
+
+  it('households: name up to 60, address up to 120', async () => {
+    const { b, hid } = await setup();
+    await b.updateHousehold(hid, { name: long(60), address: long(120) });
+    await rejectsWithMessage(b.updateHousehold(hid, { name: long(61) }), /^invalid_input: name is longer than 60/);
+    await rejectsWithMessage(b.updateHousehold(hid, { name: 'Ok', address: long(121) }), /^invalid_input: address/);
+    const { household } = await b.load(hid);
+    expect([household.name, household.address]).toEqual([long(60), long(120)]);
+  });
+
+  it('areas: name up to 60', async () => {
+    const { b, hid, data } = await setup();
+    const area = await b.createArea(hid, long(60));
+    expect(area.name).toHaveLength(60);
+    await rejectsWithMessage(b.createArea(hid, long(61)), /^invalid_input: name is longer than 60/);
+    await rejectsWithMessage(b.renameArea(data.areas[0].id, long(61)), /^invalid_input: name/);
+  });
+
+  it('createHousehold and joinHousehold check the same limits and store nothing on failure', async () => {
+    const b = make();
+    await b.signInWithGoogle();
+    await rejectsWithMessage(b.createHousehold(input({ name: long(61) })), /^invalid_input: name/);
+    await rejectsWithMessage(b.createHousehold(input({ address: long(121) })), /^invalid_input: address/);
+    await rejectsWithMessage(b.createHousehold(input({ memberName: long(41) })), /^invalid_input: name/);
+    await rejectsWithMessage(b.createHousehold(input({ memberEmoji: long(17, '🦔') })), /^invalid_input: emoji/);
+    await rejectsWithMessage(b.createHousehold(input({ areas: [long(61)], items: [] })), /^invalid_input: area name/);
+    const seed = { area: 'Kitchen', note: '', rag: 'green', due_in_days: 1, repeat: 'none', notify: 'none' } as const;
+    await rejectsWithMessage(
+      b.createHousehold(input({ areas: ['Kitchen'], items: [{ ...seed, title: long(201) }] })),
+      /^invalid_input: title/,
+    );
+    await rejectsWithMessage(
+      b.createHousehold(input({ areas: ['Kitchen'], items: [{ ...seed, title: 'Ok', note: long(4001) }] })),
+      /^invalid_input: note/,
+    );
+    expect(await b.getMyHouseholdId()).toBeNull();
+    expect(storedDoc().households).toEqual([]);
+
+    const hid = await b.createHousehold(input());
+    const token = await b.createInvite();
+    const bob = make({ user: BOB });
+    await bob.signInWithGoogle();
+    await rejectsWithMessage(bob.joinHousehold({ token, memberName: long(41), memberEmoji: '🐻' }), /^invalid_input: name/);
+    await rejectsWithMessage(bob.joinHousehold({ token, memberName: 'Bob', memberEmoji: long(17, '🐻') }), /^invalid_input: emoji/);
+    expect(await bob.getMyHouseholdId()).toBeNull();
+    expect(await bob.joinHousehold({ token, memberName: long(40), memberEmoji: '🐻' })).toBe(hid);
   });
 });
 

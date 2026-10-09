@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { RAG_LABEL } from '../../lib/constants';
 import type { Item } from '../../lib/types';
 import { useConfetti } from '../../ui/Confetti';
 import { StatusRing } from './StatusRing';
@@ -90,7 +91,11 @@ export function ItemRow({ item, meta, onOpen, onComplete }: ItemRowProps) {
           if (!busy.current) onOpen(item.id);
         }}
       >
-        <span className={styles.title}>{item.title}</span>
+        <span className={styles.title}>
+          {item.title}
+          {/* The status is only a colour on screen; assistive tech hears it after the title. */}
+          <span className="visually-hidden">{`, ${RAG_LABEL[item.rag]}.`}</span>
+        </span>
         {item.note.trim() ? <span className={styles.note}>{item.note}</span> : null}
         <span className={styles.meta}>
           {meta.who}

@@ -8,6 +8,11 @@
 //
 // Keys use the standard web-push format (what `npx web-push generate-vapid-keys` prints):
 // base64url, public = 65-byte uncompressed P-256 point, private = 32-byte scalar.
+//
+// Endpoints are stored by users, so sendWebPush only contacts the browser push services in
+// DEFAULT_PUSH_HOSTS, over https, without following redirects, and with a time limit.
+
+import { REQUEST_TIMEOUT_MS, requestSignal } from './http.ts';
 
 type Bytes = Uint8Array<ArrayBuffer>;
 
@@ -31,7 +36,10 @@ export interface PushSubscriptionKeys {
 export interface WebPushResult {
   status: number;
   ok: boolean;
-  /** 404 or 410: the subscription no longer exists and should be deleted. */
+  /**
+   * 404 or 410: the subscription no longer exists and should be deleted. Also true (with
+   * status 0) for an endpoint that is not a known push service, which is never contacted.
+   */
   gone: boolean;
   /** The push service's response text when it refused (for logs). */
   detail?: string;
@@ -43,6 +51,51 @@ export interface SendOptions {
   urgency?: 'very-low' | 'low' | 'normal' | 'high';
   /** For tests. */
   now?: Date;
+  /** Push service hosts that may be contacted. Default DEFAULT_PUSH_HOSTS. */
+  allowedHosts?: readonly string[];
+  /** Time limit for the request in ms. Default REQUEST_TIMEOUT_MS (10 s). */
+  timeoutMs?: number;
+  /** Aborts the request early (the scheduler passes its run deadline). */
+  signal?: AbortSignal;
+}
+
+/**
+ * The browser push services: the hosts of the endpoints that PushManager.subscribe() hands
+ * out. "*.example.com" matches any subdomain of example.com.
+ */
+export const DEFAULT_PUSH_HOSTS: readonly string[] = [
+  // Chrome and other Chromium browsers (Android, Opera, Samsung Internet, Brave, Vivaldi).
+  'fcm.googleapis.com',
+  // Firefox (autopush).
+  'updates.push.services.mozilla.com',
+  // Safari on macOS, iOS and iPadOS (Apple asks servers to allow *.push.apple.com).
+  'web.push.apple.com',
+  '*.push.apple.com',
+  // Edge on Windows (Windows Push Notification Services).
+  '*.notify.windows.com',
+];
+
+/**
+ * True for an https URL on the default port, without credentials, whose host is one of
+ * `hosts`. Anything else is never contacted.
+ */
+export function isAllowedPushEndpoint(endpoint: string, hosts: readonly string[] = DEFAULT_PUSH_HOSTS): boolean {
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'https:' || url.port !== '' || url.username !== '' || url.password !== '') return false;
+  const host = url.hostname.toLowerCase();
+  return hosts.some((entry) => {
+    const pattern = entry.trim().toLowerCase();
+    if (pattern.startsWith('*.')) {
+      const suffix = pattern.slice(1);
+      return host.length > suffix.length && host.endsWith(suffix);
+    }
+    return host === pattern;
+  });
 }
 
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
@@ -216,7 +269,10 @@ export async function encryptPayload(
 
 /**
  * Encrypts and sends one push message. Never throws for HTTP errors (the result says what
- * happened); throws for bad keys or a network failure.
+ * happened); throws for bad keys, a network failure, the time limit or an abort.
+ *
+ * An endpoint that is not on the allowlist (see isAllowedPushEndpoint) is not contacted and
+ * comes back as gone, so the caller deletes the subscription. Redirects are not followed.
  */
 export async function sendWebPush(
   subscription: PushSubscriptionKeys,
@@ -225,6 +281,9 @@ export async function sendWebPush(
   fetchImpl: FetchLike = fetch,
   options: SendOptions = {},
 ): Promise<WebPushResult> {
+  if (!isAllowedPushEndpoint(subscription.endpoint, options.allowedHosts)) {
+    return { status: 0, ok: false, gone: true, detail: 'endpoint is not a known push service' };
+  }
   const body = await encryptPayload(payload, subscription);
   const authorization = await vapidAuthorization(subscription.endpoint, vapid, options.now);
   const res = await fetchImpl(subscription.endpoint, {
@@ -237,6 +296,8 @@ export async function sendWebPush(
       Authorization: authorization,
     },
     body,
+    redirect: 'manual',
+    signal: requestSignal(options.timeoutMs ?? REQUEST_TIMEOUT_MS, options.signal),
   });
   let detail: string | undefined;
   try {

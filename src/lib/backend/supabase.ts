@@ -75,6 +75,8 @@ const NETWORK_MESSAGE = /failed to fetch|fetch failed|load failed|networkerror|n
  * Maps anything supabase-js returns or throws to a BackendError:
  * - an RPC/trigger message (not_signed_in, already_member, invalid_invite, not_found) keeps its code;
  * - invalid_input has no code of its own, so it becomes 'unknown' with that message;
+ * - a check violation (23514, the size and format limits) is 'unknown' with
+ *   "invalid_input: <constraint name>";
  * - an RLS rejection on insert/update (42501 "row-level security") is 'not_found', like any
  *   other row the caller cannot see;
  * - a rejected or expired JWT (HTTP 401) is 'not_signed_in';
@@ -88,6 +90,11 @@ export function toBackendError(err: unknown, httpStatus?: number): BackendError 
 
   if (RPC_CODES.has(message)) return new BackendError(message as BackendErrorCode);
   if (message === 'invalid_input') return new BackendError('unknown', 'invalid_input');
+  // A size or format limit (check constraint, supabase/migrations/20261009000100_hardening.sql).
+  if (e.code === '23514') {
+    const constraint = /constraint "([^"]+)"/.exec(message)?.[1];
+    return new BackendError('unknown', `invalid_input: ${constraint ?? message}`);
+  }
   if (e.code === '42501' && /row-level security/i.test(message)) return new BackendError('not_found', message);
   if (httpStatus === 401 || e.status === 401 || /^PGRST30[1-3]$/.test(e.code ?? '')) {
     return new BackendError('not_signed_in', message || undefined);

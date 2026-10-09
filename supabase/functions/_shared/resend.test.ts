@@ -63,3 +63,29 @@ describe('sendEmail (Resend)', () => {
     expect(await sendEmail(message, config, impl)).toEqual({ ok: false, status: 502, error: 'HTTP 502' });
   });
 });
+
+describe('sendEmail time limits', () => {
+  const waitForAbort = async (_url: string, init: RequestInit) =>
+    new Promise<Response>((_, reject) => {
+      const signal = init.signal as AbortSignal;
+      if (signal.aborted) reject(signal.reason);
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+
+  it('passes a signal on every request', async () => {
+    const { calls, impl } = fakeFetch(200, { id: 'email-4' });
+    await sendEmail(message, config, impl);
+    expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('gives up after timeoutMs', async () => {
+    await expect(sendEmail(message, config, waitForAbort, { timeoutMs: 30 })).rejects.toThrow(/timeout|aborted/i);
+  });
+
+  it('gives up when its signal aborts', async () => {
+    const stop = new AbortController();
+    const pending = sendEmail(message, config, waitForAbort, { signal: stop.signal });
+    stop.abort(new Error('the run reached its deadline'));
+    await expect(pending).rejects.toThrow('the run reached its deadline');
+  });
+});

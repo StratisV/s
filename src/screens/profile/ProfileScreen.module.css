@@ -47,12 +47,13 @@
   box-shadow: -6px 0 24px rgba(0, 0, 0, 0.08);
 }
 
-.pushed::after {
-  display: none;
-}
-
 .pushed[data-shown] {
   transform: none;
+}
+
+/* A pushed page with another one on top (Household under a member's page). */
+.pushed[data-shown][data-covered] {
+  transform: translateX(-30%);
 }
 
 @media (prefers-reduced-motion: reduce) {

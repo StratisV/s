@@ -12,6 +12,8 @@
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
   padding: calc(var(--top-inset) + var(--nav-row)) 0 calc(60px + var(--bottom-inset));
+  /* The bar overlays the scroller: keyboard focus scrolls fields clear of it. */
+  scroll-padding-top: calc(var(--top-inset) + var(--nav-row) + 8px);
 }
 
 /* The status bar area plus the 52px nav row. */
@@ -48,6 +50,25 @@
   display: flex;
   justify-content: flex-end;
   min-width: 0;
+}
+
+/* iOS back button: chevron + previous title, 44px tall. */
+.back {
+  height: 44px;
+  margin-left: -14px;
+  padding: 0 8px 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--tint);
+  border-radius: 12px;
+}
+
+.back:active {
+  opacity: 0.5;
 }
 
 .title {

@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { DemoBackend, DEMO_STORAGE_KEY, DEMO_USER, type StorageLike } from '../../lib/backend/demo';
 import { BackendError } from '../../lib/backend/types';
-import { DEFAULT_ADDRESS, DEFAULT_AREAS } from '../../lib/constants';
+import { DEFAULT_ADDRESS, DEFAULT_AREAS, TEXT_LIMITS } from '../../lib/constants';
 import type { PushState } from '../../lib/push';
 import { HomeProvider, useHome } from '../../state/HomeProvider';
 import { Toast } from '../../ui/Toast';
@@ -82,6 +82,7 @@ describe('Onboarding', () => {
 
     const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement;
     expect(name.value).toBe('Stratis');
+    expect(name.maxLength).toBe(TEXT_LIMITS.memberName);
     const cont = screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement;
     fireEvent.change(name, { target: { value: '   ' } });
     expect(cont.disabled).toBe(true);
@@ -96,6 +97,12 @@ describe('Onboarding', () => {
       DEFAULT_AREAS,
     );
     expect((screen.getByRole('textbox', { name: 'Address' }) as HTMLInputElement).placeholder).toBe(DEFAULT_ADDRESS);
+    // The same limits as the Household editor (and the database).
+    expect((screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement).maxLength).toBe(TEXT_LIMITS.householdName);
+    expect((screen.getByRole('textbox', { name: 'Address' }) as HTMLInputElement).maxLength).toBe(TEXT_LIMITS.address);
+    for (const field of screen.getAllByRole('textbox', { name: 'Area name' })) {
+      expect((field as HTMLInputElement).maxLength).toBe(TEXT_LIMITS.areaName);
+    }
     fireEvent.change(screen.getByRole('textbox', { name: 'Address' }), { target: { value: '1 Test Street' } });
     fireEvent.click(screen.getByRole('button', { name: 'Remove Jacuzzi' }));
     fireEvent.click(screen.getByRole('button', { name: 'Add Area' }));
@@ -117,6 +124,25 @@ describe('Onboarding', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(await screen.findByText('Main app')).toBeTruthy();
     expect(push.enablePush).not.toHaveBeenCalled();
+  });
+
+  it('says so once when coming back from a failed Google sign-in', async () => {
+    const backend = demo();
+    const take = vi.spyOn(backend, 'takeAuthError').mockReturnValueOnce('The user denied access');
+    renderApp(backend);
+    expect(await screen.findByText("Couldn't sign in with Google. Try again.")).toBeTruthy();
+    expect(take).toHaveBeenCalled();
+    // Taken once: it isn't shown again when Welcome comes back.
+    await signInToProfile();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign Out' }));
+    await screen.findByRole('button', { name: 'Continue with Google' });
+    expect(take).toHaveLastReturnedWith(null);
+  });
+
+  it('shows no toast on Welcome after a normal visit', async () => {
+    renderApp(demo());
+    await screen.findByRole('button', { name: 'Continue with Google' });
+    expect(screen.queryByText("Couldn't sign in with Google. Try again.")).toBeNull();
   });
 
   it('starts empty when the current list is switched off, and needs at least one area', async () => {
@@ -195,7 +221,9 @@ describe('Onboarding', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Create Home' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Turn On Notifications' }));
 
-    expect((await screen.findByRole('status')).textContent).toMatch(/still off/);
+    // The toast's live region is always in the page too: look for the note itself.
+    const notice = await screen.findByText(/still off/);
+    expect(notice.getAttribute('role')).toBe('status');
     const hid = (await backend.getMyHouseholdId())!;
     expect((await backend.load(hid)).members[0].push_enabled).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Not Now' }));
@@ -210,9 +238,10 @@ describe('Onboarding', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Create Home' }));
     await screen.findByRole('heading', { name: 'Add to Home Screen' });
     const steps = within(screen.getByRole('list')).getAllByRole('listitem');
+    // iOS 26 Safari can keep Share behind the ••• button.
     expect(steps.map((s) => s.textContent)).toEqual([
-      '1Tap Share  in Safari',
-      '2Choose Add to Home Screen',
+      '1Tap Share  in SafariIf you don’t see it, tap ••• first.',
+      '2Scroll down and choose Add to Home Screen',
       '3Open home.os from your Home Screen',
     ]);
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
@@ -253,6 +282,41 @@ describe('Onboarding', () => {
     expect(data.household.name).toBe('Alderbrook');
     expect(data.members.map((m) => [m.name, m.emoji, m.role])).toContainEqual(['Stratis', '🐻', 'member']);
     expect(localStorage.getItem('homeos.invite')).toBeNull();
+  });
+
+  it('lets you set up a new home instead of joining, and forgets the invite', async () => {
+    const shea = demo({ id: 'user-shea', email: 'shea@example.com', name: 'Shea' });
+    await shea.signInWithGoogle();
+    await shea.createHousehold({
+      name: 'Alderbrook',
+      address: DEFAULT_ADDRESS,
+      timezone: 'Europe/London',
+      memberName: 'Shea',
+      memberEmoji: '🦆',
+      areas: ['Kitchen'],
+      items: [],
+    });
+    const token = await shea.createInvite();
+    await shea.signOut();
+
+    window.history.replaceState(null, '', `/?invite=${token}`);
+    const backend = demo();
+    const first = renderApp(backend);
+    await signInToProfile();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByRole('heading', { name: 'Join Alderbrook' })).toBeTruthy();
+    expect(localStorage.getItem('homeos.invite')).toBe(token);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set up a new home instead' }));
+    expect(await screen.findByRole('heading', { name: 'Your home' })).toBeTruthy();
+    expect(localStorage.getItem('homeos.invite')).toBeNull();
+
+    // A reload goes back to the create form, not to Join.
+    first.unmount();
+    renderApp(backend);
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+    expect(await screen.findByRole('heading', { name: 'Your home' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Join Alderbrook' })).toBeNull();
   });
 
   it('lets you retry when the invite could not be checked', async () => {
