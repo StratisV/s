@@ -29,6 +29,7 @@ function item(over: Partial<Item> = {}): Item {
     kind: 'task',
     title: 'Item',
     note: '',
+    good: '',
     rag: 'amber',
     due_date: '2026-10-20',
     assignee_id: null,
@@ -231,6 +232,7 @@ describe('newItemDraft', () => {
       kind: 'task',
       title: '',
       note: '',
+      good: '',
       rag: 'amber',
       due_date: '2026-10-15',
       assignee_id: null,
@@ -243,12 +245,13 @@ describe('newItemDraft', () => {
 
 describe('draftOf', () => {
   it('keeps only the editable fields', () => {
-    const it1 = item({ assignee_id: 'm-shea', repeat: 'monthly', note: 'n' });
+    const it1 = item({ assignee_id: 'm-shea', repeat: 'monthly', note: 'n', good: 'g' });
     expect(draftOf(it1)).toEqual({
       area_id: 'a1',
       kind: 'task',
       title: 'Item',
       note: 'n',
+      good: 'g',
       rag: 'amber',
       due_date: '2026-10-20',
       assignee_id: 'm-shea',
@@ -372,6 +375,22 @@ describe('kinds: To do (task) and To maintain (state)', () => {
     expect(draftOf(legacy as Item).kind).toBe('task');
   });
 
+  it('draftOf keeps "What good looks like" (a row from before it existed has none)', () => {
+    expect(draftOf(state({ good: 'Cover on, logs dry.' })).good).toBe('Cover on, logs dry.');
+    expect(draftOf(item({ good: 'Kept for a task too.' })).good).toBe('Kept for a task too.');
+    const { good: _good, ...legacy } = state();
+    expect(draftOf(legacy as Item).good).toBe('');
+  });
+
+  it('withKind keeps "What good looks like" both ways, and applyKindRules leaves it alone', () => {
+    const saved = draftOf(state({ good: 'Cover on, logs dry.' }));
+    const task = withKind(saved, 'task', TODAY, 'state');
+    expect(task.good).toBe('Cover on, logs dry.');
+    expect(withKind(task, 'state', TODAY, 'state').good).toBe('Cover on, logs dry.');
+    expect(applyKindRules(saved).good).toBe('Cover on, logs dry.');
+    expect(applyKindRules({ ...saved, kind: 'task' as const }).good).toBe('Cover on, logs dry.');
+  });
+
   it('withKind: a To do becoming To maintain keeps its hidden task fields, so switching back restores them', () => {
     const task = newItemDraft('a1', TODAY);
     const maintained = withKind(task, 'state', TODAY);
@@ -401,13 +420,15 @@ describe('kinds: To do (task) and To maintain (state)', () => {
       kind: 'state',
       title: 'Firepit',
       note: "New one installed. Keep the cover on when it's not in use.",
+      good: 'Cover on when not in use, ash cleared out, logs dry and stacked under the bench.',
       rag: 'green',
       due_in_days: null,
       repeat: 'none',
       notify: 'none',
       demo_assignee: 'ela',
     });
-    // Everything else is a to-do.
+    // Everything else is a to-do, without a "What good looks like".
     expect(SEED_ITEMS.filter((s) => s.kind === 'state').map((s) => s.title)).toEqual(['Firepit']);
+    expect(SEED_ITEMS.filter((s) => s.good).map((s) => s.title)).toEqual(['Firepit']);
   });
 });

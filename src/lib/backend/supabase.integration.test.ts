@@ -257,11 +257,12 @@ describe('SupabaseBackend offline: requests', () => {
       p_member_name: 'Ada',
       p_member_emoji: '🦔',
       p_areas: ['Kitchen', 'Garden'],
-      p_items: input.items.map(({ area, kind, title, note, rag, due_in_days, repeat, notify }) => ({
+      p_items: input.items.map(({ area, kind, title, note, good, rag, due_in_days, repeat, notify }) => ({
         area,
         kind: kind ?? 'task',
         title,
         note,
+        good: good ?? '',
         rag,
         due_in_days,
         repeat,
@@ -386,6 +387,7 @@ describe('SupabaseBackend offline: requests', () => {
       kind: 'task',
       title: ' Bleed the radiators ',
       note: '',
+      good: '',
       rag: 'amber',
       due_date: '2026-11-01',
       assignee_id: 'm1',
@@ -414,6 +416,7 @@ describe('SupabaseBackend offline: requests', () => {
       kind: 'state',
       title: 'Firepit',
       note: 'Cover on.',
+      good: 'Cover on when not in use, logs dry and stacked.',
       rag: 'green',
       due_date: null,
       assignee_id: null,
@@ -432,6 +435,55 @@ describe('SupabaseBackend offline: requests', () => {
 
     // complete_item raises invalid_input for a state.
     await rejectsWith(backend.completeItem('i1'), 'unknown', /^invalid_input$/);
+  });
+
+  it('items carry "What good looks like": read, created, patched and seeded', async () => {
+    const { backend, calls, rest } = fakeServer((call) => {
+      if (call.url.pathname === '/rest/v1/households') return { body: [{ id: 'h1', weekly_email_time: '08:00:00' }] };
+      if (call.url.pathname === '/rest/v1/rpc/create_household') return { body: 'h1' };
+      if (call.method === 'GET') return { body: [] };
+      return { status: 201, body: [{ id: 'new', ...(call.body as object) }] };
+    });
+    await backend.load('h1');
+    expect(rest('items')[0].url.searchParams.get('select')!.split(',')).toContain('good');
+
+    const state: ItemDraft = {
+      area_id: 'a1',
+      kind: 'state',
+      title: 'Firepit',
+      note: '',
+      good: 'Cover on, logs dry.',
+      rag: 'green',
+      due_date: null,
+      assignee_id: null,
+      repeat: 'none',
+      notify: 'none',
+    };
+    await backend.createItem('h1', state);
+    expect((calls.at(-1)!.body as { good: string }).good).toBe('Cover on, logs dry.');
+    // A draft from older code without it sends the column's default.
+    const { good: _good, ...bare } = state;
+    await backend.createItem('h1', bare as ItemDraft);
+    expect((calls.at(-1)!.body as { good: string }).good).toBe('');
+
+    await backend.updateItem('i1', { good: 'Ash cleared out.' });
+    expect(calls.at(-1)!.body).toEqual({ good: 'Ash cleared out.' });
+
+    // Seed items send theirs (the Firepit has one), '' for the rest.
+    await backend.createHousehold({
+      name: 'Flat 2',
+      address: '',
+      timezone: 'Europe/London',
+      memberName: 'Ada',
+      memberEmoji: '🦔',
+      areas: ['Garden'],
+      items: seedItemsFor(['Garden']),
+    });
+    const seeded = (calls.at(-1)!.body as { p_items: { title: string; good: string }[] }).p_items;
+    expect(seeded.find((i) => i.title === 'Firepit')!.good).toBe(
+      'Cover on when not in use, ash cleared out, logs dry and stacked under the bench.',
+    );
+    expect(seeded.filter((i) => i.title !== 'Firepit').every((i) => i.good === '')).toBe(true);
   });
 
   it('createArea starts at position 0 in an empty household', async () => {
@@ -973,6 +1025,7 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     kind: 'task',
     title: 'Test item',
     note: '',
+    good: '',
     rag: 'amber',
     due_date: null,
     assignee_id: null,
@@ -1056,6 +1109,7 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
         area_id: area(data, seed.area).id,
         kind: seed.kind ?? 'task',
         note: seed.note,
+        good: seed.good ?? '',
         rag: seed.rag,
         repeat: seed.repeat,
         notify: seed.notify,
@@ -1249,12 +1303,14 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
 
     await refused(A().createItem(hidA, draft({ area_id: kitchen.id, title: over(200) })), 'items_title_length');
     await refused(A().createItem(hidA, draft({ area_id: kitchen.id, note: over(4000) })), 'items_note_length');
+    await refused(A().createItem(hidA, draft({ area_id: kitchen.id, good: over(4000) })), 'items_good_length');
     const longest = await A().createItem(
       hidA,
-      draft({ area_id: kitchen.id, title: 'x'.repeat(200), note: 'y'.repeat(4000) }),
+      draft({ area_id: kitchen.id, title: 'x'.repeat(200), note: 'y'.repeat(4000), good: 'z'.repeat(4000) }),
     );
     await refused(B().updateItem(longest.id, { title: over(200) }), 'items_title_length');
     await refused(B().updateItem(longest.id, { note: over(4000) }), 'items_note_length');
+    await refused(B().updateItem(longest.id, { good: over(4000) }), 'items_good_length');
     await refused(B().updateMember(memberA, { name: over(40) }), 'members_name_length');
     await refused(B().updateMember(memberA, { emoji: over(16, '🦔') }), 'members_emoji_length');
     await refused(B().updateHousehold(hidA, { name: over(60) }), 'households_name_length');
@@ -1266,7 +1322,11 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     expect(after.household).toEqual(before.household);
     expect(after.members).toEqual(before.members);
     expect(after.areas).toEqual(before.areas);
-    expect(after.items.find((i) => i.id === longest.id)).toMatchObject({ title: 'x'.repeat(200), note: 'y'.repeat(4000) });
+    expect(after.items.find((i) => i.id === longest.id)).toMatchObject({
+      title: 'x'.repeat(200),
+      note: 'y'.repeat(4000),
+      good: 'z'.repeat(4000),
+    });
     await A().deleteItem(longest.id);
   });
 
@@ -1349,6 +1409,39 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     // And a task can become a state again, losing its due date.
     await A().updateItem(state.id, { kind: 'state' });
     expect((await loadA()).items.find((i) => i.id === state.id)).toMatchObject({ kind: 'state', due_date: null, notify: 'none' });
+    await A().deleteItem(state.id);
+  });
+
+  it('keeps "What good looks like" through edits by anyone, kind changes, completion and undo', async () => {
+    let data = await loadA();
+    const garden = area(data, 'Garden');
+    const good = 'Cover on when not in use, ash cleared out, logs dry and stacked.';
+
+    const state = await A().createItem(hidA, draft({ area_id: garden.id, kind: 'state', title: 'Fire bowl', good }));
+    expect(state).toMatchObject({ kind: 'state', good });
+    // Any member edits it; outsiders see and change nothing.
+    await B().updateItem(state.id, { good: `${good} Grate brushed.` });
+    await rejectsWith(C().updateItem(state.id, { good: 'Hacked' }), 'not_found');
+    data = await loadA();
+    expect(data.items.find((i) => i.id === state.id)).toMatchObject({ good: `${good} Grate brushed.`, updated_by: memberB });
+
+    // A task keeps it (hidden in the app) through completion and undo, and back to a state.
+    const today = todayIn(data.household.timezone);
+    await A().updateItem(state.id, { kind: 'task', due_date: today, repeat: 'weekly' });
+    const cid = await A().completeItem(state.id);
+    expect((await loadA()).items.find((i) => i.id === state.id)).toMatchObject({ kind: 'task', good: `${good} Grate brushed.` });
+    await B().undoCompletion(cid);
+    await B().updateItem(state.id, { kind: 'state' });
+    expect((await loadA()).items.find((i) => i.id === state.id)).toMatchObject({
+      kind: 'state',
+      due_date: null,
+      good: `${good} Grate brushed.`,
+    });
+
+    // A plain task starts without one.
+    const task = await A().createItem(hidA, draft({ area_id: garden.id, title: 'Sweep the patio' }));
+    expect(task.good).toBe('');
+    await A().deleteItem(task.id);
     await A().deleteItem(state.id);
   });
 

@@ -122,6 +122,7 @@ export function newItemDraft(areaId: string, today: ISODate): ItemDraft {
     kind: NEW_ITEM_DEFAULTS.kind,
     title: '',
     note: '',
+    good: '',
     rag: NEW_ITEM_DEFAULTS.rag,
     due_date: addDays(today, NEW_ITEM_DEFAULTS.due_in_days),
     assignee_id: null,
@@ -132,13 +133,25 @@ export function newItemDraft(areaId: string, today: ISODate): ItemDraft {
 
 export function draftOf(item: Item): ItemDraft {
   const { area_id, title, note, rag, due_date, assignee_id, repeat, notify } = item;
-  // Rows stored before kinds existed read as tasks.
-  return { area_id, kind: item.kind ?? 'task', title, note, rag, due_date, assignee_id, repeat, notify };
+  // Rows stored before kinds existed read as tasks, and before "What good looks like" as ''.
+  return {
+    area_id,
+    kind: item.kind ?? 'task',
+    title,
+    note,
+    good: item.good ?? '',
+    rag,
+    due_date,
+    assignee_id,
+    repeat,
+    notify,
+  };
 }
 
 /**
  * The draft after choosing a kind in the Item sheet. Becoming a state keeps the task fields
  * in the draft (they are hidden, and dropped when saved), so switching back restores them.
+ * "What good looks like" stays whatever the kind (a task just doesn't show it).
  * An item saved as a state (`savedKind`) that becomes a task gets the new-item defaults for
  * due date, repeat and notify.
  */

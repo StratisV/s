@@ -5,8 +5,9 @@ the house (Kitchen, Garden, Jacuzzi…) and the **items** that need attention in
 red, amber or green status, a note and an assignee. An item is either **To do** (a job like
 "fix the gate", with a due date, an optional repeat and a push reminder, ticked off when it is
 done) or **To maintain** (something whose condition you keep track of, like the firepit: it
-never gets done and stays on the list). Everyone in the household signs in with **Google**,
-picks an emoji for their profile, and **can edit everything**.
+never gets done and stays on the list, and says **What good looks like** for it, such as
+"cover on, ash cleared out, logs dry and stacked"). Everyone in the household signs in with
+**Google**, picks an emoji for their profile, and **can edit everything**.
 
 - **Home**: every area and its items, with how many are red, amber and green. Each item is
   one slim row: its title, then who, when and its note on one line. Areas fold away with a
@@ -137,12 +138,13 @@ also set `VITE_BASE=/your-path/`.
 
 After pulling an update, **apply the database migrations before anything else**, because
 Vercel redeploys the app as soon as the default branch changes and the new app reads the new
-columns (for example `items.kind`): an app deployed ahead of its migrations can't load any
-household. The migrations are backward compatible (new tables and columns with defaults), so
-the app that is live keeps working on the new schema. In order:
+columns (for example `items.kind` or `items.good`): an app deployed ahead of its migrations
+can't load any household. The migrations are backward compatible (new tables and columns with
+defaults), so the app that is live keeps working on the new schema. In order:
 
-1. `npx supabase db push` (for this release: the chat and item kind migrations,
-   `20261010000100_chat.sql` and `20261010000200_item_kind.sql`).
+1. `npx supabase db push` (for this release: the chat, item kind and "What good looks like"
+   migrations, `20261010000100_chat.sql`, `20261010000200_item_kind.sql` and
+   `20261010000300_item_good.sql`).
 2. `npx supabase functions deploy scheduler --no-verify-jwt`.
 3. Push or merge to the default branch (Vercel deploys the app).
 

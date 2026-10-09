@@ -6,6 +6,7 @@ const base: ItemDraft = {
   kind: 'task',
   title: 'Heaters not working',
   note: 'No heat since the weekend.',
+  good: '',
   rag: 'red',
   due_date: '2026-10-06',
   assignee_id: 'm2',
@@ -73,6 +74,24 @@ describe('item draft helpers', () => {
     const state = { ...base, kind: 'state' as const, due_date: null, notify: 'none' as const };
     const task = { ...state, kind: 'task' as const, due_date: '2026-10-15', notify: 'day_before' as const };
     expect(changedFields(state, task)).toEqual({ kind: 'task', due_date: '2026-10-15', notify: 'day_before' });
+  });
+
+  it('trims "What good looks like" and sends it only when it changed', () => {
+    const state = { ...base, kind: 'state' as const, due_date: null, notify: 'none' as const, good: 'Cover on.' };
+    expect(normalizeDraft({ ...state, good: '  Cover on, logs dry. \n' }).good).toBe('Cover on, logs dry.');
+    expect(changedFields(state, { ...state, good: ' Cover on. ' })).toEqual({});
+    expect(isDirty(state, { ...state, good: 'Cover on.\n' })).toBe(false);
+    expect(changedFields(state, { ...state, good: ' Cover on, logs dry. ' })).toEqual({ good: 'Cover on, logs dry.' });
+    expect(isDirty(state, { ...state, good: '' })).toBe(true);
+  });
+
+  it('keeps "What good looks like" when a state becomes a task (hidden, not dropped)', () => {
+    const state = { ...base, kind: 'state' as const, due_date: null, notify: 'none' as const, good: 'Cover on.' };
+    const task = { ...state, kind: 'task' as const, due_date: '2026-10-15', notify: 'day_before' as const };
+    expect(normalizeDraft(task).good).toBe('Cover on.');
+    expect(changedFields(state, task)).not.toHaveProperty('good');
+    // Typed while it was a state, then saved as a task: it still goes with it.
+    expect(changedFields(state, { ...task, good: 'Logs dry.' })).toMatchObject({ kind: 'task', good: 'Logs dry.' });
   });
 
   it('editing a state ignores the hidden task fields', () => {

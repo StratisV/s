@@ -472,6 +472,7 @@ describe('kinds: To do and To maintain', () => {
         kind: 'state',
         title: 'Pizza oven',
         note: '',
+        good: 'Cover on, no ash left inside.',
         rag: 'green',
         due_date: '2026-10-20',
         assignee_id: null,

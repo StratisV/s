@@ -7,6 +7,7 @@ const FIELDS: (keyof ItemDraft)[] = [
   'kind',
   'title',
   'note',
+  'good',
   'rag',
   'due_date',
   'assignee_id',
@@ -15,11 +16,17 @@ const FIELDS: (keyof ItemDraft)[] = [
 ];
 
 /**
- * The draft as it is saved: title and note trimmed, and a state (To maintain) without the
- * due date, repeat and reminder it may still carry from being a task.
+ * The draft as it is saved: title, note and "What good looks like" trimmed, and a state
+ * (To maintain) without the due date, repeat and reminder it may still carry from being a
+ * task. "What good looks like" is kept for a task too (hidden, not dropped).
  */
 export function normalizeDraft(draft: ItemDraft): ItemDraft {
-  return applyKindRules({ ...draft, title: draft.title.trim(), note: draft.note.trim() });
+  return applyKindRules({
+    ...draft,
+    title: draft.title.trim(),
+    note: draft.note.trim(),
+    good: (draft.good ?? '').trim(),
+  });
 }
 
 /** Only the fields that differ from `base` (both normalised), ready for updateItem(). */

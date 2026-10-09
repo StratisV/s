@@ -332,6 +332,7 @@ describe('ItemSheet (new)', () => {
       kind: 'task',
       title: 'Fix the gate',
       note: 'Latch is loose.',
+      good: '',
       rag: 'amber',
       due_date: addDays(home().today, 7),
       assignee_id: null,
@@ -416,6 +417,7 @@ describe('ItemSheet: To do and To maintain', () => {
       kind: 'state',
       title: 'Jacuzzi',
       note: '',
+      good: '',
       rag: 'amber',
       due_date: null,
       assignee_id: null,
@@ -480,6 +482,127 @@ describe('ItemSheet: To do and To maintain', () => {
     });
     expect(update.mock.invocationCallOrder[0]).toBeLessThan(complete.mock.invocationCallOrder[0]);
     await waitFor(() => expect(home().data!.items.some((i) => i.title === 'Firepit')).toBe(false));
+  });
+});
+
+describe('ItemSheet: What good looks like', () => {
+  const FIREPIT_GOOD = 'Cover on when not in use, ash cleared out, logs dry and stacked under the bench.';
+  const kind = (name: 'To do' | 'To maintain') => screen.getByRole('radio', { name });
+  const good = () => screen.getByLabelText('What good looks like') as HTMLTextAreaElement;
+  const noGood = () => expect(screen.queryByLabelText('What good looks like')).toBeNull();
+
+  it('shows a labelled, multi-line field for a state, between the type and the RAG picker', async () => {
+    await setup(editing('Firepit'));
+    const field = good();
+    expect(field.tagName).toBe('TEXTAREA');
+    expect(field.value).toBe(FIREPIT_GOOD);
+    expect(field.placeholder).toBe('Describe how it should be kept, e.g. cover on, logs dry and stacked');
+    expect(field.maxLength).toBe(TEXT_LIMITS.itemGood);
+    // A visible label (the section header) names it.
+    const header = screen.getByText('What good looks like', { selector: 'label' });
+    expect(header.getAttribute('for')).toBe(field.id);
+    // The note (how it is now) is still its own field.
+    expect((screen.getByLabelText('Note') as HTMLTextAreaElement).value).toBe(
+      "New one installed. Keep the cover on when it's not in use.",
+    );
+    const order = [
+      screen.getByLabelText('Note'),
+      screen.getByRole('radiogroup', { name: 'Type' }),
+      header,
+      field,
+      screen.getByRole('radiogroup', { name: 'Status' }),
+      screen.getByLabelText('Area'),
+    ];
+    for (let i = 1; i < order.length; i++) {
+      expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+
+  it('is hidden for a To do, new or saved', async () => {
+    await setup(() => ({ kind: 'new' }));
+    noGood();
+    cleanup();
+    await setup(editing('Heaters not working'));
+    noGood();
+  });
+
+  it('saves an edit (trimmed) and only that', async () => {
+    const { backend, onClose, home } = await setup(editing('Firepit'));
+    const update = vi.spyOn(backend, 'updateItem');
+    fireEvent.change(good(), { target: { value: `${FIREPIT_GOOD} Grate brushed.  \n` } });
+    fireEvent.click(save());
+    expect(update).toHaveBeenCalledWith(expect.any(String), { good: `${FIREPIT_GOOD} Grate brushed.` });
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(home().data!.items.find((i) => i.title === 'Firepit')!.good).toBe(`${FIREPIT_GOOD} Grate brushed.`);
+  });
+
+  it('is a change: closing asks before discarding it; whitespace alone is not', async () => {
+    const { onClose, backend } = await setup(editing('Firepit'));
+    const update = vi.spyOn(backend, 'updateItem');
+    fireEvent.change(good(), { target: { value: `  ${FIREPIT_GOOD}\n` } });
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    cleanup();
+
+    const second = await setup(editing('Firepit'));
+    fireEvent.change(good(), { target: { value: 'Logs dry.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    const confirm = await screen.findByRole('alertdialog', { name: 'Discard your changes?' });
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Keep Editing' }));
+    expect(good().value).toBe('Logs dry.');
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard Changes' }));
+    expect(second.onClose).toHaveBeenCalledTimes(1);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('limits the length', async () => {
+    await setup(editing('Firepit'));
+    fireEvent.change(good(), { target: { value: 'g'.repeat(TEXT_LIMITS.itemGood + 50) } });
+    expect(good().value).toHaveLength(TEXT_LIMITS.itemGood);
+  });
+
+  it('creates a To maintain item with it', async () => {
+    const { backend, onClose, home } = await setup(() => ({ kind: 'new' }));
+    const create = vi.spyOn(backend, 'createItem');
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Jacuzzi' } });
+    noGood();
+    fireEvent.click(kind('To maintain'));
+    expect(good().value).toBe('');
+    fireEvent.change(good(), { target: { value: ' Clear water, cover on. ' } });
+    fireEvent.click(save());
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(create.mock.calls[0][1]).toMatchObject({ kind: 'state', title: 'Jacuzzi', good: 'Clear water, cover on.' });
+    expect(home().data!.items.find((i) => i.title === 'Jacuzzi')).toMatchObject({ kind: 'state', good: 'Clear water, cover on.' });
+  });
+
+  it('keeps the text in the draft while the type is To do, and brings it back', async () => {
+    const { onClose } = await setup(editing('Firepit'));
+    fireEvent.change(good(), { target: { value: 'Logs dry.' } });
+    fireEvent.click(kind('To do'));
+    noGood();
+    fireEvent.click(kind('To maintain'));
+    expect(good().value).toBe('Logs dry.');
+    // Back to the saved text and type: nothing to discard.
+    fireEvent.change(good(), { target: { value: FIREPIT_GOOD } });
+    fireEvent.click(kind('To do'));
+    fireEvent.click(kind('To maintain'));
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('a state turned into a To do keeps it (unseen) when saved', async () => {
+    const { backend, home } = await setup(editing('Firepit'));
+    const update = vi.spyOn(backend, 'updateItem');
+    fireEvent.click(kind('To do'));
+    fireEvent.click(save());
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    expect(update.mock.calls[0][1]).not.toHaveProperty('good');
+    await waitFor(() =>
+      expect(home().data!.items.find((i) => i.title === 'Firepit')).toMatchObject({ kind: 'task', good: FIREPIT_GOOD }),
+    );
   });
 });
 

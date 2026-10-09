@@ -64,6 +64,7 @@ export function ItemSheet({ target, open, onClose, onExited, onSaved }: ItemShee
   latest.current = { home, onClose };
   const completingRef = useRef(false);
   const noAreaId = useId();
+  const goodId = useId();
 
   // A new item's area must still exist when it is saved.
   const areaId = areas.some((a) => a.id === draft.area_id) ? draft.area_id : (areas[0]?.id ?? '');
@@ -281,6 +282,24 @@ export function ItemSheet({ target, open, onClose, onExited, onSaved }: ItemShee
           </div>
 
           <SegmentedControl<ItemKind> label="Type" options={KIND_OPTIONS} value={draft.kind} onChange={setKind} />
+
+          {/* What good looks like: To maintain only. A task keeps it in the draft, unseen. */}
+          {maintained ? (
+            <div className={styles.good}>
+              <label htmlFor={goodId} className={styles.goodHeader}>
+                What good looks like
+              </label>
+              <AutoGrowTextarea
+                id={goodId}
+                className={styles.goodText}
+                value={draft.good}
+                onChange={(e) => update({ good: clip(e.target.value, TEXT_LIMITS.itemGood) })}
+                placeholder="Describe how it should be kept, e.g. cover on, logs dry and stacked"
+                maxLength={TEXT_LIMITS.itemGood}
+                autoCapitalize="sentences"
+              />
+            </div>
+          ) : null}
 
           <RagPicker value={draft.rag} onChange={(rag) => update({ rag })} />
 

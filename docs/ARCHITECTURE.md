@@ -16,7 +16,8 @@ top of Supabase. The design spec is `design/README.md` (Turn 3, option 3a in
 - One household per user.
 - Two kinds of item (see "Item kinds" below): **To do** (`task`, the default: a job with a due
   date, repeat and reminder that Mark as Done completes) and **To maintain** (`state`: a thing
-  whose condition is kept track of, like the firepit; never done, always on the list).
+  whose condition is kept track of, like the firepit; never done, always on the list, with a
+  free-text **What good looks like**).
 - Radical simplicity: no filters, counters, dashboards or settings beyond the spec. The one
   exception the household asked for: each area header shows how many of its items are red,
   amber and green (see "Home" below).
@@ -85,7 +86,7 @@ All ids are `uuid default gen_random_uuid()`. Timestamps are `timestamptz defaul
 | `households` | id, name text not null, address text not null default '', timezone text not null default 'Europe/London', weekly_email_day smallint not null default 1 (0=Sun…6=Sat), weekly_email_time time not null default '08:00', created_at, updated_at, updated_by uuid null |
 | `members` | id, household_id → households on delete cascade, user_id uuid not null **unique** → auth.users on delete cascade, name text not null, email text not null default '', emoji text not null default '🦔', color text not null, role text not null default 'member' check (owner, member), weekly_email bool not null default true, push_enabled bool not null default false, created_at |
 | `areas` | id, household_id → households on delete cascade, name text not null, position int not null default 0, created_at |
-| `items` | id, household_id → households on delete cascade, area_id → areas on delete cascade, kind text not null default 'task' check (task, state), title text not null (non-blank), note text not null default '', rag text not null default 'amber' check (red, amber, green), due_date date null, assignee_id → members on delete set null, repeat text not null default 'none' check (none, weekly, monthly, quarterly, biannual, yearly), notify text not null default 'day_before' check (none, same_day, day_before, week_before), status text not null default 'open' check (open, done), created_by → members on delete set null, updated_by → members on delete set null, created_at, updated_at, completed_at timestamptz null |
+| `items` | id, household_id → households on delete cascade, area_id → areas on delete cascade, kind text not null default 'task' check (task, state), title text not null (non-blank), note text not null default '', good text not null default '' ("What good looks like", see "Item kinds"), rag text not null default 'amber' check (red, amber, green), due_date date null, assignee_id → members on delete set null, repeat text not null default 'none' check (none, weekly, monthly, quarterly, biannual, yearly), notify text not null default 'day_before' check (none, same_day, day_before, week_before), status text not null default 'open' check (open, done), created_by → members on delete set null, updated_by → members on delete set null, created_at, updated_at, completed_at timestamptz null |
 | `completions` | id, household_id → households on delete cascade, item_id → items **on delete set null**, item_title text not null, credited_to → members on delete set null, completed_by → members on delete set null, completed_at, prev_due_date date null, prev_status text not null |
 | `invites` | id, household_id → households on delete cascade, token text not null unique, created_by → members on delete set null, created_at, expires_at timestamptz not null default now() + 14 days |
 | `push_subs` | id, member_id → members on delete cascade, user_id uuid not null default auth.uid(), endpoint text not null unique, p256dh text not null, auth text not null, user_agent text, created_at |
@@ -132,10 +133,11 @@ Errors are raised with these exact messages so clients can map them:
    Creates the household (an unknown time zone falls back to 'Europe/London'), the caller's
    member row (role owner, colour `#007AFF`, email from `auth.jwt() ->> 'email'`), the areas in
    the given order (blank names skipped, positions 0…n-1), and the items in `p_items`:
-   `[{area, kind ('task' default | 'state'), title, note, rag, due_in_days (int|null), repeat,
-   notify}]` (a state is stored without a due date, repeat or reminder), matched to areas by
-   name case-insensitively (unknown area skipped), due date = today in the household time
-   zone + `due_in_days`, unassigned. Raises `already_member` if the caller has a member row.
+   `[{area, kind ('task' default | 'state'), title, note, good ('' default), rag, due_in_days
+   (int|null), repeat, notify}]` (a state is stored without a due date, repeat or reminder),
+   matched to areas by name case-insensitively (unknown area skipped), due date = today in the
+   household time zone + `due_in_days`, unassigned. Raises `already_member` if the caller has a
+   member row.
 2. `invite_preview(p_token text) returns json` → `{"household_name": …, "address": …}` for a
    valid unexpired token, else null. Callable by any signed-in user.
 3. `join_household(p_token text, p_member_name text, p_member_emoji text) returns uuid`
@@ -179,12 +181,13 @@ Details beyond the list above (all covered by `supabase/tests`):
   changes hands moves its subscription to the new account. Knowing someone else's endpoint is
   not enough: the insert fails and their row stays.
 - Check constraints (SQLSTATE 23514; the client maps them to `unknown` /
-  `invalid_input: <constraint>`): `items.title` <= 200, `items.note` <= 4000, `members.name`
-  <= 40, `members.emoji` <= 16, `members.color` `#RRGGBB`, `households.name` <= 60,
-  `households.address` <= 120, `areas.name` <= 60, `push_subs.endpoint` https only and <= 2048,
-  `push_subs.p256dh` and `auth` <= 256, `push_subs.user_agent` <= 512 (the insert trigger cuts
-  longer values). Lengths are characters (Postgres `length()`); `TEXT_LIMITS` in
-  `src/lib/constants.ts` holds the same numbers and the inputs use them as `maxLength`.
+  `invalid_input: <constraint>`): `items.title` <= 200, `items.note` <= 4000, `items.good`
+  <= 4000 (`items_good_length`), `members.name` <= 40, `members.emoji` <= 16, `members.color`
+  `#RRGGBB`, `households.name` <= 60, `households.address` <= 120, `areas.name` <= 60,
+  `push_subs.endpoint` https only and <= 2048, `push_subs.p256dh` and `auth` <= 256,
+  `push_subs.user_agent` <= 512 (the insert trigger cuts longer values). Lengths are characters
+  (Postgres `length()`); `TEXT_LIMITS` in `src/lib/constants.ts` holds the same numbers and the
+  inputs use them as `maxLength`.
 - View `scheduler_open_items` (`security_invoker`, service role only): open items with the note
   whitespace-squashed and cut to 200 characters, read by the scheduler. It has no `kind`
   column; the scheduler reads the ids of open states from `items` itself (see below).
@@ -287,7 +290,8 @@ elevation, with a softer, pinker morning and a warmer evening.
 
 ## Item kinds: To do and To maintain
 
-Migration `supabase/migrations/20261010000200_item_kind.sql`; types `Item.kind`,
+Migrations `supabase/migrations/20261010000200_item_kind.sql` and
+`20261010000300_item_good.sql` (What good looks like, below); types `Item.kind`,
 `ItemDraft.kind`, `SeedItem.kind?` (`'task' | 'state'`, `ItemKind` in `src/lib/types.ts`).
 
 - **To do** (`task`, default): as before. A one-off one leaves the list when done, a repeating
@@ -301,7 +305,8 @@ Migration `supabase/migrations/20261010000200_item_kind.sql`; types `Item.kind`,
   before saving restores them.
 - **Item sheet**: a two-option segmented control (**To do**, **To maintain**; the Stats control
   style) under the title and note, above the RAG picker. For To maintain the Due, Repeat and
-  Notify rows and Mark as Done are hidden and "Assigned to" reads **Looked after by**.
+  Notify rows and Mark as Done are hidden, "Assigned to" reads **Looked after by**, and
+  **What good looks like** appears under the control (see below).
 - **Home row**: a task keeps its hollow status ring (tap to complete). A state shows a solid
   14px dot in its RAG colour in the ring's place; it is not a button and taps go through to the
   row, which opens the sheet. Its meta line reads `🦊 Ela · Updated Tue 6 Oct` (or
@@ -309,8 +314,24 @@ Migration `supabase/migrations/20261010000200_item_kind.sql`; types `Item.kind`,
   members, today, timeZone)`). Assistive tech hears `<title>, Red, to maintain`.
 - **Order** within an area (`compareItems`): tasks first (due date, undated last, then oldest),
   then states by title.
-- **Seed**: SEED_ITEMS has the state "Firepit" (Garden, green, Ela in the demo).
-- Demo documents stored before kinds existed read their items as tasks.
+- **What good looks like** (`items.good`, migration
+  `supabase/migrations/20261010000300_item_good.sql`; `Item.good`, `ItemDraft.good`,
+  `SeedItem.good?`, `TEXT_LIMITS.itemGood` = 4000): free text saying how a state should be kept
+  ("Cover on when not in use, ash cleared out, logs dry and stacked under the bench."), next to
+  its note, which says how it is now. Every item has the column (default ''), tasks too: the
+  app only shows it for a state, and nothing but an edit changes it (not the kind trigger,
+  `complete_item` or `undo_completion`), so an item switched to To do and back keeps it. Same
+  RLS as the rest of the row (every member edits it), same 4000-character limit as the note.
+  In the Item sheet it appears for To maintain only, under the type control and above the RAG
+  picker: a section header (20/25/600) "What good looks like" that labels a white card which
+  is itself an auto-growing textarea (17/22, two lines tall when empty, placeholder "Describe how
+  it should be kept, e.g. cover on, logs dry and stacked"). It is part of the draft: trimmed on
+  save, sent only when changed, and an edit makes Close ask before discarding. Choosing To do
+  hides it but keeps the text in the draft. Home rows do not show it.
+- **Seed**: SEED_ITEMS has the state "Firepit" (Garden, green, Ela in the demo), with its
+  "What good looks like".
+- Demo documents stored before kinds existed read their items as tasks, and items stored before
+  "What good looks like" existed read as `good: ''`.
 
 ## Chat (household group chat)
 

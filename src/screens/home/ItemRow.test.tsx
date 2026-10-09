@@ -11,6 +11,7 @@ const item: Item = {
   kind: 'task',
   title: 'Heaters not working',
   note: 'No heat since the weekend.',
+  good: '',
   rag: 'red',
   due_date: '2026-10-06',
   assignee_id: 'm1',
