@@ -88,6 +88,8 @@ test.describe('Collapsible areas', () => {
     await expect(garden).toHaveAttribute('aria-expanded', 'false');
     // Collapsed rows are out of the tab order.
     await page.keyboard.press('Tab');
+    await expect(area(page, 'Garden').getByRole('button', { name: 'Share Garden' })).toBeFocused();
+    await page.keyboard.press('Tab');
     await expect(area(page, 'Garden').getByRole('button', { name: 'Add item to Garden' })).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(disclosure(page, 'Garden Lounge')).toBeFocused();

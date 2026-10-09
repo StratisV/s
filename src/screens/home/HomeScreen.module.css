@@ -30,9 +30,14 @@
   padding-top: 14px;
 }
 
+/* An area opened from a shared link comes to the top just under the stuck tab switch (60px). */
+.section {
+  scroll-margin-top: calc(var(--top-inset) + 60px);
+}
+
 /*
- * Area name (a disclosure button), then the status counts and the + on the
- * right. Above the card so the controls' tap targets win over its first row.
+ * Area name (a disclosure button), then the status counts, Share and the + on
+ * the right. Above the card so the controls' tap targets win over its first row.
  */
 .headerRow {
   position: relative;
@@ -123,6 +128,35 @@ section[data-collapsed] .chevron {
   background: var(--dot);
 }
 
+/*
+ * Share: the bare glyph in the tint colour, as in an iOS toolbar, so the tinted
+ * + stays the main action. Narrow, so long names still fit on one line at
+ * 320px: its 44px tap target reaches left, over the counts (which take no
+ * taps), and ends where the +'s begins (8px out, the gap between them).
+ */
+.share {
+  position: relative;
+  flex: none;
+  width: 22px;
+  height: 28px;
+  margin: -2px 0 -2px -4px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: var(--tint);
+  scroll-margin: calc(var(--top-inset) + 16px) 0 112px;
+}
+
+.share::before {
+  content: '';
+  position: absolute;
+  inset: -8px 0 -8px -22px;
+}
+
+.share:active {
+  opacity: 0.5;
+}
+
 /* A small tinted + that keeps the header line at 25px; the tap target is 44px. */
 .add {
   position: relative;
@@ -185,6 +219,26 @@ section[data-collapsed] .chevron {
 
 .panel[data-collapsed] .card {
   opacity: 0;
+}
+
+/*
+ * Opened from a shared link: a tint ring that fades out, so it is clear which
+ * area was meant. An outline inside the edge (the panel clips anything outside).
+ */
+.section[data-linked] .card {
+  outline: 3px solid transparent;
+  outline-offset: -3px;
+  animation: linked 2.4s ease-out;
+}
+
+@keyframes linked {
+  0%,
+  45% {
+    outline-color: rgba(0, 122, 255, 0.5);
+  }
+  100% {
+    outline-color: rgba(0, 122, 255, 0);
+  }
 }
 
 .list {
@@ -271,5 +325,11 @@ section[data-collapsed] .chevron {
   .chevron,
   .add {
     transition: none;
+  }
+
+  /* No fade: the ring is simply there for a moment. */
+  .section[data-linked] .card {
+    animation: none;
+    outline-color: rgba(0, 122, 255, 0.5);
   }
 }

@@ -33,7 +33,10 @@ src/
   lib/constants.ts         emoji set, colours, labels, default areas, seed items
   lib/logic/*.ts           pure logic: dates, items (missed, sort, repeat, kinds), stats (donut),
                            chat (order, merge, runs, separators, reactions, unread, keyboard),
-                           sun (London sun position), sky (time-of-day sky colours)
+                           sun (London sun position), sky (time-of-day sky colours),
+                           share (the text and link an item or area is shared with)
+  lib/sharedLink.ts        ?item= / ?area= links: taken from the address at startup, kept until used
+  lib/shareSheet.ts        navigator.share, or the clipboard (lib/clipboard.ts) where there is none
   lib/backend/types.ts     Backend interface (the contract both backends implement)
   lib/backend/supabase.ts  production backend (supabase-js)
   lib/backend/demo.ts      localStorage backend (no env vars, e2e tests)
@@ -48,6 +51,7 @@ src/
   screens/chat/            Household group chat with emoji reactions
   state/ChatProvider.tsx   chat state: pages, realtime merge, optimistic send/react, unread dot
   screens/item/            Item sheet (edit / new)
+  screens/share/           useShare (share or copy, with its toasts), useSharedLink (opens a link)
   screens/stats/           Stats screen + donut
   screens/profile/         Profile (full-screen cover) + Household editor (pushed inside Profile, with
                            People: each member's name and emoji on a page pushed on top)
@@ -232,8 +236,11 @@ messages above (`network` for fetch failures). `completeItem` on a state throws
   and a number, 13px/600, the RAG text colour on the RAG tint), only for non-zero counts,
   shown open or collapsed. Every open item in the area counts by its RAG, To maintain items
   included. Assistive tech reads one label, such as "1 urgent, 2 at risk, 3 on track".
-- **Add**: after the counts, a small tinted + ("Add item to <area>", 44 × 44 tap target)
-  opens the new-item sheet with that area chosen.
+- **Share**: between the counts and the +, a bare tint share glyph ("Share <area>"), see
+  "Sharing" below. It is 22px wide so names still fit on one line at 320px; its 44 × 44 tap
+  target reaches left over the counts (which take no taps) and ends where the +'s begins.
+- **Add**: after the counts and Share, a small tinted + ("Add item to <area>", 44 × 44 tap
+  target) opens the new-item sheet with that area chosen.
 - **Saving into a collapsed area opens it**: when an item is created, or moved to another
   area, the Item sheet reports the area (`onSaved`), App passes it to Home (`revealArea`)
   and Home expands it, so the item can be seen. Closing without saving changes nothing.
@@ -287,6 +294,52 @@ elevation, with a softer, pinker morning and a warmer evening.
   sunset".
 - The duck (green) and hedgehog (brown) are SVG drawings in `ui/animals.ts`, used in the
   scene and the confetti (`<img data-animal="duck|hedgehog">`). Avatars are still emoji.
+
+## Sharing
+
+Any item or area can be shared, for example to WhatsApp, Messages or Mail.
+
+- **Where**: the Item sheet of a saved item has a round **Share item** button in its nav bar,
+  left of Save (none while creating an item: there is nothing to link to yet). Each area
+  header on Home has **Share <area>** (see "Home"). Both use `ShareIcon` (square.and.arrow.up).
+- **What** (`lib/logic/share.ts`, pure and unit tested): plain text, then a blank line and a
+  link back into the app. An item (as saved, not unsaved edits in the sheet):
+
+  ```
+  Heaters not working
+  Hallway · Red · Missed · Tue 6 Oct
+  Assigned to Shea
+  No heat since the weekend. Engineer needs booking.
+
+  https://<app>/?item=<id>
+  ```
+
+  A task reads `Due Fri 13 Nov` (or `Missed · Tue 6 Oct`) and adds its repeat (`Every month`);
+  a To maintain item reads `Updated <day>` (household time zone), `Looked after by <name>` and
+  adds `What good looks like: …`. Names never carry the emoji; no assignee reads `Unassigned`.
+  Notes are tidied (spaces squashed, blank lines dropped) and cut at a word with "…" past 280
+  characters (`SHARE_NOTE_MAX`). An area lists its open items in Home's order, one line each:
+  `Kitchen (2 items)`, `• Olive oil · Green · Due Fri 13 Nov`, …; nothing open reads
+  `Nothing to do`, and past 20 (`SHARE_AREA_MAX`) the rest are counted (`…and 4 more`).
+- **How** (`screens/share/useShare.ts`, `lib/shareSheet.ts`): `navigator.share({ title, text })`
+  straight from the tap, with the link as the text's last line (so every app gets it, and the
+  share sheet's Copy copies the whole message). Cancelling (AbortError) does nothing. Without
+  a share sheet (most desktop browsers), or when it refuses, the same text goes on the
+  clipboard and a toast says "Copied to share"; if that fails too, "Couldn’t share. Try
+  again." A second tap while the sheet is coming up is ignored (for 1.5s at most, in case a
+  share sheet never reports back). The invite link uses the same helper.
+- **Links** (`lib/sharedLink.ts`): `<origin><BASE_URL>?item=<id>` or `?area=<id>`. `main.tsx`
+  calls `captureSharedLink()` before anything renders: it takes the parameter out of the
+  address bar (`history.replaceState`, other parameters left exactly as they were) and keeps
+  the link in localStorage (`homeos.link`, with the time) until the household has loaded, so
+  it survives signing in and the Google redirect, like an invite. It is forgotten after an
+  hour, when taken, and on sign out. Once the household is ready, `useSharedLink` (in App's
+  main shell) opens the item's sheet, or switches to Home, where `HomeScreen` (`linkedArea`)
+  expands the area (remembered as open), scrolls it to just under the stuck tab switch once its
+  card has opened, and rings the card in the tint colour for a moment (`data-linked`). An id
+  this household doesn't have gets a toast ("That item isn’t in your home", "That area isn’t
+  in your home"); a one-off item that has been done says "“<title>” is already done". RLS
+  already keeps other households' rows out of `load()`, so a link is no way in.
 
 ## Item kinds: To do and To maintain
 

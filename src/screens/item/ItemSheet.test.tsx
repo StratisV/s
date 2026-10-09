@@ -4,9 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DemoBackend, type StorageLike } from '../../lib/backend/demo';
 import { BackendError } from '../../lib/backend/types';
 import { TEXT_LIMITS } from '../../lib/constants';
-import { addDays } from '../../lib/logic/dates';
+import { addDays, formatDay } from '../../lib/logic/dates';
 import { HomeProvider, useHome, type HomeContextValue } from '../../state/HomeProvider';
 import { ConfettiProvider } from '../../ui/Confetti';
+import { COPIED_TOAST } from '../share/useShare';
 import type { ItemSheetTarget } from '../types';
 import { ItemSheet } from './ItemSheet';
 
@@ -282,6 +283,8 @@ describe('ItemSheet (new)', () => {
     expect(value('Notify')).toBe('1 day before');
     expect(screen.queryByRole('button', { name: 'Mark as Done' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    // Nothing to link to yet.
+    expect(screen.queryByRole('button', { name: 'Share item' })).toBeNull();
   });
 
   it('explains why Save stays disabled when there is no area', async () => {
@@ -679,5 +682,97 @@ describe('ItemSheet: kind changed by someone else while open', () => {
     await act(() => home().updateItem(id, { kind: 'state' }));
     expect(kind('To maintain').getAttribute('aria-checked')).toBe('true');
     expect(screen.queryByRole('button', { name: 'Mark as Done' })).toBeNull();
+  });
+});
+
+describe('ItemSheet: Share', () => {
+  afterEach(() => {
+    delete (navigator as { share?: unknown }).share;
+    delete (navigator as { clipboard?: unknown }).clipboard;
+  });
+
+  function stubShare(impl: (data: ShareData) => Promise<void> = async () => {}) {
+    const share = vi.fn(impl);
+    Object.defineProperty(navigator, 'share', { value: share, configurable: true });
+    return share;
+  }
+
+  const shareButton = () => screen.getByRole('button', { name: 'Share item' });
+
+  it('sits in the nav bar, between the drag handle and Save', async () => {
+    const { dialog } = await setup(editing('Heaters not working'));
+    const nav = dialog.querySelector('[data-sheet-handle]')!;
+    const names = Array.from(nav.querySelectorAll('button'), (b) => b.getAttribute('aria-label'));
+    expect(names).toEqual(['Close', 'Share item', 'Save']);
+  });
+
+  it('shares a To do: what, where, status, when, who, the note and a link', async () => {
+    const { home } = await setup(editing('Heaters not working'));
+    const share = stubShare();
+    const heaters = home().data!.items.find((i) => i.title === 'Heaters not working')!;
+    fireEvent.click(shareButton());
+    expect(share).toHaveBeenCalledWith({
+      title: 'Heaters not working',
+      text: [
+        'Heaters not working',
+        `Hallway · Red · Missed · ${formatDay(heaters.due_date!, home().today)}`,
+        'Assigned to Shea',
+        'No heat since the weekend. Engineer needs booking.',
+        '',
+        `${window.location.origin}/?item=${heaters.id}`,
+      ].join('\n'),
+    });
+    // The sheet stays as it was.
+    await act(async () => {});
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(home().toast).toBeNull();
+  });
+
+  it('shares a To maintain item with what good looks like', async () => {
+    await setup(editing('Firepit'));
+    const share = stubShare();
+    fireEvent.click(shareButton());
+    const text = share.mock.lastCall![0].text!;
+    expect(text).toMatch(/^Firepit\nGarden · Green · Updated \w{3} \d{1,2} \w{3}\nLooked after by Ela\n/);
+    expect(text).toContain('\nWhat good looks like: Cover on when not in use, ash cleared out, logs dry and stacked under the bench.\n\n');
+  });
+
+  it('shares the item as saved, not edits still in the sheet', async () => {
+    await setup(editing('Heaters not working'));
+    const share = stubShare();
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Heaters fixed' } });
+    fireEvent.click(shareButton());
+    expect(share.mock.lastCall![0].title).toBe('Heaters not working');
+  });
+
+  it('copies the text where there is no share sheet, and says so', async () => {
+    const { home } = await setup(editing('Olive oil'));
+    const writeText = vi.fn(async (_text: string) => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    fireEvent.click(shareButton());
+    await waitFor(() => expect(home().toast?.message).toBe(COPIED_TOAST));
+    expect(writeText.mock.lastCall![0]).toMatch(/^Olive oil\nKitchen · Green · Due .* · Every month\nAssigned to Stratis\n/);
+  });
+
+  it('does nothing when the share sheet is closed without sharing', async () => {
+    const { home } = await setup(editing('Olive oil'));
+    const writeText = vi.fn(async (_text: string) => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    stubShare(() => Promise.reject(new DOMException('Share canceled', 'AbortError')));
+    fireEvent.click(shareButton());
+    await act(async () => {});
+    expect(writeText).not.toHaveBeenCalled();
+    expect(home().toast).toBeNull();
+  });
+
+  it('says so when neither sharing nor copying works', async () => {
+    const { home } = await setup(editing('Olive oil'));
+    const writeText = vi.fn(async () => {
+      throw new Error('denied');
+    });
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    // jsdom has no execCommand('copy') either.
+    fireEvent.click(shareButton());
+    await waitFor(() => expect(home().toast?.message).toBe('Couldn’t share. Try again.'));
   });
 });

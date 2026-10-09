@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { RAG_ORDER, RAG_RING, RAG_TEXT, RAG_TINT } from '../../lib/constants';
 import { itemMeta, itemsByArea } from '../../lib/logic/items';
+import { areaShareMessage } from '../../lib/logic/share';
+import { appBaseUrl } from '../../lib/sharedLink';
 import type { Area, ISODate, Item, Member, Rag } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
-import { ChevronRightIcon, PlusIcon } from '../../ui/icons';
+import { ChevronRightIcon, PlusIcon, ShareIcon } from '../../ui/icons';
 import { Screen } from '../../ui/Screen';
+import { useShare } from '../share/useShare';
 import { ItemRow } from './ItemRow';
 import styles from './HomeScreen.module.css';
 
@@ -21,6 +24,12 @@ interface HomeScreenProps {
    */
   revealArea?: string | null;
   onRevealed?(): void;
+  /**
+   * An area opened from a shared link (`?area=`): it is expanded and scrolled to the top,
+   * under the tab switch. Then `onLinkedAreaShown` is called.
+   */
+  linkedArea?: string | null;
+  onLinkedAreaShown?(): void;
 }
 
 /** Where this device remembers which areas are collapsed: a JSON list of area ids. */
@@ -69,8 +78,18 @@ function useCollapsedAreas(householdId: string, areaIds: string[]) {
 }
 
 /** Home: the household's areas, each with its open items (README "1. Home"). */
-export function HomeScreen({ tabs, onOpenItem, onOpenProfile, onAddItem, revealArea, onRevealed }: HomeScreenProps) {
+export function HomeScreen({
+  tabs,
+  onOpenItem,
+  onOpenProfile,
+  onAddItem,
+  revealArea,
+  onRevealed,
+  linkedArea,
+  onLinkedAreaShown,
+}: HomeScreenProps) {
   const { data, me, today, completeItem } = useHousehold();
+  const share = useShare();
   const sections = useMemo(() => itemsByArea(data.areas, data.items), [data.areas, data.items]);
   const areaIds = useMemo(() => sections.map((s) => s.area.id), [sections]);
   const [collapsed, setCollapsed] = useCollapsedAreas(data.household.id, areaIds);
@@ -86,6 +105,53 @@ export function HomeScreen({ tabs, onOpenItem, onOpenProfile, onAddItem, revealA
     }
     onRevealed?.();
   }, [revealArea, collapsed, setCollapsed, onRevealed]);
+
+  // An area from a shared link: open it, then bring it to the top once it has opened, and
+  // light its card up for a moment (near the bottom of the page it can't reach the top).
+  const [flashArea, setFlashArea] = useState<string | null>(null);
+  const collapsedRef = useRef(collapsed);
+  collapsedRef.current = collapsed;
+  const linkedRef = useRef({ setCollapsed, onLinkedAreaShown });
+  linkedRef.current = { setCollapsed, onLinkedAreaShown };
+  useEffect(() => {
+    if (!linkedArea) return;
+    const wasCollapsed = collapsedRef.current.has(linkedArea);
+    if (wasCollapsed) {
+      const next = new Set(collapsedRef.current);
+      next.delete(linkedArea);
+      linkedRef.current.setCollapsed(next);
+    }
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    // A collapsed card takes its slide (HomeScreen.module.css .panel) to reach full height,
+    // and near the bottom of the page it can't come to the top before then.
+    const timer = setTimeout(
+      () => {
+        const section = Array.from(document.querySelectorAll<HTMLElement>('section[data-area-id]')).find(
+          (el) => el.dataset.areaId === linkedArea,
+        );
+        section?.scrollIntoView({ block: 'start', behavior: still ? 'auto' : 'smooth' });
+        setFlashArea(linkedArea);
+        linkedRef.current.onLinkedAreaShown?.();
+      },
+      wasCollapsed && !still ? AREA_SLIDE_MS : 0,
+    );
+    return () => clearTimeout(timer);
+  }, [linkedArea]);
+  useEffect(() => {
+    if (!flashArea) return;
+    const timer = setTimeout(() => setFlashArea(null), AREA_FLASH_MS);
+    return () => clearTimeout(timer);
+  }, [flashArea]);
+
+  const shareArea = (area: Area) =>
+    share(
+      areaShareMessage(area, data.items, {
+        members: data.members,
+        today,
+        timeZone: data.household.timezone,
+        baseUrl: appBaseUrl(),
+      }),
+    );
 
   const toggle = (areaId: string) => {
     const next = new Set(collapsed);
@@ -123,8 +189,10 @@ export function HomeScreen({ tabs, onOpenItem, onOpenProfile, onAddItem, revealA
               today={today}
               timeZone={data.household.timezone}
               collapsed={collapsed.has(area.id)}
+              linked={flashArea === area.id}
               onToggle={toggle}
               onAddItem={onAddItem}
+              onShare={shareArea}
               onOpenItem={onOpenItem}
               onComplete={completeItem}
             />
@@ -154,6 +222,11 @@ function NoAreas({ onOpenProfile }: { onOpenProfile(): void }) {
     </div>
   );
 }
+
+/** How long a collapsed area's card takes to open (`.panel` in HomeScreen.module.css), and a little more. */
+const AREA_SLIDE_MS = 360;
+/** How long an area opened from a shared link stays lit up (`.section[data-linked]`). */
+const AREA_FLASH_MS = 2400;
 
 const COUNT_LABEL: Record<Rag, string> = { red: 'urgent', amber: 'at risk', green: 'on track' };
 
@@ -204,8 +277,12 @@ interface AreaSectionProps {
   /** The household's, for a To maintain row's "Updated <day>". */
   timeZone: string;
   collapsed: boolean;
+  /** Just opened from a shared link: lit up for a moment. */
+  linked: boolean;
   onToggle(areaId: string): void;
   onAddItem(areaId: string): void;
+  /** Shares the area's open items (the share sheet, or the clipboard). */
+  onShare(area: Area): void;
   onOpenItem(itemId: string): void;
   onComplete(itemId: string): Promise<void>;
 }
@@ -217,8 +294,10 @@ function AreaSection({
   today,
   timeZone,
   collapsed,
+  linked,
   onToggle,
   onAddItem,
+  onShare,
   onOpenItem,
   onComplete,
 }: AreaSectionProps) {
@@ -231,7 +310,13 @@ function AreaSection({
     if (panelRef.current) panelRef.current.inert = collapsed;
   }, [collapsed]);
   return (
-    <section aria-labelledby={headingId} data-collapsed={collapsed || undefined}>
+    <section
+      aria-labelledby={headingId}
+      className={styles.section}
+      data-area-id={area.id}
+      data-collapsed={collapsed || undefined}
+      data-linked={linked || undefined}
+    >
       <div className={styles.headerRow}>
         <h2 id={headingId} className={styles.header}>
           <button
@@ -252,6 +337,9 @@ function AreaSection({
           </button>
         </h2>
         <StatusCounts items={items} />
+        <button type="button" className={styles.share} aria-label={`Share ${area.name}`} onClick={() => onShare(area)}>
+          <ShareIcon size={20} strokeWidth={2} />
+        </button>
         <button
           type="button"
           className={styles.add}

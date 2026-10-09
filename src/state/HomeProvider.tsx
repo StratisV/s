@@ -3,6 +3,7 @@ import { BackendError, type Backend, type HouseholdPatch, type ItemPatch, type M
 import { STATE_FIELDS } from '../lib/constants';
 import { formatDay, todayIn } from '../lib/logic/dates';
 import { disablePush } from '../lib/push';
+import { forgetSharedLink } from '../lib/sharedLink';
 import { applyKindRules, nextDueDate } from '../lib/logic/items';
 import type {
   Area,
@@ -534,9 +535,10 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         dismissToast();
         // Stop this device getting the previous person's pushes (only the owner can delete the row).
         await disablePush(backend);
-        // An invite opened on this device shouldn't follow the next person who signs in.
+        // An invite or shared link opened on this device shouldn't follow the next person who signs in.
         clearStoredInvite();
         setPendingInvite(null);
+        forgetSharedLink();
         await backend.signOut();
       },
       createHousehold: async (input) => {

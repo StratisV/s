@@ -21,6 +21,11 @@ never gets done and stays on the list, and says **What good looks like** for it,
   long they stay), anyone can react to a message with emoji (long-press it, or tap a reaction
   to add yours), and a dot on the Chat tab shows unread messages.
 - **Stats**: who has done what.
+- **Share**: send an item (from its sheet) or a whole area (the share button in its header)
+  to WhatsApp, Messages or Mail as a short summary with a link. The link opens that item, or
+  that area on Home, in home.os for anyone in the household (after signing in if need be;
+  on iPhone, links open in Safari rather than the Home Screen app). Where there is no share
+  sheet, the text is copied instead.
 - A **weekly email** with the full status, and **push notifications** before deadlines and when
   one is missed.
 
@@ -184,4 +189,6 @@ The household chat has its own rules:
 - Only the author can delete a message (for everyone); nobody can edit one.
 
 People outside the household can't see or change any of it. New people join only through an
-invite link (valid for 14 days).
+invite link (valid for 14 days). A shared item or area link opens the item or area only for
+people in the household; anyone else just sees their own home. The text of a shared message
+can be read by whoever it was sent to.

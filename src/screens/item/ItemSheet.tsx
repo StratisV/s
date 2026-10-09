@@ -1,13 +1,16 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { KIND_OPTIONS, NOTIFY_OPTIONS, REPEAT_OPTIONS, TEXT_LIMITS } from '../../lib/constants';
 import { draftOf, dueDetail, memberLabel, newItemDraft, withKind } from '../../lib/logic/items';
+import { itemShareMessage } from '../../lib/logic/share';
+import { appBaseUrl } from '../../lib/sharedLink';
 import type { ItemDraft, ItemKind, Notify, Repeat } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
 import { ActionSheet } from '../../ui/ActionSheet';
 import { useConfetti } from '../../ui/Confetti';
-import { CheckIcon, XMarkIcon } from '../../ui/icons';
+import { CheckIcon, ShareIcon, XMarkIcon } from '../../ui/icons';
 import { Sheet } from '../../ui/Sheet';
 import { SegmentedControl } from '../stats/SegmentedControl';
+import { useShare } from '../share/useShare';
 import type { ItemSheetTarget } from '../types';
 import { AutoGrowTextarea } from './AutoGrowTextarea';
 import { DateRow, DetailsCard, SelectRow } from './DetailRows';
@@ -38,6 +41,7 @@ export function ItemSheet({ target, open, onClose, onExited, onSaved }: ItemShee
   const home = useHousehold();
   const { data, today } = home;
   const fire = useConfetti();
+  const share = useShare();
 
   const isNew = target.kind === 'new';
   const itemId = target.kind === 'edit' ? target.itemId : null;
@@ -203,6 +207,19 @@ export function ItemSheet({ target, open, onClose, onExited, onSaved }: ItemShee
     })();
   };
 
+  /** The item as saved (what the link opens), not unsaved edits in the sheet. */
+  const shareItem = () => {
+    if (!item || busy || confirm) return;
+    share(
+      itemShareMessage(item, data.areas, {
+        members: data.members,
+        today,
+        timeZone: data.household.timezone,
+        baseUrl: appBaseUrl(),
+      }),
+    );
+  };
+
   const confirmDelete = () => {
     if (!itemId) return;
     void home.deleteItem(itemId).catch(() => {});
@@ -242,17 +259,25 @@ export function ItemSheet({ target, open, onClose, onExited, onSaved }: ItemShee
             <XMarkIcon size={22} strokeWidth={2.5} />
           </button>
           <span />
-          <button
-            type="button"
-            className={styles.save}
-            aria-label="Save"
-            onClick={() => void save()}
-            disabled={!savable || saving}
-            aria-busy={saving || undefined}
-            aria-describedby={areas.length === 0 ? noAreaId : undefined}
-          >
-            <CheckIcon size={24} strokeWidth={2.7} />
-          </button>
+          <div className={styles.trailing}>
+            {/* A saved item can be shared; a new one has nothing to link to yet. */}
+            {item ? (
+              <button type="button" className={styles.share} aria-label="Share item" onClick={shareItem}>
+                <ShareIcon size={22} strokeWidth={2.1} />
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className={styles.save}
+              aria-label="Save"
+              onClick={() => void save()}
+              disabled={!savable || saving}
+              aria-busy={saving || undefined}
+              aria-describedby={areas.length === 0 ? noAreaId : undefined}
+            >
+              <CheckIcon size={24} strokeWidth={2.7} />
+            </button>
+          </div>
         </div>
 
         <div className={styles.body} data-sheet-scroll>
