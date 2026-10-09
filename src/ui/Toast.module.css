@@ -3,7 +3,8 @@
   left: 0;
   right: 0;
   bottom: calc(var(--tabbar-bottom) + var(--tabbar-height) + 14px);
-  z-index: 950;
+  /* Above the app, below action sheets (900) so a toast never covers a confirmation. */
+  z-index: 850;
   display: flex;
   justify-content: center;
   padding: 0 16px;

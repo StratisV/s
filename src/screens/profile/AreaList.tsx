@@ -65,6 +65,10 @@ export function AreaList({ scrollRef }: { scrollRef: RefObject<HTMLDivElement> }
   const [confirm, setConfirm] = useState<{ area: Area; items: number } | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  // Stops a drag in progress (listeners, auto-scroll) if the page goes away mid-drag.
+  const endDrag = useRef<(() => void) | null>(null);
+  useEffect(() => () => endDrag.current?.(), []);
+
   // Focus to restore after the list re-renders: a moved grip, or a new area's name.
   const focusGrip = useRef<string | null>(null);
   const focusNew = useRef<string | null>(null);
@@ -151,12 +155,16 @@ export function AreaList({ scrollRef }: { scrollRef: RefObject<HTMLDivElement> }
       pointerY = ev.clientY;
       update();
     };
-    const onEnd = (ev: PointerEvent) => {
-      if (ev.pointerId !== pointerId) return;
+    const stop = () => {
       cancelAnimationFrame(raf);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onEnd);
       window.removeEventListener('pointercancel', onEnd);
+      endDrag.current = null;
+    };
+    const onEnd = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      stop();
       // Glide into the slot, then save the new order (the optimistic update and
       // clearing the drag land in the same render, so nothing jumps).
       const slot = to > from ? rects[to].bottom - rects[from].bottom : to < from ? rects[to].top - rects[from].top : 0;
@@ -177,6 +185,7 @@ export function AreaList({ scrollRef }: { scrollRef: RefObject<HTMLDivElement> }
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onEnd);
     window.addEventListener('pointercancel', onEnd);
+    endDrag.current = stop;
     setDrag({ id, from, to: from, dy: 0, step, dropping: false });
   };
 
@@ -305,8 +314,9 @@ export function AreaList({ scrollRef }: { scrollRef: RefObject<HTMLDivElement> }
         >
           <PlusCircleIcon size={22} />
           <span className={styles.addLabel}>Add Area</span>
-          <input ref={proxyRef} className="visually-hidden" tabIndex={-1} aria-hidden="true" readOnly />
         </button>
+        {/* Not read-only: iOS only raises the keyboard for an editable field. */}
+        <input ref={proxyRef} className="visually-hidden" tabIndex={-1} aria-hidden="true" autoComplete="off" />
       </div>
       <span id={hintId} className="visually-hidden">
         Drag, or use the up and down arrow keys, to move this area.

@@ -74,8 +74,7 @@ const easeOutCubic = (t: number) => 1 - (1 - t) ** 3;
  * (the last non-empty counts stay drawn while they fade out).
  */
 function useTweenedRows(rows: MemberCount[]): MemberCount[] {
-  const target = new Map(rows.map((r) => [r.member.id, r.count]));
-  const [shown, setShown] = useState(target);
+  const [shown, setShown] = useState(() => new Map(rows.map((r) => [r.member.id, r.count])));
   const shownRef = useRef(shown);
   const key = rows.map((r) => `${r.member.id}:${r.count}`).join(',');
 

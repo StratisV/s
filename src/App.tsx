@@ -58,6 +58,12 @@ function MainApp() {
     return () => ro.disconnect();
   }, []);
 
+  // While a sheet or the Profile cover is up, the screen behind can't be focused or tapped.
+  const covered = sheetOpen || profileOpen;
+  useEffect(() => {
+    if (stageRef.current) stageRef.current.inert = covered;
+  }, [covered]);
+
   const openSheet = useCallback((target: ItemSheetTarget) => {
     setSheetTarget(target);
     setSheetKey((k) => k + 1);
@@ -66,7 +72,7 @@ function MainApp() {
 
   return (
     <div className={styles.main} data-pushed={sheetOpen || undefined}>
-      <div ref={stageRef} className={styles.stage} aria-hidden={sheetOpen || profileOpen || undefined}>
+      <div ref={stageRef} className={styles.stage}>
         {tab === 'home' ? (
           <HomeScreen onOpenItem={(itemId) => openSheet({ kind: 'edit', itemId })} onOpenProfile={() => setProfileOpen(true)} />
         ) : (
