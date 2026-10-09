@@ -99,12 +99,15 @@ export function MessageMenu({
     }));
   }, [anchor, mine, grid]);
 
-  // Focus: the first reaction (or menu item) on open, the first emoji of the grid when it opens.
+  // Focus: the first reaction (or menu item) once placed (hidden things can't take focus),
+  // the first emoji of the grid when it opens.
+  const placed = layout !== null;
   useEffect(() => {
+    if (!placed) return;
     const root = rootRef.current;
     const first = root?.querySelector<HTMLElement>(grid ? '[data-grid] button' : 'button');
     first?.focus({ preventScroll: true });
-  }, [grid]);
+  }, [grid, placed]);
 
   // Focus goes back to the bubble when the menu goes.
   useEffect(() => {

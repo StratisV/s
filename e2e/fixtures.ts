@@ -83,13 +83,22 @@ export function statsScreen(page: Page): Locator {
   return page.getByRole('region', { name: 'Stats', exact: true });
 }
 
+export function chatScreen(page: Page): Locator {
+  return page.getByRole('region', { name: 'Chat', exact: true });
+}
+
 export function tabs(page: Page): Locator {
   return page.getByRole('navigation', { name: 'Tabs' });
 }
 
-export async function goToTab(page: Page, name: 'Home' | 'Stats'): Promise<void> {
-  await tabs(page).getByRole('button', { name, exact: true }).click();
-  await expect(tabs(page).getByRole('button', { name, exact: true })).toHaveAttribute('aria-current', 'page');
+/** A tab button. Chat is named "Chat, unread messages" while it has its dot. */
+export function tabButton(page: Page, name: 'Home' | 'Chat' | 'Stats'): Locator {
+  return tabs(page).getByRole('button', { name: name === 'Chat' ? /^Chat(, unread messages)?$/ : name, exact: true });
+}
+
+export async function goToTab(page: Page, name: 'Home' | 'Chat' | 'Stats'): Promise<void> {
+  await tabButton(page, name).click();
+  await expect(tabButton(page, name)).toHaveAttribute('aria-current', 'page');
 }
 
 /** An area section on Home. */

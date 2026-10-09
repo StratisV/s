@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DemoBackend, type StorageLike } from '../../lib/backend/demo';
 import { HomeProvider, useHome, type HomeContextValue } from '../../state/HomeProvider';
@@ -18,7 +18,15 @@ class MemoryStorage implements StorageLike {
   }
 }
 
-function Ready({ onOpenProfile, expose }: { onOpenProfile(): void; expose(home: HomeContextValue): void }) {
+function Ready({
+  onOpenProfile,
+  onAddItem,
+  expose,
+}: {
+  onOpenProfile(): void;
+  onAddItem(areaId: string): void;
+  expose(home: HomeContextValue): void;
+}) {
   const home = useHome();
   expose(home);
   if (home.phase.kind !== 'ready' || !home.data) return null;
@@ -28,16 +36,17 @@ function Ready({ onOpenProfile, expose }: { onOpenProfile(): void; expose(home: 
 async function setup() {
   const backend = new DemoBackend({ storage: new MemoryStorage(), search: '?demo-seed=1', latency: 0 });
   const onOpenProfile = vi.fn();
+  const onAddItem = vi.fn();
   let home!: HomeContextValue;
   render(
     <HomeProvider backend={backend}>
       <ConfettiProvider>
-        <Ready onOpenProfile={onOpenProfile} expose={(h) => (home = h)} />
+        <Ready onOpenProfile={onOpenProfile} onAddItem={onAddItem} expose={(h) => (home = h)} />
       </ConfettiProvider>
     </HomeProvider>,
   );
   await screen.findByRole('heading', { name: 'Home', level: 1 });
-  return { onOpenProfile, home: () => home };
+  return { onOpenProfile, onAddItem, home: () => home };
 }
 
 afterEach(cleanup);
@@ -54,6 +63,19 @@ describe('HomeScreen', () => {
     expect(screen.getByRole('button', { name: /^Shower draining slowly ?, Amber\./ })).toBeTruthy();
     // The ring keeps its name.
     expect(screen.getByRole('button', { name: 'Mark Heaters not working as done' })).toBeTruthy();
+  });
+
+  it('has a + in each area header that adds an item to that area', async () => {
+    const { home, onAddItem } = await setup();
+    const areas = home().data!.areas;
+    const garden = areas.find((a) => a.name === 'Garden')!;
+    const section = screen.getByRole('region', { name: 'Garden' });
+    const add = within(section).getByRole('button', { name: 'Add item to Garden' });
+    fireEvent.click(add);
+    expect(onAddItem).toHaveBeenCalledWith(garden.id);
+    // One per area, named after it, and the heading keeps its text.
+    expect(screen.getAllByRole('button', { name: /^Add item to / })).toHaveLength(areas.length);
+    expect(within(section).getByRole('heading', { level: 2 }).textContent).toBe('Garden');
   });
 
   it('shows a way to add an area when there are none left', async () => {

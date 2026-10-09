@@ -41,13 +41,13 @@ export function TabBar({ tab, onTab, onAdd, unread = false, hidden = false }: Ta
             type="button"
             className={styles.tab}
             aria-current={tab === t.id ? 'page' : undefined}
+            aria-label={t.id === 'chat' && unread ? 'Chat, unread messages' : undefined}
             onClick={() => onTab(t.id)}
           >
             <span className={styles.label}>
               {t.label}
               {t.id === 'chat' && unread ? <span className={styles.dot} aria-hidden="true" /> : null}
             </span>
-            {t.id === 'chat' && unread ? <span className="visually-hidden">, unread messages</span> : null}
           </button>
         ))}
       </div>

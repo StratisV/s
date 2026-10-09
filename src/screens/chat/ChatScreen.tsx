@@ -69,6 +69,38 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
 
   const [typing, setTyping] = useState(false);
   const keyboard = useKeyboardInset(typing);
+
+  // Tapping something in the list while typing (a chip, a retry) blurs the field. The tab
+  // bar and composer then move, so wait until that tap has landed before they do.
+  const pointerDown = useRef(false);
+  const blurWaiting = useRef(false);
+  const settleTimer = useRef<ReturnType<typeof setTimeout>>();
+  const onComposerFocus = useCallback((focused: boolean) => {
+    blurWaiting.current = false;
+    if (focused) setTyping(true);
+    else if (pointerDown.current) blurWaiting.current = true;
+    else setTyping(false);
+  }, []);
+  useEffect(() => {
+    const release = () => {
+      if (!pointerDown.current) return;
+      clearTimeout(settleTimer.current);
+      settleTimer.current = setTimeout(() => {
+        pointerDown.current = false;
+        if (blurWaiting.current) {
+          blurWaiting.current = false;
+          setTyping(false);
+        }
+      }, 250);
+    };
+    window.addEventListener('pointerup', release, true);
+    window.addEventListener('pointercancel', release, true);
+    return () => {
+      clearTimeout(settleTimer.current);
+      window.removeEventListener('pointerup', release, true);
+      window.removeEventListener('pointercancel', release, true);
+    };
+  }, []);
   const typingRef = useRef(onTypingChange);
   typingRef.current = onTypingChange;
   useEffect(() => typingRef.current(typing), [typing]);
@@ -254,6 +286,10 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
     <section
       className={styles.screen}
       aria-label="Chat"
+      onPointerDownCapture={() => {
+        clearTimeout(settleTimer.current);
+        pointerDown.current = true;
+      }}
       data-typing={typing || undefined}
       data-keyboard={keyboard > 0 || undefined}
       style={style}
@@ -293,9 +329,7 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
               👋
             </span>
             <p className={styles.emptyTitle}>Say hello</p>
-            <p className={styles.emptyText}>
-              This is a group chat for everyone at {data.household.name.trim() || 'home'}. Messages are kept for good.
-            </p>
+            <p className={styles.emptyText}>Start a chat with everyone in your home. Messages here are kept for good.</p>
           </div>
         ) : null}
 
@@ -335,7 +369,7 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
         initial={chat.draft.get()}
         onDraft={chat.draft.set}
         onSend={chat.send}
-        onFocusChange={setTyping}
+        onFocusChange={onComposerFocus}
       />
 
       {menu && menuEntry ? (

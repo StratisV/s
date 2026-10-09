@@ -12,7 +12,10 @@ const MOVE_TOLERANCE = 8;
 export function useLongPress(onLongPress: () => void, ms = LONG_PRESS_MS) {
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const origin = useRef<{ x: number; y: number } | null>(null);
-  const fired = useRef(false);
+  /** When the current press opened the menu (0: it hasn't). */
+  const firedAt = useRef(0);
+  /** The click that ends a long press must not count as a tap. */
+  const swallowClick = useRef(false);
   const callback = useRef(onLongPress);
   callback.current = onLongPress;
 
@@ -25,13 +28,17 @@ export function useLongPress(onLongPress: () => void, ms = LONG_PRESS_MS) {
 
   const onPointerDown = useCallback(
     (e: PointerEvent) => {
-      if (e.button !== 0 || !e.isPrimary) return;
-      fired.current = false;
+      // A new press: a contextmenu from here on is its own (a right-click), not the end of a long press.
+      firedAt.current = 0;
+      swallowClick.current = false;
+      // Primary button / first finger only (right-click is the contextmenu path).
+      if ((e.button ?? 0) !== 0 || e.isPrimary === false) return;
       origin.current = { x: e.clientX, y: e.clientY };
       clearTimeout(timer.current);
       timer.current = setTimeout(() => {
         origin.current = null;
-        fired.current = true;
+        firedAt.current = Date.now();
+        swallowClick.current = true;
         navigator.vibrate?.(10);
         callback.current();
       }, ms);
@@ -52,16 +59,15 @@ export function useLongPress(onLongPress: () => void, ms = LONG_PRESS_MS) {
       e.preventDefault();
       cancel();
       // A touch long-press also raises contextmenu on some browsers: open once.
-      if (fired.current) return;
-      fired.current = true;
+      if (firedAt.current && Date.now() - firedAt.current < 1500) return;
       callback.current();
     },
     [cancel],
   );
 
   const onClickCapture = useCallback((e: MouseEvent) => {
-    if (!fired.current) return;
-    fired.current = false;
+    if (!swallowClick.current) return;
+    swallowClick.current = false;
     e.preventDefault();
     e.stopPropagation();
   }, []);
