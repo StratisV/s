@@ -10,6 +10,7 @@ import {
   type SupabaseClient,
   type User,
 } from '@supabase/supabase-js';
+import type { ChatChange, ChatMessage, ChatPage } from '../types';
 import type {
   Area,
   AuthUser,
@@ -568,5 +569,25 @@ export class SupabaseBackend implements Backend {
       return runAffecting(this.client.from(table).select('id').eq('id', id).limit(1));
     }
     await runAffecting(this.client.from(table).update(values).eq('id', id).select('id'));
+  }
+
+  // ── Chat (STUB: replaced by the backend agent) ─────────
+  listMessages(_householdId: string, _opts?: { before?: string; limit?: number }): Promise<ChatPage> {
+    return Promise.reject(new Error('chat not implemented'));
+  }
+  getMessages(_ids: string[]): Promise<ChatMessage[]> {
+    return Promise.reject(new Error('chat not implemented'));
+  }
+  sendMessage(_householdId: string, _body: string): Promise<ChatMessage> {
+    return Promise.reject(new Error('chat not implemented'));
+  }
+  deleteMessage(_id: string): Promise<void> {
+    return Promise.reject(new Error('chat not implemented'));
+  }
+  setReaction(_messageId: string, _emoji: string, _on: boolean): Promise<void> {
+    return Promise.reject(new Error('chat not implemented'));
+  }
+  subscribeChat(_householdId: string, _onChange: (change: ChatChange) => void): Unsubscribe {
+    return () => {};
   }
 }

@@ -1,10 +1,14 @@
 import type {
   Area,
   AuthUser,
+  ChatChange,
+  ChatMessage,
+  ChatPage,
   CreateHouseholdInput,
   Household,
   HouseholdData,
   InvitePreview,
+  ISOTimestamp,
   Item,
   ItemDraft,
   JoinHouseholdInput,
@@ -110,4 +114,25 @@ export interface Backend {
   // ── Push ──────────────────────────────────────────────
   savePushSubscription(memberId: string, sub: PushSubscriptionInput): Promise<void>;
   deletePushSubscription(endpoint: string): Promise<void>;
+
+  // ── Chat: one group chat per household, kept forever ──
+  /**
+   * Up to `limit` (default CHAT_PAGE_SIZE) of the newest messages created
+   * strictly before `before` (or the newest overall), returned oldest first,
+   * each with all its reactions.
+   */
+  listMessages(householdId: string, opts?: { before?: ISOTimestamp; limit?: number }): Promise<ChatPage>;
+  /** These messages (with reactions) if they still exist; deleted ids are simply missing. */
+  getMessages(ids: string[]): Promise<ChatMessage[]>;
+  /**
+   * Posts as the signed-in member. The body is trimmed; blank or longer than
+   * TEXT_LIMITS.chatMessage throws BackendError('unknown', 'invalid_input: body').
+   */
+  sendMessage(householdId: string, body: string): Promise<ChatMessage>;
+  /** Deletes one of your own messages (and its reactions). Someone else's: 'not_found'. */
+  deleteMessage(id: string): Promise<void>;
+  /** Adds (on = true) or removes your `emoji` reaction on a message. Idempotent. */
+  setReaction(messageId: string, emoji: string, on: boolean): Promise<void>;
+  /** Reports chat changes made by anyone (including this device) while subscribed. */
+  subscribeChat(householdId: string, onChange: (change: ChatChange) => void): Unsubscribe;
 }

@@ -122,4 +122,19 @@ export const TEXT_LIMITS = {
   areaName: 60,
   /** No input: emoji come from EMOJI_SET. The database still caps what a client can store. */
   memberEmoji: 16,
+  chatMessage: 4000,
 } as const;
+
+/** Messages per chat page (the newest page first, older ones as you scroll up). */
+export const CHAT_PAGE_SIZE = 50;
+
+/** One-tap reactions shown above a message (iOS tapback style). */
+export const QUICK_REACTIONS = ['❤️', '👍', '😂', '😮', '😢', '🙏'] as const;
+
+/** The fuller reaction grid behind the "+" in the reaction bar. */
+export const REACTION_EMOJIS = [
+  '❤️', '👍', '👎', '😂', '😮', '😢', '🙏', '🎉',
+  '🔥', '👏', '💯', '✅', '❌', '👀', '🤔', '😍',
+  '🥳', '😅', '🙌', '💪', '🏡', '🧹', '🛠️', '🦔',
+  '🦆', '🦊', '🌻', '⭐', '☕', '🍕', '😴', '🤞',
+] as const;

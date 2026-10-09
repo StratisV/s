@@ -9,6 +9,7 @@
 import { DEFAULT_ADDRESS, DEFAULT_AREAS, MEMBER_COLORS, SEED_ITEMS, TEXT_LIMITS } from '../constants';
 import { addDays, addMonths, daysBetween, deviceTimeZone, parseISODate, todayIn, zonedParts } from '../logic/dates';
 import { nextDueDate } from '../logic/items';
+import type { ChatChange, ChatMessage, ChatPage } from '../types';
 import type {
   Area,
   AuthUser,
@@ -982,5 +983,25 @@ export class DemoBackend implements Backend {
   /** Demo sign-in can't fail. */
   takeAuthError(): string | null {
     return null;
+  }
+
+  // ── Chat (STUB: replaced by the backend agent) ─────────
+  listMessages(_householdId: string, _opts?: { before?: string; limit?: number }): Promise<ChatPage> {
+    return Promise.reject(new Error('chat not implemented'));
+  }
+  getMessages(_ids: string[]): Promise<ChatMessage[]> {
+    return Promise.reject(new Error('chat not implemented'));
+  }
+  sendMessage(_householdId: string, _body: string): Promise<ChatMessage> {
+    return Promise.reject(new Error('chat not implemented'));
+  }
+  deleteMessage(_id: string): Promise<void> {
+    return Promise.reject(new Error('chat not implemented'));
+  }
+  setReaction(_messageId: string, _emoji: string, _on: boolean): Promise<void> {
+    return Promise.reject(new Error('chat not implemented'));
+  }
+  subscribeChat(_householdId: string, _onChange: (change: ChatChange) => void): Unsubscribe {
+    return () => {};
   }
 }

@@ -151,3 +151,39 @@ export interface PushSubscriptionInput {
   endpoint: string;
   keys: { p256dh: string; auth: string };
 }
+
+/** One emoji reaction by one member on a chat message. */
+export interface ChatReaction {
+  message_id: string;
+  member_id: string;
+  emoji: string;
+  created_at: ISOTimestamp;
+}
+
+/** A message in the household's group chat. Messages are kept forever. */
+export interface ChatMessage {
+  id: string;
+  household_id: string;
+  /** The sender; null if their member row no longer exists. */
+  member_id: string | null;
+  body: string;
+  created_at: ISOTimestamp;
+  /** Every reaction on the message, oldest first. */
+  reactions: ChatReaction[];
+}
+
+/** A page of chat history, oldest message first. */
+export interface ChatPage {
+  messages: ChatMessage[];
+  /** True when older messages exist before the first one in this page. */
+  hasMore: boolean;
+}
+
+/**
+ * What changed in the chat, as reported by Backend.subscribeChat. 'resync'
+ * means "something may have changed; reload the latest page".
+ */
+export type ChatChange =
+  | { type: 'message'; messageId: string; deleted: boolean }
+  | { type: 'reaction'; messageId: string }
+  | { type: 'resync' };

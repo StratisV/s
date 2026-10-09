@@ -33,7 +33,9 @@ src/
   lib/sw-register.ts       service worker registration
   ui/                      shared primitives: Screen, Sheet, ActionSheet, Toggle, Avatar, Toast, Confetti, HomeScene, icons
   lib/preview.ts           `?frame` simulates the 54px status bar inset for screenshots
-  screens/home/            Home screen, item rows, home scene, floating tab bar
+  screens/home/            Home screen (per-area add buttons), item rows, home scene, floating tab bar
+  screens/chat/            Household group chat with emoji reactions
+  state/ChatProvider.tsx   chat state: pages, realtime merge, optimistic send/react, unread dot
   screens/item/            Item sheet (edit / new)
   screens/stats/           Stats screen + donut
   screens/profile/         Profile (full-screen cover) + Household editor (pushed inside Profile, with
@@ -168,6 +170,55 @@ Details beyond the list above (all covered by `supabase/tests`):
 
 `src/lib/backend/types.ts` is authoritative. `BackendError.code` mirrors the RPC error
 messages above (`network` for fetch failures).
+
+## Chat (household group chat)
+
+One group chat per household. Every member can read and post; messages are **kept forever**
+(no retention limit, no automatic deletion). Anyone can react to any message with emoji;
+each member can add several different emoji to the same message, once each. A member can
+delete only their own messages (and remove only their own reactions). Messages cannot be
+edited.
+
+### Tables (migration `supabase/migrations/20261010000100_chat.sql`)
+
+| table | columns |
+| --- | --- |
+| `messages` | id uuid pk, household_id → households on delete cascade, member_id → members on delete set null (null = former member), body text not null (trimmed, 1 to 4000 chars), created_at timestamptz not null default now(); index (household_id, created_at desc) |
+| `message_reactions` | message_id → messages on delete cascade, member_id → members on delete cascade, household_id → households on delete cascade (copied from the message), emoji text not null (1 to 16 chars), created_at; primary key (message_id, member_id, emoji) |
+
+Triggers: on INSERT into `messages`, `member_id := current_member_id()` and `body := btrim(body)`
+(the service role keeps what it sends); on INSERT into `message_reactions`,
+`member_id := current_member_id()` and `household_id` from the message.
+
+RLS: `messages` SELECT and INSERT where `is_household_member(household_id)`, DELETE where
+`member_id = current_member_id()`, no UPDATE. `message_reactions` SELECT and INSERT where
+member of the household, DELETE where `member_id = current_member_id()`. Grants: messages
+select, insert (household_id, body), delete; message_reactions select, insert (message_id,
+emoji), delete. `anon` gets nothing. Both tables join the `supabase_realtime` publication.
+
+### Backend methods (`src/lib/backend/types.ts`)
+
+`listMessages(householdId, { before?, limit? })` pages backwards by `created_at` (oldest first
+within a page, `hasMore` when older ones exist); `getMessages(ids)` reloads specific messages
+with reactions; `sendMessage`, `deleteMessage`, `setReaction(messageId, emoji, on)`;
+`subscribeChat(householdId, onChange)` reports `ChatChange` events: a message added or deleted,
+a reaction changed on a message, or `resync`. The Supabase backend maps realtime events on
+both tables to these (a DELETE carries the primary key, which is enough); the demo backend
+emits them for its own writes and on `storage` events from other tabs.
+
+### UI
+
+- Floating tab bar: **Home, Chat, Stats**. The round + (new item) shows on Home and Stats, not
+  on Chat. A small dot on Chat means unread messages from others (last-read time is kept per
+  member on this device).
+- Chat screen: large title "Chat", message bubbles (own on the right in the tint colour, others
+  on the left in light grey with the sender's emoji and name), day separators, reactions as
+  small chips under a bubble (tap a chip to add or remove that reaction), long-press (or the
+  context-menu key / right-click) on a bubble opens the reaction bar (six quick reactions plus
+  "+" for the full grid) with Copy and, for your own messages, Delete. Older messages load as
+  you scroll up. The composer sits above the tab bar; while typing, the tab bar hides and the
+  composer follows the iPhone keyboard (`visualViewport`).
+- Home: each area header has a small + that opens the new-item sheet with that area chosen.
 
 ## Edge Function `scheduler` (runs every 15 minutes via pg_cron + pg_net)
 
