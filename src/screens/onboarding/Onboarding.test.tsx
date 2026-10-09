@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { DemoBackend, DEMO_STORAGE_KEY, DEMO_USER, type StorageLike } from '../../lib/backend/demo';
+import { BackendError } from '../../lib/backend/types';
 import { DEFAULT_ADDRESS, DEFAULT_AREAS } from '../../lib/constants';
 import type { PushState } from '../../lib/push';
 import { HomeProvider, useHome } from '../../state/HomeProvider';
@@ -252,6 +253,34 @@ describe('Onboarding', () => {
     expect(data.household.name).toBe('Alderbrook');
     expect(data.members.map((m) => [m.name, m.emoji, m.role])).toContainEqual(['Stratis', '🐻', 'member']);
     expect(localStorage.getItem('homeos.invite')).toBeNull();
+  });
+
+  it('lets you retry when the invite could not be checked', async () => {
+    const owner = demo({ id: 'user-shea', email: 'shea@example.com', name: 'Shea' });
+    await owner.signInWithGoogle();
+    await owner.createHousehold({
+      name: 'Alderbrook',
+      address: '',
+      timezone: 'Europe/London',
+      memberName: 'Shea',
+      memberEmoji: '🦆',
+      areas: ['Kitchen'],
+      items: [],
+    });
+    const token = await owner.createInvite();
+    await owner.signOut();
+
+    window.history.replaceState(null, '', `/?invite=${token}`);
+    const backend = demo();
+    const preview = vi.spyOn(backend, 'getInvitePreview').mockRejectedValueOnce(new BackendError('network'));
+    renderApp(backend);
+    await signInToProfile();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByRole('heading', { name: 'Couldn’t check your invite' });
+    expect(screen.getByText('No connection. Try again in a moment.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Try Again' }));
+    expect(await screen.findByRole('heading', { name: 'Join Alderbrook' })).toBeTruthy();
+    expect(preview).toHaveBeenCalledTimes(2);
   });
 
   it('explains an invalid invite and offers to set up a new home instead', async () => {

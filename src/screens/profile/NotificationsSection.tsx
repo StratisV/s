@@ -83,8 +83,8 @@ function PushCaption({ state }: { state: PushState }) {
     case 'needs-install':
       return (
         <p className={list.caption}>
-          To get notifications on iPhone, add home.os to your Home Screen: tap Share
-          <ShareIcon size={15} aria-label="" />, then Add to Home Screen.
+          To get notifications on iPhone, add home.os to your Home Screen: tap Share{' '}
+          <ShareIcon size={15} />, then Add to Home Screen.
         </p>
       );
     case 'unsupported':

@@ -84,7 +84,7 @@ export function AreaList({ scrollRef }: { scrollRef: RefObject<HTMLDivElement> }
     focusGrip.current = null;
     const grip = listRef.current?.querySelector<HTMLElement>(`[data-grip="${id}"]`);
     if (grip && document.activeElement !== grip) grip.focus({ preventScroll: true });
-    grip?.scrollIntoView({ block: 'nearest' });
+    grip?.scrollIntoView?.({ block: 'nearest' });
   }, [areas]);
 
   useEffect(focusNewArea, [areas, focusNewArea]);
@@ -125,7 +125,9 @@ export function AreaList({ scrollRef }: { scrollRef: RefObject<HTMLDivElement> }
     const update = () => {
       const dy = clamp(pointerY - startY + (scroller.scrollTop - startScroll), minDy, maxDy);
       const center = centers[from] + dy;
-      to = centers.reduce((n, c, i) => (i !== from && c < center ? n + 1 : n), 0);
+      // Rows whose centre the dragged row has passed end up above it. `<=` below
+      // the start, so pulling all the way down (clamped onto the last centre) reaches the end.
+      to = centers.reduce((n, c, i) => ((i < from && c < center) || (i > from && c <= center) ? n + 1 : n), 0);
       setDrag({ id, from, to, dy, step, dropping: false });
     };
 

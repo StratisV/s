@@ -60,14 +60,14 @@
   min-width: 0;
 }
 
-/* Scroll-edge fade under the status bar (same as the tab screens). */
+/* Scroll-edge fade under the status bar, same as the tab screens (58px with the 54px inset, solid to 55%). */
 .fade {
   position: absolute;
   left: 0;
   right: 0;
   top: 0;
-  height: calc(var(--top-inset) + 14px);
-  background: linear-gradient(var(--bg) calc(var(--top-inset) * 0.95), rgba(242, 242, 247, 0));
+  height: calc(var(--top-inset) + 4px);
+  background: linear-gradient(var(--bg) 55%, rgba(242, 242, 247, 0));
   z-index: 4;
   pointer-events: none;
 }
@@ -144,6 +144,11 @@
 
 .hero .title {
   margin-top: 26px;
+}
+
+/* Under a large title (one line, like the Home address): 20px line, as on the tab screens. */
+.titleBlock .subtitle {
+  line-height: 20px;
 }
 
 .hero .title,
