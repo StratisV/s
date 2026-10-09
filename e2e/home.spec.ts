@@ -23,9 +23,16 @@ import {
   type Page,
 } from './fixtures';
 
-/** The home scene (sky, house, duck and hedgehog). */
-function scene(page: Page): Locator {
-  return page.getByRole('img', { name: /^A duck and a hedgehog outside their house/ });
+/** The hero at the top of the screen (sky, house, duck and hedgehog). */
+function hero(page: Page): Locator {
+  return page.locator('[data-phase][data-tone]').first();
+}
+
+/** Animations running in the hero (paused ones, off screen or for Reduce Motion, don't count). */
+function running(page: Page): Promise<number> {
+  return hero(page).evaluate(
+    (el) => el.getAnimations({ subtree: true }).filter((a) => a.playState === 'running').length,
+  );
 }
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
@@ -38,7 +45,7 @@ test.describe('Home', () => {
   test('shows the address and the areas in the household order', async ({ page }) => {
     const home = homeScreen(page);
     await expect(home.getByText('21 Alderbrook Road', { exact: true })).toBeVisible();
-    await expect(home.getByRole('img', { name: /duck and a hedgehog/ })).toBeVisible();
+    await expect(hero(page)).toBeVisible();
     await expect(areaHeadings(page)).toHaveText(DEFAULT_AREAS);
     await expect(area(page, 'Bedroom Small').getByText('Nothing to do', { exact: true })).toBeVisible();
   });
@@ -75,9 +82,9 @@ test.describe('Home', () => {
     // A date that is not missed stays in the secondary colour.
     await expect(meta(page, 'Mirror lights not level').getByText('Tue 20 Oct')).toHaveCSS('color', 'rgb(110, 110, 115)');
 
-    // The note is shown under the title; an item without one has no note line.
-    await expect(row(page, 'Mirror lights not level')).toContainText('One is 3cm higher.');
-    await expect(rowButton(page, 'Change the filter').locator(':scope > span')).toHaveCount(2);
+    // The note follows who and when on the second line; an item without one ends at the date.
+    await expect(row(page, 'Mirror lights not level')).toContainText('Tue 20 Oct · One is 3cm higher.');
+    await expect(rowButton(page, 'Change the filter').locator(':scope > span').last().locator(':scope > span')).toHaveCount(1);
   });
 
   test('status rings are coloured by RAG', async ({ page }) => {
@@ -282,114 +289,62 @@ test.describe('Confetti and motion', () => {
   test.describe('with Reduce Motion', () => {
     test.use({ contextOptions: { reducedMotion: 'reduce' } });
 
-    test('the animals and stars stay still and the burst is small', async ({ page }) => {
-      await expect(scene(page).locator('[data-animal="duck"]')).toHaveCSS('animation-name', 'none');
-      await expect(scene(page).locator('[data-animal="hedgehog"]')).toHaveCSS('animation-name', 'none');
+    test('the hero stands still and the burst is small', async ({ page }) => {
+      await expect(hero(page)).toBeVisible();
+      expect(await running(page)).toBe(0);
       await ring(page, 'Olive oil').click();
       await expect(page.locator('[data-confetti] img')).toHaveCount(6);
 
       await page.clock.setSystemTime(new Date('2026-10-08T22:00:00+01:00'));
       await page.reload();
-      expect(await twinkles(page)).toEqual(['none']);
+      await expect(hero(page)).toHaveAttribute('data-phase', 'night');
+      expect(await running(page)).toBe(0);
     });
   });
 
-  test('the animals move without Reduce Motion, and the stars twinkle at night', async ({ page }) => {
-    await expect(scene(page).locator('[data-animal="duck"]')).not.toHaveCSS('animation-name', 'none');
-    await expect(scene(page).locator('[data-animal="hedgehog"]')).not.toHaveCSS('animation-name', 'none');
-    // Nothing twinkles by day.
-    expect(await twinkles(page)).toEqual(['none']);
-    await page.clock.setSystemTime(new Date('2026-10-08T22:00:00+01:00'));
-    await page.reload();
-    const names = await twinkles(page);
-    expect(names).toHaveLength(1);
-    expect(names[0]).toMatch(/twinkle/);
+  test('the hero moves without Reduce Motion', async ({ page }) => {
+    await expect(hero(page)).toBeVisible();
+    await expect.poll(() => running(page)).toBeGreaterThan(0);
   });
 });
 
-/** The scene's box, and the boxes (relative to it) of the suns that can be seen. */
-async function sunBoxes(page: Page) {
-  return scene(page).evaluate((el) => {
-    const b = el.getBoundingClientRect();
-    const shown = Array.from(el.querySelectorAll<HTMLElement>('[data-side]'))
-      .filter((s) => Number(getComputedStyle(s).opacity) > 0.5)
-      .map((s) => {
-        const r = s.getBoundingClientRect();
-        return { x: r.x - b.x, y: r.y - b.y, width: r.width, height: r.height };
-      });
-    return { box: { width: b.width, height: b.height }, shown };
+test.describe('Hero', () => {
+  test('runs from the very top of the screen, with the title, address and avatar on it', async ({ page }) => {
+    const box = (await hero(page).boundingBox())!;
+    expect(box.y).toBe(0);
+    expect(box.width).toBe(402);
+    for (const el of [
+      homeScreen(page).getByRole('heading', { name: 'Home', level: 1 }),
+      homeScreen(page).getByText('21 Alderbrook Road'),
+      homeScreen(page).getByRole('button', { name: 'Profile' }),
+    ]) {
+      const b = (await el.boundingBox())!;
+      expect(b.y + b.height).toBeLessThan(box.y + box.height);
+    }
   });
-}
 
-/** The distinct animations running on the scene's stars. */
-async function twinkles(page: Page): Promise<string[]> {
-  const stars = scene(page).locator('[data-star]');
-  await expect(stars.first()).toBeAttached();
-  const names = await stars.evaluateAll((els) => els.map((el) => getComputedStyle(el, '::before').animationName));
-  return [...new Set(names)];
-}
-
-test.describe('Home scene', () => {
-  test('a green duck facing the house on the left, a brown hedgehog on the right', async ({ page }) => {
-    const duck = scene(page).locator('img[data-animal="duck"]');
-    const hedgehog = scene(page).locator('img[data-animal="hedgehog"]');
-    await expect(duck).toHaveAttribute('alt', '');
-    await expect(hedgehog).toHaveAttribute('alt', '');
-    // No emoji animals in the scene (the house is still the 🏡).
-    await expect(scene(page)).not.toContainText(/🦔|🦆/);
-    // Drawn: the duck mostly green, the hedgehog mostly brown.
-    const colours = await page.evaluate(async () => {
-      const tally = async (img: HTMLImageElement) => {
-        await img.decode();
-        const c = document.createElement('canvas');
-        c.width = c.height = 64;
-        const g = c.getContext('2d')!;
-        g.drawImage(img, 0, 0, 64, 64);
-        const px = g.getImageData(0, 0, 64, 64).data;
-        let green = 0;
-        let brown = 0;
-        let solid = 0;
-        for (let i = 0; i < px.length; i += 4) {
-          const [r, gr, b, a] = [px[i], px[i + 1], px[i + 2], px[i + 3]];
-          if (a < 200) continue;
-          solid++;
-          if (gr > r + 25 && gr > b + 25) green++;
-          if (r > gr + 20 && gr > b + 10 && r < 200) brown++;
-        }
-        return { green: green / solid, brown: brown / solid };
-      };
-      const imgs = (name: string) => document.querySelector<HTMLImageElement>(`[role="img"] img[data-animal="${name}"]`)!;
-      return { duck: await tally(imgs('duck')), hedgehog: await tally(imgs('hedgehog')) };
-    });
-    expect(colours.duck.green).toBeGreaterThan(0.6);
-    expect(colours.hedgehog.brown).toBeGreaterThan(0.4);
-    expect(colours.hedgehog.green).toBe(0);
-    // Either side of the house, both on the ground.
-    const [d, h, house] = await Promise.all([duck.boundingBox(), hedgehog.boundingBox(), scene(page).getByText('🏡').boundingBox()]);
-    expect(d!.x + d!.width).toBeLessThan(house!.x + 12);
-    expect(h!.x).toBeGreaterThan(house!.x + house!.width - 12);
+  test('the drawing is decorative; a hidden sentence describes it', async ({ page }) => {
+    await expect(hero(page).locator('[aria-hidden="true"]').first()).toBeAttached();
+    await expect(hero(page)).toContainText(/duck/);
+    await expect(hero(page)).toContainText(/hedgehog/);
   });
 
   test('follows the sun in London through the day (8 October)', async ({ page }) => {
-    const sky = scene(page);
-    // 10:00 (the fixtures' NOW): daytime, the 3a look.
+    const sky = hero(page);
+    // 10:00 (the fixtures' NOW): daytime.
     await expect(sky).toHaveAttribute('data-phase', 'day');
-    await expect(sky).toHaveAccessibleName('A duck and a hedgehog outside their house in the daytime');
-    await expect(sky).toHaveCSS('--sky-top', 'rgb(234, 243, 255)');
-
-    const expected: [string, string, string][] = [
-      ['03:00', 'night', 'at night'],
-      ['07:30', 'sunrise', 'at sunrise'],
-      ['12:00', 'day', 'in the daytime'],
-      ['18:05', 'sunset', 'at sunset'],
-      ['18:45', 'dusk', 'at dusk'],
+    const expected: [string, string][] = [
+      ['03:00', 'night'],
+      ['07:30', 'sunrise'],
+      ['12:00', 'day'],
+      ['18:05', 'sunset'],
+      ['18:45', 'dusk'],
     ];
     // Recomputed every minute: move the clock, let a minute pass.
-    for (const [time, phase, phrase] of expected) {
+    for (const [time, phase] of expected) {
       await page.clock.setSystemTime(new Date(`2026-10-08T${time}:00+01:00`));
       await page.clock.runFor(61_000);
       await expect(sky, time).toHaveAttribute('data-phase', phase);
-      await expect(sky).toHaveAccessibleName(`A duck and a hedgehog outside their house ${phrase}`);
     }
     // And right away when the app is opened at that time.
     for (const [time, phase] of expected) {
@@ -399,116 +354,47 @@ test.describe('Home scene', () => {
     }
   });
 
-  test('night: navy sky, moon and stars, the house lit; the sun sets on the right', async ({ page }) => {
-    await page.clock.setSystemTime(new Date('2026-10-08T22:00:00+01:00'));
-    await page.reload();
-    const sky = scene(page);
-    await expect(sky).toHaveAttribute('data-phase', 'night');
-    await expect(sky).toHaveCSS('--sky-top', 'rgb(11, 21, 51)');
-    await expect(sky).toHaveCSS('--moon', '1');
-    await expect(sky).toHaveCSS('--lamps', '1');
-
-    await expect(sky.locator('[data-side]').first()).toHaveCSS('opacity', '0');
-    await expect(sky.locator('[data-side]').last()).toHaveCSS('opacity', '0');
-
-    // Sunrise on the left (east), sunset on the right (west), low in both.
-    for (const [time, side] of [
-      ['07:45', 'east'],
-      ['17:55', 'west'],
-    ] as const) {
-      await page.clock.setSystemTime(new Date(`2026-10-08T${time}:00+01:00`));
-      await page.reload();
-      await expect(sky).toHaveAttribute('data-sun', side);
-      const { box, shown } = await sunBoxes(page);
-      expect(shown, time).toHaveLength(1);
-      const sun = shown[0];
-      if (side === 'east') expect(sun.x + sun.width / 2).toBeLessThan(box.width / 4);
-      else expect(sun.x + sun.width / 2).toBeGreaterThan((box.width * 3) / 4);
-      // Low: its centre in the bottom half of the sky (the horizon is at 66%).
-      expect(sun.y + sun.height / 2).toBeGreaterThan(box.height * 0.33);
-    }
-  });
-
-  test('by day the sun is in the 3a spot, never on the house, morning or afternoon', async ({ page }) => {
-    const sky = scene(page);
-    const house = sky.getByText('🏡');
-    for (const at of [
-      '2026-10-08T09:30:00+01:00',
-      '2026-10-08T12:50:00+01:00', // solar noon
-      '2026-10-08T15:30:00+01:00',
-      '2026-12-21T12:00:00Z',
-      '2026-06-21T13:00:00+01:00',
-    ]) {
-      await page.clock.setSystemTime(new Date(at));
-      await page.reload();
-      await expect(sky, at).toHaveAttribute('data-phase', 'day');
-      const { box, shown } = await sunBoxes(page);
-      expect(shown, at).toHaveLength(1);
-      const sun = shown[0];
-      // 28px circle, 22px from the top and 28px from the right (design/README.md "Home scene card").
-      expect(sun.width).toBe(28);
-      expect(sun.y).toBeCloseTo(22, 0);
-      expect(box.width - (sun.x + sun.width)).toBeCloseTo(28, 0);
-      // Clear of the house, halo (9px) and all.
-      const [h, s] = [(await house.boundingBox())!, (await sky.boundingBox())!];
-      const hx = h.x - s.x;
-      const hy = h.y - s.y;
-      const apart =
-        sun.x - 9 > hx + h.width || sun.x + sun.width + 9 < hx || sun.y - 9 > hy + h.height || sun.y + sun.height + 9 < hy;
-      expect(apart, at).toBe(true);
-    }
-    // The morning sun climbs on the left first.
-    await page.clock.setSystemTime(new Date('2026-10-08T08:15:00+01:00'));
-    await page.reload();
-    await expect(sky).toHaveAttribute('data-sun', 'east');
-  });
-
-  test('back from the background a day later, the sun is just in its new place (no glide)', async ({ page }) => {
-    const sky = scene(page);
-    const lift = () => sky.evaluate((el) => Number(getComputedStyle(el).getPropertyValue('--sun-lift')));
-    await page.clock.setSystemTime(new Date('2026-10-08T17:30:00+01:00'));
-    await page.reload();
-    await expect(sky).toHaveAttribute('data-sun', 'west');
-    const before = await lift();
-    expect(before).toBeLessThan(0.9);
-
-    // The next morning, low in the east: the app comes back into view.
-    await page.clock.setSystemTime(new Date('2026-10-09T07:50:00+01:00'));
-    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-    await expect(sky).toHaveAttribute('data-sun', 'east');
-    await page.waitForTimeout(120);
-    const soon = await lift();
-    await page.waitForTimeout(2000);
-    // Already there after about 0.1s, not part-way through a 1.6s glide.
-    expect(soon).toBeCloseTo(await lift(), 3);
-    expect(Math.abs(soon - before)).toBeGreaterThan(0.1);
-
-    // A minute passing still glides (the transitions are back on).
-    await expect(sky).not.toHaveAttribute('data-jump');
-    await expect(sky).toHaveCSS('transition-property', /--sun-lift/);
+  test('a strip of sky sits behind the status bar once the hero has scrolled away', async ({ page }) => {
+    // As on an iPhone: a 54px status bar.
+    await page.evaluate(() => document.documentElement.style.setProperty('--top-inset', '54px'));
+    const strip = page.locator('[data-status-sky]');
+    await expect(strip).toHaveCSS('height', '54px');
+    await expect(strip).toHaveCSS('opacity', '0');
+    await homeScreen(page).evaluate((el) => {
+      (el.firstElementChild as HTMLElement).scrollTop = 900;
+    });
+    await expect(strip).toHaveCSS('opacity', '1');
+    // The tab switch is held just under it.
+    await expect.poll(async () => Math.round((await page.getByRole('navigation', { name: 'Tabs' }).boundingBox())!.y)).toBe(54 + 6);
+    await homeScreen(page).evaluate((el) => {
+      (el.firstElementChild as HTMLElement).scrollTop = 0;
+    });
+    await expect(strip).toHaveCSS('opacity', '0');
   });
 
   test('the Welcome screen shows the same sky', async ({ page }) => {
     await page.clock.setSystemTime(new Date('2026-10-08T18:05:00+01:00'));
     await openFresh(page);
-    await expect(scene(page)).toHaveAttribute('data-phase', 'sunset');
-    await expect(scene(page)).toHaveAccessibleName('A duck and a hedgehog outside their house at sunset');
+    await expect(hero(page)).toHaveAttribute('data-phase', 'sunset');
+    expect((await hero(page).boundingBox())!.y).toBe(0);
   });
 });
 
 test.describe('Long text', () => {
-  test('a long note is cut off at two lines on Home', async ({ page }) => {
+  test('a long note is cut off at the end of its one line on Home', async ({ page }) => {
     const sheet = await openItem(page, 'Olive oil');
     await sheet.getByLabel('Note', { exact: true }).fill(
       'Restocked, 5L tin is in the pantry. ' .repeat(8).trim(),
     );
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
-    const note = rowButton(page, 'Olive oil').locator(':scope > span').nth(1);
-    await expect(note).toContainText('Restocked, 5L tin');
-    const box = (await note.boundingBox())!;
-    expect(box.height).toBeLessThanOrEqual(41);
-    expect(box.height).toBeGreaterThan(30);
+    const line = rowButton(page, 'Olive oil').locator(':scope > span').nth(1);
+    await expect(line).toContainText('Restocked, 5L tin');
+    const box = (await line.boundingBox())!;
+    expect(box.height).toBeLessThanOrEqual(19);
+    await expect(line).toHaveCSS('text-overflow', 'ellipsis');
+    // The whole row stays two lines tall.
+    expect((await rowButton(page, 'Olive oil').boundingBox())!.height).toBeLessThan(62);
   });
 });
 

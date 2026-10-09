@@ -141,8 +141,8 @@ export async function titlesIn(page: Page, areaName: string): Promise<string[]> 
 
 /** The meta line of a row: `🦆 Shea · Tue 20 Oct`. */
 export function meta(page: Page, title: string): Locator {
-  // The last line of the row's open button.
-  return rowButton(page, title).locator(':scope > span').last();
+  // Who and when, at the start of the row's second line (the note follows it).
+  return rowButton(page, title).locator('[data-meta]');
 }
 
 /** The undo / error toast showing `message`. */

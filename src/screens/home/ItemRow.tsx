@@ -116,19 +116,21 @@ export function ItemRow({ item, meta, onOpen, onComplete }: ItemRowProps) {
           <span className="visually-hidden">{spoken}</span>
         </span>
         <span className={styles.meta}>
-          {meta.who}
-          {meta.date ? (
-            <>
-              {' · '}
-              <span
-                className={styles.date}
-                data-missed={meta.missed || undefined}
-                data-updated={maintained || undefined}
-              >
-                {meta.date}
-              </span>
-            </>
-          ) : null}
+          <span data-meta="">
+            {meta.who}
+            {meta.date ? (
+              <>
+                {' · '}
+                <span
+                  className={styles.date}
+                  data-missed={meta.missed || undefined}
+                  data-updated={maintained || undefined}
+                >
+                  {meta.date}
+                </span>
+              </>
+            ) : null}
+          </span>
           {item.note.trim() ? (
             <>
               {' · '}

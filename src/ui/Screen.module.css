@@ -89,7 +89,7 @@
   position: sticky;
   top: var(--top-inset);
   z-index: 5;
-  padding: 2px 16px 10px;
+  padding: 6px 16px 10px;
   background: var(--bg);
   transition:
     background-color 0.2s ease,
@@ -97,7 +97,6 @@
 }
 
 .dock[data-stuck] {
-  padding-top: 8px;
   background: rgba(242, 242, 247, 0.94);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);

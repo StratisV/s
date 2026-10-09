@@ -49,7 +49,7 @@ function stateRow(page: Page, title: string): Locator {
 
 /** The meta line of a state's row: `🦊 Ela · Updated Thu 8 Oct`. */
 function stateMeta(page: Page, title: string): Locator {
-  return stateButton(page, title).locator(':scope > span').last();
+  return stateButton(page, title).locator('[data-meta]');
 }
 
 /** Focuses a control as the keyboard would (so it matches :focus-visible). */
