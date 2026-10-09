@@ -13,8 +13,17 @@ import { createClient, type SupabaseClient, type User } from '@supabase/supabase
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { addDays, todayIn } from '../logic/dates';
 import { seedItemsFor } from '../logic/items';
-import type { Area, CreateHouseholdInput, HouseholdData, ItemDraft, PushSubscriptionInput } from '../types';
-import { SupabaseBackend, toAuthUser, toBackendError, toHHMM } from './supabase';
+import { CHAT_PAGE_SIZE } from '../constants';
+import type {
+  Area,
+  ChatChange,
+  ChatPage,
+  CreateHouseholdInput,
+  HouseholdData,
+  ItemDraft,
+  PushSubscriptionInput,
+} from '../types';
+import { SupabaseBackend, instantOf, toAuthUser, toBackendError, toHHMM } from './supabase';
 import { BackendError, type BackendErrorCode } from './types';
 
 async function rejectsWith(p: Promise<unknown>, code: BackendErrorCode, message?: RegExp) {
@@ -565,7 +574,7 @@ describe('SupabaseBackend offline: auth and realtime wiring', () => {
     const stop = backend.subscribeChat('h1', (c) => seen.push(c));
 
     expect(rt.client.channel).toHaveBeenCalledTimes(1);
-    expect(String(rt.client.channel.mock.calls[0][0])).toMatch(/^chat:h1:/);
+    expect(String((rt.client.channel.mock.calls[0] as unknown[])[0])).toMatch(/^chat:h1:/);
     // Deletes are filtered too: with replica identity full the old row carries household_id.
     expect(rt.handlers.map((h) => [h.type, h.filter.table, h.filter.filter, h.filter.event, h.filter.schema])).toEqual([
       ['postgres_changes', 'messages', 'household_id=eq.h1', '*', 'public'],
@@ -875,6 +884,7 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
   let memberA = '';
   let memberB = '';
   let memberC = '';
+  let hidC = '';
 
   async function createPerson(key: Person['key'], fullName: string): Promise<Person> {
     const email = `homeos-${key}-${runId}@example.com`;
@@ -1064,7 +1074,7 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     await rejectsWith(C().createInvite(), 'not_found');
 
     // C can still start a household of their own, and it stays separate.
-    const hidC = await C().createHousehold({
+    hidC = await C().createHousehold({
       name: 'Other Place',
       address: '',
       timezone: 'Not/AZone',
@@ -1373,6 +1383,314 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     }
     // Unsubscribing removes the channel.
     expect(await waitFor(() => people.a.client.getChannels().length === 0, 5000)).toBe(true);
+  });
+
+  // ── Chat ────────────────────────────────────────────────
+
+  /** Messages as the service role writes them: with chosen times (members cannot set created_at). */
+  async function seedMessages(rows: { member_id: string; body: string; created_at: string }[]) {
+    const { data, error } = await admin
+      .from('messages')
+      .insert(rows.map((r) => ({ household_id: hidA, ...r })))
+      .select('id, body, created_at');
+    if (error) throw error;
+    return data as { id: string; body: string; created_at: string }[];
+  }
+
+  /** A household's message ids as stored, in chat order (created_at to the microsecond, then id). */
+  async function storedMessageIds(hid: string): Promise<string[]> {
+    const { data, error } = await admin.from('messages').select('id').eq('household_id', hid).order('created_at').order('id');
+    if (error) throw error;
+    return data.map((m) => m.id as string);
+  }
+
+  async function storedReactions(messageId: string) {
+    const { data, error } = await admin
+      .from('message_reactions')
+      .select('member_id, household_id, emoji')
+      .eq('message_id', messageId)
+      .order('created_at');
+    if (error) throw error;
+    return data;
+  }
+
+  it('chat: members post and read; an outsider sees nothing and cannot post', async () => {
+    const fromA = await A().sendMessage(hidA, '  The engineer is here \n');
+    expect(fromA).toEqual({
+      id: fromA.id,
+      household_id: hidA,
+      member_id: memberA,
+      body: 'The engineer is here',
+      created_at: fromA.created_at,
+      reactions: [],
+    });
+    const fromB = await B().sendMessage(hidA, 'Thanks, I will put the kettle on');
+    expect(fromB).toMatchObject({ household_id: hidA, member_id: memberB, reactions: [] });
+    expect(instantOf(fromB.created_at)).toBeGreaterThan(instantOf(fromA.created_at));
+
+    const page = await B().listMessages(hidA);
+    expect(page).toEqual({ messages: [fromA, fromB], hasMore: false });
+    expect(await A().listMessages(hidA)).toEqual(page);
+    expect(await A().getMessages([fromB.id, 'tmp-1', fromA.id, fromB.id])).toEqual([fromA, fromB]);
+
+    // TEXT_LIMITS.chatMessage, in characters as Postgres counts them: an emoji is one.
+    const longest = await A().sendMessage(hidA, '🦔'.repeat(4000));
+    expect(Array.from(longest.body)).toHaveLength(4000);
+    for (const body of ['', '   ', '\n\t ', 'x'.repeat(4001), '🦔'.repeat(4001)]) {
+      await rejectsWith(A().sendMessage(hidA, body), 'unknown', /^invalid_input: body$/);
+    }
+    await A().deleteMessage(longest.id);
+
+    // C belongs to another household: A's chat is invisible and closed to them.
+    await rejectsWith(C().listMessages(hidA), 'not_found');
+    await rejectsWith(C().listMessages(hidA, { before: fromB.created_at }), 'not_found');
+    await rejectsWith(C().sendMessage(hidA, 'Hi'), 'not_found');
+    expect(await C().getMessages([fromA.id, fromB.id])).toEqual([]);
+    await rejectsWith(C().setReaction(fromA.id, '👍', true), 'not_found');
+    await C().setReaction(fromA.id, '👍', false);
+    await rejectsWith(C().deleteMessage(fromA.id), 'not_found');
+
+    // C's own chat starts empty and stays out of A's sight.
+    expect(await C().listMessages(hidC)).toEqual({ messages: [], hasMore: false });
+    const fromC = await C().sendMessage(hidC, 'Only for the shed');
+    expect(fromC).toMatchObject({ household_id: hidC, member_id: memberC });
+    expect(await A().getMessages([fromC.id])).toEqual([]);
+    await rejectsWith(A().listMessages(hidC), 'not_found');
+    await rejectsWith(A().setReaction(fromC.id, '👍', true), 'not_found');
+    await rejectsWith(A().deleteMessage(fromC.id), 'not_found');
+
+    expect(await storedMessageIds(hidA)).toEqual([fromA.id, fromB.id]);
+    expect(await storedMessageIds(hidC)).toEqual([fromC.id]);
+    expect(await storedReactions(fromA.id)).toEqual([]);
+  });
+
+  it('chat: pages backwards through the whole history, to the microsecond', async () => {
+    const current = await storedMessageIds(hidA);
+    // Older history: a regular stretch longer than two pages, two messages one microsecond
+    // apart, and three sharing one created_at (as rows written in a single transaction do).
+    const t = (time: string) => `2026-01-01T${time}+00:00`;
+    const regular = Array.from({ length: 2 * CHAT_PAGE_SIZE + 5 }, (_, i) => ({
+      member_id: i % 2 ? memberB : memberA,
+      body: `History ${i + 1}`,
+      created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+    }));
+    const seeded = await seedMessages([
+      ...regular,
+      { member_id: memberA, body: 'One microsecond', created_at: t('12:00:00.000001') },
+      { member_id: memberB, body: 'Then the next', created_at: t('12:00:00.000002') },
+      { member_id: memberA, body: 'Before the group', created_at: t('12:30:00') },
+      ...['Group 1', 'Group 2', 'Group 3'].map((body) => ({ member_id: memberB, body, created_at: t('13:00:00.5') })),
+      { member_id: memberA, body: 'After the group', created_at: t('13:00:01') },
+      { member_id: memberA, body: 'Later still', created_at: t('13:00:02') },
+    ]);
+    const seededAt = (body: string) => seeded.find((m) => m.body === body)!.created_at;
+    const expected = await storedMessageIds(hidA);
+    expect(expected).toHaveLength(current.length + seeded.length);
+    expect(expected.slice(-current.length)).toEqual(current);
+
+    /** Every page from the newest back, oldest page first. */
+    async function readAll(limit?: number): Promise<ChatPage[]> {
+      const pages: ChatPage[] = [];
+      let before: string | undefined;
+      for (;;) {
+        const page = await B().listMessages(hidA, { before, limit });
+        pages.unshift(page);
+        if (!page.hasMore) return pages;
+        expect(page.messages.length).toBeGreaterThan(0);
+        before = page.messages[0].created_at;
+      }
+    }
+    const ids = (pages: ChatPage[]) => pages.flatMap((p) => p.messages.map((m) => m.id));
+
+    const pages = await readAll();
+    expect(pages.length).toBeGreaterThanOrEqual(3);
+    expect(pages.at(-1)!.messages).toHaveLength(CHAT_PAGE_SIZE);
+    expect(ids(pages)).toEqual(expected);
+    for (const page of pages) {
+      const times = page.messages.map((m) => instantOf(m.created_at));
+      expect([...times].sort((x, y) => x - y)).toEqual(times);
+    }
+    // Tiny pages cross the microsecond pair and the shared created_at at every alignment.
+    for (const limit of [1, 2, 3]) expect(ids(await readAll(limit)), `pages of ${limit}`).toEqual(expected);
+
+    // `before` is strict and keeps its microseconds.
+    expect(seededAt('Then the next')).toMatch(/\.000002\+00(:00)?$/);
+    const previous = await A().listMessages(hidA, { before: seededAt('Then the next'), limit: 1 });
+    expect(previous.messages.map((m) => m.body)).toEqual(['One microsecond']);
+    // A page that would end inside the group stops before it; a group bigger than the page comes whole.
+    const stopsShort = await A().listMessages(hidA, { before: seededAt('Later still'), limit: 3 });
+    expect([stopsShort.messages.map((m) => m.body), stopsShort.hasMore]).toEqual([['After the group'], true]);
+    const group = await A().listMessages(hidA, { before: seededAt('After the group'), limit: 2 });
+    expect([group.messages.map((m) => m.body).sort(), group.hasMore]).toEqual([['Group 1', 'Group 2', 'Group 3'], true]);
+    // The start of the chat.
+    expect(await A().listMessages(hidA, { before: pages[0].messages[0].created_at })).toEqual({
+      messages: [],
+      hasMore: false,
+    });
+    await rejectsWith(A().listMessages(hidA, { before: 'yesterday-ish' }), 'unknown', /^invalid_input: before$/);
+  });
+
+  it('chat: reactions from two members, several emoji each, once each; only your own come off', async () => {
+    const msg = await A().sendMessage(hidA, 'The firepit has gone to its new home');
+    await A().setReaction(msg.id, '❤️', true);
+    await A().setReaction(msg.id, '❤️', true); // again: still one
+    await A().setReaction(msg.id, '🎉', true);
+    await B().setReaction(msg.id, '❤️', true);
+    await B().setReaction(msg.id, '👨‍👩‍👧‍👦', true); // one emoji of 7 code points
+
+    let [got] = await B().getMessages([msg.id]);
+    expect(got.reactions.map((r) => [r.member_id, r.emoji])).toEqual([
+      [memberA, '❤️'],
+      [memberA, '🎉'],
+      [memberB, '❤️'],
+      [memberB, '👨‍👩‍👧‍👦'],
+    ]);
+    expect(got.reactions.every((r) => r.message_id === msg.id)).toBe(true);
+    // The newest page carries the same message with the same reactions.
+    expect(await A().listMessages(hidA, { limit: 1 })).toEqual({ messages: [got], hasMore: true });
+
+    // Removing touches only your own reaction.
+    await B().setReaction(msg.id, '❤️', false);
+    await B().setReaction(msg.id, '❤️', false); // already off
+    await B().setReaction(msg.id, '🎉', false); // A's 🎉 stays
+    [got] = await A().getMessages([msg.id]);
+    expect(got.reactions.map((r) => [r.member_id, r.emoji])).toEqual([
+      [memberA, '❤️'],
+      [memberA, '🎉'],
+      [memberB, '👨‍👩‍👧‍👦'],
+    ]);
+    // The database fills in the member and the message's household.
+    expect(await storedReactions(msg.id)).toEqual([
+      { member_id: memberA, household_id: hidA, emoji: '❤️' },
+      { member_id: memberA, household_id: hidA, emoji: '🎉' },
+      { member_id: memberB, household_id: hidA, emoji: '👨‍👩‍👧‍👦' },
+    ]);
+
+    for (const emoji of ['', '🦔'.repeat(17)]) {
+      await rejectsWith(B().setReaction(msg.id, emoji, true), 'unknown', /^invalid_input: emoji$/);
+    }
+    await rejectsWith(B().setReaction(crypto.randomUUID(), '👍', true), 'not_found');
+    await B().setReaction(crypto.randomUUID(), '👍', false);
+    expect(await storedReactions(msg.id)).toHaveLength(3);
+  });
+
+  it('chat: members delete only their own messages, and the reactions go with them', async () => {
+    const fromA = await A().sendMessage(hidA, 'Hi Bea');
+    const fromB = await B().sendMessage(hidA, 'Hello from Bea');
+    await A().setReaction(fromB.id, '❤️', true);
+    await B().setReaction(fromA.id, '👍', true);
+
+    await rejectsWith(A().deleteMessage(fromB.id), 'not_found');
+    await rejectsWith(C().deleteMessage(fromB.id), 'not_found');
+    await rejectsWith(A().deleteMessage('nope'), 'not_found');
+    expect((await B().getMessages([fromA.id, fromB.id])).map((m) => m.id)).toEqual([fromA.id, fromB.id]);
+
+    await B().deleteMessage(fromB.id); // A's reaction on it goes too
+    await rejectsWith(B().deleteMessage(fromB.id), 'not_found');
+    expect(await A().getMessages([fromB.id])).toEqual([]);
+    expect(await storedReactions(fromB.id)).toEqual([]);
+
+    await A().deleteMessage(fromA.id);
+    expect(await storedReactions(fromA.id)).toEqual([]);
+    expect(await B().getMessages([fromA.id, fromB.id])).toEqual([]);
+    expect((await B().listMessages(hidA)).messages.some((m) => m.id === fromA.id || m.id === fromB.id)).toBe(false);
+  });
+
+  it('subscribeChat: a member hears messages, reactions and deletes; other households hear none of it', { timeout: 60_000 }, async () => {
+    const heardB: ChatChange[] = [];
+    const heardC: ChatChange[] = [];
+    const stopB = B().subscribeChat(hidA, (c) => heardB.push(c));
+    const stopC = C().subscribeChat(hidC, (c) => heardC.push(c));
+    // C also listens to A's household with the same filters (as if C knew its id). RLS keeps
+    // every INSERT from C; a DELETE notice carries the primary key only.
+    type Heard = { table: string; eventType: string; new: object; old: object };
+    const outsiderHeard: Heard[] = [];
+    const outsider = people.c.client.channel(`chat-outsider:${hidA}:${runId}`);
+    for (const table of ['messages', 'message_reactions']) {
+      const filter = `household_id=eq.${hidA}`;
+      outsider.on('postgres_changes', { event: '*', schema: 'public', table, filter }, (p) => outsiderHeard.push(p));
+    }
+    outsider.subscribe();
+
+    const joined = (p: Person) => {
+      const channels = p.client.getChannels();
+      return channels.length > 0 && channels.every((c) => c.state === 'joined');
+    };
+    const messageEvent = (id: string, deleted: boolean) => (c: ChatChange) =>
+      c.type === 'message' && c.messageId === id && c.deleted === deleted;
+    const reactionEvents = (list: ChatChange[], id: string) =>
+      list.filter((c) => c.type === 'reaction' && c.messageId === id).length;
+    const sentInA: string[] = [];
+    const sentInC: string[] = [];
+
+    try {
+      expect(await waitFor(() => joined(people.b) && joined(people.c), 10_000), 'realtime channels joined').toBe(true);
+      // Postgres changes start flowing a moment after the join, so keep posting until one arrives.
+      const until = Date.now() + 20_000;
+      let flowing = false;
+      for (let n = 1; !flowing && Date.now() < until; n++) {
+        const warm = await A().sendMessage(hidA, `Warming up ${n}`);
+        sentInA.push(warm.id);
+        flowing = await waitFor(() => heardB.some(messageEvent(warm.id, false)), 1500);
+      }
+      expect(flowing, 'chat events heard by a member').toBe(true);
+
+      // A's message, a reaction on and off, B's own reaction, then the delete, which takes B's
+      // reaction with it. Realtime drops an INSERT whose row is gone by the time it reads it,
+      // so each step waits until B has heard the previous one.
+      const msg = await A().sendMessage(hidA, `Secret ${runId}`);
+      sentInA.push(msg.id);
+      expect(await waitFor(() => heardB.some(messageEvent(msg.id, false)), 10_000), 'B heard the message').toBe(true);
+      const steps: [string, () => Promise<void>][] = [
+        ['reaction', () => A().setReaction(msg.id, '👍', true)],
+        ['un-reaction', () => A().setReaction(msg.id, '👍', false)],
+        ['own reaction', () => B().setReaction(msg.id, '❤️', true)],
+      ];
+      for (const [what, step] of steps) {
+        const before = reactionEvents(heardB, msg.id);
+        await step();
+        expect(await waitFor(() => reactionEvents(heardB, msg.id) > before, 10_000), `B heard the ${what}`).toBe(true);
+      }
+      const reactionsBefore = reactionEvents(heardB, msg.id);
+      await A().deleteMessage(msg.id);
+      expect(await waitFor(() => heardB.some(messageEvent(msg.id, true)), 10_000), 'B heard the delete').toBe(true);
+      expect(
+        await waitFor(() => reactionEvents(heardB, msg.id) > reactionsBefore, 10_000),
+        'B heard the reaction removed with the message',
+      ).toBe(true);
+
+      // The same in C's household reaches C only.
+      const fromC = await C().sendMessage(hidC, `Shed ${runId}`);
+      sentInC.push(fromC.id);
+      expect(await waitFor(() => heardC.some(messageEvent(fromC.id, false)), 10_000), 'C heard their message').toBe(true);
+      await C().setReaction(fromC.id, '👍', true);
+      expect(await waitFor(() => reactionEvents(heardC, fromC.id) > 0, 10_000), 'C heard their reaction').toBe(true);
+      await C().deleteMessage(fromC.id);
+      expect(await waitFor(() => heardC.some(messageEvent(fromC.id, true)), 10_000), 'C heard their delete').toBe(true);
+      await sleep(1000);
+
+      const named = (list: ChatChange[]) => list.flatMap((c) => (c.type === 'resync' ? [] : [c.messageId]));
+      console.log('DEBUG', JSON.stringify({ heardB, sentInA, sentInC, heardC }));
+      expect(named(heardB).filter((id) => !sentInA.includes(id)), 'B heard only its own household').toEqual([]);
+      expect(named(heardC).filter((id) => !sentInC.includes(id)), 'C heard only its own household').toEqual([]);
+      expect(heardB.some((c) => c.type === 'resync')).toBe(false);
+      for (const heard of outsiderHeard) {
+        expect(heard.eventType, `outsider heard ${heard.eventType} on ${heard.table}`).toBe('DELETE');
+        expect(heard.new).toEqual({});
+        const primaryKey = heard.table === 'messages' ? ['id'] : ['emoji', 'member_id', 'message_id'];
+        expect(Object.keys(heard.old).sort()).toEqual(primaryKey);
+      }
+    } finally {
+      stopB();
+      stopC();
+      void people.c.client.removeChannel(outsider);
+    }
+    // Unsubscribing removes the channel, and nothing more arrives.
+    expect(await waitFor(() => people.b.client.getChannels().length === 0, 5000)).toBe(true);
+    const heard = heardB.length;
+    await A().sendMessage(hidA, 'After unsubscribing');
+    await sleep(1000);
+    expect(heardB).toHaveLength(heard);
   });
 
   it('signs out', async () => {

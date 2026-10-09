@@ -1,0 +1,241 @@
+/* One message: name, bubble (+ avatar), reactions. */
+.row {
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.row[data-mine] {
+  align-items: flex-end;
+}
+
+/* Bubbles in a run sit close; a new run gets some air. */
+.row + .row {
+  margin-top: 2px;
+}
+
+.row[data-first] + .row[data-first],
+.row + .row[data-first] {
+  margin-top: 10px;
+}
+
+.sender {
+  margin: 0 0 3px 49px;
+  font-size: 13px;
+  line-height: 16px;
+  letter-spacing: -0.08px;
+  color: var(--label-secondary);
+  max-width: 75%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.line {
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.row[data-mine] .line {
+  justify-content: flex-end;
+}
+
+.avatarSlot {
+  flex: none;
+  width: 28px;
+  height: 28px;
+}
+
+/* ── Bubble ───────────────────────────────────────────── */
+
+.bubble {
+  position: relative;
+  z-index: 0;
+  min-width: 36px;
+  padding: 7px 13px;
+  border-radius: 20px;
+  background: var(--card);
+  color: var(--label);
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.bubble[data-mine] {
+  background: var(--tint);
+  color: #fff;
+}
+
+.inList {
+  max-width: 75%;
+  /* Long-press opens the menu, not the text callout. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+  cursor: default;
+  scroll-margin: calc(var(--top-inset) + 16px) 0 var(--chat-bottom-space, 160px);
+}
+
+.inList:focus-visible {
+  outline: 2px solid var(--tint);
+  outline-offset: 3px;
+}
+
+/* The menu shows a lifted copy; the original steps out of the way. */
+.inList[data-lifted] {
+  visibility: hidden;
+}
+
+/* Tail on the last bubble of a run (drawn behind the text, cut by a page-coloured curve). */
+.bubble[data-tail]::before,
+.bubble[data-tail]::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  height: 20px;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.bubble[data-tail][data-mine]::before {
+  right: -7px;
+  width: 20px;
+  background: var(--tint);
+  border-bottom-left-radius: 16px 14px;
+}
+
+.bubble[data-tail][data-mine]::after {
+  right: -10px;
+  width: 10px;
+  background: var(--bg);
+  border-bottom-left-radius: 10px;
+}
+
+.bubble[data-tail]:not([data-mine])::before {
+  left: -7px;
+  width: 20px;
+  background: var(--card);
+  border-bottom-right-radius: 16px 14px;
+}
+
+.bubble[data-tail]:not([data-mine])::after {
+  left: -10px;
+  width: 10px;
+  background: var(--bg);
+  border-bottom-right-radius: 10px;
+}
+
+/* Still on its way: dims only if it takes a moment. */
+.row[data-state='sending'] .bubble {
+  opacity: 0.6;
+  transition: opacity 0.2s ease 0.6s;
+}
+
+.row[data-state='failed'] .bubble {
+  opacity: 0.85;
+}
+
+.retry {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: 0 -10px -4px -4px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+}
+
+.retry:active {
+  opacity: 0.6;
+}
+
+.failedNote {
+  margin: 4px 30px 0 0;
+  font-size: 13px;
+  line-height: 16px;
+  font-weight: 600;
+  color: var(--destructive);
+}
+
+/* ── Reaction chips ───────────────────────────────────── */
+
+.chips {
+  max-width: 75%;
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.row:not([data-mine]) .chips {
+  margin-left: 36px;
+}
+
+.row[data-mine] .chips {
+  justify-content: flex-end;
+}
+
+.chip {
+  position: relative;
+  height: 26px;
+  padding: 0 9px 0 7px;
+  border-radius: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--card);
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  color: var(--label-tertiary);
+  font-size: 13px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: -0.08px;
+  font-variant-numeric: tabular-nums;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+/* A taller tap target than the pill. */
+.chip::before {
+  content: '';
+  position: absolute;
+  inset: -4px -2px -9px;
+}
+
+.chip[aria-pressed='true'] {
+  background: rgba(0, 122, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(0, 122, 255, 0.32);
+  color: var(--tint);
+}
+
+.chip:active {
+  transform: scale(0.94);
+}
+
+.chip:focus-visible {
+  outline-offset: 1px;
+}
+
+.chipEmoji {
+  font-size: 15px;
+  line-height: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip,
+  .row[data-state='sending'] .bubble {
+    transition: none;
+  }
+
+  .chip:active {
+    transform: none;
+  }
+}

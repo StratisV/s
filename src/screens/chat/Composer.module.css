@@ -1,0 +1,87 @@
+/* Liquid Glass capsule, like the tab bar. ChatScreen sets its bottom. */
+.composer {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: var(--composer-bottom);
+  z-index: 5;
+  min-height: 48px;
+  padding: 5px 5px 5px 16px;
+  border-radius: 24px;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 0.5px solid rgba(0, 0, 0, 0.06);
+  box-shadow:
+    var(--shadow-glass),
+    inset 1.5px 1.5px 1px rgba(255, 255, 255, 0.75);
+  transition: bottom 0.38s var(--sheet-ease);
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  /* 17px: iOS zooms into anything smaller. */
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  padding: 8px 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: var(--label);
+  resize: none;
+  /* About five lines, then it scrolls. */
+  max-height: 128px;
+  overflow-y: auto;
+  outline: none;
+  caret-color: var(--tint);
+}
+
+.input::placeholder {
+  color: rgba(60, 60, 67, 0.6);
+}
+
+.send {
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 1px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--tint);
+  color: #fff;
+  transition:
+    background-color 0.15s ease,
+    transform 0.12s ease;
+}
+
+/* 44px to tap. */
+.send::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+}
+
+.send:disabled {
+  background: rgba(118, 118, 128, 0.2);
+  color: #fff;
+  cursor: default;
+}
+
+.send:not(:disabled):active {
+  transform: scale(0.92);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer,
+  .send {
+    transition: none;
+  }
+}
