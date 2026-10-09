@@ -72,21 +72,24 @@ Set the same three variables in your host's dashboard for production builds.
 
 1. Generate a Web Push key pair once: `npx web-push generate-vapid-keys`.
 2. Create a Resend API key at https://resend.com and verify the domain you will send from.
-3. Deploy the scheduler function and give it its secrets:
+3. Make up a long random secret for the scheduler and keep it for the next two steps:
+   `openssl rand -hex 32`.
+4. Deploy the scheduler function and give it its secrets:
 
    ```bash
    npx supabase functions deploy scheduler --no-verify-jwt
    npx supabase secrets set \
-     CRON_SECRET="$(openssl rand -hex 32)" \
+     CRON_SECRET="the-secret-from-step-3" \
      APP_URL="https://your-app-url" \
      VAPID_PUBLIC_KEY="..." VAPID_PRIVATE_KEY="..." VAPID_SUBJECT="mailto:you@example.com" \
      RESEND_API_KEY="re_..." EMAIL_FROM="home.os <home@yourdomain.com>"
    ```
 
-4. Open `supabase/cron.sql`, replace the two placeholders (your project URL and the same
-   `CRON_SECRET`), and run it once in the Supabase **SQL Editor**. It runs the scheduler every
-   15 minutes: reminders go out at 08:00 household time per each item's Notify setting, missed
-   alerts the morning after a deadline, and the weekly email on Mondays at 08:00.
+5. Open `supabase/cron.sql`, replace the two placeholders at the top of step 2 (your project
+   URL and the same secret), and run the whole script once in the Supabase **SQL Editor**. It
+   calls the scheduler every 15 minutes: reminders go out from 08:00 household time per each
+   item's Notify setting, missed alerts the morning after a deadline, and the weekly email on
+   Mondays at 08:00. `select cron.unschedule('home-os-scheduler');` stops it.
 
 ### 5. Deploy the app
 
@@ -114,7 +117,9 @@ Any static host works. Build command `npm run build`, output folder `dist`, plus
 | `npm run icons` | Re-render the app icons from `public/icons/icon.svg` |
 
 With Docker running, `npx supabase start` gives you a full local Supabase stack;
-`npx supabase db reset` applies the migrations to it.
+`npx supabase db reset` applies the migrations to it, and
+`DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres npm run test:db` runs the
+database tests against it.
 
 ## Permissions
 

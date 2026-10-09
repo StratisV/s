@@ -38,7 +38,7 @@ src/
   screens/stats/           Stats screen + donut
   screens/profile/         Profile (full-screen cover) + Household editor (pushed inside Profile)
   screens/onboarding/      Welcome, create profile, household create/join, notifications step
-public/                    manifest, service worker (sw.js), icons
+public/                    manifest, service worker (sw.js), icons, favicon.ico (npm run icons)
 supabase/migrations/       schema, RLS, RPCs
 supabase/functions/        Edge Functions (scheduler: push reminders, missed alerts, weekly email)
 supabase/tests/            database tests (run against a local Postgres 16)
@@ -130,6 +130,22 @@ Errors are raised with these exact messages so clients can map them:
 Realtime: add `households, members, areas, items, completions` to the `supabase_realtime`
 publication (guarded so the migration also runs on plain Postgres).
 
+Details beyond the list above (all covered by `supabase/tests`):
+- `invalid_input`: a blank household or member name, an unknown time zone on update,
+  `weekly_email_day` outside 0 to 6, or an invalid rag/repeat/notify in seed items. A blank
+  emoji becomes 🦔. Invite tokens are trimmed.
+- Member email comes from the JWT, falling back to `auth.users`.
+- `join_household` with a token for the caller's own household returns its id even after the
+  token expired; otherwise an unknown or expired token raises `invalid_invite` before
+  `already_member` is checked.
+- The items trigger raises `not_found` for a missing area; on insert `created_by` is always the
+  caller (the service role keeps what it sends).
+- A BEFORE INSERT trigger on `push_subs` replaces any stored row with the same endpoint, so a
+  phone that changes hands moves its subscription to the new account.
+- Internal helpers `next_due_date(text, date, date)` and `is_valid_timezone(text)` are not
+  callable by clients.
+- Realtime DELETE events carry only the primary key (RLS tables), so clients reload on any event.
+
 ## Backend contract
 
 `src/lib/backend/types.ts` is authoritative. `BackendError.code` mirrors the RPC error
@@ -138,6 +154,11 @@ messages above (`network` for fetch failures).
 ## Edge Function `scheduler` (runs every 15 minutes via pg_cron + pg_net)
 
 - Auth: `Authorization: Bearer <CRON_SECRET>`; `verify_jwt = false` in `supabase/config.toml`.
+- `?dry=1` returns the plan as JSON without claiming or sending (`&now=<ISO timestamp>` plans
+  another moment, dry runs only). The response summarises counts per channel; a channel whose
+  secrets are missing is skipped and named in `skipped`.
+- Scheduled by `supabase/cron.sql` (job `home-os-scheduler`; Vault secrets
+  `home_os_project_url` and `home_os_cron_secret`).
 - Uses the service role key. For each household, works in the household's time zone and only
   sends at or after 08:00 local (SEND_HOUR).
 - **Reminders**: open items with `notify <> 'none'` and a due date where
@@ -161,6 +182,6 @@ messages above (`network` for fetch failures).
 ## Testing
 
 - `npm test`: Vitest unit tests (logic, demo backend, Edge Function shared modules).
-- `npm run test:db`: starts a throwaway local Postgres 16, applies a Supabase stub
+- `npm run test:db`: starts a throwaway local Postgres 16 (or uses `DATABASE_URL`), applies a Supabase stub
   (`auth` schema, roles) and the migrations, then runs `supabase/tests`.
 - `npm run test:e2e`: Playwright against the demo-mode build.

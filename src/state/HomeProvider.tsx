@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { BackendError, type Backend, type HouseholdPatch, type ItemPatch, type MemberPatch } from '../lib/backend/types';
 import { formatDay, todayIn } from '../lib/logic/dates';
+import { disablePush } from '../lib/push';
 import { nextDueDate } from '../lib/logic/items';
 import type {
   Area,
@@ -320,6 +321,8 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       signIn: () => backend.signInWithGoogle(),
       signOut: async () => {
         dismissToast();
+        // Stop this device getting the previous person's pushes (only the owner can delete the row).
+        await disablePush(backend);
         await backend.signOut();
       },
       createHousehold: async (input) => {
