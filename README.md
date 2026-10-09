@@ -9,8 +9,10 @@ never gets done and stays on the list, and says **What good looks like** for it,
 "cover on, ash cleared out, logs dry and stacked"). Everyone in the household signs in with
 **Google**, picks an emoji for their profile, and **can edit everything**.
 
-- **Home**: every area and its items, with how many are red, amber and green. Each item is
-  one slim row: its title, then who, when and its note on one line. Areas fold away with a
+- **Home**: today's date, then every area and its items, with how many are red, amber and green.
+  A row of people at the top (Everyone, you, each person, Unassigned, with counts) shows just
+  one person's items, so everyone can see what they need to do; the phone remembers the choice.
+  Each item is one slim row: its title, then who, when and its note on one line. Areas fold away with a
   tap (or all at once) and stay that way on that phone. Add an item with the round + at the
   bottom right, or with the small + in an area's header, which starts the item in that area.
 - **The hero**: every tab opens on an illustration that runs to the very top of the screen: the
@@ -53,6 +55,21 @@ You need four free accounts: **Supabase** (database, Google sign-in, scheduled j
 **Google Cloud** (the OAuth client for "Continue with Google"), **Resend** (the weekly email)
 and a static host such as **Vercel**, **Netlify** or **Cloudflare Pages** (HTTPS is required
 for notifications).
+
+### The quick way: Vercel + Supabase (shared data on every phone)
+
+Without a database the app runs in demo mode and each browser keeps its own data. To share it:
+
+1. In Vercel, open the project, go to **Storage**, choose **Create Database**, then **Supabase**,
+   and connect it to the project (all environments). Vercel adds the database settings to the
+   project (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `POSTGRES_URL_NON_POOLING`, ...).
+2. Redeploy. The build reads those settings (`vite.config.ts`), and `scripts/migrate.mjs` brings
+   the database up to date before building (production builds only; it records what it applied
+   in `supabase_migrations.schema_migrations`, like the Supabase CLI).
+3. Turn on Google sign-in (step 2 below) and, in Supabase **Authentication > URL Configuration**,
+   set the Site URL to the app's address and add `<app address>/**` as a redirect URL.
+
+The numbered steps below do the same by hand, plus push notifications and the weekly email.
 
 ### 1. Supabase project and database
 

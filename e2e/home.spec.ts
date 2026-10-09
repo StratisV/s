@@ -392,7 +392,7 @@ test.describe('Long text', () => {
     await expect(line).toContainText('Restocked, 5L tin');
     const box = (await line.boundingBox())!;
     expect(box.height).toBeLessThanOrEqual(19);
-    await expect(line).toHaveCSS('text-overflow', 'ellipsis');
+    await expect(line.locator(':scope > span').last()).toHaveCSS('text-overflow', 'ellipsis');
     // The whole row stays two lines tall.
     expect((await rowButton(page, 'Olive oil').boundingBox())!.height).toBeLessThan(62);
   });

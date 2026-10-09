@@ -11,8 +11,8 @@
   color: #fff;
   display: grid;
   place-items: center;
-  /* Keyboard focus scrolls the ring clear of the top fade and the floating tab bar. */
-  scroll-margin: calc(var(--top-inset) + 28px) 0 124px;
+  /* Keyboard focus scrolls the ring clear of the floating + (the scroll area's padding keeps it below the tab switch). */
+  scroll-margin: 12px 0 calc(116px + var(--bottom-inset));
   transition:
     transform 0.12s ease,
     background-color 0.15s ease;

@@ -202,6 +202,9 @@ export function ChatScreen({ onOpenProfile, tabs, onTypingChange }: ChatScreenPr
   // ── Scrolling ───────────────────────────────────────────
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
+  /** Where the messages start in the scroll area (below the hero and the tab switch). */
+  const logTop = () => logRef.current?.offsetTop ?? 0;
   const atBottom = useRef(true);
   const [showNew, setShowNew] = useState(false);
   /** Scroll metrics after the last render, to keep the view still when older messages load above. */
@@ -233,7 +236,7 @@ export function ChatScreen({ onOpenProfile, tabs, onTypingChange }: ChatScreenPr
       setShowNew(false);
       readIfVisible();
     }
-    if (el.scrollTop < NEAR_TOP && hasMore && !loadingOlder) void loadOlder();
+    if (el.scrollTop - logTop() < NEAR_TOP && hasMore && !loadingOlder) void loadOlder();
   };
 
   // After each change to the list: stay at the bottom, keep the view still when older
@@ -273,7 +276,8 @@ export function ChatScreen({ onOpenProfile, tabs, onTypingChange }: ChatScreenPr
   // Not a full screen of messages yet and more exist: fetch more.
   useEffect(() => {
     const el = scrollRef.current;
-    if (el && status === 'ready' && hasMore && !loadingOlder && el.scrollHeight <= el.clientHeight + NEAR_TOP) void loadOlder();
+    if (el && status === 'ready' && hasMore && !loadingOlder && el.scrollHeight - logTop() <= el.clientHeight + NEAR_TOP)
+      void loadOlder();
   }, [status, hasMore, loadingOlder, loadOlder, entries.length]);
 
   // Back in view (app reopened) at the bottom: it is read.
@@ -418,7 +422,7 @@ export function ChatScreen({ onOpenProfile, tabs, onTypingChange }: ChatScreenPr
           </div>
         ) : null}
 
-        <div className={styles.log} role="log" aria-label="Messages" aria-busy={status === 'loading' || loadingOlder}>
+        <div ref={logRef} className={styles.log} role="log" aria-label="Messages" aria-busy={status === 'loading' || loadingOlder}>
           {views.map((row) =>
             row.kind === 'separator' ? (
               <p key={row.key} className={styles.separator}>

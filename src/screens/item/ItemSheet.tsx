@@ -6,6 +6,7 @@ import { appBaseUrl } from '../../lib/sharedLink';
 import type { ItemDraft, ItemKind, Notify, Repeat } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
 import { ActionSheet } from '../../ui/ActionSheet';
+import { EmojiText } from '../../ui/EmojiText';
 import { useConfetti } from '../../ui/Confetti';
 import { CheckIcon, ShareIcon, XMarkIcon } from '../../ui/icons';
 import { Sheet } from '../../ui/Sheet';
@@ -351,7 +352,7 @@ export function ItemSheet({ target, open, onClose, onExited, onSaved }: ItemShee
               value={assignee?.id ?? UNASSIGNED}
               options={memberOptions}
               onChange={(id) => update({ assignee_id: id === UNASSIGNED ? null : id })}
-              display={memberLabel(assignee)}
+              display={<EmojiText text={memberLabel(assignee)} />}
             />
             {maintained ? null : (
               <>

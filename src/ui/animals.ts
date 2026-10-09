@@ -1,7 +1,8 @@
 // The household's duck and hedgehog, drawn as small SVG illustrations so their
 // colours never depend on the phone's emoji font: a green duck that faces
 // right and a brown hedgehog that faces left (towards the house in the home
-// scene). Used by the home scene and the confetti. Profile avatars stay emoji.
+// scene). Used by the confetti, the Join screen's scene, and in place of the
+// 🦆 and 🦔 emoji wherever people's emoji are shown (ui/EmojiText.tsx).
 
 /** A green duck facing right: green head and body, darker wing, orange bill and feet. */
 export const DUCK_SVG =

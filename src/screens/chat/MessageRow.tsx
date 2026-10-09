@@ -1,3 +1,4 @@
+import { EmojiText } from '../../ui/EmojiText';
 import { memo, useCallback, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { isJumboEmoji, type ChatRow, type ReactionChip } from '../../lib/logic/chat';
 import { Avatar } from '../../ui/Avatar';
@@ -145,7 +146,7 @@ export const MessageRow = memo(function MessageRow({
               onClick={() => onToggleReaction(entry.message.id, chip.emoji)}
             >
               <span className={styles.chipEmoji} aria-hidden="true">
-                {chip.emoji}
+                <EmojiText text={chip.emoji} />
               </span>
               <span className={styles.chipCount} aria-hidden="true">
                 {chip.count}

@@ -1,0 +1,79 @@
+/* One line of pills under the tab switch, scrolling sideways (edge to edge) when it is long. */
+.row {
+  display: flex;
+  gap: 8px;
+  padding: 4px 16px 2px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.row::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  flex: none;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--card);
+  color: var(--label);
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  font-weight: 500;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.chip[aria-checked='true'] {
+  background: var(--tint);
+  color: #fff;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.chip:not([aria-checked='true']):active {
+  background: #e5e5ea;
+}
+
+.chip:focus-visible {
+  outline-offset: 2px;
+}
+
+.emoji {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.count {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: var(--fill-tertiary);
+  color: var(--label-secondary);
+}
+
+.chip[aria-checked='true'] .count {
+  background: rgba(255, 255, 255, 0.24);
+  color: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip {
+    transition: none;
+  }
+}

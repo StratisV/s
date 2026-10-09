@@ -25,6 +25,18 @@
   opacity: 0.5;
 }
 
+/* The filter picked someone with nothing open. */
+.nobody {
+  margin: 16px 16px 0;
+  padding: 14px 18px;
+  border-radius: var(--r-card);
+  background: var(--card);
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label-secondary);
+}
+
 /* The first area sits closer: the toolbar line takes the space above it. */
 .toolbar + section .headerRow {
   padding-top: 14px;

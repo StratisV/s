@@ -46,7 +46,14 @@ export function StatsScreen({ onOpenProfile, tabs }: { onOpenProfile(): void; ta
       onAvatar={onOpenProfile}
       tabs={tabs}
     >
-      <SegmentedControl label="Period" options={PERIODS} value={period} onChange={setPeriod} className={styles.period} />
+      <SegmentedControl
+        label="Period"
+        options={PERIODS}
+        value={period}
+        onChange={setPeriod}
+        className={styles.period}
+        compact
+      />
       <div className={styles.donut}>
         <Donut rows={rows} total={total} label={summary} />
       </div>

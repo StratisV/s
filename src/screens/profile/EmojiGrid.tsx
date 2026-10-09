@@ -1,3 +1,4 @@
+import { EmojiText } from '../../ui/EmojiText';
 import { useRef, type KeyboardEvent } from 'react';
 import { EMOJIS } from '../../lib/constants';
 import styles from './EmojiGrid.module.css';
@@ -70,7 +71,7 @@ export function EmojiGrid({ value, onChange, label, labelledBy }: EmojiGridProps
             if (i !== selected) onChange(emoji);
           }}
         >
-          {emoji}
+          <EmojiText text={emoji} />
         </button>
       ))}
     </div>
