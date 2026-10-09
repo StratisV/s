@@ -27,8 +27,9 @@ export function StatsScreen({ onOpenProfile, tabs }: { onOpenProfile(): void; ta
 
   const { members, completions, household } = data;
   const { rows, total } = useMemo(
-    () => countCompletions(members, completions, period, household.timezone),
-    // `today` re-counts when a new month starts while the app is open.
+    // "This month" is the month of `today` (the household's day, which moves on at midnight
+    // while the app is open), not of whatever the clock says at render time.
+    () => countCompletions(members, completions, period, household.timezone, today),
     [members, completions, period, household.timezone, today],
   );
 

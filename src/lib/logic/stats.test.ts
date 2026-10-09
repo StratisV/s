@@ -74,6 +74,10 @@ describe('countCompletions', () => {
     expect(athens.rows.map((r) => r.count)).toEqual([2, 1, 0]);
     // In Los Angeles it is still 31 Oct at `now`, and Ela's 30 Sep 23:30 UTC is 16:30 on 30 Sep there.
     const la = countCompletions(members, completions, 'month', 'America/Los_Angeles', now);
+    // Given the household's day, "this month" is that day's month, whatever the clock says.
+    expect(countCompletions(members, completions, 'month', 'Pacific/Kiritimati', '2026-10-31').total).toBe(
+      countCompletions(members, completions, 'month', 'UTC', '2026-10-31').total,
+    );
     expect(la.rows.map((r) => r.count)).toEqual([2, 1, 0]);
     const laSep = countCompletions(members, completions, 'month', 'America/Los_Angeles', new Date('2026-10-01T05:00:00Z'));
     expect(laSep.rows.map((r) => r.count)).toEqual([0, 0, 1]);

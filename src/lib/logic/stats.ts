@@ -1,5 +1,5 @@
 import { MEMBER_COLORS } from '../constants';
-import type { Completion, Member, StatsPeriod } from '../types';
+import type { Completion, ISODate, Member, StatsPeriod } from '../types';
 import { monthKey } from './dates';
 
 export function memberColor(index: number): string {
@@ -21,9 +21,10 @@ export function countCompletions(
   completions: Completion[],
   period: StatsPeriod,
   timeZone: string,
-  now: Date = new Date(),
+  /** The moment, or the household's day ("2026-10-08"), whose month is "this month". */
+  now: Date | ISODate = new Date(),
 ): { rows: MemberCount[]; total: number } {
-  const current = monthKey(now, timeZone);
+  const current = typeof now === 'string' ? now.slice(0, 7) : monthKey(now, timeZone);
   const counts = new Map<string, number>();
   for (const c of completions) {
     if (!c.credited_to) continue;
