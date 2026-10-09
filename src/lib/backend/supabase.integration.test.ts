@@ -497,10 +497,10 @@ describe('SupabaseBackend offline: auth and realtime wiring', () => {
   });
 
   function fakeRealtimeClient() {
-    const handlers: { type: string; filter: Record<string, string>; cb: () => void }[] = [];
+    const handlers: { type: string; filter: Record<string, string>; cb: (payload?: unknown) => void }[] = [];
     let status: (s: string) => void = () => {};
     const channel = {
-      on: vi.fn((type: string, filter: Record<string, string>, cb: () => void) => {
+      on: vi.fn((type: string, filter: Record<string, string>, cb: (payload?: unknown) => void) => {
         handlers.push({ type, filter, cb });
         return channel;
       }),
@@ -556,6 +556,278 @@ describe('SupabaseBackend offline: auth and realtime wiring', () => {
     const [first, second] = rt.client.channel.mock.calls.map((c) => (c as unknown[])[0]);
     expect(first).not.toBe(second);
     expect(String(first)).toContain('h1');
+  });
+
+  it('subscribeChat() maps both chat tables to ChatChange events on one channel', () => {
+    const rt = fakeRealtimeClient();
+    const backend = new SupabaseBackend(FAKE_URL, FAKE_KEY, { client: rt.client as unknown as SupabaseClient });
+    const seen: ChatChange[] = [];
+    const stop = backend.subscribeChat('h1', (c) => seen.push(c));
+
+    expect(rt.client.channel).toHaveBeenCalledTimes(1);
+    expect(String(rt.client.channel.mock.calls[0][0])).toMatch(/^chat:h1:/);
+    // Deletes are filtered too: with replica identity full the old row carries household_id.
+    expect(rt.handlers.map((h) => [h.type, h.filter.table, h.filter.filter, h.filter.event, h.filter.schema])).toEqual([
+      ['postgres_changes', 'messages', 'household_id=eq.h1', '*', 'public'],
+      ['postgres_changes', 'message_reactions', 'household_id=eq.h1', '*', 'public'],
+    ]);
+    const [messages, reactions] = rt.handlers;
+    const change = (eventType: string, row: object) =>
+      eventType === 'DELETE' ? { eventType, new: {}, old: row, errors: null } : { eventType, new: row, old: {}, errors: null };
+
+    messages.cb(change('INSERT', { id: 'm1', household_id: 'h1', body: 'Hi' }));
+    messages.cb(change('DELETE', { id: 'm1' })); // a DELETE carries the primary key only
+    reactions.cb(change('INSERT', { message_id: 'm2', member_id: 'p1', emoji: '👍', household_id: 'h1' }));
+    reactions.cb(change('DELETE', { message_id: 'm2', member_id: 'p1', emoji: '👍' }));
+    messages.cb(change('DELETE', {})); // names no message: reload
+    reactions.cb(change('INSERT', { message_id: 42 }));
+    expect(seen).toEqual([
+      { type: 'message', messageId: 'm1', deleted: false },
+      { type: 'message', messageId: 'm1', deleted: true },
+      { type: 'reaction', messageId: 'm2' },
+      { type: 'reaction', messageId: 'm2' },
+      { type: 'resync' },
+      { type: 'resync' },
+    ]);
+
+    // First join: nothing missed. A rejoin after a dropped connection: resync.
+    rt.setStatus('SUBSCRIBED');
+    expect(seen).toHaveLength(6);
+    rt.setStatus('CHANNEL_ERROR');
+    rt.setStatus('SUBSCRIBED');
+    expect(seen.at(-1)).toEqual({ type: 'resync' });
+    expect(seen).toHaveLength(7);
+
+    stop();
+    stop();
+    expect(rt.client.removeChannel).toHaveBeenCalledTimes(1);
+    expect(rt.client.removeChannel).toHaveBeenCalledWith(rt.channel);
+    messages.cb(change('INSERT', { id: 'm3' }));
+    rt.setStatus('SUBSCRIBED');
+    expect(seen).toHaveLength(7);
+  });
+
+  it('subscribeChat() keeps delivering when a listener throws', () => {
+    const rt = fakeRealtimeClient();
+    const backend = new SupabaseBackend(FAKE_URL, FAKE_KEY, { client: rt.client as unknown as SupabaseClient });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      let calls = 0;
+      backend.subscribeChat('h1', () => {
+        calls++;
+        throw new Error('listener failed');
+      });
+      expect(() => rt.handlers[0].cb({ eventType: 'INSERT', new: { id: 'm1' }, old: {} })).not.toThrow();
+      rt.handlers[1].cb({ eventType: 'INSERT', new: { message_id: 'm1' }, old: {} });
+      expect(calls).toBe(2);
+      expect(errors).toHaveBeenCalledTimes(2);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+});
+
+describe('SupabaseBackend offline: chat requests', () => {
+  const H = '22222222-2222-4222-8222-222222222222';
+  const ME = '33333333-3333-4333-8333-333333333333';
+  const uid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  const SELECT = 'id,household_id,member_id,body,created_at,reactions:message_reactions(message_id,member_id,emoji,created_at)';
+  const row = (n: number, created_at: string, reactions: object[] = []) => ({
+    id: uid(n),
+    household_id: H,
+    member_id: ME,
+    body: `Message ${n}`,
+    created_at,
+    reactions,
+  });
+  const at = (s: number) => `2026-10-09T19:13:${String(s).padStart(2, '0')}.5+00:00`;
+  const pgError = (message: string, code = 'P0001', status = 400) => ({
+    status,
+    body: { message, code, details: null, hint: null },
+  });
+
+  it('instantOf keeps the microseconds PostgREST prints', () => {
+    expect(instantOf('2026-10-09T19:13:24.1021+00:00') - instantOf('2026-10-09T19:13:24.102+00:00')).toBe(100);
+    expect(instantOf('2026-10-09T19:13:24.000001+00:00') - instantOf('2026-10-09T19:13:24+00:00')).toBe(1);
+    expect(instantOf('2026-10-09T19:13:24.5Z')).toBe(instantOf('2026-10-09T20:13:24.500000+01:00'));
+    expect(instantOf('2026-10-09T19:13:24.999999+00:00')).toBeLessThan(instantOf('2026-10-09T19:13:25+00:00'));
+  });
+
+  it('listMessages reads the newest page with its reactions in one request, oldest first', async () => {
+    const reactions = [
+      { message_id: uid(3), member_id: 'p2', emoji: '🎉', created_at: '2026-10-09T19:14:00.10215+00:00' },
+      { message_id: uid(3), member_id: 'p1', emoji: '❤️', created_at: '2026-10-09T19:14:00.1021+00:00' },
+    ];
+    const { backend, rest } = fakeServer(() => ({ body: [row(3, at(3), reactions), row(2, at(2)), row(1, at(1))] }));
+    const page = await backend.listMessages(H, { limit: 2 });
+    expect(page.hasMore).toBe(true);
+    expect(page.messages.map((m) => m.body)).toEqual(['Message 2', 'Message 3']);
+    // Reactions oldest first, to the microsecond; exactly the contract's keys.
+    expect(page.messages[1].reactions.map((r) => r.emoji)).toEqual(['❤️', '🎉']);
+    expect(Object.keys(page.messages[1]).sort()).toEqual(['body', 'created_at', 'household_id', 'id', 'member_id', 'reactions']);
+    expect(Object.keys(page.messages[1].reactions[0]).sort()).toEqual(['created_at', 'emoji', 'member_id', 'message_id']);
+
+    const q = rest('messages')[0].url.searchParams;
+    expect(rest('messages')).toHaveLength(1);
+    expect(q.get('select')).toBe(SELECT);
+    expect(q.get('household_id')).toBe(`eq.${H}`);
+    expect(q.get('order')).toBe('created_at.desc,id.desc');
+    expect(q.get('limit')).toBe('3');
+    expect(q.has('created_at')).toBe(false);
+
+    // `before` goes to the API exactly as given (microseconds intact).
+    const before = '2026-10-09T19:13:24.1021+00:00';
+    const older = await backend.listMessages(H, { before, limit: 5 });
+    expect(older).toMatchObject({ hasMore: false });
+    expect(older.messages.map((m) => m.body)).toEqual(['Message 1', 'Message 2', 'Message 3']);
+    expect(rest('messages')[1].url.searchParams.get('created_at')).toBe(`lt.${before}`);
+  });
+
+  it('listMessages page sizes: a positive whole number below max_rows, 50 by default', async () => {
+    const { backend, rest } = fakeServer(() => ({ body: [row(1, at(1))] }));
+    for (const limit of [undefined, Number.NaN, 0, -3, 2.7, 10_000, Infinity]) await backend.listMessages(H, { limit });
+    expect(rest('messages').map((c) => c.url.searchParams.get('limit'))).toEqual(['51', '51', '2', '2', '3', '1000', '1000']);
+  });
+
+  it('listMessages never ends a page inside a group of messages sharing one created_at', async () => {
+    // Newest first: 5 at t5, then 4, 3 and 2 sharing t3 (one transaction), then 1 at t1.
+    const all = [row(5, at(5)), row(4, at(3)), row(3, at(3)), row(2, at(3)), row(1, at(1))];
+    const { backend, rest } = fakeServer((call) => {
+      const q = call.url.searchParams;
+      const lt = q.get('created_at')?.startsWith('lt.') ? instantOf(q.get('created_at')!.slice(3)) : Infinity;
+      const eq = q.get('created_at')?.startsWith('eq.') ? q.get('created_at')!.slice(3) : null;
+      const rows = all.filter((m) => (eq ? m.created_at === eq : instantOf(m.created_at) < lt));
+      return { body: rows.slice(0, Number(q.get('limit') ?? rows.length)) };
+    });
+
+    // A page of 3 would end inside the group: it stops before the group instead.
+    const first = await backend.listMessages(H, { limit: 3 });
+    expect([first.messages.map((m) => m.body), first.hasMore]).toEqual([['Message 5'], true]);
+    // The group is bigger than the page: the whole group comes back.
+    const second = await backend.listMessages(H, { before: first.messages[0].created_at, limit: 2 });
+    expect([second.messages.map((m) => m.body), second.hasMore]).toEqual([['Message 2', 'Message 3', 'Message 4'], true]);
+    const groupRead = rest('messages').find((c) => c.url.searchParams.get('created_at') === `eq.${at(3)}`)!;
+    expect(groupRead.url.searchParams.get('household_id')).toBe(`eq.${H}`);
+    expect(groupRead.url.searchParams.get('select')).toBe(SELECT);
+    const third = await backend.listMessages(H, { before: second.messages[0].created_at, limit: 2 });
+    expect([third.messages.map((m) => m.body), third.hasMore]).toEqual([['Message 1'], false]);
+
+    // The group is the oldest history: nothing more.
+    all.pop();
+    const last = await backend.listMessages(H, { before: at(4), limit: 1 });
+    expect([last.messages.map((m) => m.body), last.hasMore]).toEqual([['Message 2', 'Message 3', 'Message 4'], false]);
+  });
+
+  it('listMessages reports an empty chat, or a household the caller cannot see', async () => {
+    let visible: object[] = [{ id: H }];
+    const { backend, rest } = fakeServer((call) => ({ body: call.url.pathname === '/rest/v1/households' ? visible : [] }));
+    expect(await backend.listMessages(H)).toEqual({ messages: [], hasMore: false });
+    expect(rest('households')[0].url.searchParams.get('id')).toBe(`eq.${H}`);
+    visible = [];
+    await rejectsWith(backend.listMessages(H), 'not_found');
+    await rejectsWith(backend.listMessages(H, { before: 'yesterday-ish' }), 'unknown', /^invalid_input: before$/);
+    const before = rest('messages').length;
+    await rejectsWith(backend.listMessages('another-household'), 'not_found');
+    expect(rest('messages')).toHaveLength(before);
+  });
+
+  it('getMessages reloads the messages that still exist, in chat order', async () => {
+    // Same millisecond: only the microseconds tell them apart.
+    const a = row(1, '2026-10-09T19:13:24.10215+00:00');
+    const b = row(2, '2026-10-09T19:13:24.1021+00:00');
+    const { backend, rest } = fakeServer(() => ({ body: [a, b] }));
+    const got = await backend.getMessages([a.id, 'tmp-1', b.id, a.id]);
+    expect(got.map((m) => m.id)).toEqual([b.id, a.id]);
+    expect(rest('messages')).toHaveLength(1);
+    expect(rest('messages')[0].url.searchParams.get('id')).toBe(`in.(${a.id},${b.id})`);
+    expect(rest('messages')[0].url.searchParams.get('select')).toBe(SELECT);
+
+    expect(await backend.getMessages([])).toEqual([]);
+    expect(await backend.getMessages(['tmp-1'])).toEqual([]);
+    expect(rest('messages')).toHaveLength(1);
+
+    // Long lists go in several short requests.
+    await backend.getMessages(Array.from({ length: 250 }, (_, i) => uid(i)));
+    const sizes = rest('messages')
+      .slice(1)
+      .map((c) => c.url.searchParams.get('id')!.split(',').length);
+    expect(sizes).toEqual([100, 100, 50]);
+  });
+
+  it('sendMessage posts only the household and the trimmed body', async () => {
+    let reply: Reply = { status: 201, body: [{ ...row(1, at(1)), body: 'The engineer is here', reactions: undefined }] };
+    const { backend, rest } = fakeServer(() => reply);
+    const sent = await backend.sendMessage(H, '  The engineer is here \n');
+    expect(sent).toEqual({ ...row(1, at(1)), body: 'The engineer is here', reactions: [] });
+    const post = rest('messages')[0];
+    expect(post.method).toBe('POST');
+    expect(post.body).toEqual({ household_id: H, body: 'The engineer is here' });
+    expect(post.url.searchParams.get('select')).toBe('id,household_id,member_id,body,created_at');
+
+    // Characters as Postgres counts them: an emoji is one.
+    await backend.sendMessage(H, '🦔'.repeat(4000));
+    await backend.sendMessage(H, ` ${'x'.repeat(4000)}\n`);
+    expect(rest('messages')).toHaveLength(3);
+    for (const body of ['', '   ', '\n\t ', 'x'.repeat(4001), '🦔'.repeat(4001), null as unknown as string]) {
+      await rejectsWith(backend.sendMessage(H, body), 'unknown', /^invalid_input: body$/);
+    }
+    await rejectsWith(backend.sendMessage('another-household', 'Hi'), 'not_found');
+    expect(rest('messages')).toHaveLength(3);
+
+    reply = pgError('new row violates row-level security policy for table "messages"', '42501', 403);
+    await rejectsWith(backend.sendMessage(H, 'Hi'), 'not_found');
+    reply = pgError('new row for relation "messages" violates check constraint "messages_body_length"', '23514');
+    await rejectsWith(backend.sendMessage(H, '​'), 'unknown', /^invalid_input: messages_body_length$/);
+  });
+
+  it('deleteMessage deletes one of your own messages, else not_found', async () => {
+    let rows: object[] = [{ id: uid(1) }];
+    const { backend, rest } = fakeServer(() => ({ body: rows }));
+    await backend.deleteMessage(uid(1));
+    const del = rest('messages')[0];
+    expect([del.method, del.url.searchParams.get('id'), del.url.searchParams.get('select')]).toEqual([
+      'DELETE',
+      `eq.${uid(1)}`,
+      'id',
+    ]);
+    rows = []; // someone else's message, or gone: RLS deletes nothing
+    await rejectsWith(backend.deleteMessage(uid(1)), 'not_found');
+    await rejectsWith(backend.deleteMessage('nope'), 'not_found');
+    expect(rest('messages')).toHaveLength(2);
+  });
+
+  it('setReaction adds idempotently and removes only by message and emoji', async () => {
+    let reply: Reply = { status: 201 };
+    const { backend, rest } = fakeServer(() => reply);
+    await backend.setReaction(uid(1), '❤️', true);
+    const add = rest('message_reactions')[0];
+    expect(add.method).toBe('POST');
+    expect(add.body).toEqual({ message_id: uid(1), emoji: '❤️' });
+    expect(add.url.searchParams.get('on_conflict')).toBe('message_id,member_id,emoji');
+    expect(add.headers.get('prefer')).toMatch(/resolution=ignore-duplicates/);
+
+    reply = { status: 204 };
+    await backend.setReaction(uid(1), '❤️', false);
+    const remove = rest('message_reactions')[1];
+    expect(remove.method).toBe('DELETE');
+    expect(remove.url.searchParams.get('message_id')).toBe(`eq.${uid(1)}`);
+    expect(remove.url.searchParams.get('emoji')).toBe('eq.❤️');
+    // RLS keeps the delete to the caller's own reactions.
+    expect(remove.url.searchParams.has('member_id')).toBe(false);
+
+    await backend.setReaction(uid(1), '👨‍👩‍👧‍👦', true); // 7 code points
+    for (const emoji of ['', '🦔'.repeat(17)]) {
+      await rejectsWith(backend.setReaction(uid(1), emoji, true), 'unknown', /^invalid_input: emoji$/);
+    }
+    await rejectsWith(backend.setReaction('nope', '👍', true), 'not_found');
+    await backend.setReaction('nope', '👍', false);
+    await backend.setReaction(uid(1), '', false);
+    expect(rest('message_reactions')).toHaveLength(3);
+
+    reply = pgError('not_found'); // the trigger: no such message
+    await rejectsWith(backend.setReaction(uid(2), '👍', true), 'not_found');
+    reply = pgError('new row violates row-level security policy for table "message_reactions"', '42501', 403);
+    await rejectsWith(backend.setReaction(uid(2), '👍', true), 'not_found');
   });
 });
 
