@@ -7,6 +7,7 @@ import App from './App';
 import { createBackend } from './lib/backend';
 import { applyPreviewInset } from './lib/preview';
 import { registerServiceWorker } from './lib/sw-register';
+import { watchForUpdates } from './lib/update';
 import { HomeProvider } from './state/HomeProvider';
 import { ConfettiProvider } from './ui/Confetti';
 
@@ -27,3 +28,4 @@ createBackend().then((backend) => {
 });
 
 registerServiceWorker();
+watchForUpdates();

@@ -102,7 +102,9 @@ test.describe('To maintain', () => {
     await expect(firepit.getByRole('button')).toHaveCount(1);
     await expect(ring(page, 'Firepit')).toHaveCount(0);
     // Assistive tech hears the status and the kind after the title.
-    await expect(stateButton(page, 'Firepit')).toHaveAccessibleName(/^Firepit ?, Green, to maintain\. New one installed/);
+    await expect(stateButton(page, 'Firepit')).toHaveAccessibleName(
+      /^Firepit ?, Green, to maintain\. 🦊 Ela · Updated Thu 8 Oct · New one installed/,
+    );
     // To-dos first (by date), then states (by title).
     expect(await rowTitlesIn(page, 'Garden')).toEqual(['Give away the old firepit', 'Garden room wall panel', 'Firepit']);
     expect(await titlesIn(page, 'Garden')).toEqual(['Give away the old firepit', 'Garden room wall panel']);
