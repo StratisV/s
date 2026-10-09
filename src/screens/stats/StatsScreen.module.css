@@ -1,0 +1,50 @@
+.period {
+  margin: 18px 16px 0;
+}
+
+.donut {
+  display: flex;
+  justify-content: center;
+  padding: 36px 0 32px;
+}
+
+.legend {
+  margin: 0 16px;
+  padding: 0 18px;
+  list-style: none;
+  background: var(--card);
+  border-radius: var(--r-card);
+}
+
+.row {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 17px;
+  letter-spacing: -0.4px;
+}
+
+.row + .row {
+  border-top: 0.5px solid var(--separator);
+}
+
+.who {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.count {
+  flex: none;
+  font-weight: 600;
+}

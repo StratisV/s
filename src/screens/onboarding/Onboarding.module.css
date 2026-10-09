@@ -1,0 +1,357 @@
+/* Shared layout for the sign-in and setup steps (3a visual language). */
+
+.page {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bg);
+  outline: none;
+}
+
+/* Steps slide in a little and fade, in the direction of travel. */
+.page[data-enter='forward'] {
+  animation: enter-forward 0.42s var(--sheet-ease) both;
+}
+
+.page[data-enter='back'] {
+  animation: enter-back 0.42s var(--sheet-ease) both;
+}
+
+@keyframes enter-forward {
+  from {
+    opacity: 0;
+    transform: translateX(44px);
+  }
+}
+
+@keyframes enter-back {
+  from {
+    opacity: 0;
+    transform: translateX(-44px);
+  }
+}
+
+.scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--top-inset);
+}
+
+/* A form step is the scroll content itself, so the footer can stick inside it. */
+.form {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+.fieldset {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+/* Scroll-edge fade under the status bar (same as the tab screens). */
+.fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: calc(var(--top-inset) + 14px);
+  background: linear-gradient(var(--bg) calc(var(--top-inset) * 0.95), rgba(242, 242, 247, 0));
+  z-index: 4;
+  pointer-events: none;
+}
+
+/* ── Nav row ───────────────────────────────────────────── */
+
+.nav {
+  flex: none;
+  height: var(--nav-row);
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+}
+
+/* Text button in the nav row: 17px tint with a 44px tap target. */
+.navButton {
+  height: 44px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 12px;
+  font-size: 17px;
+  letter-spacing: -0.4px;
+  color: var(--tint);
+  transition: opacity 0.15s ease;
+}
+
+.navButton:active {
+  opacity: 0.4;
+}
+
+.navButton:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ── Titles and text ───────────────────────────────────── */
+
+.titleBlock {
+  padding: 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  margin: 0;
+  font-size: 34px;
+  line-height: 41px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* Centred hero (Notifications): icon, title, one paragraph. */
+.hero {
+  padding: 12px 32px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.hero .title {
+  margin-top: 26px;
+}
+
+.hero .subtitle {
+  margin-top: 8px;
+}
+
+.sectionHeader {
+  margin: 0;
+  padding: 30px 20px 8px;
+  font-size: 20px;
+  line-height: 25px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+}
+
+.caption {
+  margin: 0;
+  padding: 10px 20px 0;
+  font-size: 13px;
+  line-height: 16px;
+  letter-spacing: 0;
+  color: var(--label-secondary);
+}
+
+/* ── Cards and rows ────────────────────────────────────── */
+
+.card {
+  margin: 0 16px;
+  padding: 0 18px;
+  background: var(--card);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+.row {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 17px;
+  letter-spacing: -0.4px;
+}
+
+.row + .row {
+  border-top: 0.5px solid var(--separator);
+}
+
+.rowLabel {
+  flex: none;
+  color: var(--label);
+}
+
+.rowLabel[data-wide] {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Text field filling the rest of the row, right-aligned like the Item sheet values. */
+.input {
+  flex: 1;
+  min-width: 0;
+  height: 52px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  outline: none;
+  font-size: 17px;
+  letter-spacing: -0.4px;
+  text-align: right;
+  color: var(--label);
+  caret-color: var(--tint);
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.input::placeholder {
+  color: rgba(60, 60, 67, 0.3);
+  opacity: 1;
+}
+
+.input:disabled {
+  color: var(--label);
+  -webkit-text-fill-color: var(--label);
+  opacity: 1;
+}
+
+/* ── Footer and buttons ────────────────────────────────── */
+
+.spacer {
+  flex: 1 0 28px;
+}
+
+/* Pinned to the bottom while content scrolls under it. */
+.footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  padding: 16px 16px max(22px, calc(var(--bottom-inset) + 8px));
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  background: linear-gradient(rgba(242, 242, 247, 0), var(--bg) 16px);
+}
+
+.primary {
+  position: relative;
+  width: 100%;
+  height: 54px;
+  border-radius: var(--r-button);
+  background: var(--tint);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  user-select: none;
+  -webkit-user-select: none;
+  transition:
+    transform 0.12s ease,
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.primary:not(:disabled):not([aria-busy='true']):active {
+  transform: scale(0.96);
+}
+
+/* Not ready yet (for example a blank name): iOS filled-button disabled look. */
+.primary:disabled {
+  background: rgba(120, 120, 128, 0.16);
+  color: rgba(60, 60, 67, 0.3);
+  cursor: default;
+}
+
+.primary[aria-busy='true'] {
+  cursor: progress;
+}
+
+/* Secondary action under the primary button: 17px tint text, 44px tap target. */
+.textButton {
+  align-self: center;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 12px;
+  font-size: 17px;
+  letter-spacing: -0.4px;
+  color: var(--tint);
+  transition: opacity 0.15s ease;
+}
+
+.textButton:active {
+  opacity: 0.4;
+}
+
+.textButton:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ── Activity indicator ────────────────────────────────── */
+
+.spinner {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2.5px solid currentColor;
+  border-right-color: transparent;
+  opacity: 0.9;
+  animation: spin 0.75s linear infinite;
+}
+
+.spinner[data-size='large'] {
+  width: 28px;
+  height: 28px;
+  border-width: 3px;
+  color: var(--label-secondary);
+  opacity: 0.6;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page[data-enter='forward'],
+  .page[data-enter='back'] {
+    animation: fade-in 0.2s ease both;
+  }
+
+  .spinner {
+    animation-duration: 1.6s;
+  }
+
+  .primary {
+    transition: none;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}

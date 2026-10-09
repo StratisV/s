@@ -43,8 +43,10 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
 
   const [base] = useState<ItemDraft>(() => {
     if (item) return draftOf(item);
-    const preselected = target.kind === 'new' && target.areaId && areas.some((a) => a.id === target.areaId);
-    return newItemDraft(preselected && target.kind === 'new' ? target.areaId! : (areas[0]?.id ?? ''), today);
+    // The area it was added from, otherwise the first area.
+    const wanted = target.kind === 'new' ? target.areaId : undefined;
+    const areaId = wanted && areas.some((a) => a.id === wanted) ? wanted : (areas[0]?.id ?? '');
+    return newItemDraft(areaId, today);
   });
   const [draft, setDraft] = useState<ItemDraft>(base);
   const [confirm, setConfirm] = useState<Confirm>(null);
@@ -58,6 +60,8 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
   const latest = useRef({ home, onClose });
   latest.current = { home, onClose };
   const completingRef = useRef(false);
+  // Where focus was before a confirmation opened, to return to on cancel.
+  const returnFocus = useRef<HTMLElement | null>(null);
 
   // A new item's area must still exist when it is saved.
   const areaId = areas.some((a) => a.id === draft.area_id) ? draft.area_id : (areas[0]?.id ?? '');
@@ -98,9 +102,20 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
     return () => panel.removeEventListener('focus', focusTitle);
   }, [isNew]);
 
+  const ask = (kind: Exclude<Confirm, null>) => {
+    returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setConfirm(kind);
+  };
+
+  const cancelConfirm = () => {
+    setConfirm(null);
+    const el = returnFocus.current;
+    if (el?.isConnected && document.activeElement !== el) el.focus({ preventScroll: true });
+  };
+
   const requestClose = () => {
     if (busy || confirm) return;
-    if (dirty) setConfirm('discard');
+    if (dirty) ask('discard');
     else close();
   };
 
@@ -239,7 +254,7 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
             />
             <SelectRow
               label="Assigned to"
-              value={draft.assignee_id ?? UNASSIGNED}
+              value={assignee?.id ?? UNASSIGNED}
               options={memberOptions}
               onChange={(id) => update({ assignee_id: id === UNASSIGNED ? null : id })}
               display={memberLabel(assignee)}
@@ -266,7 +281,7 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
               <button
                 type="button"
                 className={styles.delete}
-                onClick={() => !busy && setConfirm('delete')}
+                onClick={() => !busy && !confirm && ask('delete')}
                 aria-haspopup="dialog"
               >
                 Delete
@@ -281,14 +296,14 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
         title={isNew ? 'Discard this item?' : 'Discard your changes?'}
         actions={[{ label: 'Discard Changes', destructive: true, onSelect: close }]}
         cancelLabel="Keep Editing"
-        onCancel={() => setConfirm(null)}
+        onCancel={cancelConfirm}
       />
       <ActionSheet
         open={confirm === 'delete'}
         title="Delete this item?"
         message="It will be removed for everyone in the household."
         actions={[{ label: 'Delete Item', destructive: true, onSelect: confirmDelete }]}
-        onCancel={() => setConfirm(null)}
+        onCancel={cancelConfirm}
       />
     </Sheet>
   );

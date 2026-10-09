@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './ActionSheet.module.css';
 
@@ -24,6 +24,9 @@ interface ActionSheetProps {
 export function ActionSheet({ open, title, message, actions, cancelLabel = 'Cancel', onCancel }: ActionSheetProps) {
   const [mounted, setMounted] = useState(open);
   const [shown, setShown] = useState(false);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef(onCancel);
+  cancelRef.current = onCancel;
 
   useEffect(() => {
     if (open) {
@@ -36,20 +39,34 @@ export function ActionSheet({ open, title, message, actions, cancelLabel = 'Canc
     return () => clearTimeout(t);
   }, [open]);
 
+  // Escape cancels; focus starts on the first action and Tab stays inside the sheet.
   useEffect(() => {
-    if (!open) return;
+    if (!open || !mounted) return;
+    const buttons = () => Array.from(sheetRef.current?.querySelectorAll<HTMLButtonElement>('button') ?? []);
+    buttons()[0]?.focus({ preventScroll: true });
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel();
+      if (e.key === 'Escape') {
+        e.stopPropagation(); // don't also close a sheet underneath
+        cancelRef.current();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const list = buttons();
+      if (list.length === 0) return;
+      const i = list.indexOf(document.activeElement as HTMLButtonElement);
+      const next = e.shiftKey ? (i <= 0 ? list.length - 1 : i - 1) : i === list.length - 1 ? 0 : i + 1;
+      e.preventDefault();
+      list[next].focus();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onCancel]);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [open, mounted]);
 
   if (!mounted) return null;
   return createPortal(
     <div className={styles.root} data-shown={shown || undefined}>
       <div className={styles.backdrop} onClick={onCancel} />
-      <div className={styles.sheet} role="alertdialog" aria-modal="true" aria-label={title ?? 'Confirm'}>
+      <div ref={sheetRef} className={styles.sheet} role="alertdialog" aria-modal="true" aria-label={title ?? 'Confirm'}>
         <div className={styles.group}>
           {title || message ? (
             <div className={styles.header}>

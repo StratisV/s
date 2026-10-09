@@ -1,0 +1,52 @@
+.track {
+  position: relative;
+  padding: 3px;
+  border-radius: 100px;
+  background: var(--fill-tertiary);
+  display: grid;
+  grid-template-columns: repeat(var(--count), minmax(0, 1fr));
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The selected segment's white pill, sliding under the labels. */
+.thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / var(--count));
+  border-radius: 100px;
+  background: #fff;
+  box-shadow: var(--shadow-segment);
+  transform: translateX(calc(100% * var(--index)));
+  transition: transform 0.34s var(--sheet-ease);
+}
+
+.segment {
+  position: relative;
+  height: 38px;
+  border-radius: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  font-weight: 500;
+  color: var(--label);
+}
+
+.segment[aria-checked='true'] {
+  font-weight: 600;
+}
+
+.segment:not([aria-checked='true']):active {
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thumb {
+    transition: none;
+  }
+}

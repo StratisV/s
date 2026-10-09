@@ -11,7 +11,8 @@
 // Secrets (npx supabase secrets set …): CRON_SECRET, APP_URL, VAPID_PUBLIC_KEY,
 // VAPID_PRIVATE_KEY, VAPID_SUBJECT, RESEND_API_KEY, EMAIL_FROM. Without the VAPID or Resend
 // ones that channel is skipped and the response says so. SUPABASE_URL and
-// SUPABASE_SERVICE_ROLE_KEY come from the platform.
+// SUPABASE_SERVICE_ROLE_KEY come from the platform. Optional RESEND_API_URL replaces
+// https://api.resend.com/emails (only for a local fake while testing).
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { isAuthorized } from '../_shared/auth.ts';
@@ -183,7 +184,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
           vapidPublicKey && vapidPrivateKey && vapidSubject
             ? { publicKey: vapidPublicKey, privateKey: vapidPrivateKey, subject: vapidSubject }
             : null,
-        resend: resendKey && emailFrom ? { apiKey: resendKey, from: emailFrom } : null,
+        resend: resendKey && emailFrom ? { apiKey: resendKey, from: emailFrom, url: env('RESEND_API_URL') } : null,
       },
       { now, dry },
     );

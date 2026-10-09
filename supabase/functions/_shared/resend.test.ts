@@ -47,6 +47,12 @@ describe('sendEmail (Resend)', () => {
     expect((calls[0].init.headers as Record<string, string>)['Idempotency-Key']).toBe('weekly/m-1/2026-10-12');
   });
 
+  it('posts to RESEND_API_URL instead when one is configured', async () => {
+    const { calls, impl } = fakeFetch(200, { id: 'email-3' });
+    await sendEmail(message, { ...config, url: 'http://127.0.0.1:9999/emails' }, impl);
+    expect(calls[0].url).toBe('http://127.0.0.1:9999/emails');
+  });
+
   it("reports Resend's error message when refused", async () => {
     const { impl } = fakeFetch(422, { statusCode: 422, name: 'validation_error', message: 'Invalid `to` field.' });
     expect(await sendEmail(message, config, impl)).toEqual({ ok: false, status: 422, error: 'Invalid `to` field.' });

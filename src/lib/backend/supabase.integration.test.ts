@@ -996,14 +996,25 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     await B().deletePushSubscription(endpoint);
   });
 
-  it('subscribe() hears an edit made by another member, and outsiders hear nothing', { timeout: 45_000 }, async () => {
+  it('subscribe() hears edits made by another member; outsiders get no content', { timeout: 45_000 }, async () => {
     const data = await loadA();
     const joined = (p: Person) => p.client.getChannels().some((c) => c.state === 'joined');
+
     let changes = 0;
-    let outsiderChanges = 0;
     const stop = A().subscribe(hidA, () => changes++);
-    // C knows A's household id but is not a member: RLS must keep A's updates from C.
-    const stopOutsider = C().subscribe(hidA, () => outsiderChanges++);
+
+    // C is not a member but knows A's household id and listens with the same filters.
+    // RLS keeps every INSERT and UPDATE from C. Supabase Realtime does not apply RLS to
+    // DELETE, so C may hear that a row was deleted, but the payload carries its id only.
+    type Heard = { table: string; eventType: string; new: object; old: object };
+    const outsiderHeard: Heard[] = [];
+    const outsider = people.c.client.channel(`outsider:${hidA}:${runId}`);
+    for (const table of ['households', 'members', 'areas', 'items', 'completions']) {
+      const filter = `${table === 'households' ? 'id' : 'household_id'}=eq.${hidA}`;
+      outsider.on('postgres_changes', { event: '*', schema: 'public', table, filter }, (p) => outsiderHeard.push(p));
+    }
+    outsider.subscribe();
+
     try {
       expect(await waitFor(() => joined(people.a) && joined(people.c), 10_000), 'realtime channels joined').toBe(true);
       // Postgres changes start flowing a moment after the join, so keep editing until one arrives.
@@ -1013,17 +1024,34 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
         await waitFor(() => changes > 0, 1500);
       }
       expect(changes, 'postgres_changes events heard by a member').toBeGreaterThan(0);
-      // The outsider's channel was listening for the same edits.
-      await B().renameArea(data.areas[0].id, `Renamed ${runId} final`);
-      await sleep(1500);
-      expect(outsiderChanges, 'postgres_changes events heard by an outsider').toBe(0);
+
+      // An insert, an update and a delete, with both channels listening. Realtime checks RLS
+      // when it reads the change, and drops an insert or update whose row is already gone, so
+      // each step waits until the member has heard the previous one.
+      let itemId = '';
+      const edits: [string, () => Promise<unknown>][] = [
+        ['insert', async () => (itemId = (await B().createItem(hidA, draft({ area_id: data.areas[0].id }))).id)],
+        ['update', () => B().updateItem(itemId, { title: `Secret ${runId}`, note: 'secret note' })],
+        ['delete', () => B().deleteItem(itemId)],
+      ];
+      for (const [what, edit] of edits) {
+        const before = changes;
+        await edit();
+        expect(await waitFor(() => changes > before, 10_000), `member heard the ${what}`).toBe(true);
+      }
+      await sleep(1000);
+
+      for (const heard of outsiderHeard) {
+        expect(heard.eventType, `outsider heard ${heard.eventType} on ${heard.table}`).toBe('DELETE');
+        expect(heard.new).toEqual({});
+        expect(Object.keys(heard.old)).toEqual(['id']);
+      }
     } finally {
       stop();
-      stopOutsider();
+      void people.c.client.removeChannel(outsider);
     }
     // Unsubscribing removes the channel.
     expect(await waitFor(() => people.a.client.getChannels().length === 0, 5000)).toBe(true);
-    expect(await waitFor(() => people.c.client.getChannels().length === 0, 5000)).toBe(true);
   });
 
   it('signs out', async () => {

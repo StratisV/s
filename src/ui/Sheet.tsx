@@ -64,7 +64,12 @@ export function Sheet({ open, onRequestClose, onExited, label, children }: Sheet
       }, 460);
       return () => clearTimeout(t);
     }
-    if (stage === 'open') panelRef.current?.focus({ preventScroll: true });
+    if (stage === 'open') {
+      // Keep focus that is already inside (e.g. a new item's title focused during the tap,
+      // which is what lets iOS open the keyboard); otherwise move it into the dialog.
+      const panel = panelRef.current;
+      if (panel && !panel.contains(document.activeElement)) panel.focus({ preventScroll: true });
+    }
   }, [stage]);
 
   // Escape closes.

@@ -1,0 +1,55 @@
+/* Numbered steps in a white list card; the separator starts at the text. */
+.steps {
+  margin: 28px 16px 0;
+  padding: 0 18px 0 16px;
+  list-style: none;
+  background: var(--card);
+  border-radius: var(--r-card);
+}
+
+.step {
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+  min-height: 52px;
+}
+
+.number {
+  flex: none;
+  align-self: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--tint);
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.stepText {
+  flex: 1;
+  min-width: 0;
+  padding: 15px 0;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+}
+
+.step + .step .stepText {
+  border-top: 0.5px solid var(--separator);
+}
+
+.stepText strong {
+  font-weight: 600;
+}
+
+.share {
+  display: inline-grid;
+  vertical-align: -3px;
+  color: var(--tint);
+}

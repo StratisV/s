@@ -1,0 +1,106 @@
+/* White list card; rows follow the Home item row (icon, 14px gap, separator on the text column). */
+.card {
+  margin: 0 16px;
+  padding: 0 18px 0 16px;
+  list-style: none;
+  background: var(--card);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+  min-height: 52px;
+}
+
+/* 22px symbol with a 44px tap target. */
+.icon {
+  flex: none;
+  width: 44px;
+  margin: 0 -11px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  transition: transform 0.12s ease;
+}
+
+.icon:active {
+  transform: scale(0.88);
+}
+
+.icon:disabled,
+.add:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.row + .row .field {
+  border-top: 0.5px solid var(--separator);
+}
+
+.input {
+  width: 100%;
+  height: 52px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  outline: none;
+  font-size: 17px;
+  letter-spacing: -0.4px;
+  color: var(--label);
+  caret-color: var(--tint);
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.input::placeholder {
+  color: rgba(60, 60, 67, 0.3);
+  opacity: 1;
+}
+
+.input:disabled {
+  color: var(--label);
+  -webkit-text-fill-color: var(--label);
+  opacity: 1;
+}
+
+.add {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+  min-height: 52px;
+  font-size: 17px;
+  letter-spacing: -0.4px;
+  text-align: left;
+  color: var(--label);
+  border-radius: 0;
+}
+
+.addIcon {
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+
+.add:not(:disabled):active .field {
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon {
+    transition: none;
+  }
+}

@@ -1,0 +1,59 @@
+.chart {
+  position: relative;
+  width: 220px;
+  height: 220px;
+}
+
+/* Rotated so the first segment starts at 12 o'clock. */
+.ring {
+  display: block;
+  transform: rotate(-90deg);
+}
+
+.track {
+  stroke: var(--fill-tertiary);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.segments {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.track[data-visible],
+.segments[data-visible] {
+  opacity: 1;
+}
+
+.center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.total {
+  font-family: var(--font-rounded);
+  font-size: 54px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.caption {
+  font-size: 15px;
+  line-height: 18px;
+  letter-spacing: normal;
+  color: var(--label-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .track,
+  .segments {
+    transition: none;
+  }
+}

@@ -11,6 +11,8 @@ export interface ResendConfig {
   apiKey: string;
   /** "home.os <home@yourdomain.com>" (the domain must be verified in Resend). */
   from: string;
+  /** Endpoint override (RESEND_API_URL), for a local fake while testing. Default RESEND_URL. */
+  url?: string;
 }
 
 export interface SendEmailOptions {
@@ -46,7 +48,7 @@ export async function sendEmail(
   };
   if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey.slice(0, 256);
 
-  const res = await fetchImpl(RESEND_URL, {
+  const res = await fetchImpl(config.url || RESEND_URL, {
     method: 'POST',
     headers,
     body: JSON.stringify({
