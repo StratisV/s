@@ -555,19 +555,30 @@ export class DemoBackend implements Backend {
       if (!Array.isArray(doc.housekeeping_visits)) doc.housekeeping_visits = [];
       if (!Array.isArray(doc.housekeeping_visit_tasks)) doc.housekeeping_visit_tasks = [];
       if (!Array.isArray(parsed.housekeeping_tasks)) {
-        // Stored before housekeeping existed: each household without a task or a visit gets
-        // the starter task list once, like the migration's backfill. Written back at once,
-        // so the new tasks keep their ids from one read to the next.
         doc.housekeeping_tasks = [];
-        for (const household of doc.households) {
-          if (doc.housekeeping_visits.some((v) => v.household_id === household.id)) continue;
-          this.addStarterTasks(doc, household.id, this.now());
-        }
-        this.write(doc);
+        this.backfillStarterTasks(doc);
       }
       return doc;
     } catch {
       return emptyDoc();
+    }
+  }
+
+  /**
+   * A document stored before housekeeping existed: each household without a task or a visit
+   * gets the starter task list once, like the migration's backfill. Written back at once, so
+   * the new tasks keep their ids from one read to the next. Should that fail, the households
+   * just start with an empty list; the rest of the document is read as stored.
+   */
+  private backfillStarterTasks(doc: DemoDoc) {
+    try {
+      for (const household of doc.households) {
+        if (doc.housekeeping_visits.some((v) => v.household_id === household.id)) continue;
+        this.addStarterTasks(doc, household.id, this.now());
+      }
+      this.write(doc);
+    } catch {
+      doc.housekeeping_tasks = [];
     }
   }
 
