@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_ADDRESS, DEFAULT_AREAS, MEMBER_COLORS, SEED_ITEMS } from '../constants';
+import { CHAT_PAGE_SIZE, DEFAULT_ADDRESS, DEFAULT_AREAS, MEMBER_COLORS, REACTION_EMOJIS, SEED_ITEMS } from '../constants';
 import { addDays, deviceTimeZone, monthKey, todayIn } from '../logic/dates';
 import { seedItemsFor } from '../logic/items';
 import { countCompletions } from '../logic/stats';
-import type { AuthUser, CreateHouseholdInput, HouseholdData, ItemDraft } from '../types';
+import type { AuthUser, ChatChange, CreateHouseholdInput, HouseholdData, ItemDraft } from '../types';
 import { DEMO_STORAGE_KEY, DEMO_USER, DemoBackend, type DemoBackendOptions, type StorageLike } from './demo';
 import { BackendError } from './types';
 
@@ -831,5 +831,456 @@ describe('URL switches', () => {
     const { hid } = await setup();
     const b = make({ search: '?demo-reset=0' });
     expect(await b.getMyHouseholdId()).toBe(hid);
+  });
+});
+
+describe('chat', () => {
+  const later = (ms: number) => {
+    clock = new Date(clock.getTime() + ms);
+  };
+  const reactionsOf = (doc: { message_reactions: { message_id: string }[] }, id: string) =>
+    doc.message_reactions.filter((r) => r.message_id === id);
+
+  /** Bob joins Stratis's household; the shared document is left signed in as Bob. */
+  async function joinBob(b: DemoBackend, hid: string) {
+    const token = await b.createInvite();
+    const bob = make({ user: BOB });
+    await bob.signInWithGoogle();
+    await bob.joinHousehold({ token, memberName: 'Bob', memberEmoji: '🐻' });
+    const bobMe = (await bob.load(hid)).members.find((m) => m.user_id === BOB.id)!;
+    return { bob, bobMe };
+  }
+
+  it('starts every demo household with a short conversation about the house, with reactions', async () => {
+    const { b, hid, data } = await setup();
+    const page = await b.listMessages(hid);
+    expect(page.hasMore).toBe(false);
+    const { messages } = page;
+    expect(messages.length).toBeGreaterThanOrEqual(6);
+    expect(messages.length).toBeLessThanOrEqual(10);
+
+    const all = messages.map((m) => m.body).join('\n');
+    expect(all).toMatch(/heating engineer/i);
+    expect(all).toMatch(/firepit/i);
+    expect(all).toMatch(/olive oil/i);
+    expect(all).not.toMatch(/—/); // no em dashes in copy
+    const [stratis, shea, ela] = data.members;
+    expect(new Set(messages.map((m) => m.member_id))).toEqual(new Set([stratis.id, shea.id, ela.id]));
+
+    // Yesterday evening and this morning (10:30 in London), oldest first, all in the past.
+    const times = messages.map((m) => new Date(m.created_at).getTime());
+    for (let i = 1; i < times.length; i++) expect(times[i]).toBeGreaterThan(times[i - 1]);
+    expect(times[times.length - 1]).toBeLessThan(clock.getTime());
+    expect(new Set(messages.map((m) => todayIn(TZ, new Date(m.created_at))))).toEqual(new Set(['2026-10-07', '2026-10-08']));
+
+    // A few reactions, from members, after their message, once each; some of them Stratis's own.
+    const reactions = messages.flatMap((m) => m.reactions.map((r) => ({ ...r, sent: m.created_at, id: m.id })));
+    expect(reactions.length).toBeGreaterThanOrEqual(3);
+    expect(messages.some((m) => m.reactions.length >= 2)).toBe(true);
+    expect(reactions.some((r) => r.member_id === stratis.id)).toBe(true);
+    const keys = new Set<string>();
+    for (const r of reactions) {
+      expect(r.message_id).toBe(r.id);
+      expect(data.members.some((m) => m.id === r.member_id)).toBe(true);
+      expect(REACTION_EMOJIS as readonly string[]).toContain(r.emoji);
+      expect(r.created_at > r.sent).toBe(true);
+      expect(new Date(r.created_at).getTime()).toBeLessThanOrEqual(clock.getTime());
+      keys.add(`${r.message_id} ${r.member_id} ${r.emoji}`);
+    }
+    expect(keys.size).toBe(reactions.length);
+    for (const m of messages) {
+      const stamps = m.reactions.map((r) => r.created_at);
+      expect([...stamps].sort()).toEqual(stamps);
+    }
+
+    // Each household gets its own copy.
+    const bob = make({ user: BOB });
+    await bob.signInWithGoogle();
+    const bobHid = await bob.createHousehold(input({ name: "Bob's" }));
+    const bobChat = (await bob.listMessages(bobHid)).messages;
+    expect(bobChat.map((m) => m.body)).toEqual(messages.map((m) => m.body));
+    expect(bobChat.every((m) => m.household_id === bobHid && !messages.some((x) => x.id === m.id))).toBe(true);
+  });
+
+  it('moves the seeded conversation a day earlier while this morning is still ahead', async () => {
+    clock = new Date('2026-10-08T06:00:00Z'); // 07:00 in London
+    const { b, hid } = await setup();
+    const { messages } = await b.listMessages(hid);
+    expect(new Set(messages.map((m) => todayIn(TZ, new Date(m.created_at))))).toEqual(new Set(['2026-10-06', '2026-10-07']));
+    for (const m of messages) {
+      expect(new Date(m.created_at).getTime()).toBeLessThan(clock.getTime());
+      for (const r of m.reactions) expect(new Date(r.created_at).getTime()).toBeLessThanOrEqual(clock.getTime());
+    }
+  });
+
+  it('?demo-seed=1 comes with the conversation', async () => {
+    const b = make({ search: '?demo-seed=1' });
+    const hid = (await b.getMyHouseholdId())!;
+    const { members } = await b.load(hid);
+    const page = await b.listMessages(hid);
+    expect(page.messages.length).toBeGreaterThanOrEqual(6);
+    expect(page.messages.length).toBeLessThanOrEqual(10);
+    expect(new Set(page.messages.map((m) => m.member_id))).toEqual(new Set(members.map((m) => m.id)));
+    expect(page.messages.some((m) => m.reactions.length > 0)).toBe(true);
+  });
+
+  it('returns exactly the contract shape', async () => {
+    const { b, hid } = await setup();
+    const { messages } = await b.listMessages(hid);
+    const reacted = messages.find((m) => m.reactions.length)!;
+    expect(Object.keys(reacted).sort()).toEqual(['body', 'created_at', 'household_id', 'id', 'member_id', 'reactions']);
+    expect(Object.keys(reacted.reactions[0]).sort()).toEqual(['created_at', 'emoji', 'member_id', 'message_id']);
+    const [got] = await b.getMessages([reacted.id]);
+    expect(got).toEqual(reacted);
+  });
+
+  it('posts trimmed messages of 1 to 4000 characters as the signed-in member', async () => {
+    const { b, hid, me } = await setup();
+    const seeded = storedDoc().messages.length;
+    clock = new Date('2026-10-08T10:00:00Z');
+    const msg = await b.sendMessage(hid, '  The engineer is here \n');
+    expect(msg).toEqual({
+      id: msg.id,
+      household_id: hid,
+      member_id: me.id,
+      body: 'The engineer is here',
+      created_at: '2026-10-08T10:00:00.000Z',
+      reactions: [],
+    });
+    expect((await b.listMessages(hid)).messages.at(-1)).toEqual(msg);
+
+    expect((await b.sendMessage(hid, 'x'.repeat(4000))).body).toHaveLength(4000);
+    expect((await b.sendMessage(hid, ` ${'x'.repeat(4000)}\n`)).body).toHaveLength(4000);
+    // Characters as Postgres counts them: an emoji is one.
+    expect(Array.from((await b.sendMessage(hid, '🦔'.repeat(4000))).body)).toHaveLength(4000);
+    for (const body of ['', '   ', '\n\t ', 'x'.repeat(4001), '🦔'.repeat(4001)]) {
+      await rejectsWithMessage(b.sendMessage(hid, body), /^invalid_input: body$/);
+    }
+    expect(storedDoc().messages).toHaveLength(seeded + 4);
+    await rejectsWith(b.sendMessage('another-household', 'Hi'), 'not_found');
+  });
+
+  it('stamps created_at strictly after the newest message, even within one millisecond', async () => {
+    const { b, hid } = await setup();
+    const sent = [];
+    for (const body of ['one', 'two', 'three']) sent.push(await b.sendMessage(hid, body));
+    expect(sent.map((m) => m.created_at)).toEqual([
+      '2026-10-08T09:30:00.000Z',
+      '2026-10-08T09:30:00.001Z',
+      '2026-10-08T09:30:00.002Z',
+    ]);
+    later(1); // the clock catches up by one millisecond only
+    expect((await b.sendMessage(hid, 'four')).created_at).toBe('2026-10-08T09:30:00.003Z');
+    later(60_000);
+    expect((await b.sendMessage(hid, 'five')).created_at).toBe('2026-10-08T09:31:00.001Z');
+    const { messages } = await b.listMessages(hid, { limit: 5 });
+    expect(messages.map((m) => m.body)).toEqual(['one', 'two', 'three', 'four', 'five']);
+  });
+
+  it('pages backwards by created_at: the newest page first, each page oldest first', async () => {
+    const { b, hid } = await setup();
+    const seeded = (await b.listMessages(hid)).messages;
+    const n = 2 * CHAT_PAGE_SIZE + 20;
+    for (let i = 1; i <= n; i++) {
+      later(1000);
+      await b.sendMessage(hid, `Message ${i}`);
+    }
+    const bodies = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => `Message ${from + i}`);
+
+    const first = await b.listMessages(hid);
+    expect(first.hasMore).toBe(true);
+    expect(first.messages.map((m) => m.body)).toEqual(bodies(n - CHAT_PAGE_SIZE + 1, n));
+
+    const second = await b.listMessages(hid, { before: first.messages[0].created_at });
+    expect(second.hasMore).toBe(true);
+    expect(second.messages.map((m) => m.body)).toEqual(bodies(21, n - CHAT_PAGE_SIZE));
+
+    const third = await b.listMessages(hid, { before: second.messages[0].created_at });
+    expect(third.hasMore).toBe(false);
+    expect(third.messages).toEqual([...seeded, ...(await b.listMessages(hid, { before: second.messages[0].created_at, limit: 20 })).messages]);
+    expect(third.messages.slice(seeded.length).map((m) => m.body)).toEqual(bodies(1, 20));
+
+    // Together: every message once, in order.
+    const everything = [...third.messages, ...second.messages, ...first.messages];
+    expect(everything).toHaveLength(seeded.length + n);
+    expect(new Set(everything.map((m) => m.id)).size).toBe(everything.length);
+    const times = everything.map((m) => new Date(m.created_at).getTime());
+    for (let i = 1; i < times.length; i++) expect(times[i]).toBeGreaterThan(times[i - 1]);
+
+    // `before` is strict, and any spelling of the instant works.
+    const newest = first.messages[first.messages.length - 1];
+    expect((await b.listMessages(hid, { before: newest.created_at, limit: 1 })).messages.map((m) => m.body)).toEqual([
+      `Message ${n - 1}`,
+    ]);
+    const offset = newest.created_at.replace('Z', '+00:00');
+    expect((await b.listMessages(hid, { before: offset, limit: 1 })).messages.map((m) => m.body)).toEqual([`Message ${n - 1}`]);
+    expect(await b.listMessages(hid, { before: seeded[0].created_at })).toEqual({ messages: [], hasMore: false });
+    await rejectsWithMessage(b.listMessages(hid, { before: 'yesterday-ish' }), /^invalid_input: before$/);
+
+    // Limits: a positive whole number, the page size when missing.
+    const three = await b.listMessages(hid, { limit: 3 });
+    expect(three).toMatchObject({ hasMore: true });
+    expect(three.messages.map((m) => m.body)).toEqual(bodies(n - 2, n));
+    expect((await b.listMessages(hid, { limit: 0 })).messages.map((m) => m.body)).toEqual([`Message ${n}`]);
+    expect((await b.listMessages(hid, { limit: 2.7 })).messages).toHaveLength(2);
+    expect((await b.listMessages(hid, { limit: Number.NaN })).messages).toHaveLength(CHAT_PAGE_SIZE);
+    const huge = await b.listMessages(hid, { limit: 10_000 });
+    expect(huge).toMatchObject({ hasMore: false });
+    expect(huge.messages).toEqual(everything);
+  });
+
+  it('getMessages reloads the messages that still exist, with their reactions', async () => {
+    const { b, hid, me } = await setup();
+    const a = await b.sendMessage(hid, 'A');
+    later(1000);
+    const c = await b.sendMessage(hid, 'C');
+    later(1000);
+    await b.setReaction(a.id, '👍', true);
+    const got = await b.getMessages([c.id, 'missing', a.id, a.id]);
+    expect(got.map((m) => m.body)).toEqual(['A', 'C']);
+    expect(got[0].reactions).toEqual([{ message_id: a.id, member_id: me.id, emoji: '👍', created_at: '2026-10-08T09:30:02.000Z' }]);
+    await b.deleteMessage(c.id);
+    expect((await b.getMessages([a.id, c.id])).map((m) => m.body)).toEqual(['A']);
+    expect(await b.getMessages([])).toEqual([]);
+  });
+
+  it("keeps each household's chat to its members", async () => {
+    const { b, hid } = await setup();
+    const msg = await b.sendMessage(hid, 'Only for us');
+
+    const bob = make({ user: BOB });
+    await bob.signInWithGoogle();
+    const outsider = async () => {
+      await rejectsWith(bob.listMessages(hid), 'not_found');
+      await rejectsWith(bob.sendMessage(hid, 'Hi'), 'not_found');
+      expect(await bob.getMessages([msg.id])).toEqual([]);
+      await rejectsWith(bob.setReaction(msg.id, '👍', true), 'not_found');
+      await bob.setReaction(msg.id, '👍', false); // a delete that matches nothing
+      await rejectsWith(bob.deleteMessage(msg.id), 'not_found');
+    };
+    await outsider(); // no household yet
+    const bobHid = await bob.createHousehold(input({ name: "Bob's" }));
+    await outsider(); // a household of his own
+    expect((await bob.listMessages(bobHid)).messages.some((m) => m.id === msg.id)).toBe(false);
+
+    await b.signInWithGoogle();
+    expect(await b.getMessages([msg.id])).toEqual([msg]);
+    await rejectsWith(b.listMessages(bobHid), 'not_found');
+  });
+
+  it('deletes only your own messages, and their reactions with them', async () => {
+    const { b, hid, data } = await setup();
+    const { bob } = await joinBob(b, hid);
+    const bobs = await bob.sendMessage(hid, 'Hello from Bob');
+    await b.signInWithGoogle();
+    later(1000);
+    const mine = await b.sendMessage(hid, 'Hi Bob');
+    await b.setReaction(bobs.id, '❤️', true);
+
+    await rejectsWith(b.deleteMessage(bobs.id), 'not_found');
+    const sheas = (await b.listMessages(hid)).messages.find((m) => m.member_id === data.members[1].id)!;
+    await rejectsWith(b.deleteMessage(sheas.id), 'not_found');
+    await rejectsWith(b.deleteMessage('nope'), 'not_found');
+    expect(await b.getMessages([bobs.id, sheas.id])).toHaveLength(2);
+
+    await bob.signInWithGoogle();
+    await bob.setReaction(mine.id, '👍', true);
+    await bob.deleteMessage(bobs.id);
+    expect(storedDoc().messages.some((m: { id: string }) => m.id === bobs.id)).toBe(false);
+    expect(reactionsOf(storedDoc(), bobs.id)).toEqual([]);
+    await rejectsWith(bob.deleteMessage(bobs.id), 'not_found');
+
+    await b.signInWithGoogle();
+    expect(reactionsOf(storedDoc(), mine.id)).toHaveLength(1);
+    await b.deleteMessage(mine.id); // someone else's reaction on it goes too
+    expect(reactionsOf(storedDoc(), mine.id)).toEqual([]);
+    expect(await b.getMessages([bobs.id, mine.id])).toEqual([]);
+  });
+
+  it('reactions: several emoji per member, once each, idempotent, and only your own', async () => {
+    const { b, hid, me } = await setup();
+    const msg = await b.sendMessage(hid, 'The firepit has gone to its new home');
+    const { bob, bobMe } = await joinBob(b, hid);
+
+    await b.signInWithGoogle();
+    later(1000);
+    await b.setReaction(msg.id, '❤️', true);
+    later(1000);
+    await b.setReaction(msg.id, '❤️', true); // again: still one, first time kept
+    later(1000);
+    await b.setReaction(msg.id, '🎉', true);
+    await bob.signInWithGoogle();
+    later(1000);
+    await bob.setReaction(msg.id, '❤️', true);
+
+    let [got] = await bob.getMessages([msg.id]);
+    expect(got.reactions).toEqual([
+      { message_id: msg.id, member_id: me.id, emoji: '❤️', created_at: '2026-10-08T09:30:01.000Z' },
+      { message_id: msg.id, member_id: me.id, emoji: '🎉', created_at: '2026-10-08T09:30:03.000Z' },
+      { message_id: msg.id, member_id: bobMe.id, emoji: '❤️', created_at: '2026-10-08T09:30:04.000Z' },
+    ]);
+
+    // Removing touches only your own reaction.
+    await bob.setReaction(msg.id, '❤️', false);
+    await bob.setReaction(msg.id, '❤️', false); // already off
+    await bob.setReaction(msg.id, '🎉', false); // Stratis's 🎉 stays
+    [got] = await bob.getMessages([msg.id]);
+    expect(got.reactions.map((r) => [r.member_id, r.emoji])).toEqual([
+      [me.id, '❤️'],
+      [me.id, '🎉'],
+    ]);
+
+    // message_reactions.emoji: 1 to 16 characters.
+    for (const emoji of ['', '  ', '🦔'.repeat(17)]) {
+      await rejectsWithMessage(bob.setReaction(msg.id, emoji, true), /^invalid_input: emoji$/);
+    }
+    await bob.setReaction(msg.id, '👨‍👩‍👧‍👦', true);
+    await rejectsWith(bob.setReaction('nope', '👍', true), 'not_found');
+    await bob.setReaction('nope', '👍', false);
+
+    const rows = reactionsOf(storedDoc(), msg.id) as { household_id: string; member_id: string }[];
+    expect(rows).toHaveLength(3);
+    expect(rows.every((r) => r.household_id === hid)).toBe(true);
+    expect(rows.filter((r) => r.member_id === bobMe.id)).toHaveLength(1);
+  });
+
+  it('needs a signed-in user for every chat call', async () => {
+    const { b, hid } = await setup();
+    const msg = await b.sendMessage(hid, 'Hi');
+    await b.signOut();
+    await rejectsWith(b.listMessages(hid), 'not_signed_in');
+    await rejectsWith(b.getMessages([msg.id]), 'not_signed_in');
+    await rejectsWith(b.getMessages([]), 'not_signed_in');
+    await rejectsWith(b.sendMessage(hid, 'Hi'), 'not_signed_in');
+    await rejectsWith(b.sendMessage(hid, ''), 'not_signed_in');
+    await rejectsWith(b.deleteMessage(msg.id), 'not_signed_in');
+    await rejectsWith(b.setReaction(msg.id, '👍', true), 'not_signed_in');
+    await rejectsWith(b.setReaction(msg.id, '👍', false), 'not_signed_in');
+  });
+
+  it('works with a document stored before chat existed', async () => {
+    const { hid } = await setup();
+    const doc = storedDoc();
+    delete doc.messages;
+    delete doc.message_reactions;
+    storage.setItem(DEMO_STORAGE_KEY, JSON.stringify(doc));
+
+    const b = make();
+    expect(await b.load(hid)).toBeTruthy();
+    expect(await b.listMessages(hid)).toEqual({ messages: [], hasMore: false });
+    const msg = await b.sendMessage(hid, 'First!');
+    await b.setReaction(msg.id, '🎉', true);
+    expect((await b.listMessages(hid)).messages.map((m) => [m.body, m.reactions.length])).toEqual([['First!', 1]]);
+    expect(storedDoc().version).toBe(1);
+  });
+
+  describe('subscribeChat', () => {
+    it('reports every chat write made through this backend, and only real changes', async () => {
+      const { b, hid } = await setup();
+      const changes: ChatChange[] = [];
+      const unsub = b.subscribeChat(hid, (c) => changes.push(c));
+      const elsewhere = vi.fn();
+      const unsubElsewhere = b.subscribeChat('another-household', elsewhere);
+
+      const msg = await b.sendMessage(hid, 'Hi');
+      await b.setReaction(msg.id, '👍', true);
+      await b.setReaction(msg.id, '👍', true); // nothing changed
+      await b.setReaction(msg.id, '👍', false);
+      await b.setReaction(msg.id, '👍', false); // nothing changed
+      await rejectsWith(b.sendMessage(hid, ' '), 'unknown'); // failed writes are silent
+      await rejectsWith(b.setReaction('nope', '👍', true), 'not_found');
+      await rejectsWith(b.deleteMessage('nope'), 'not_found');
+      await b.deleteMessage(msg.id);
+      expect(changes).toEqual([
+        { type: 'message', messageId: msg.id, deleted: false },
+        { type: 'reaction', messageId: msg.id },
+        { type: 'reaction', messageId: msg.id },
+        { type: 'message', messageId: msg.id, deleted: true },
+      ]);
+      expect(elsewhere).not.toHaveBeenCalled();
+
+      unsub();
+      unsubElsewhere();
+      await b.sendMessage(hid, 'Anyone?');
+      expect(changes).toHaveLength(4);
+    });
+
+    it('reports a send before its promise settles, with the message already readable', async () => {
+      const { b, hid } = await setup();
+      let settled = false;
+      let readable: Promise<number> | null = null;
+      b.subscribeChat(hid, (c) => {
+        expect(settled).toBe(false);
+        if (c.type === 'message') readable = b.getMessages([c.messageId]).then((m) => m.length);
+      });
+      await b.sendMessage(hid, 'Hi').then(() => (settled = true));
+      expect(await readable).toBe(1);
+    });
+
+    it('keeps the write when a listener throws', async () => {
+      const { b, hid } = await setup();
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const after = vi.fn();
+        b.subscribeChat(hid, () => {
+          throw new Error('boom');
+        });
+        b.subscribeChat(hid, after);
+        const msg = await b.sendMessage(hid, 'Still sent');
+        expect(after).toHaveBeenCalledTimes(1);
+        expect(errors).toHaveBeenCalledTimes(1);
+        expect(await b.getMessages([msg.id])).toHaveLength(1);
+      } finally {
+        errors.mockRestore();
+      }
+    });
+
+    it("resyncs when another tab changes this household's chat", async () => {
+      const win = new EventTarget();
+      vi.stubGlobal('window', win);
+      const { b, hid } = await setup();
+      const fire = (key: string | null) => win.dispatchEvent(Object.assign(new Event('storage'), { key }));
+      const changes: ChatChange[] = [];
+      const unsub = b.subscribeChat(hid, (c) => changes.push(c));
+      const otherTab = make(); // same storage and session, as another tab has
+
+      fire(DEMO_STORAGE_KEY); // the chat has not changed
+      expect(changes).toEqual([]);
+
+      const msg = await otherTab.sendMessage(hid, 'From the other tab');
+      fire('something-else');
+      expect(changes).toEqual([]);
+      fire(DEMO_STORAGE_KEY);
+      expect(changes).toEqual([{ type: 'resync' }]);
+      fire(DEMO_STORAGE_KEY); // already seen
+      expect(changes).toHaveLength(1);
+
+      // Items edited elsewhere leave the chat alone.
+      const data = await otherTab.load(hid);
+      await otherTab.updateItem(data.items[0].id, { rag: 'red' });
+      fire(DEMO_STORAGE_KEY);
+      expect(changes).toHaveLength(1);
+
+      await otherTab.setReaction(msg.id, '👍', true);
+      fire(null); // storage cleared or replaced wholesale counts too
+      expect(changes).toEqual([{ type: 'resync' }, { type: 'resync' }]);
+
+      // This tab's own write reports itself once, not again as a resync.
+      const mine = await b.sendMessage(hid, 'From this tab');
+      fire(DEMO_STORAGE_KEY);
+      expect(changes.slice(2)).toEqual([{ type: 'message', messageId: mine.id, deleted: false }]);
+
+      unsub();
+      await otherTab.sendMessage(hid, 'Unheard');
+      fire(DEMO_STORAGE_KEY);
+      expect(changes).toHaveLength(3);
+    });
+
+    it('is safe outside a browser', async () => {
+      const { b, hid } = await setup();
+      const unsub = b.subscribeChat(hid, () => {});
+      expect(typeof unsub).toBe('function');
+      unsub();
+    });
   });
 });
