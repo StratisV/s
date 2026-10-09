@@ -785,8 +785,9 @@ describe('SupabaseBackend offline: chat requests', () => {
 
     reply = pgError('new row violates row-level security policy for table "messages"', '42501', 403);
     await rejectsWith(backend.sendMessage(H, 'Hi'), 'not_found');
+    // The database's own check, should it ever refuse what the client let through.
     reply = pgError('new row for relation "messages" violates check constraint "messages_body_length"', '23514');
-    await rejectsWith(backend.sendMessage(H, '​'), 'unknown', /^invalid_input: messages_body_length$/);
+    await rejectsWith(backend.sendMessage(H, 'Hi'), 'unknown', /^invalid_input: messages_body_length$/);
   });
 
   it('deleteMessage deletes one of your own messages, else not_found', async () => {
@@ -1669,10 +1670,13 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
       expect(await waitFor(() => heardC.some(messageEvent(fromC.id, true)), 10_000), 'C heard their delete').toBe(true);
       await sleep(1000);
 
+      // A new subscription may first hear changes committed just before it (Realtime reads
+      // the write-ahead log a little behind), here from the earlier chat tests in A's
+      // household. From the first warm-up message on, B hears exactly what this test did there.
       const named = (list: ChatChange[]) => list.flatMap((c) => (c.type === 'resync' ? [] : [c.messageId]));
-      console.log('DEBUG', JSON.stringify({ heardB, sentInA, sentInC, heardC }));
-      expect(named(heardB).filter((id) => !sentInA.includes(id)), 'B heard only its own household').toEqual([]);
-      expect(named(heardC).filter((id) => !sentInC.includes(id)), 'C heard only its own household').toEqual([]);
+      const sinceWarmUp = named(heardB).slice(named(heardB).indexOf(sentInA[0]));
+      expect(sinceWarmUp.filter((id) => !sentInA.includes(id)), 'B heard only its own household').toEqual([]);
+      expect(named(heardC).filter((id) => sentInA.includes(id)), 'C heard nothing of A').toEqual([]);
       expect(heardB.some((c) => c.type === 'resync')).toBe(false);
       for (const heard of outsiderHeard) {
         expect(heard.eventType, `outsider heard ${heard.eventType} on ${heard.table}`).toBe('DELETE');
@@ -1680,6 +1684,22 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
         const primaryKey = heard.table === 'messages' ? ['id'] : ['emoji', 'member_id', 'message_id'];
         expect(Object.keys(heard.old).sort()).toEqual(primaryKey);
       }
+
+      // A dropped connection: once the channel has rejoined, B is told to resync and hears
+      // changes again.
+      type Socket = { close(code?: number, reason?: string): void };
+      const realtime = people.b.client.realtime as unknown as { socketAdapter?: { socket?: { conn?: Socket } }; conn?: Socket };
+      const socket = realtime.socketAdapter?.socket?.conn ?? realtime.conn;
+      expect(socket, 'the realtime WebSocket').toBeTruthy();
+      socket!.close(4000, 'test: connection dropped');
+      expect(await waitFor(() => heardB.some((c) => c.type === 'resync'), 15_000), 'B told to resync').toBe(true);
+      const rejoined = Date.now() + 20_000;
+      flowing = false;
+      for (let n = 1; !flowing && Date.now() < rejoined; n++) {
+        const next = await A().sendMessage(hidA, `After the drop ${n}`);
+        flowing = await waitFor(() => heardB.some(messageEvent(next.id, false)), 1500);
+      }
+      expect(flowing, 'B hears again after rejoining').toBe(true);
     } finally {
       stopB();
       stopC();

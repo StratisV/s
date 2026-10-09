@@ -22,7 +22,7 @@ function Ready({ onOpenProfile, expose }: { onOpenProfile(): void; expose(home: 
   const home = useHome();
   expose(home);
   if (home.phase.kind !== 'ready' || !home.data) return null;
-  return <HomeScreen onOpenItem={() => {}} onOpenProfile={onOpenProfile} />;
+  return <HomeScreen onOpenItem={() => {}} onAddItem={onAddItem} onOpenProfile={onOpenProfile} />;
 }
 
 async function setup() {

@@ -1,0 +1,234 @@
+/* Above the app and the toast's layer below it; action sheets (900) still cover it. */
+.root {
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  font-family: var(--font-text);
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  animation: fade-in 0.22s ease both;
+}
+
+/* The area everything is kept inside (safe areas and a small margin). */
+.frame {
+  position: absolute;
+  top: calc(var(--top-inset) + 8px);
+  bottom: calc(var(--bottom-inset) + 12px);
+  left: 8px;
+  right: 8px;
+  pointer-events: none;
+}
+
+/* Measured first, shown once placed (before the first paint). */
+.root:not([data-placed]) .clone,
+.root:not([data-placed]) .glass,
+.root:not([data-placed]) .menu {
+  visibility: hidden;
+}
+
+.clone {
+  position: absolute;
+  display: flex;
+  animation: lift 0.32s var(--sheet-ease) both;
+}
+
+.cloneBubble {
+  width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.14);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Liquid Glass, as the tab bar. */
+.glass {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 0.5px solid rgba(0, 0, 0, 0.06);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.06),
+    0 10px 30px rgba(0, 0, 0, 0.14),
+    inset 1.5px 1.5px 1px rgba(255, 255, 255, 0.75);
+  animation: pop-up 0.3s var(--sheet-ease) both;
+  transform-origin: 30px 100%;
+}
+
+.glass[data-mine] {
+  transform-origin: calc(100% - 30px) 100%;
+}
+
+.bar {
+  padding: 5px;
+  border-radius: 29px;
+  display: flex;
+  gap: 2px;
+}
+
+.grid {
+  width: min(352px, calc(100vw - 16px));
+  padding: 8px;
+  border-radius: 26px;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.emoji,
+.more {
+  flex: none;
+  width: min(44px, calc((100vw - 40px) / 7));
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 28px;
+  line-height: 1;
+  transition:
+    transform 0.12s ease,
+    background-color 0.15s ease;
+}
+
+.grid .emoji {
+  width: auto;
+  height: 40px;
+  font-size: 26px;
+  border-radius: 12px;
+}
+
+.emoji:active {
+  transform: scale(1.18);
+}
+
+.emoji[aria-pressed='true'] {
+  background: rgba(0, 122, 255, 0.16);
+}
+
+.emoji:focus-visible,
+.more:focus-visible,
+.item:focus-visible {
+  outline-offset: -2px;
+}
+
+.more {
+  color: var(--label-secondary);
+}
+
+.more::before {
+  content: '';
+  grid-area: 1 / 1;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(118, 118, 128, 0.14);
+}
+
+.more > svg {
+  grid-area: 1 / 1;
+}
+
+.menu {
+  position: absolute;
+  min-width: 210px;
+  border-radius: 20px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 0.5px solid rgba(0, 0, 0, 0.06);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.06),
+    0 10px 30px rgba(0, 0, 0, 0.14);
+  animation: pop-down 0.3s var(--sheet-ease) both;
+  transform-origin: 30px 0;
+}
+
+.menu[data-mine] {
+  transform-origin: calc(100% - 30px) 0;
+}
+
+.item {
+  position: relative;
+  min-height: 46px;
+  padding: 0 16px 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  text-align: left;
+  color: var(--label);
+}
+
+.item + .item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  border-top: 0.5px solid var(--separator);
+}
+
+.item[data-destructive] {
+  color: var(--destructive);
+}
+
+.item:active {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes lift {
+  from {
+    transform: translateY(var(--shift, 0px));
+  }
+}
+
+@keyframes pop-up {
+  from {
+    opacity: 0;
+    transform: scale(0.6) translateY(8px);
+  }
+}
+
+@keyframes pop-down {
+  from {
+    opacity: 0;
+    transform: scale(0.6) translateY(-8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop,
+  .clone,
+  .glass,
+  .menu {
+    animation: none;
+  }
+
+  .emoji,
+  .more {
+    transition: none;
+  }
+
+  .emoji:active {
+    transform: none;
+  }
+}

@@ -9,11 +9,21 @@
   justify-content: space-between;
   align-items: center;
   pointer-events: none;
+  transition:
+    transform 0.38s var(--sheet-ease),
+    opacity 0.25s ease;
+}
+
+/* While typing in the chat the bar slides down out of the way. */
+.bar[data-hidden] {
+  transform: translateY(calc(100% + var(--tabbar-bottom) + 12px));
+  opacity: 0;
 }
 
 .capsule {
   pointer-events: auto;
-  width: 190px;
+  /* Three tabs; next to the 62px add button with room to spare on a 375px screen. */
+  width: min(264px, calc(100% - 62px - 12px));
   height: var(--tabbar-height);
   padding: 4px;
   border-radius: var(--r-tab);
@@ -25,7 +35,7 @@
     var(--shadow-glass),
     inset 1.5px 1.5px 1px rgba(255, 255, 255, 0.75);
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .tab {
@@ -40,6 +50,21 @@
   transition:
     background-color 0.2s ease,
     color 0.2s ease;
+}
+
+.label {
+  position: relative;
+}
+
+/* Unread messages on Chat. */
+.dot {
+  position: absolute;
+  top: -1px;
+  right: -10px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--rag-red);
 }
 
 .tab[aria-current] {
@@ -69,13 +94,27 @@
   transition: transform 0.12s ease;
 }
 
+/* Back from Chat: the button pops in. */
+.add[data-enter] {
+  animation: add-in 0.3s var(--sheet-ease);
+}
+
 .add:active {
   transform: scale(0.94);
 }
 
+@keyframes add-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .bar,
   .tab,
   .add {
     transition: none;
+    animation: none;
   }
 }

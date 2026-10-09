@@ -97,12 +97,3 @@ export function NotDeliveredIcon({ size = 24, ...p }: IconProps) {
     </svg>
   );
 }
-
-/** face.smiling with a plus (more reactions) */
-export function MoreReactionsIcon({ size = 24, strokeWidth = 1.8, ...p }: IconProps) {
-  return (
-    <svg {...base(size, p)}>
-      <path d="M12 6.5v11M6.5 12h11" stroke="currentColor" strokeWidth={strokeWidth + 0.4} strokeLinecap="round" />
-    </svg>
-  );
-}

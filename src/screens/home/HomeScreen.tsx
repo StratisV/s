@@ -3,17 +3,20 @@ import { itemMeta, itemsByArea } from '../../lib/logic/items';
 import type { Area, ISODate, Item, Member } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
 import { HomeScene } from '../../ui/HomeScene';
+import { PlusIcon } from '../../ui/icons';
 import { LargeTitle, Screen } from '../../ui/Screen';
 import { ItemRow } from './ItemRow';
 import styles from './HomeScreen.module.css';
 
 interface HomeScreenProps {
   onOpenItem(itemId: string): void;
+  /** The + in an area header: a new item in that area. */
+  onAddItem(areaId: string): void;
   onOpenProfile(): void;
 }
 
 /** Home: the household's areas, each with its open items (README "1. Home"). */
-export function HomeScreen({ onOpenItem, onOpenProfile }: HomeScreenProps) {
+export function HomeScreen({ onOpenItem, onAddItem, onOpenProfile }: HomeScreenProps) {
   const { data, me, today, completeItem } = useHousehold();
   const sections = useMemo(() => itemsByArea(data.areas, data.items), [data.areas, data.items]);
 
@@ -32,6 +35,7 @@ export function HomeScreen({ onOpenItem, onOpenProfile }: HomeScreenProps) {
             members={data.members}
             today={today}
             onOpenItem={onOpenItem}
+            onAddItem={onAddItem}
             onComplete={completeItem}
           />
         ))
@@ -66,16 +70,29 @@ interface AreaSectionProps {
   members: Member[];
   today: ISODate;
   onOpenItem(itemId: string): void;
+  onAddItem(areaId: string): void;
   onComplete(itemId: string): Promise<void>;
 }
 
-function AreaSection({ area, items, members, today, onOpenItem, onComplete }: AreaSectionProps) {
+function AreaSection({ area, items, members, today, onOpenItem, onAddItem, onComplete }: AreaSectionProps) {
   const headingId = useId();
   return (
     <section aria-labelledby={headingId}>
-      <h2 id={headingId} className={styles.header}>
-        {area.name}
-      </h2>
+      <div className={styles.headerRow}>
+        <h2 id={headingId} className={styles.header}>
+          {area.name}
+        </h2>
+        <button
+          type="button"
+          className={styles.areaAdd}
+          aria-label={`Add item to ${area.name}`}
+          onClick={() => onAddItem(area.id)}
+        >
+          <span className={styles.areaAddGlyph}>
+            <PlusIcon size={16} strokeWidth={2.8} />
+          </span>
+        </button>
+      </div>
       <div className={styles.card}>
         {items.length ? (
           <ul className={styles.list} role="list">

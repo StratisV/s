@@ -2,14 +2,65 @@
   padding: 16px 16px 0;
 }
 
+.headerRow {
+  position: relative;
+}
+
 .header {
   margin: 0;
-  padding: 24px 20px 8px;
+  /* Room on the right for the + (long names wrap before it). */
+  padding: 24px 58px 8px 20px;
   font-size: 20px;
   line-height: 25px;
   font-weight: 600;
   letter-spacing: -0.3px;
   overflow-wrap: anywhere;
+}
+
+/* The small tinted + on the right of an area header: 44px to tap, the header keeps its height. */
+.areaAdd {
+  position: absolute;
+  top: 14px;
+  right: 10px;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--tint);
+  /* Keyboard focus scrolls it clear of the top fade and the floating tab bar. */
+  scroll-margin: calc(var(--top-inset) + 16px) 0 112px;
+}
+
+.areaAddGlyph {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 122, 255, 0.1);
+  transition:
+    background-color 0.15s ease,
+    transform 0.12s ease;
+}
+
+.areaAdd:active .areaAddGlyph {
+  background: rgba(0, 122, 255, 0.18);
+  transform: scale(0.92);
+}
+
+.areaAdd:focus-visible {
+  outline-offset: -4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .areaAddGlyph {
+    transition: none;
+  }
+
+  .areaAdd:active .areaAddGlyph {
+    transform: none;
+  }
 }
 
 .card {

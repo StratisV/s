@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ChatScreen } from './screens/chat/ChatScreen';
 import { HomeScreen } from './screens/home/HomeScreen';
 import { TabBar } from './screens/home/TabBar';
 import { ItemSheet } from './screens/item/ItemSheet';
@@ -6,7 +7,8 @@ import { Onboarding } from './screens/onboarding/Onboarding';
 import { ProfileScreen } from './screens/profile/ProfileScreen';
 import { StatsScreen } from './screens/stats/StatsScreen';
 import type { ItemSheetTarget, Tab } from './screens/types';
-import { useHome } from './state/HomeProvider';
+import { ChatProvider, useChat } from './state/ChatProvider';
+import { useHome, useHousehold } from './state/HomeProvider';
 import { Toast } from './ui/Toast';
 import styles from './App.module.css';
 
@@ -75,8 +77,20 @@ function restoreFocus({ target, nearby }: FocusReturn, stage: HTMLElement) {
   next?.focus({ preventScroll: true });
 }
 
+/** The ready app: the chat lives as long as the household is open (its tab comes and goes). */
 function MainApp() {
+  const { data } = useHousehold();
+  return (
+    <ChatProvider key={data.household.id}>
+      <MainShell />
+    </ChatProvider>
+  );
+}
+
+function MainShell() {
+  const { unread } = useChat();
   const [tab, setTab] = useState<Tab>('home');
+  const [typing, setTyping] = useState(false);
   const [sheetTarget, setSheetTarget] = useState<ItemSheetTarget | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetKey, setSheetKey] = useState(0);
@@ -127,11 +141,23 @@ function MainApp() {
     <div className={styles.main} data-pushed={sheetOpen || undefined}>
       <div ref={stageRef} className={styles.stage}>
         {tab === 'home' ? (
-          <HomeScreen onOpenItem={(itemId) => openSheet({ kind: 'edit', itemId })} onOpenProfile={() => setProfileOpen(true)} />
+          <HomeScreen
+            onOpenItem={(itemId) => openSheet({ kind: 'edit', itemId })}
+            onAddItem={(areaId) => openSheet({ kind: 'new', areaId })}
+            onOpenProfile={() => setProfileOpen(true)}
+          />
+        ) : tab === 'chat' ? (
+          <ChatScreen onOpenProfile={() => setProfileOpen(true)} onTypingChange={setTyping} />
         ) : (
           <StatsScreen onOpenProfile={() => setProfileOpen(true)} />
         )}
-        <TabBar tab={tab} onTab={setTab} onAdd={() => openSheet({ kind: 'new' })} />
+        <TabBar
+          tab={tab}
+          onTab={setTab}
+          onAdd={() => openSheet({ kind: 'new' })}
+          unread={unread}
+          hidden={tab === 'chat' && typing}
+        />
         <div className={styles.dim} aria-hidden="true" />
       </div>
       {sheetTarget ? (

@@ -1,0 +1,208 @@
+.screen {
+  /* Where the composer sits: above the tab bar, or (typing) at the bottom or on the keyboard. */
+  --composer-bottom: calc(var(--tabbar-bottom) + var(--tabbar-height) + 10px);
+  --chat-bottom-space: calc(var(--composer-bottom) + var(--composer-h, 48px) + 14px);
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.screen[data-typing] {
+  --composer-bottom: max(10px, var(--bottom-inset));
+}
+
+.screen[data-typing][data-keyboard] {
+  --composer-bottom: calc(var(--kb) + 8px);
+}
+
+.scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  /* Older messages are put in place by hand (ChatScreen), not by the browser. */
+  overflow-anchor: none;
+  padding: var(--top-inset) 0 var(--chat-bottom-space);
+}
+
+/* Nav row and fade: the same as the other tabs (src/ui/Screen). */
+.nav {
+  height: var(--nav-row);
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.avatarButton {
+  position: relative;
+  border-radius: 50%;
+  display: grid;
+}
+
+.avatarButton::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+}
+
+.avatarButton:active {
+  opacity: 0.7;
+}
+
+.fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: calc(var(--top-inset) + 4px);
+  background: linear-gradient(var(--bg) 55%, rgba(242, 242, 247, 0));
+  z-index: 4;
+  pointer-events: none;
+}
+
+.log {
+  padding-top: 6px;
+}
+
+.separator {
+  margin: 18px 0 8px;
+  padding: 0 16px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 16px;
+  letter-spacing: -0.08px;
+  color: var(--label-secondary);
+}
+
+.separator strong {
+  font-weight: 600;
+}
+
+.older {
+  height: 44px;
+  display: grid;
+  place-items: center;
+}
+
+.state {
+  padding: 48px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.stateText {
+  margin: 0;
+  font-size: 17px;
+  color: var(--label-secondary);
+}
+
+.stateButton {
+  min-height: 44px;
+  padding: 0 16px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--tint);
+}
+
+.spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(60, 60, 67, 0.16);
+  border-top-color: var(--label-secondary);
+  animation: spin 0.8s linear infinite;
+}
+
+.empty {
+  margin: 56px 32px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.emptyEmoji {
+  font-size: 48px;
+  line-height: 1;
+  margin-bottom: 14px;
+}
+
+.emptyTitle {
+  margin: 0 0 4px;
+  font-size: 20px;
+  line-height: 25px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+}
+
+.emptyText {
+  margin: 0;
+  max-width: 290px;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
+}
+
+/* "New messages": a small glass capsule over the bottom of the list. */
+.newPill {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--composer-bottom) + var(--composer-h, 48px) + 12px);
+  z-index: 5;
+  transform: translateX(-50%);
+  height: 36px;
+  padding: 0 14px 0 16px;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  color: var(--tint);
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 0.5px solid rgba(0, 0, 0, 0.06);
+  box-shadow: var(--shadow-glass);
+  animation: pill-in 0.28s var(--sheet-ease);
+}
+
+/* 44px to tap. */
+.newPill::before {
+  content: '';
+  position: absolute;
+  inset: -4px 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pill-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 10px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2s;
+  }
+
+  .newPill {
+    animation: none;
+  }
+}
