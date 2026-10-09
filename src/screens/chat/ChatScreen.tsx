@@ -30,6 +30,8 @@ interface ChatScreenProps {
 const NEAR_BOTTOM = 80;
 /** Older messages load when you scroll this close to the top. */
 const NEAR_TOP = 400;
+/** How long a tapped composer waits for the on-screen keyboard before moving to the bottom. */
+const KEYBOARD_WAIT_MS = 600;
 
 const prefersReducedMotion = () => {
   try {
@@ -38,6 +40,23 @@ const prefersReducedMotion = () => {
     return false;
   }
 };
+
+function isFocusVisible(el: Element | null): boolean {
+  try {
+    return !!el && el.matches(':focus-visible');
+  } catch {
+    return false; // engines without :focus-visible
+  }
+}
+
+/** Where focus goes when `bubble`'s message is deleted: the next message, else the one before, else the composer. */
+function nearbyFocus(bubble: HTMLElement): HTMLElement | null {
+  const log = bubble.closest('[role="log"]');
+  const bubbles = Array.from(log?.querySelectorAll<HTMLElement>('[role="article"]') ?? []);
+  const i = bubbles.indexOf(bubble);
+  const next = i < 0 ? undefined : (bubbles[i + 1] ?? bubbles[i - 1]);
+  return next ?? bubble.closest('section')?.querySelector<HTMLElement>('textarea') ?? null;
+}
 
 interface MenuState {
   key: string;
@@ -70,21 +89,39 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
   const [typing, setTyping] = useState(false);
   const keyboard = useKeyboardInset(typing);
 
+  // Tapped with a finger: the iPhone keyboard is rising, but its height only arrives with
+  // the first visualViewport resize. Until then the composer stays where it was (rather
+  // than dropping to the bottom behind the keyboard and coming back up). No keyboard after
+  // KEYBOARD_WAIT_MS (a hardware keyboard): it moves down.
+  const [kbPending, setKbPending] = useState(false);
+  const kbTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    if (keyboard > 0) setKbPending(false);
+  }, [keyboard]);
+  useEffect(() => () => clearTimeout(kbTimer.current), []);
+
   // Tapping something in the list while typing (a chip, a retry) blurs the field. The tab
   // bar and composer then move, so wait until that tap has landed before they do.
   const pointerDown = useRef(false);
+  /** The press has ended; its click is landing (settleTimer runs). */
+  const released = useRef(false);
   const blurWaiting = useRef(false);
   const settleTimer = useRef<ReturnType<typeof setTimeout>>();
-  const onComposerFocus = useCallback((focused: boolean) => {
+  const onComposerFocus = useCallback((focused: boolean, touch: boolean) => {
     blurWaiting.current = false;
+    clearTimeout(kbTimer.current);
+    setKbPending(focused && touch);
+    if (focused && touch) kbTimer.current = setTimeout(() => setKbPending(false), KEYBOARD_WAIT_MS);
     if (focused) {
       setTyping(true);
     } else if (pointerDown.current) {
       blurWaiting.current = true;
+      if (released.current) return; // the release timer settles it shortly
       // In case the press never reports its end.
       clearTimeout(settleTimer.current);
       settleTimer.current = setTimeout(() => {
         pointerDown.current = false;
+        released.current = false;
         if (!blurWaiting.current) return;
         blurWaiting.current = false;
         setTyping(false);
@@ -96,9 +133,11 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
   useEffect(() => {
     const release = () => {
       if (!pointerDown.current) return;
+      released.current = true;
       clearTimeout(settleTimer.current);
       settleTimer.current = setTimeout(() => {
         pointerDown.current = false;
+        released.current = false;
         if (blurWaiting.current) {
           blurWaiting.current = false;
           setTyping(false);
@@ -131,19 +170,20 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
     return () => ro.disconnect();
   }, []);
 
-  // The toast floats just above the composer here (Toast reads --toast-bottom).
+  // The toast floats just above the composer here (Toast.module.css reads --toast-bottom),
+  // following the composer's bottom in ChatScreen.module.css.
   useEffect(() => {
     const root = document.documentElement.style;
     const above = `${composerHeight + 12}px`;
     root.setProperty(
       '--toast-bottom',
-      !typing
-        ? `calc(var(--tabbar-bottom) + var(--tabbar-height) + 10px + ${above})`
-        : keyboard > 0
-          ? `calc(${keyboard + 8}px + ${above})`
-          : `calc(max(10px, var(--bottom-inset)) + ${above})`,
+      typing && keyboard > 0
+        ? `calc(${keyboard + 8}px + ${above})`
+        : typing && !kbPending
+          ? `calc(max(10px, var(--bottom-inset)) + ${above})`
+          : `calc(var(--tabbar-bottom) + var(--tabbar-height) + 10px + ${above})`,
     );
-  }, [composerHeight, typing, keyboard]);
+  }, [composerHeight, typing, keyboard, kbPending]);
   useEffect(
     () => () => {
       document.documentElement.style.removeProperty('--toast-bottom');
@@ -238,7 +278,8 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
   // ── Reactions and the menu ──────────────────────────────
 
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  /** The message to delete once confirmed, and its bubble (focus moves on from it). */
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; bubble: HTMLElement | null } | null>(null);
   const byKey = useMemo(() => new Map(entries.map((e) => [e.key, e])), [entries]);
   const menuEntry: ChatEntry | undefined = menu ? byKey.get(menu.key) : undefined;
 
@@ -288,7 +329,7 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
         run: () => {
           closeMenu();
           if (state === 'failed') discard(key);
-          else setConfirmDelete(message.id);
+          else setConfirmDelete({ id: message.id, bubble: menu?.bubble ?? null });
         },
       });
     }
@@ -328,9 +369,11 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
       onPointerDownCapture={() => {
         clearTimeout(settleTimer.current);
         pointerDown.current = true;
+        released.current = false;
       }}
       data-typing={typing || undefined}
       data-keyboard={keyboard > 0 || undefined}
+      data-kb-pending={(typing && kbPending && keyboard === 0) || undefined}
       style={style}
     >
       <div ref={scrollRef} className={styles.scroll} onScroll={onScroll}>
@@ -438,9 +481,13 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
             label: 'Delete Message',
             destructive: true,
             onSelect: () => {
-              const id = confirmDelete;
+              const target = confirmDelete;
+              // From the keyboard, focus moves to the next message (its bubble goes away now).
+              const next = target?.bubble && isFocusVisible(document.activeElement) ? nearbyFocus(target.bubble) : null;
               setConfirmDelete(null);
-              if (id) void deleteMessage(id);
+              if (!target) return;
+              void deleteMessage(target.id);
+              next?.focus({ preventScroll: true });
             },
           },
         ]}

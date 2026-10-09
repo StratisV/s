@@ -1,6 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { BackendError } from '../lib/backend/types';
-import { applyReaction, hasUnread, mergeMessages, mergeNewestPage, newestTimestamp, timeOf, type ChatEntry } from '../lib/logic/chat';
+import {
+  applyReaction,
+  hasUnread,
+  mergeMessages,
+  mergeNewestPage,
+  newestTimestamp,
+  timeOf,
+  type ChatEntry,
+} from '../lib/logic/chat';
 import type { ChatChange, ChatMessage, ISOTimestamp } from '../lib/types';
 import { useHousehold } from './HomeProvider';
 
@@ -75,7 +83,19 @@ interface Pending {
   body: string;
   created_at: ISOTimestamp;
   state: 'sending' | 'failed';
+  /** When the latest attempt to send it began (this device's clock). */
+  startedAt: number;
 }
+
+/**
+ * A stored message of yours with a pending send's text is taken for that send
+ * (realtime got there first) only if it was posted after the send began, give
+ * or take this much clock difference between the device and the server.
+ */
+const CLAIM_SKEW_MS = 2 * 60_000;
+
+/** On a resync, at most this many older loaded messages are reloaded (newest first). */
+const RESYNC_REFRESH_MAX = 500;
 
 interface ReactionOp {
   id: number;
@@ -150,8 +170,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const latestFetch = useRef(new Map<string, number>());
   /** The newest listMessages() for the newest page; an older answer is stale. */
   const pageSeq = useRef(0);
-  /** A sent message keeps its pending bubble's key, so it doesn't re-mount. */
+  /** A sent message keeps its pending bubble's key, so it doesn't re-mount. One key per message. */
   const keyFor = useRef(new Map<string, string>());
+  /** Pending sends a stored message was taken for (claimPending), by key, until their send settles. */
+  const claimed = useRef(new Map<string, Pending>());
   /** Reaction writes run one after another per message and emoji. */
   const chains = useRef(new Map<string, Promise<void>>());
   const opSeq = useRef(0);
@@ -161,14 +183,24 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   const visible = (list: ChatMessage[]) => list.filter((m) => !deleted.current.has(m.id));
 
-  /** Pending sends this device already sees stored (realtime got there first) are dropped. */
+  /**
+   * Pending sends this device already sees stored (realtime got there first) are
+   * dropped, and the stored message takes over the bubble's key. Only a message
+   * posted since the send began counts: an older one with the same text (in a
+   * first page that was still loading) is not it. If the send then fails after
+   * all, deliver() gives the bubble back (another device of yours sent that text).
+   */
   const claimPending = (s: ChatState, arrived: ChatMessage[]): Pending[] => {
     let pending = s.pending;
     for (const m of arrived) {
       if (m.member_id !== meId || keyFor.current.has(m.id) || s.messages.some((x) => x.id === m.id)) continue;
-      const match = pending.find((p) => p.state === 'sending' && p.body === m.body);
+      const posted = timeOf(m.created_at);
+      const match = pending.find(
+        (p) => p.state === 'sending' && p.body === m.body && posted >= p.startedAt - CLAIM_SKEW_MS,
+      );
       if (!match) continue;
       keyFor.current.set(m.id, match.key);
+      claimed.current.set(match.key, match);
       pending = pending.filter((p) => p !== match);
     }
     return pending;
@@ -189,22 +221,25 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   // ── Loading ─────────────────────────────────────────────
 
-  const loadNewest = useCallback(async () => {
+  /** Loads the newest page and merges it in. Resolves to the page's ids (null: failed, or overtaken by a newer load). */
+  const loadNewest = useCallback(async (): Promise<Set<string> | null> => {
     const seq = ++pageSeq.current;
     const since = tick.current;
     try {
       const page = await backend.listMessages(householdId);
-      if (!alive.current || seq !== pageSeq.current) return;
+      if (!alive.current || seq !== pageSeq.current) return null;
       const keepLocal = (id: string) => (touched.current.get(id) ?? 0) > since;
       update((s) => {
         const fresh = { ...page, messages: visible(page.messages) };
         const merged = mergeNewestPage(s.messages, s.hasMore, fresh, keepLocal);
         return { ...s, status: 'ready', messages: merged.messages, hasMore: merged.hasMore, pending: claimPending(s, fresh.messages) };
       });
+      return new Set(page.messages.map((m) => m.id));
     } catch {
-      if (!alive.current || seq !== pageSeq.current) return;
+      if (!alive.current || seq !== pageSeq.current) return null;
       // Keep showing what is loaded; only a first load that fails shows the error.
       update((s) => (s.status === 'ready' ? s : { ...s, status: 'error' }));
+      return null;
     }
   }, [backend, householdId, update]);
 
@@ -276,10 +311,22 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     }
   }, [backend, householdId, update]);
 
-  // First load, live changes, and a resync whenever the app comes back into view.
+  /**
+   * Changes may have been missed (another tab wrote, or the connection dropped and
+   * rejoined): reload the newest page, then the older loaded messages it doesn't
+   * cover, so their reactions and deletes are not left stale.
+   */
+  const resync = useCallback(async () => {
+    const page = await loadNewest();
+    if (!page || !alive.current) return;
+    const older = stateRef.current.messages.map((m) => m.id).filter((id) => !page.has(id));
+    if (older.length) await refetch(older.slice(-RESYNC_REFRESH_MAX), false);
+  }, [loadNewest, refetch]);
+
+  // First load, live changes, and a reload whenever the app comes back into view.
   useEffect(() => {
     const onChange = (change: ChatChange) => {
-      if (change.type === 'resync') void loadNewest();
+      if (change.type === 'resync') void resync();
       else if (change.type === 'message' && change.deleted) removeMessage(change.messageId);
       else void refetch([change.messageId], change.type === 'message');
     };
@@ -298,7 +345,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       unsub?.();
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [backend, householdId, loadNewest, refetch, removeMessage]);
+  }, [backend, householdId, loadNewest, refetch, removeMessage, resync]);
 
   // Another tab of this person read the chat.
   useEffect(() => {
@@ -316,10 +363,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     async (key: string) => {
       const p = stateRef.current.pending.find((x) => x.key === key);
       if (!p) return;
-      update((s) => ({ ...s, pending: s.pending.map((x) => (x.key === key ? { ...x, state: 'sending' } : x)) }));
+      const startedAt = Date.now();
+      update((s) => ({ ...s, pending: s.pending.map((x) => (x.key === key ? { ...x, state: 'sending', startedAt } : x)) }));
       try {
         const sent = await backend.sendMessage(householdId, p.body);
         if (!alive.current) return;
+        claimed.current.delete(key);
+        // One key per message: a stored message wrongly taken for this send gets its own back.
+        for (const [id, k] of keyFor.current) if (k === key && id !== sent.id) keyFor.current.delete(id);
         keyFor.current.set(sent.id, key);
         touch([sent.id]);
         update((s) => ({
@@ -329,7 +380,19 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         }));
       } catch {
         if (!alive.current) return;
-        update((s) => ({ ...s, pending: s.pending.map((x) => (x.key === key ? { ...x, state: 'failed' } : x)) }));
+        // A stored message was taken for this send, yet the send failed: it was not this
+        // one. It keeps its own key, and this message shows as not delivered again.
+        const taken = claimed.current.get(key);
+        claimed.current.delete(key);
+        if (taken) for (const [id, k] of keyFor.current) if (k === key) keyFor.current.delete(id);
+        update((s) => {
+          if (s.pending.some((x) => x.key === key)) {
+            return { ...s, pending: s.pending.map((x) => (x.key === key ? { ...x, state: 'failed' } : x)) };
+          }
+          if (!taken) return s;
+          const back: Pending = { ...taken, state: 'failed' };
+          return { ...s, pending: [...s.pending, back].sort((a, b) => timeOf(a.created_at) - timeOf(b.created_at)) };
+        });
       }
     },
     [backend, householdId, update],
@@ -343,7 +406,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const last = stateRef.current.messages[stateRef.current.messages.length - 1];
       // Never before the newest message, even with a slow clock.
       const at = Math.max(Date.now(), last ? timeOf(last.created_at) + 1 : 0);
-      const pending: Pending = { key, body: text, created_at: new Date(at).toISOString(), state: 'sending' };
+      const pending: Pending = { key, body: text, created_at: new Date(at).toISOString(), state: 'sending', startedAt: Date.now() };
       update((s) => ({ ...s, pending: [...s.pending, pending] }));
       void deliver(key);
     },

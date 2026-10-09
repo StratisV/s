@@ -10,8 +10,9 @@
 -- (if not exists, create or replace, drop/create for triggers and policies).
 --
 -- Limits (src/lib/constants.ts TEXT_LIMITS.chatMessage): messages.body is trimmed and 1 to
--- 4000 characters, message_reactions.emoji 1 to 16 characters. A violation raises
--- check_violation (SQLSTATE 23514) naming the constraint.
+-- 4000 characters, message_reactions.emoji 1 to 16 characters and one of the app's reaction
+-- emoji (REACTION_EMOJIS). A violation raises check_violation (SQLSTATE 23514) naming the
+-- constraint.
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Tables
@@ -42,6 +43,22 @@ create table if not exists public.message_reactions (
   primary key (message_id, member_id, emoji),
   constraint message_reactions_emoji_length check (length(emoji) between 1 and 16)
 );
+
+-- A reaction is one of the app's reaction emoji: REACTION_EMOJIS in src/lib/constants.ts,
+-- the same code points in the same order (U+FE0F included in ❤️ and 🛠️; constants.test.ts
+-- compares the two lists). Free text would show as a chip to the household, and a reaction's
+-- primary key (emoji included) is what a realtime DELETE notice carries. Dropped and added
+-- again so that applying this file again, or a changed list, always leaves the current check.
+alter table public.message_reactions drop constraint if exists message_reactions_emoji_allowed;
+alter table public.message_reactions
+  add constraint message_reactions_emoji_allowed check (
+    emoji = any (array[
+      '❤️', '👍', '👎', '😂', '😮', '😢', '🙏', '🎉',
+      '🔥', '👏', '💯', '✅', '❌', '👀', '🤔', '😍',
+      '🥳', '😅', '🙌', '💪', '🏡', '🧹', '🛠️', '🦔',
+      '🦆', '🦊', '🌻', '⭐', '☕', '🍕', '😴', '🤞'
+    ]::text[])
+  );
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Indexes (paging backwards through a household's chat, plus foreign keys used by RLS and

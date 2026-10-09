@@ -12,6 +12,11 @@
   --composer-bottom: max(10px, var(--bottom-inset));
 }
 
+/* Tapped, keyboard on its way: stay put until its height is known (ChatScreen). */
+.screen[data-typing][data-kb-pending] {
+  --composer-bottom: calc(var(--tabbar-bottom) + var(--tabbar-height) + 10px);
+}
+
 .screen[data-typing][data-keyboard] {
   --composer-bottom: calc(var(--kb) + 8px);
 }
@@ -168,7 +173,7 @@
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.2px;
-  color: var(--tint);
+  color: var(--tint-text);
   background: rgba(255, 255, 255, 0.82);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);

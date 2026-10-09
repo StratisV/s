@@ -4,9 +4,16 @@ A radically simple, iPhone-first app for looking after a home. It lists the **ar
 the house (Kitchen, Garden, Jacuzzi…) and the **items** that need attention in each, with a
 red, amber or green status, a note, a due date, an assignee, an optional repeat and a push
 reminder. Everyone in the household signs in with **Google**, picks an emoji for their
-profile, and **can edit everything**. A Stats tab shows who has done what, everyone gets a
-weekly email with the full status, and push notifications arrive before deadlines and when
-one is missed.
+profile, and **can edit everything**.
+
+- **Home**: every area and its items. Add an item with the round + in the tab bar, or with the
+  small + in an area's header, which starts the item in that area.
+- **Chat**: one group chat for the whole household. Messages are kept for good (no limit on how
+  long they stay), anyone can react to a message with emoji (long-press it, or tap a reaction
+  to add yours), and a dot on the Chat tab shows unread messages.
+- **Stats**: who has done what.
+- A **weekly email** with the full status, and **push notifications** before deadlines and when
+  one is missed.
 
 It is an installable web app (PWA): no App Store needed. Add it to the iPhone Home Screen
 and it behaves like a native app, including notifications (iOS 16.4 or later).
@@ -142,5 +149,15 @@ database tests against it. The live backend suite runs with
 Everyone who belongs to a household can edit everything in it: the household's name,
 address and time zone, its areas, every item, completions (undo) and each other's profiles
 (name and emoji, under **Profile → Household → People**).
+
+The household chat has its own rules:
+
+- Everyone in the household reads and posts in it.
+- Messages are kept forever: nothing deletes them by age. If someone's account is removed,
+  their messages stay (shown as from a former member).
+- Anyone can react to any message, with several different emoji, once each, and can take back
+  only their own reactions.
+- Only the author can delete a message (for everyone); nobody can edit one.
+
 People outside the household can't see or change any of it. New people join only through an
 invite link (valid for 14 days).

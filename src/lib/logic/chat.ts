@@ -13,9 +13,22 @@ export const SEPARATOR_GAP_MS = 60 * 60_000;
 /** Milliseconds since the epoch; any ISO form (`Z` or `+00:00`) compares the same. */
 export const timeOf = (ts: ISOTimestamp): number => new Date(ts).getTime();
 
-/** Chat order: oldest first by instant, then by id so the order is stable. */
+/**
+ * Microseconds since the epoch, for ordering and comparing message times.
+ * Postgres keeps microseconds and PostgREST prints them
+ * ('2026-10-09T19:13:24.1021+00:00'), while a JS Date stops at milliseconds:
+ * two messages in the same millisecond would otherwise tie.
+ */
+export function instantOf(ts: ISOTimestamp): number {
+  const fraction = /[T ][\d:]+\.(\d+)/.exec(ts)?.[1] ?? '';
+  // Parse with the fraction cut to milliseconds (engines differ on longer ones), then add the rest.
+  const ms = Date.parse(fraction.length > 3 ? ts.replace(`.${fraction}`, `.${fraction.slice(0, 3)}`) : ts);
+  return ms * 1000 + Number(fraction.slice(3, 6).padEnd(3, '0'));
+}
+
+/** Chat order: oldest first by instant (to the microsecond), then by id so the order is stable. */
 export function compareMessages(a: ChatMessage, b: ChatMessage): number {
-  return timeOf(a.created_at) - timeOf(b.created_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  return instantOf(a.created_at) - instantOf(b.created_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 }
 
 /**
@@ -54,8 +67,8 @@ export function mergeNewestPage(
   keepLocal: (id: string) => boolean = () => false,
 ): { messages: ChatMessage[]; hasMore: boolean } {
   const pageIds = new Set(page.messages.map((m) => m.id));
-  const start = page.hasMore && page.messages.length ? timeOf(page.messages[0].created_at) : -Infinity;
-  const inWindow = (m: ChatMessage) => timeOf(m.created_at) >= start;
+  const start = page.hasMore && page.messages.length ? instantOf(page.messages[0].created_at) : -Infinity;
+  const inWindow = (m: ChatMessage) => instantOf(m.created_at) >= start;
   const recent = current.filter((m) => !pageIds.has(m.id) && inWindow(m) && keepLocal(m.id));
   const older = current.filter((m) => !pageIds.has(m.id) && !inWindow(m));
   const joined = older.length > 0 && current.some(inWindow);
@@ -113,8 +126,10 @@ export type ChatRow =
       mine: boolean;
       /** First of a run: the sender's name goes above it. */
       first: boolean;
-      /** Last of a run: the avatar (others) and the bubble's tail go beside it. */
+      /** Last of a run: the avatar (others) goes beside it. */
       last: boolean;
+      /** The bubble has a tail: last of its run, or followed in it by an emoji-only message (no bubble). */
+      tail: boolean;
     };
 
 /**
@@ -138,7 +153,8 @@ export function buildRows(entries: ChatEntry[], meId: string, timeZone: string, 
       rows.push({ kind: 'separator', key: `sep-${entry.key}`, day: dayText, time });
     }
     const sameRun = !!prev && !separated && prev.entry.message.member_id === m.member_id && t - prevTime <= RUN_GAP_MS;
-    if (prev && !sameRun) prev.last = true;
+    if (prev && !sameRun) prev.last = prev.tail = true;
+    else if (prev && isJumboEmoji(m.body)) prev.tail = true;
     const row: MessageRow = {
       kind: 'message',
       key: entry.key,
@@ -146,12 +162,13 @@ export function buildRows(entries: ChatEntry[], meId: string, timeZone: string, 
       mine: m.member_id === meId,
       first: !sameRun,
       last: false,
+      tail: false,
     };
     rows.push(row);
     prev = row;
     prevDay = day;
   }
-  if (prev) prev.last = true;
+  if (prev) prev.last = prev.tail = true;
   return rows;
 }
 
@@ -216,6 +233,22 @@ export function applyReaction(message: ChatMessage, meId: string, emoji: string,
       ? [...message.reactions, { message_id: message.id, member_id: meId, emoji, created_at: at }]
       : message.reactions.filter((r) => !mine(r)),
   };
+}
+
+// ── Emoji-only messages ───────────────────────────────────
+
+/**
+ * One emoji as people type it: a flag (a pair of regional indicators, never
+ * one alone), a keycap, or a pictograph (with its variation selector, skin
+ * tone, tag sequence and ZWJ joins, e.g. 👨‍👩‍👧, ❤️‍🔥, 🏴󠁧󠁢󠁳󠁣󠁴󠁿).
+ */
+const EMOJI = String.raw`(?:\p{Regional_Indicator}{2}|[0-9#*]\uFE0F?\u20E3|(?:(?!\p{Regional_Indicator})\p{Emoji_Presentation}|\p{Extended_Pictographic}\uFE0F)\p{Emoji_Modifier}?[\u{E0020}-\u{E007E}]*\u{E007F}?(?:\u200D(?:\p{Emoji_Presentation}|\p{Extended_Pictographic})\uFE0F?\p{Emoji_Modifier}?)*)`;
+const JUMBO = new RegExp(`^(?:${EMOJI}\\s*){1,3}$`, 'u');
+
+/** A message of only one to three emoji shows large, with no bubble (like Messages). */
+export function isJumboEmoji(body: string): boolean {
+  const text = body.trim();
+  return text.length > 0 && text.length <= 64 && JUMBO.test(text);
 }
 
 // ── Unread ────────────────────────────────────────────────

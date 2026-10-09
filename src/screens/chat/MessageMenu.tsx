@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { QUICK_REACTIONS, REACTION_EMOJIS } from '../../lib/constants';
+import { isJumboEmoji } from '../../lib/logic/chat';
 import { PlusIcon } from '../../ui/icons';
 import { CopyIcon, RetryIcon, TrashIcon } from './icons';
 import { Bubble } from './MessageRow';
@@ -97,7 +98,10 @@ export function MessageMenu({
       menuTop: cloneTop + cloneHeight + GAP,
       menuLeft: alignX(menuW),
     }));
-  }, [anchor, mine, grid]);
+    // A message still sending gains its reactions and Delete when it is stored (or Try Again
+    // when it fails): place everything again. Not `actions` itself, which is a new array on
+    // every render.
+  }, [anchor, mine, grid, reactions, actions.length]);
 
   // Focus: the first reaction (or menu item) once placed (hidden things can't take focus),
   // the first emoji of the grid when it opens.
@@ -208,7 +212,7 @@ export function MessageMenu({
         }}
         aria-hidden="true"
       >
-        <Bubble mine={mine} className={styles.cloneBubble}>
+        <Bubble mine={mine} jumbo={isJumboEmoji(body)} className={styles.cloneBubble}>
           {body}
         </Bubble>
       </div>

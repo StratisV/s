@@ -131,7 +131,12 @@ export const CHAT_PAGE_SIZE = 50;
 /** One-tap reactions shown above a message (iOS tapback style). */
 export const QUICK_REACTIONS = ['❤️', '👍', '😂', '😮', '😢', '🙏'] as const;
 
-/** The fuller reaction grid behind the "+" in the reaction bar. */
+/**
+ * The fuller reaction grid behind the "+" in the reaction bar, and the only
+ * emoji a reaction may be. Keep in step with the check constraint
+ * message_reactions_emoji_allowed in supabase/migrations/20261010000100_chat.sql
+ * (exact code points, including U+FE0F; constants.test.ts compares them).
+ */
 export const REACTION_EMOJIS = [
   '❤️', '👍', '👎', '😂', '😮', '😢', '🙏', '🎉',
   '🔥', '👏', '💯', '✅', '❌', '👀', '🤔', '😍',

@@ -2,7 +2,8 @@
   position: fixed;
   left: 0;
   right: 0;
-  bottom: calc(var(--tabbar-bottom) + var(--tabbar-height) + 14px);
+  /* Above the tab bar; a screen with its own bottom bar (Chat's composer) sets --toast-bottom. */
+  bottom: var(--toast-bottom, calc(var(--tabbar-bottom) + var(--tabbar-height) + 14px));
   /* Above the app, below action sheets (900) so a toast never covers a confirmation. */
   z-index: 850;
   display: flex;

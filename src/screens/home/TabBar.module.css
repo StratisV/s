@@ -113,7 +113,8 @@
 @media (prefers-reduced-motion: reduce) {
   .bar,
   .tab,
-  .add {
+  .add,
+  .add[data-enter] {
     transition: none;
     animation: none;
   }

@@ -7,6 +7,8 @@ import {
   dayLabel,
   formatClock,
   hasUnread,
+  instantOf,
+  isJumboEmoji,
   joinNames,
   keyboardInset,
   mergeMessages,
@@ -160,11 +162,27 @@ describe('buildRows', () => {
     ]);
   });
 
+  it('gives the tail to the last bubble of a run, and to one followed by an emoji-only message', () => {
+    const entries = [
+      msg('1', '2026-10-08T07:00:00Z', 'me', { body: 'Done!' }),
+      msg('2', '2026-10-08T07:00:10Z', 'me', { body: '🎉' }),
+      msg('3', '2026-10-08T07:00:20Z', 'me', { body: 'And the gutters' }),
+      msg('4', '2026-10-08T07:00:30Z', 'me', { body: 'too' }),
+    ].map((m) => entry(m));
+    const rows = buildRows(entries, 'me', TZ, NOW).filter((r) => r.kind === 'message');
+    expect(rows.map((r) => [r.key, r.first, r.last, r.tail])).toEqual([
+      ['1', true, false, true],
+      ['2', false, false, false],
+      ['3', false, false, false],
+      ['4', false, true, true],
+    ]);
+  });
+
   it('is empty for no messages, and keeps the entry keys', () => {
     expect(buildRows([], 'me', TZ, NOW)).toEqual([]);
     const pending: ChatEntry = { key: 'local-1', message: msg('local-1', '2026-10-08T08:00:00Z', 'me'), state: 'sending' };
     const rows = buildRows([pending], 'me', TZ, NOW);
-    expect(rows[1]).toMatchObject({ kind: 'message', key: 'local-1', mine: true, first: true, last: true });
+    expect(rows[1]).toMatchObject({ kind: 'message', key: 'local-1', mine: true, first: true, last: true, tail: true });
   });
 });
 
@@ -226,6 +244,35 @@ describe('unread', () => {
   it('finds the newest time', () => {
     expect(newestTimestamp([])).toBeNull();
     expect(newestTimestamp([messages[1], messages[0]])).toBe('2026-10-08T07:10:00Z');
+  });
+});
+
+describe('isJumboEmoji', () => {
+  it('is one to three emoji, whatever they are made of', () => {
+    for (const text of ['🎉', '❤️', '🛠️', '👍🏽', '👨‍👩‍👧‍👦', '❤️‍🔥', '🏳️‍🌈', '🧑🏽‍💻', '🇬🇧', '🏴󠁧󠁢󠁳󠁣󠁴󠁿', '1️⃣', '⭐', '☕', '🎉🎉🎉', '🎉 🎉', ' 😂 ', '🇬🇧🇬🇷🇫🇷']) {
+      expect(isJumboEmoji(text), text).toBe(true);
+    }
+  });
+
+  it('is not text, four or more emoji, or symbols shown as text', () => {
+    for (const text of ['', ' ', 'ok', 'hi 🎉', '🎉!', 'a🎉', '🎉🎉🎉🎉', '1', '#', '©', '™', '🇬']) {
+      expect(isJumboEmoji(text), text).toBe(false);
+    }
+  });
+});
+
+describe('instantOf', () => {
+  it('keeps the microseconds PostgREST prints, and reads any ISO form', () => {
+    expect(instantOf('2026-10-09T19:13:24.1021+00:00') - instantOf('2026-10-09T19:13:24.102+00:00')).toBe(100);
+    expect(instantOf('2026-10-09T19:13:24.000001+00:00') - instantOf('2026-10-09T19:13:24+00:00')).toBe(1);
+    expect(instantOf('2026-10-09T19:13:24.5Z')).toBe(instantOf('2026-10-09T20:13:24.500000+01:00'));
+    expect(instantOf('2026-10-09T19:13:24.999999+00:00')).toBeLessThan(instantOf('2026-10-09T19:13:25+00:00'));
+  });
+
+  it('orders two messages within one millisecond by their microseconds, not their ids', () => {
+    const a = msg('b', '2026-10-09T19:13:24.102001+00:00');
+    const b = msg('a', '2026-10-09T19:13:24.102002+00:00');
+    expect(mergeMessages([], [b, a]).map((m) => m.id)).toEqual(['b', 'a']);
   });
 });
 

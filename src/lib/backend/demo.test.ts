@@ -1131,11 +1131,11 @@ describe('chat', () => {
       [me.id, '🎉'],
     ]);
 
-    // message_reactions.emoji: 1 to 16 characters.
-    for (const emoji of ['', '🦔'.repeat(17)]) {
+    // message_reactions.emoji: one of REACTION_EMOJIS (message_reactions_emoji_allowed).
+    for (const emoji of ['', '🦔'.repeat(17), '👨‍👩‍👧‍👦', '❤', 'pay rent 1234']) {
       await rejectsWithMessage(bob.setReaction(msg.id, emoji, true), /^invalid_input: emoji$/);
     }
-    await bob.setReaction(msg.id, '👨‍👩‍👧‍👦', true);
+    await bob.setReaction(msg.id, '🛠️', true); // two code points (U+FE0F)
     await rejectsWith(bob.setReaction('nope', '👍', true), 'not_found');
     await bob.setReaction('nope', '👍', false);
 

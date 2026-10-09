@@ -47,6 +47,11 @@
   user-select: text;
 }
 
+/* Large emoji have no bubble to cast a shadow. */
+.cloneBubble[data-jumbo] {
+  box-shadow: none;
+}
+
 /* Liquid Glass, as the tab bar. */
 .glass {
   position: absolute;

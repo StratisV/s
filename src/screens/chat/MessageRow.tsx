@@ -1,5 +1,5 @@
 import { memo, useCallback, useRef, type KeyboardEvent, type ReactNode } from 'react';
-import type { ChatRow, ReactionChip } from '../../lib/logic/chat';
+import { isJumboEmoji, type ChatRow, type ReactionChip } from '../../lib/logic/chat';
 import { Avatar } from '../../ui/Avatar';
 import { NotDeliveredIcon } from './icons';
 import { useLongPress } from './useLongPress';
@@ -24,20 +24,30 @@ interface MessageRowProps {
   onRetry(key: string): void;
 }
 
-/** A bubble in the chat's colours: yours in the tint on the right, others' white on the left. */
+/**
+ * A bubble in the chat's colours: yours in the tint on the right, others' white on the left.
+ * `jumbo`: only one to three emoji, shown large with no bubble.
+ */
 export function Bubble({
   mine,
   tail,
+  jumbo,
   className,
   children,
 }: {
   mine: boolean;
   tail?: boolean;
+  jumbo?: boolean;
   className?: string;
   children: ReactNode;
 }) {
   return (
-    <div className={`${styles.bubble} ${className ?? ''}`} data-mine={mine || undefined} data-tail={tail || undefined}>
+    <div
+      className={`${styles.bubble} ${className ?? ''}`}
+      data-mine={mine || undefined}
+      data-tail={tail || undefined}
+      data-jumbo={jumbo || undefined}
+    >
       {children}
     </div>
   );
@@ -59,7 +69,7 @@ export const MessageRow = memo(function MessageRow({
   onToggleReaction,
   onRetry,
 }: MessageRowProps) {
-  const { entry, mine, first, last } = row;
+  const { entry, mine, first, last, tail } = row;
   const bubbleRef = useRef<HTMLDivElement>(null);
   const open = useCallback(() => {
     if (bubbleRef.current) onMenu(entry.key, bubbleRef.current);
@@ -74,6 +84,7 @@ export const MessageRow = memo(function MessageRow({
   };
 
   const failed = entry.state === 'failed';
+  const jumbo = isJumboEmoji(entry.message.body);
   return (
     <div
       className={styles.row}
@@ -82,7 +93,12 @@ export const MessageRow = memo(function MessageRow({
       data-last={last || undefined}
       data-state={entry.state}
     >
-      {!mine && first ? <div className={styles.sender}>{sender.name}</div> : null}
+      {/* The bubble's accessible name already starts with the sender. */}
+      {!mine && first ? (
+        <div className={styles.sender} aria-hidden="true">
+          {sender.name}
+        </div>
+      ) : null}
       <div className={styles.line}>
         {!mine ? (
           <span className={styles.avatarSlot}>
@@ -93,7 +109,8 @@ export const MessageRow = memo(function MessageRow({
           ref={bubbleRef}
           className={`${styles.bubble} ${styles.inList}`}
           data-mine={mine || undefined}
-          data-tail={last || undefined}
+          data-tail={tail || undefined}
+          data-jumbo={jumbo || undefined}
           data-lifted={lifted || undefined}
           role="article"
           aria-label={label}

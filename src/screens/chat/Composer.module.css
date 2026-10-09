@@ -68,13 +68,14 @@
   border-radius: 50%;
 }
 
-.send:disabled {
+/* Off while the field is blank (aria-disabled, so it stays in the Tab order). */
+.send[aria-disabled='true'] {
   background: rgba(118, 118, 128, 0.2);
   color: #fff;
   cursor: default;
 }
 
-.send:not(:disabled):active {
+.send:not([aria-disabled='true']):active {
   transform: scale(0.92);
 }
 

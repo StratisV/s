@@ -97,8 +97,8 @@ describe('ChatScreen', () => {
     const shea = bubble(/^The heating engineer/);
     expect(shea.getAttribute('aria-label')).toMatch(/^Shea, (Today|Yesterday) \d\d:\d\d$/);
     const sheaRow = shea.closest('[data-first]')!;
-    expect(sheaRow.textContent).toContain('Shea');
-    expect(sheaRow.querySelector('[aria-hidden="true"]')?.textContent).toBe('🦆');
+    // The name and the avatar are for the eye: the bubble's own name already says who.
+    expect([...sheaRow.querySelectorAll('[aria-hidden="true"]')].map((el) => el.textContent)).toEqual(['Shea', '🦆']);
     // Yours: "You", right side, no name line.
     const mine = bubble("I'm in all morning, I'll let him in.");
     expect(mine.getAttribute('aria-label')).toMatch(/^You, /);
@@ -185,17 +185,42 @@ describe('ChatScreen', () => {
     expect(within(log()).getAllByRole('article')).toHaveLength(7);
   });
 
+  it('deleting from the keyboard moves focus to the next message', async () => {
+    // jsdom has no :focus-visible; from the keyboard, focus would show.
+    const matches = Element.prototype.matches;
+    vi.spyOn(Element.prototype, 'matches').mockImplementation(function (this: Element, selector: string) {
+      return selector === ':focus-visible' ? this === document.activeElement : matches.call(this, selector);
+    });
+    await setup();
+    const olive = bubble(/^Restocked the olive oil/);
+    act(() => olive.focus());
+    fireEvent.keyDown(olive, { key: 'Enter' });
+    act(() => within(menu()!).getByRole('button', { name: 'Delete' }).focus());
+    fireEvent.click(within(menu()!).getByRole('button', { name: 'Delete' }));
+    const confirm = await screen.findByRole('alertdialog', { name: 'Delete this message?' });
+    const remove = within(confirm).getByRole('button', { name: 'Delete Message' });
+    act(() => remove.focus());
+    fireEvent.click(remove);
+    await waitFor(() => expect(within(log()).queryByText(/^Restocked the olive oil/)).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(document.activeElement).toBe(bubble(/^Legend\./));
+  });
+
   it('sends with Enter, keeps Shift+Enter as a new line, and the send button is off while blank', async () => {
     const { onTyping } = await setup();
     const field = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement;
     const send = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement;
-    expect(send.disabled).toBe(true);
+    // Off, but still in the Tab order (the tab bar is hidden while typing).
+    expect(send.getAttribute('aria-disabled')).toBe('true');
+    expect(send.disabled).toBe(false);
     expect(field.maxLength).toBe(4000);
     expect(field.getAttribute('enterkeyhint')).toBe('send');
     fireEvent.focus(field);
     expect(onTyping).toHaveBeenLastCalledWith(true);
+    fireEvent.click(send); // blank: nothing is sent
+    expect(within(log()).getAllByRole('article')).toHaveLength(8);
     fireEvent.change(field, { target: { value: 'Two\nlines' } });
-    expect(send.disabled).toBe(false);
+    expect(send.getAttribute('aria-disabled')).toBe('false');
     fireEvent.keyDown(field, { key: 'Enter', shiftKey: true });
     expect(field.value).toBe('Two\nlines');
     fireEvent.keyDown(field, { key: 'Enter' });
@@ -206,6 +231,87 @@ describe('ChatScreen', () => {
     await waitFor(() => expect(bubble('By button')).toBeTruthy());
     fireEvent.blur(field);
     expect(onTyping).toHaveBeenLastCalledWith(false);
+  });
+
+  it('tapped with a finger, Return starts a new line and the button sends (like Messages)', async () => {
+    await setup();
+    const field = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement;
+    fireEvent.pointerDown(field, { pointerType: 'touch' });
+    expect(field.getAttribute('enterkeyhint')).toBe('enter');
+    fireEvent.focus(field);
+    fireEvent.change(field, { target: { value: 'Shopping list' } });
+    const enter = fireEvent.keyDown(field, { key: 'Enter' });
+    expect(enter).toBe(true); // not prevented: the browser adds the line
+    expect(field.value).toBe('Shopping list');
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(bubble('Shopping list')).toBeTruthy());
+    // Ctrl or Cmd+Enter always sends.
+    fireEvent.change(field, { target: { value: 'Milk' } });
+    fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(bubble('Milk')).toBeTruthy());
+    // Back to a mouse (or focused from the keyboard after a blur): Enter sends again.
+    fireEvent.blur(field);
+    expect(field.getAttribute('enterkeyhint')).toBe('send');
+    fireEvent.pointerDown(field, { pointerType: 'mouse' });
+    fireEvent.focus(field);
+    fireEvent.change(field, { target: { value: 'Eggs' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    await waitFor(() => expect(bubble('Eggs')).toBeTruthy());
+  });
+
+  it('tapped, the composer stays put until the keyboard height is known', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const vv = Object.assign(new EventTarget(), { height: 874, offsetTop: 0 });
+      Object.defineProperty(window, 'visualViewport', { value: vv, configurable: true, writable: true });
+      Object.defineProperty(window, 'innerHeight', { value: 874, configurable: true });
+      await setup();
+      const region = screen.getByRole('region', { name: 'Chat' });
+      const field = screen.getByRole('textbox', { name: 'Message' });
+      fireEvent.pointerDown(field, { pointerType: 'touch' });
+      act(() => field.focus());
+      expect(region.hasAttribute('data-typing')).toBe(true);
+      expect(region.hasAttribute('data-kb-pending')).toBe(true);
+      act(() => {
+        vv.height = 538;
+        vv.dispatchEvent(new Event('resize'));
+      });
+      expect(region.hasAttribute('data-kb-pending')).toBe(false);
+      expect(region.hasAttribute('data-keyboard')).toBe(true);
+      act(() => field.blur());
+
+      // No keyboard comes (a hardware keyboard): it moves down after a moment.
+      act(() => {
+        vv.height = 874;
+        vv.dispatchEvent(new Event('resize'));
+      });
+      fireEvent.pointerDown(field, { pointerType: 'touch' });
+      act(() => field.focus());
+      expect(region.hasAttribute('data-kb-pending')).toBe(true);
+      act(() => vi.advanceTimersByTime(700));
+      expect(region.hasAttribute('data-kb-pending')).toBe(false);
+      expect(region.hasAttribute('data-typing')).toBe(true);
+      act(() => field.blur());
+
+      // Focused with a mouse or the keyboard: no wait.
+      fireEvent.pointerDown(field, { pointerType: 'mouse' });
+      act(() => field.focus());
+      expect(region.hasAttribute('data-kb-pending')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows a message of only emoji large, with no bubble', async () => {
+    await setup();
+    const field = screen.getByRole('textbox', { name: 'Message' });
+    for (const text of ['🎉', 'Party 🎉']) {
+      fireEvent.change(field, { target: { value: text } });
+      fireEvent.keyDown(field, { key: 'Enter' });
+    }
+    await waitFor(() => expect(bubble('Party 🎉')).toBeTruthy());
+    expect(bubble('🎉').hasAttribute('data-jumbo')).toBe(true);
+    expect(bubble('Party 🎉').hasAttribute('data-jumbo')).toBe(false);
   });
 
   it('follows the iPhone keyboard with the visual viewport while typing', async () => {
