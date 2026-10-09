@@ -157,11 +157,18 @@ max_indexes = 5
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
-site_url = "http://127.0.0.1:3000"
+site_url = "http://localhost:5173"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000"]
+# home.os dev server (5173, both host names) and `vite preview` (4173). The glob keeps invite
+# links (with a path or query) working on 127.0.0.1; any localhost URL already matches site_url.
+additional_redirect_urls = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:4173",
+  "http://127.0.0.1:5173/**",
+]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.
@@ -335,6 +342,27 @@ skip_nonce_check = false
 # If enabled, it will allow the user to successfully authenticate when the provider does not return an email address.
 email_optional = false
 
+# Google is the only way to sign in to home.os. It is off by default so `supabase start` works
+# without credentials (the app's demo mode needs none). To use it locally:
+#   1. In Google Cloud Console create an OAuth client ID (type "Web application") with the
+#      authorized redirect URI http://127.0.0.1:54321/auth/v1/callback
+#   2. Put its ID and secret in supabase/.env (git-ignored; the CLI reads it) or your shell:
+#        SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=....apps.googleusercontent.com
+#        SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=...
+#   3. Set enabled = true below and restart: npx supabase stop && npx supabase start
+# In production, enable Google in the dashboard instead (see README "Google sign-in").
+[auth.external.google]
+enabled = false
+client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"
+# DO NOT commit your OAuth provider secret to git. Use environment variable substitution instead:
+secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"
+# Overrides the default auth callback URL derived from auth.external_url.
+redirect_uri = ""
+# Overrides the default auth provider URL.
+url = ""
+# Only needed for native ID-token sign-in; the web OAuth redirect flow keeps the check.
+skip_nonce_check = false
+
 # Allow Solana wallet holders to sign in to your project via the Sign in with Solana (SIWS, EIP-4361) standard.
 # You can configure "web3" rate limit in the [auth.rate_limit] section and set up [auth.captcha] if self-hosting.
 [auth.web3.solana]
@@ -375,8 +403,8 @@ allow_dynamic_registration = false
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.
-# `per_worker` (default) — enables hot reload during local development.
-# `oneshot` — fallback mode if hot reload causes issues (e.g. in large repos or with symlinks).
+# `per_worker` (default): enables hot reload during local development.
+# `oneshot`: fallback mode if hot reload causes issues (e.g. in large repos or with symlinks).
 policy = "per_worker"
 # Port to attach the Chrome inspector for debugging edge functions.
 inspector_port = 8083
@@ -385,6 +413,11 @@ deno_version = 2
 
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
+
+# The scheduler is called by pg_cron with `Authorization: Bearer <CRON_SECRET>`, not a user
+# JWT, so the gateway must not verify JWTs for it. The function checks the secret itself.
+[functions.scheduler]
+verify_jwt = false
 
 [analytics]
 enabled = true

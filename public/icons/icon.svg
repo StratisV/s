@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>home.os</title>
+  <!--
+    The home scene (design/README.md "Home scene card"): sky and grass split at 66%,
+    the sun with its soft halo, and a friendly house. scripts/make-icons.mjs renders the
+    PNG icons from this file: it drops the rounded #tile clip for the full-bleed icons
+    and shrinks #art into the safe zone for the maskable one, so the sky and grass
+    rects reach far past the canvas on purpose.
+  -->
+  <defs>
+    <clipPath id="tile">
+      <rect width="512" height="512" rx="114" />
+    </clipPath>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="338" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#EAF3FF" />
+      <stop offset="1" stop-color="#F6FAFF" />
+    </linearGradient>
+    <linearGradient id="grass" x1="0" y1="338" x2="0" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#DCEFD6" />
+      <stop offset="1" stop-color="#CFE8C8" />
+    </linearGradient>
+    <linearGradient id="roof" x1="0" y1="130" x2="0" y2="280" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF7B56" />
+      <stop offset="1" stop-color="#EE5236" />
+    </linearGradient>
+    <linearGradient id="wall" x1="0" y1="160" x2="0" y2="392" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF6E6" />
+      <stop offset="1" stop-color="#FBDDB4" />
+    </linearGradient>
+    <radialGradient id="halo" cx="404" cy="106" r="68" gradientUnits="userSpaceOnUse">
+      <stop offset="0.55" stop-color="#FFD66B" stop-opacity="0.42" />
+      <stop offset="0.75" stop-color="#FFD66B" stop-opacity="0.22" />
+      <stop offset="1" stop-color="#FFD66B" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="bush" x1="0" y1="350" x2="0" y2="410" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#86CC6E" />
+      <stop offset="1" stop-color="#5DAE4E" />
+    </linearGradient>
+  </defs>
+
+  <g clip-path="url(#tile)">
+    <g id="art">
+      <!-- Sky and grass -->
+      <rect x="-512" y="-512" width="1536" height="850" fill="url(#sky)" />
+      <rect x="-512" y="338" width="1536" height="686" fill="url(#grass)" />
+
+      <!-- Sun with its halo -->
+      <circle cx="404" cy="106" r="68" fill="url(#halo)" />
+      <circle cx="404" cy="106" r="40" fill="#FFD66B" />
+
+      <!-- The house, drawn around its doorstep at (256, 392) and scaled up to fill the tile -->
+      <g transform="translate(256 412) scale(1.25) translate(-256 -392)">
+        <!-- Soft ground shadow -->
+        <ellipse cx="256" cy="393" rx="136" ry="11" fill="#4E9A40" fill-opacity="0.18" />
+
+        <!-- Chimney (behind the roof) -->
+        <rect x="168" y="152" width="30" height="80" rx="6" fill="#E04B33" />
+        <rect x="161" y="142" width="44" height="18" rx="7" fill="#C93F2A" />
+
+        <!-- Walls and gable -->
+        <path d="M166 392 V244 L256 162 L346 244 V392 Z" fill="url(#wall)" stroke="url(#wall)" stroke-width="8" stroke-linejoin="round" />
+
+        <!-- Roof -->
+        <path d="M134 262 L256 150 L378 262" fill="none" stroke="url(#roof)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" />
+
+        <!-- Round gable window -->
+        <circle cx="256" cy="228" r="19" fill="#FFFFFF" />
+        <circle cx="256" cy="228" r="13" fill="#8CC8FF" />
+
+        <!-- Windows -->
+        <rect x="180" y="282" width="46" height="46" rx="10" fill="#FFFFFF" />
+        <rect x="185.5" y="287.5" width="35" height="35" rx="6.5" fill="#8CC8FF" />
+        <rect x="286" y="282" width="46" height="46" rx="10" fill="#FFFFFF" />
+        <rect x="291.5" y="287.5" width="35" height="35" rx="6.5" fill="#8CC8FF" />
+
+        <!-- Door -->
+        <path d="M230 392 V320 a26 26 0 0 1 52 0 V392 Z" fill="#D6703A" />
+        <circle cx="269" cy="358" r="4.5" fill="#FFE2B8" />
+
+        <!-- Bushes -->
+        <circle cx="166" cy="380" r="24" fill="url(#bush)" />
+        <circle cx="142" cy="390" r="17" fill="url(#bush)" />
+        <circle cx="346" cy="380" r="24" fill="url(#bush)" />
+        <circle cx="370" cy="390" r="17" fill="url(#bush)" />
+      </g>
+    </g>
+  </g>
+</svg>

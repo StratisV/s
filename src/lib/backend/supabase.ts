@@ -1,32 +1,529 @@
-// STUB: replaced by the Supabase backend agent.
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import type { Backend } from './types';
+// Production backend: Supabase Auth (Google), PostgREST tables and RPCs, Realtime.
+// Table, column and RPC names follow docs/ARCHITECTURE.md ("Database"). Row level security
+// lets every member edit everything in their household and hides everything else, so a
+// write that touches zero rows means "not found, or not yours" and becomes 'not_found'.
+
+import {
+  createClient,
+  isAuthRetryableFetchError,
+  type Session,
+  type SupabaseClient,
+  type User,
+} from '@supabase/supabase-js';
+import type {
+  Area,
+  AuthUser,
+  Completion,
+  CreateHouseholdInput,
+  Household,
+  HouseholdData,
+  InvitePreview,
+  Item,
+  ItemDraft,
+  JoinHouseholdInput,
+  Member,
+  PushSubscriptionInput,
+} from '../types';
+import {
+  BackendError,
+  type Backend,
+  type BackendErrorCode,
+  type HouseholdPatch,
+  type ItemPatch,
+  type MemberPatch,
+  type Unsubscribe,
+} from './types';
+
+// ── Columns (only what the UI types carry) ─────────────────
+
+const HOUSEHOLD_COLS = 'id, name, address, timezone, weekly_email_day, weekly_email_time';
+const MEMBER_COLS =
+  'id, household_id, user_id, name, email, emoji, color, role, weekly_email, push_enabled, created_at';
+const AREA_COLS = 'id, household_id, name, position';
+const ITEM_COLS =
+  'id, household_id, area_id, title, note, rag, due_date, assignee_id, repeat, notify, status, created_by, updated_by, created_at, updated_at';
+const COMPLETION_COLS = 'id, household_id, item_id, item_title, credited_to, completed_by, completed_at';
+
+/** Columns each patch may write (the DB grants UPDATE on exactly these). */
+const HOUSEHOLD_PATCH_KEYS = ['name', 'address', 'timezone'] as const;
+const MEMBER_PATCH_KEYS = ['name', 'emoji', 'weekly_email', 'push_enabled'] as const;
+const ITEM_PATCH_KEYS = ['area_id', 'title', 'note', 'rag', 'due_date', 'assignee_id', 'repeat', 'notify'] as const;
+
+/** Rows per request when reading lists. Must not exceed the API's max_rows (1000 by default). */
+const PAGE = 1000;
+
+/** Messages the RPCs and triggers raise that map straight onto a BackendErrorCode. */
+const RPC_CODES: ReadonlySet<string> = new Set<BackendErrorCode>([
+  'not_signed_in',
+  'already_member',
+  'invalid_invite',
+  'not_found',
+]);
+
+// ── Errors ─────────────────────────────────────────────────
+
+interface ErrorLike {
+  name?: string;
+  message?: string;
+  code?: string;
+  status?: number;
+}
+
+const NETWORK_MESSAGE = /failed to fetch|fetch failed|load failed|networkerror|network request failed|^aborterror/i;
+
+/**
+ * Maps anything supabase-js returns or throws to a BackendError:
+ * - an RPC/trigger message (not_signed_in, already_member, invalid_invite, not_found) keeps its code;
+ * - invalid_input has no code of its own, so it becomes 'unknown' with that message;
+ * - an RLS rejection on insert/update (42501 "row-level security") is 'not_found', like any
+ *   other row the caller cannot see;
+ * - a rejected or expired JWT (HTTP 401) is 'not_signed_in';
+ * - fetch failures (HTTP status 0, TypeError, AuthRetryableFetchError) are 'network';
+ * - anything else is 'unknown' with the original message.
+ */
+export function toBackendError(err: unknown, httpStatus?: number): BackendError {
+  if (err instanceof BackendError) return err;
+  const e: ErrorLike = typeof err === 'object' && err !== null ? (err as ErrorLike) : { message: String(err) };
+  const message = typeof e.message === 'string' ? e.message.trim() : '';
+
+  if (RPC_CODES.has(message)) return new BackendError(message as BackendErrorCode);
+  if (message === 'invalid_input') return new BackendError('unknown', 'invalid_input');
+  if (e.code === '42501' && /row-level security/i.test(message)) return new BackendError('not_found', message);
+  if (httpStatus === 401 || e.status === 401 || /^PGRST30[1-3]$/.test(e.code ?? '')) {
+    return new BackendError('not_signed_in', message || undefined);
+  }
+  const isNetwork =
+    httpStatus === 0 ||
+    isAuthRetryableFetchError(err) ||
+    e.name === 'TypeError' ||
+    e.name === 'AbortError' ||
+    NETWORK_MESSAGE.test(message);
+  if (isNetwork) return new BackendError('network', message || undefined);
+  return new BackendError('unknown', message || undefined);
+}
+
+interface QueryResult {
+  data: unknown;
+  error: unknown;
+  status: number;
+}
+
+/** Awaits a PostgREST query (or RPC) and returns its data, throwing a BackendError on failure. */
+async function run<T>(query: PromiseLike<QueryResult>): Promise<T> {
+  let res: QueryResult;
+  try {
+    res = await query;
+  } catch (err) {
+    throw toBackendError(err);
+  }
+  if (res.error) throw toBackendError(res.error, res.status);
+  return res.data as T;
+}
+
+/** For writes that select `id` back: zero rows means the row is gone or belongs to another household. */
+async function runAffecting(query: PromiseLike<QueryResult>): Promise<void> {
+  const rows = await run<{ id: string }[] | null>(query);
+  if (!rows || rows.length === 0) throw new BackendError('not_found');
+}
+
+/** Reads every page of a list query (the API caps each response at max_rows). */
+async function runAll<T>(page: (from: number, to: number) => PromiseLike<QueryResult>): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const rows = (await run<T[] | null>(page(from, from + PAGE - 1))) ?? [];
+    out.push(...rows);
+    if (rows.length < PAGE) return out;
+  }
+}
+
+function invalidInput(what: string): BackendError {
+  return new BackendError('unknown', `invalid_input: ${what}`);
+}
+
+function requireText(value: string, what: string): string {
+  const v = (value ?? '').trim();
+  if (!v) throw invalidInput(what);
+  return v;
+}
+
+/** Copies the allowed keys that are present (undefined means "leave as is"). */
+function pick<T extends object, K extends keyof T>(patch: T, keys: readonly K[]): Partial<Pick<T, K>> {
+  const out: Partial<Pick<T, K>> = {};
+  for (const k of keys) if (patch[k] !== undefined) out[k] = patch[k];
+  return out;
+}
+
+// ── Row mapping ────────────────────────────────────────────
+
+function str(v: unknown): string {
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+/** Google puts the name in full_name (or name) and the photo in avatar_url (or picture). */
+export function toAuthUser(user: User): AuthUser {
+  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
+  const email = user.email ?? '';
+  const name = str(meta.full_name) || str(meta.name) || email.split('@')[0] || '';
+  const avatarUrl = str(meta.avatar_url) || str(meta.picture);
+  return avatarUrl ? { id: user.id, email, name, avatarUrl } : { id: user.id, email, name };
+}
+
+/** Postgres `time` comes back as HH:MM:SS; the app uses HH:MM. */
+export function toHHMM(time: string | null | undefined): string {
+  const m = /^(\d{1,2}):(\d{2})/.exec(time ?? '');
+  return m ? `${m[1].padStart(2, '0')}:${m[2]}` : '08:00';
+}
+
+function toHousehold(row: Household): Household {
+  return {
+    id: row.id,
+    name: row.name,
+    address: row.address ?? '',
+    timezone: row.timezone,
+    weekly_email_day: Number(row.weekly_email_day),
+    weekly_email_time: toHHMM(row.weekly_email_time),
+  };
+}
+
+let channelSeq = 0;
+
+export interface SupabaseBackendOptions {
+  /** Use this client instead of creating one (tests sign in with their own clients). */
+  client?: SupabaseClient;
+}
 
 export class SupabaseBackend implements Backend {
   readonly kind = 'supabase' as const;
-  constructor(_url: string, _anonKey: string) {}
-  getUser(..._args: any[]): any { throw new Error('not implemented'); }
-  onAuthChange(..._args: any[]): any { throw new Error('not implemented'); }
-  signInWithGoogle(..._args: any[]): any { throw new Error('not implemented'); }
-  signOut(..._args: any[]): any { throw new Error('not implemented'); }
-  getMyHouseholdId(..._args: any[]): any { throw new Error('not implemented'); }
-  load(..._args: any[]): any { throw new Error('not implemented'); }
-  subscribe(..._args: any[]): any { throw new Error('not implemented'); }
-  createHousehold(..._args: any[]): any { throw new Error('not implemented'); }
-  joinHousehold(..._args: any[]): any { throw new Error('not implemented'); }
-  getInvitePreview(..._args: any[]): any { throw new Error('not implemented'); }
-  createInvite(..._args: any[]): any { throw new Error('not implemented'); }
-  updateHousehold(..._args: any[]): any { throw new Error('not implemented'); }
-  updateMember(..._args: any[]): any { throw new Error('not implemented'); }
-  createArea(..._args: any[]): any { throw new Error('not implemented'); }
-  renameArea(..._args: any[]): any { throw new Error('not implemented'); }
-  deleteArea(..._args: any[]): any { throw new Error('not implemented'); }
-  reorderAreas(..._args: any[]): any { throw new Error('not implemented'); }
-  createItem(..._args: any[]): any { throw new Error('not implemented'); }
-  updateItem(..._args: any[]): any { throw new Error('not implemented'); }
-  deleteItem(..._args: any[]): any { throw new Error('not implemented'); }
-  completeItem(..._args: any[]): any { throw new Error('not implemented'); }
-  undoCompletion(..._args: any[]): any { throw new Error('not implemented'); }
-  savePushSubscription(..._args: any[]): any { throw new Error('not implemented'); }
-  deletePushSubscription(..._args: any[]): any { throw new Error('not implemented'); }
+  readonly client: SupabaseClient;
+
+  constructor(url: string, anonKey: string, options: SupabaseBackendOptions = {}) {
+    this.client =
+      options.client ??
+      createClient(url, anonKey, {
+        auth: {
+          flowType: 'pkce',
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true,
+        },
+      });
+  }
+
+  // ── Auth ───────────────────────────────────────────────
+
+  private async session(): Promise<Session | null> {
+    const { data, error } = await this.client.auth.getSession();
+    if (error) {
+      if (isAuthRetryableFetchError(error)) throw toBackendError(error);
+      // A revoked or broken session counts as signed out (supabase-js has already dropped it).
+      return null;
+    }
+    return data.session;
+  }
+
+  private async userId(): Promise<string> {
+    const id = (await this.session())?.user.id;
+    if (!id) throw new BackendError('not_signed_in');
+    return id;
+  }
+
+  async getUser(): Promise<AuthUser | null> {
+    const session = await this.session();
+    return session ? toAuthUser(session.user) : null;
+  }
+
+  onAuthChange(cb: (user: AuthUser | null) => void): Unsubscribe {
+    let active = true;
+    const { data } = this.client.auth.onAuthStateChange((event, session) => {
+      if (event !== 'INITIAL_SESSION' && event !== 'SIGNED_IN' && event !== 'SIGNED_OUT') return;
+      const user = session?.user ? toAuthUser(session.user) : null;
+      // Leave supabase's auth lock before the app reacts (it calls back into the client).
+      setTimeout(() => {
+        if (active) cb(user);
+      }, 0);
+    });
+    return () => {
+      active = false;
+      data.subscription.unsubscribe();
+    };
+  }
+
+  async signInWithGoogle(): Promise<void> {
+    const { error } = await this.client.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin + import.meta.env.BASE_URL,
+        queryParams: { prompt: 'select_account' },
+      },
+    });
+    if (error) throw toBackendError(error);
+  }
+
+  async signOut(): Promise<void> {
+    // 'local' signs out this device only; the user's other devices stay signed in.
+    const { error } = await this.client.auth.signOut({ scope: 'local' });
+    // supabase-js drops the local session even when revoking it on the server fails.
+    if (error && (await this.session())) throw toBackendError(error);
+  }
+
+  // ── Household membership ───────────────────────────────
+
+  async getMyHouseholdId(): Promise<string | null> {
+    const userId = await this.userId();
+    const rows = await run<{ household_id: string }[]>(
+      this.client.from('members').select('household_id').eq('user_id', userId).limit(1),
+    );
+    return rows[0]?.household_id ?? null;
+  }
+
+  async load(householdId: string): Promise<HouseholdData> {
+    const db = this.client;
+    const [households, members, areas, items, completions] = await Promise.all([
+      run<Household[]>(db.from('households').select(HOUSEHOLD_COLS).eq('id', householdId).limit(1)),
+      runAll<Member>((from, to) =>
+        db
+          .from('members')
+          .select(MEMBER_COLS)
+          .eq('household_id', householdId)
+          .order('created_at')
+          .order('id')
+          .range(from, to),
+      ),
+      runAll<Area>((from, to) =>
+        db
+          .from('areas')
+          .select(AREA_COLS)
+          .eq('household_id', householdId)
+          .order('position')
+          .order('created_at')
+          .order('id')
+          .range(from, to),
+      ),
+      runAll<Item>((from, to) =>
+        db
+          .from('items')
+          .select(ITEM_COLS)
+          .eq('household_id', householdId)
+          .eq('status', 'open')
+          .order('created_at')
+          .order('id')
+          .range(from, to),
+      ),
+      runAll<Completion>((from, to) =>
+        db
+          .from('completions')
+          .select(COMPLETION_COLS)
+          .eq('household_id', householdId)
+          .order('completed_at', { ascending: false })
+          .order('id')
+          .range(from, to),
+      ),
+    ]);
+    // RLS hides other households, so "not a member" also lands here.
+    if (!households[0]) throw new BackendError('not_found');
+    return { household: toHousehold(households[0]), members, areas, items, completions };
+  }
+
+  subscribe(householdId: string, onChange: () => void): Unsubscribe {
+    // A unique topic, so a quick unsubscribe/subscribe (React StrictMode) never reuses a
+    // channel that is still being torn down.
+    const channel = this.client.channel(`household:${householdId}:${++channelSeq}`);
+    const tables: [table: string, filter: string][] = [
+      ['households', `id=eq.${householdId}`],
+      ['members', `household_id=eq.${householdId}`],
+      ['areas', `household_id=eq.${householdId}`],
+      ['items', `household_id=eq.${householdId}`],
+      ['completions', `household_id=eq.${householdId}`],
+    ];
+    let closed = false;
+    const notify = () => {
+      if (!closed) onChange();
+    };
+    for (const [table, filter] of tables) {
+      channel.on('postgres_changes', { event: '*', schema: 'public', table, filter }, notify);
+    }
+    let joinedBefore = false;
+    channel.subscribe((status) => {
+      if (status !== 'SUBSCRIBED') return;
+      // Rejoined after a dropped connection: changes may have been missed meanwhile.
+      if (joinedBefore) notify();
+      joinedBefore = true;
+    });
+    return () => {
+      if (closed) return;
+      closed = true;
+      void this.client.removeChannel(channel);
+    };
+  }
+
+  async createHousehold(input: CreateHouseholdInput): Promise<string> {
+    const items = input.items.map((i) => ({
+      area: i.area,
+      title: i.title,
+      note: i.note ?? '',
+      rag: i.rag,
+      due_in_days: i.due_in_days,
+      repeat: i.repeat,
+      notify: i.notify,
+    }));
+    return run<string>(
+      this.client.rpc('create_household', {
+        p_name: input.name,
+        p_address: input.address,
+        p_timezone: input.timezone,
+        p_member_name: input.memberName,
+        p_member_emoji: input.memberEmoji,
+        p_areas: input.areas,
+        p_items: items,
+      }),
+    );
+  }
+
+  async joinHousehold(input: JoinHouseholdInput): Promise<string> {
+    return run<string>(
+      this.client.rpc('join_household', {
+        p_token: input.token,
+        p_member_name: input.memberName,
+        p_member_emoji: input.memberEmoji,
+      }),
+    );
+  }
+
+  async getInvitePreview(token: string): Promise<InvitePreview | null> {
+    const data = await run<Partial<InvitePreview> | null>(this.client.rpc('invite_preview', { p_token: token }));
+    if (!data || typeof data.household_name !== 'string') return null;
+    return { household_name: data.household_name, address: data.address ?? '' };
+  }
+
+  async createInvite(): Promise<string> {
+    return run<string>(this.client.rpc('create_invite'));
+  }
+
+  // ── Edits (any member may edit anything) ──────────────
+
+  async updateHousehold(id: string, patch: HouseholdPatch): Promise<void> {
+    const values = pick(patch, HOUSEHOLD_PATCH_KEYS);
+    if (values.name !== undefined) values.name = requireText(values.name, 'name');
+    if (values.address !== undefined) values.address = values.address.trim();
+    if (values.timezone !== undefined) values.timezone = requireText(values.timezone, 'timezone');
+    await this.updateRow('households', id, values);
+  }
+
+  async updateMember(id: string, patch: MemberPatch): Promise<void> {
+    const values = pick(patch, MEMBER_PATCH_KEYS);
+    if (values.name !== undefined) values.name = requireText(values.name, 'name');
+    if (values.emoji !== undefined) values.emoji = requireText(values.emoji, 'emoji');
+    await this.updateRow('members', id, values);
+  }
+
+  async createArea(householdId: string, name: string): Promise<Area> {
+    const clean = requireText(name, 'name');
+    // New areas go last.
+    const last = await run<{ position: number }[]>(
+      this.client
+        .from('areas')
+        .select('position')
+        .eq('household_id', householdId)
+        .order('position', { ascending: false })
+        .limit(1),
+    );
+    const position = last[0] ? last[0].position + 1 : 0;
+    const rows = await run<Area[]>(
+      this.client.from('areas').insert({ household_id: householdId, name: clean, position }).select(AREA_COLS),
+    );
+    if (!rows[0]) throw new BackendError('not_found');
+    return rows[0];
+  }
+
+  async renameArea(id: string, name: string): Promise<void> {
+    await this.updateRow('areas', id, { name: requireText(name, 'name') });
+  }
+
+  async deleteArea(id: string): Promise<void> {
+    // Items go with it (on delete cascade); their completions stay, with item_id null.
+    await runAffecting(this.client.from('areas').delete().eq('id', id).select('id'));
+  }
+
+  async reorderAreas(householdId: string, orderedIds: string[]): Promise<void> {
+    await run<null>(this.client.rpc('reorder_areas', { p_household_id: householdId, p_area_ids: orderedIds }));
+  }
+
+  async createItem(householdId: string, draft: ItemDraft): Promise<Item> {
+    // household_id is rewritten from the area by a trigger; sending it keeps the intent clear.
+    const rows = await run<Item[]>(
+      this.client
+        .from('items')
+        .insert({
+          household_id: householdId,
+          area_id: draft.area_id,
+          title: requireText(draft.title, 'title'),
+          note: draft.note ?? '',
+          rag: draft.rag,
+          due_date: draft.due_date,
+          assignee_id: draft.assignee_id,
+          repeat: draft.repeat,
+          notify: draft.notify,
+        })
+        .select(ITEM_COLS),
+    );
+    if (!rows[0]) throw new BackendError('not_found');
+    return rows[0];
+  }
+
+  async updateItem(id: string, patch: ItemPatch): Promise<void> {
+    const values = pick(patch, ITEM_PATCH_KEYS);
+    if (values.title !== undefined) values.title = requireText(values.title, 'title');
+    await this.updateRow('items', id, values);
+  }
+
+  async deleteItem(id: string): Promise<void> {
+    await runAffecting(this.client.from('items').delete().eq('id', id).select('id'));
+  }
+
+  async completeItem(id: string): Promise<string> {
+    return run<string>(this.client.rpc('complete_item', { p_item_id: id }));
+  }
+
+  async undoCompletion(completionId: string): Promise<void> {
+    await run<null>(this.client.rpc('undo_completion', { p_completion_id: completionId }));
+  }
+
+  // ── Push ──────────────────────────────────────────────
+
+  async savePushSubscription(memberId: string, sub: PushSubscriptionInput): Promise<void> {
+    const userId = await this.userId();
+    if (!sub?.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) throw invalidInput('push subscription');
+    await runAffecting(
+      this.client
+        .from('push_subs')
+        .upsert(
+          {
+            member_id: memberId,
+            user_id: userId,
+            endpoint: sub.endpoint,
+            p256dh: sub.keys.p256dh,
+            auth: sub.keys.auth,
+            user_agent: typeof navigator !== 'undefined' && navigator.userAgent ? navigator.userAgent : null,
+          },
+          { onConflict: 'endpoint' },
+        )
+        .select('id'),
+    );
+  }
+
+  async deletePushSubscription(endpoint: string): Promise<void> {
+    // Idempotent: the scheduler may already have removed an expired subscription.
+    await run<unknown>(this.client.from('push_subs').delete().eq('endpoint', endpoint));
+  }
+
+  // ── Helpers ───────────────────────────────────────────
+
+  /** Updates one row by id and checks that it was really there (and visible to the caller). */
+  private async updateRow(table: string, id: string, values: Record<string, unknown>): Promise<void> {
+    if (Object.keys(values).length === 0) {
+      // Nothing to change: still report a row the caller cannot see.
+      return runAffecting(this.client.from(table).select('id').eq('id', id).limit(1));
+    }
+    await runAffecting(this.client.from(table).update(values).eq('id', id).select('id'));
+  }
 }
