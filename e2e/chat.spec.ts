@@ -526,9 +526,12 @@ test.describe('Chat', () => {
     await messageRow(page, 'Restocked the olive oil').getByRole('button', { name: '👍, 1 reaction from Shea' }).click();
     const toast = page.getByText('Couldn’t react. Please sign in again.');
     await expect(toast).toBeVisible();
-    const toastBox = (await toast.boundingBox())!;
     const form = (await chatScreen(page).getByRole('form', { name: 'New message' }).boundingBox())!;
-    expect(toastBox.y + toastBox.height).toBeLessThanOrEqual(form.y);
+    // Once it has slid in (it rises 16px as it appears).
+    await expect(async () => {
+      const toastBox = (await toast.boundingBox())!;
+      expect(toastBox.y + toastBox.height).toBeLessThanOrEqual(form.y - 8);
+    }).toPass();
     // A tap on the field reaches the field.
     const hit = await page.evaluate(
       ([x, y]) => document.elementFromPoint(x, y)?.tagName,
