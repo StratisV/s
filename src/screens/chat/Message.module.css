@@ -168,7 +168,7 @@
 
 .chips {
   max-width: 75%;
-  margin-top: 4px;
+  margin: 4px 0 2px;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -203,11 +203,11 @@
     color 0.15s ease;
 }
 
-/* A taller tap target than the pill. */
+/* A taller tap target than the pill (short of the next bubble). */
 .chip::before {
   content: '';
   position: absolute;
-  inset: -4px -2px -9px;
+  inset: -4px -2px -6px;
 }
 
 .chip[aria-pressed='true'] {

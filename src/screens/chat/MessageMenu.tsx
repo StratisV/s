@@ -116,6 +116,17 @@ export function MessageMenu({
     };
   }, [returnFocus]);
 
+  // Rotating (a new width) moves the bubble out from under its copy: close. A height change
+  // is only the keyboard going away.
+  useEffect(() => {
+    const width = window.innerWidth;
+    const onResize = () => {
+      if (window.innerWidth !== width) closeRef.current();
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   // Escape closes; Tab stays inside.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

@@ -77,9 +77,21 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
   const settleTimer = useRef<ReturnType<typeof setTimeout>>();
   const onComposerFocus = useCallback((focused: boolean) => {
     blurWaiting.current = false;
-    if (focused) setTyping(true);
-    else if (pointerDown.current) blurWaiting.current = true;
-    else setTyping(false);
+    if (focused) {
+      setTyping(true);
+    } else if (pointerDown.current) {
+      blurWaiting.current = true;
+      // In case the press never reports its end.
+      clearTimeout(settleTimer.current);
+      settleTimer.current = setTimeout(() => {
+        pointerDown.current = false;
+        if (!blurWaiting.current) return;
+        blurWaiting.current = false;
+        setTyping(false);
+      }, 1500);
+    } else {
+      setTyping(false);
+    }
   }, []);
   useEffect(() => {
     const release = () => {
@@ -118,6 +130,26 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // The toast floats just above the composer here (Toast reads --toast-bottom).
+  useEffect(() => {
+    const root = document.documentElement.style;
+    const above = `${composerHeight + 12}px`;
+    root.setProperty(
+      '--toast-bottom',
+      !typing
+        ? `calc(var(--tabbar-bottom) + var(--tabbar-height) + 10px + ${above})`
+        : keyboard > 0
+          ? `calc(${keyboard + 8}px + ${above})`
+          : `calc(max(10px, var(--bottom-inset)) + ${above})`,
+    );
+  }, [composerHeight, typing, keyboard]);
+  useEffect(
+    () => () => {
+      document.documentElement.style.removeProperty('--toast-bottom');
+    },
+    [],
+  );
 
   // ── Scrolling ───────────────────────────────────────────
 
@@ -229,7 +261,14 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
   if (menuEntry) {
     const { message, state, key } = menuEntry;
     if (state === 'failed') {
-      menuActions.push({ label: 'Try Again', icon: 'retry', run: () => (closeMenu(), retry(key)) });
+      menuActions.push({
+        label: 'Try Again',
+        icon: 'retry',
+        run: () => {
+          closeMenu();
+          retry(key);
+        },
+      });
     }
     menuActions.push({
       label: 'Copy',
@@ -333,7 +372,7 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
           </div>
         ) : null}
 
-        <div className={styles.log} role="log" aria-label="Messages">
+        <div className={styles.log} role="log" aria-label="Messages" aria-busy={status === 'loading' || loadingOlder}>
           {views.map((row) =>
             row.kind === 'separator' ? (
               <p key={row.key} className={styles.separator}>
