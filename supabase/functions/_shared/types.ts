@@ -5,6 +5,8 @@ import type { ISODate } from './dates.ts';
 
 export type Rag = 'red' | 'amber' | 'green';
 export type Notify = 'none' | 'same_day' | 'day_before' | 'week_before';
+/** 'task' (To do) or 'state' (To maintain: never due, missed or reminded about). */
+export type ItemKind = 'task' | 'state';
 
 export interface HouseholdRow {
   id: string;
@@ -42,6 +44,8 @@ export interface ItemRow {
   id: string;
   household_id: string;
   area_id: string;
+  /** Missing reads as 'task'. The Edge Function marks states (see withItemKinds). */
+  kind?: ItemKind;
   title: string;
   note: string;
   rag: Rag;

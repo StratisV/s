@@ -82,7 +82,7 @@ test.describe('Sign-in and setup', () => {
     for (const [i, n] of DEFAULT_AREAS.entries()) await expect(areaInputs.nth(i)).toHaveValue(n);
     const seed = homeStep.getByRole('switch', { name: 'Start with our current list' });
     await expect(seed).toHaveAttribute('aria-checked', 'true');
-    await expect(homeStep.getByText(/^Adds the 13 items from our current notes list/)).toBeVisible();
+    await expect(homeStep.getByText(/^Adds the 14 items from our current notes list/)).toBeVisible();
     await homeStep.getByRole('button', { name: 'Create Home' }).click();
 
     // Notifications step (push is not configured in this build, so it just confirms).
@@ -143,7 +143,7 @@ test.describe('Sign-in and setup', () => {
     await expect(inputs.last()).toBeFocused();
     await inputs.last().fill('Garage');
     await inputs.last().press('Enter');
-    await expect(homeStep.getByText(/^Adds the 10 items/)).toBeVisible();
+    await expect(homeStep.getByText(/^Adds the 11 items/)).toBeVisible();
     await homeStep.getByRole('button', { name: 'Create Home' }).click();
     await page.getByRole('button', { name: 'Continue' }).click();
 

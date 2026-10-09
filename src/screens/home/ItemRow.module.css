@@ -89,6 +89,10 @@
   font-weight: 500;
 }
 
+.date[data-updated] {
+  font-weight: 400;
+}
+
 .date[data-missed] {
   color: var(--destructive);
   font-weight: 700;

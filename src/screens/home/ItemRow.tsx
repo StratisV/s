@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { RAG_LABEL } from '../../lib/constants';
 import type { Item } from '../../lib/types';
 import { useConfetti } from '../../ui/Confetti';
-import { StatusRing } from './StatusRing';
+import { inCollapsedArea } from './areaPanel';
+import { StatusDot, StatusRing } from './StatusRing';
 import styles from './ItemRow.module.css';
 
 /** How long the filled ring and check show before the row completes. */
@@ -20,7 +21,10 @@ function isFocusVisible(el: Element): boolean {
 
 interface ItemRowProps {
   item: Item;
-  /** From itemMeta(): `🦆 Shea`, and `Tue 20 Oct` / `Missed · Tue 6 Oct` / null. */
+  /**
+   * From itemMeta(): `🦆 Shea`, and `Tue 20 Oct` / `Missed · Tue 6 Oct` / null, or for a
+   * state (To maintain) `Updated Tue 6 Oct`.
+   */
   meta: { who: string; date: string | null; missed: boolean };
   onOpen(itemId: string): void;
   onComplete(itemId: string): Promise<void> | void;
@@ -29,6 +33,8 @@ interface ItemRowProps {
 /**
  * A Home row: status ring, then title, note (2 lines max) and meta.
  * The ring completes the item; anywhere else on the row opens it.
+ * A state (To maintain) has a solid dot instead of the ring: it is never completed, and
+ * the whole row opens it.
  */
 export function ItemRow({ item, meta, onOpen, onComplete }: ItemRowProps) {
   const fire = useConfetti();
@@ -59,11 +65,16 @@ export function ItemRow({ item, meta, onOpen, onComplete }: ItemRowProps) {
     const keyboard = isFocusVisible(ring);
 
     setTimeout(() => {
-      // A one-off item leaves the list: move keyboard focus to the nearest remaining row.
-      if (item.repeat === 'none' && keyboard && document.activeElement === ring && openRef.current) {
-        const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-item-open]'));
-        const i = rows.indexOf(openRef.current);
-        (rows[i + 1] ?? rows[i - 1])?.focus();
+      // A one-off item leaves the list: move keyboard focus to the nearest remaining row
+      // (rows in a collapsed area can't take it), else to the area's name.
+      const own = openRef.current;
+      if (item.repeat === 'none' && keyboard && document.activeElement === ring && own) {
+        const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-item-open]')).filter(
+          (el) => el === own || !inCollapsedArea(el),
+        );
+        const i = rows.indexOf(own);
+        const next = rows[i + 1] ?? rows[i - 1] ?? own.closest('section')?.querySelector<HTMLElement>('button[aria-expanded]');
+        next?.focus();
       }
       const pending = completeRef.current(item.id);
       if (mounted.current) setCompleting(false);
@@ -79,9 +90,17 @@ export function ItemRow({ item, meta, onOpen, onComplete }: ItemRowProps) {
     }, COMPLETE_FEEDBACK_MS);
   };
 
+  const maintained = item.kind === 'state';
+  // The status is only a colour on screen; assistive tech hears it (and the kind) after the title.
+  const spoken = maintained ? `, ${RAG_LABEL[item.rag]}, to maintain.` : `, ${RAG_LABEL[item.rag]}.`;
+
   return (
-    <li className={styles.row}>
-      <StatusRing rag={item.rag} done={completing} label={`Mark ${item.title} as done`} onClick={complete} />
+    <li className={styles.row} data-kind={item.kind}>
+      {maintained ? (
+        <StatusDot rag={item.rag} />
+      ) : (
+        <StatusRing rag={item.rag} done={completing} label={`Mark ${item.title} as done`} onClick={complete} />
+      )}
       <button
         ref={openRef}
         type="button"
@@ -93,8 +112,7 @@ export function ItemRow({ item, meta, onOpen, onComplete }: ItemRowProps) {
       >
         <span className={styles.title}>
           {item.title}
-          {/* The status is only a colour on screen; assistive tech hears it after the title. */}
-          <span className="visually-hidden">{`, ${RAG_LABEL[item.rag]}.`}</span>
+          <span className="visually-hidden">{spoken}</span>
         </span>
         {item.note.trim() ? <span className={styles.note}>{item.note}</span> : null}
         <span className={styles.meta}>
@@ -102,7 +120,11 @@ export function ItemRow({ item, meta, onOpen, onComplete }: ItemRowProps) {
           {meta.date ? (
             <>
               {' · '}
-              <span className={styles.date} data-missed={meta.missed || undefined}>
+              <span
+                className={styles.date}
+                data-missed={meta.missed || undefined}
+                data-updated={maintained || undefined}
+              >
                 {meta.date}
               </span>
             </>

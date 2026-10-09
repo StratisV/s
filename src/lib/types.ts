@@ -10,6 +10,13 @@ export type Rag = 'red' | 'amber' | 'green';
 export type Repeat = 'none' | 'weekly' | 'monthly' | 'quarterly' | 'biannual' | 'yearly';
 export type Notify = 'none' | 'same_day' | 'day_before' | 'week_before';
 export type ItemStatus = 'open' | 'done';
+/**
+ * 'task' (shown as "To do"): something to get done; Mark as Done completes it.
+ * 'state' (shown as "To maintain"): a thing whose condition is kept track of (the firepit,
+ * the jacuzzi). It is never done and stays on the list, and has no due date, repeat or
+ * reminder (the database forces due_date null, repeat 'none', notify 'none').
+ */
+export type ItemKind = 'task' | 'state';
 export type Role = 'owner' | 'member';
 export type StatsPeriod = 'month' | 'lifetime';
 
@@ -52,12 +59,17 @@ export interface Item {
   id: string;
   household_id: string;
   area_id: string;
+  /** 'task' (To do) or 'state' (To maintain). */
+  kind: ItemKind;
   title: string;
   note: string;
   rag: Rag;
+  /** Always null for a state. */
   due_date: ISODate | null;
   assignee_id: string | null;
+  /** Always 'none' for a state. */
   repeat: Repeat;
+  /** Always 'none' for a state. */
   notify: Notify;
   status: ItemStatus;
   created_by: string | null;
@@ -69,6 +81,7 @@ export interface Item {
 /** Fields the UI can set when creating or editing an item. */
 export interface ItemDraft {
   area_id: string;
+  kind: ItemKind;
   title: string;
   note: string;
   rag: Rag;
@@ -118,6 +131,8 @@ export interface InvitePreview {
 /** An item from the client's notes list, seeded on household creation when asked. */
 export interface SeedItem {
   area: string;
+  /** Default 'task'. A 'state' is seeded without a due date, repeat or reminder. */
+  kind?: ItemKind;
   title: string;
   note: string;
   rag: Rag;

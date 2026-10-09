@@ -8,7 +8,7 @@
 
 import { CHAT_PAGE_SIZE, DEFAULT_ADDRESS, DEFAULT_AREAS, MEMBER_COLORS, SEED_ITEMS, TEXT_LIMITS } from '../constants';
 import { addDays, addMonths, daysBetween, deviceTimeZone, parseISODate, todayIn, zonedParts } from '../logic/dates';
-import { nextDueDate } from '../logic/items';
+import { applyKindRules, nextDueDate } from '../logic/items';
 import type {
   Area,
   AuthUser,
@@ -25,6 +25,7 @@ import type {
   ISOTimestamp,
   Item,
   ItemDraft,
+  ItemKind,
   ItemStatus,
   JoinHouseholdInput,
   Member,
@@ -330,6 +331,15 @@ function zonedInstant(date: ISODate, hour: number, minute: number, timeZone: str
   return new Date(t);
 }
 
+const isKind = (value: unknown): value is ItemKind => value === 'task' || value === 'state';
+
+/** items.kind check: 'task' unless given; anything else is invalid_input, like the check constraint. */
+function kindOf(value: ItemKind | undefined): ItemKind {
+  if (value === undefined) return 'task';
+  if (!isKind(value)) throw invalidInput('kind');
+  return value;
+}
+
 function invalidInput(what: string): BackendError {
   return new BackendError('unknown', `invalid_input: ${what}`);
 }
@@ -428,6 +438,10 @@ export class DemoBackend implements Backend {
       const doc = { ...emptyDoc(), ...parsed };
       if (!Array.isArray(doc.messages)) doc.messages = [];
       if (!Array.isArray(doc.message_reactions)) doc.message_reactions = [];
+      // Items stored before kinds existed are tasks (the column's default).
+      if (Array.isArray(doc.items)) {
+        for (const item of doc.items) if (!isKind(item.kind)) item.kind = 'task';
+      }
       return doc;
     } catch {
       return emptyDoc();
@@ -690,10 +704,11 @@ export class DemoBackend implements Backend {
     input.items.forEach((seed, i) => {
       const area = areaByName.get(seed.area.trim().toLowerCase());
       if (!area || !seed.title.trim()) return;
-      doc.items.push({
+      const row: ItemRow = {
         id: uuid(),
         household_id: household.id,
         area_id: area.id,
+        kind: kindOf(seed.kind),
         title: withinLimit(seed.title.trim(), TEXT_LIMITS.itemTitle, 'title'),
         note: withinLimit(seed.note ?? '', TEXT_LIMITS.itemNote, 'note'),
         rag: seed.rag,
@@ -707,7 +722,9 @@ export class DemoBackend implements Backend {
         created_at: ts(i),
         updated_at: ts(i),
         completed_at: null,
-      });
+      };
+      // A seeded state has no due date, repeat or reminder (the items trigger in SQL).
+      doc.items.push(applyKindRules(row));
     });
 
     this.addHistory(doc, household, people, now);
@@ -967,10 +984,11 @@ export class DemoBackend implements Backend {
       const area = this.areaIn(doc, me, draft.area_id);
       this.checkAssignee(doc, area.household_id, draft.assignee_id);
       const at = this.stamp();
-      const item: ItemRow = {
+      const item: ItemRow = applyKindRules({
         id: uuid(),
         household_id: area.household_id,
         area_id: area.id,
+        kind: kindOf(draft.kind),
         title: withinLimit(requireText(draft.title, 'title'), TEXT_LIMITS.itemTitle, 'title'),
         note: withinLimit(draft.note ?? '', TEXT_LIMITS.itemNote, 'note'),
         rag: draft.rag,
@@ -984,7 +1002,7 @@ export class DemoBackend implements Backend {
         created_at: at,
         updated_at: at,
         completed_at: null,
-      };
+      });
       doc.items.push(item);
       return toItem(item);
     });
@@ -996,6 +1014,7 @@ export class DemoBackend implements Backend {
       const item = this.itemIn(doc, me, id);
       const next: ItemRow = { ...item };
       if (patch.area_id !== undefined) next.area_id = this.areaIn(doc, me, patch.area_id).id;
+      if (patch.kind !== undefined) next.kind = kindOf(patch.kind);
       if (patch.title !== undefined) {
         next.title = withinLimit(requireText(patch.title, 'title'), TEXT_LIMITS.itemTitle, 'title');
       }
@@ -1008,7 +1027,9 @@ export class DemoBackend implements Backend {
       this.checkAssignee(doc, item.household_id, next.assignee_id);
       next.updated_at = this.stamp();
       next.updated_by = me.id;
-      Object.assign(item, next);
+      // A state keeps no due date, repeat or reminder; a state that becomes a task keeps
+      // whatever the patch gives it.
+      Object.assign(item, applyKindRules(next));
     });
   }
 
@@ -1024,6 +1045,8 @@ export class DemoBackend implements Backend {
       const me = this.meIn(doc);
       const item = this.itemIn(doc, me, id);
       if (item.status !== 'open') throw new BackendError('not_found', 'Item is not open');
+      // A state (To maintain) is never done (complete_item raises invalid_input).
+      if (item.kind === 'state') throw invalidInput('state');
       const household = this.householdIn(doc, item.household_id);
       const now = this.now();
       const completion: CompletionRow = {
@@ -1062,6 +1085,8 @@ export class DemoBackend implements Backend {
         item.completed_at = null;
         item.updated_at = this.stamp();
         item.updated_by = me.id;
+        // Made a state since it was completed: it still has no due date.
+        Object.assign(item, applyKindRules(item));
       }
       doc.completions = doc.completions.filter((c) => c.id !== completion.id);
     });

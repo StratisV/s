@@ -60,6 +60,27 @@
   }
 }
 
+/*
+ * A state's dot sits in the ring's 22px slot, centred on the ring's line. Taps go through
+ * it to the row underneath, which opens the item (a state is never completed).
+ */
+.dotSlot {
+  pointer-events: none;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-top: 13px;
+  display: grid;
+  place-items: center;
+}
+
+.dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ring);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ring,
   .check {

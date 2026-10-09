@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, type ReactNode } from 'react';
+import { ANIMAL_URL, type Animal } from './animals';
 
 type Fire = (origin: Element | { x: number; y: number }) => void;
 
@@ -8,14 +9,15 @@ const PARTICLES = 36;
 const REDUCED_PARTICLES = 6;
 const GRAVITY = 1500; // px/s²
 const LIFETIME_MS = 3000;
-const EMOJI = ['🦔', '🦆'];
+const ANIMALS: Animal[] = ['hedgehog', 'duck'];
 
 function prefersReducedMotion(): boolean {
   return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 }
 
 /**
- * Hedgehog and duck confetti (README "Confetti"): 36 particles from the
+ * Hedgehog and duck confetti (README "Confetti"), drawn with the scene's
+ * green duck and brown hedgehog (src/ui/animals.ts): 36 particles from the
  * centre of the tapped control, ±280 px/s horizontal, −(700–1200) px/s
  * vertical, 1500 px/s² gravity, ±420° spin, 1.7–2.6 s, 0–160 ms delay,
  * scale 0.2→1 in the first frame, fade after 75%. Full-screen overlay
@@ -38,6 +40,12 @@ export function ConfettiProvider({ children }: { children: ReactNode }) {
     });
     document.body.appendChild(layer);
     layerRef.current = layer;
+    // Decode the two drawings up front so the first burst has no blank frame.
+    for (const kind of ANIMALS) {
+      const img = new Image();
+      img.src = ANIMAL_URL[kind];
+      img.decode?.().catch(() => {});
+    }
     return () => {
       layer.remove();
       layerRef.current = null;
@@ -67,14 +75,18 @@ export function ConfettiProvider({ children }: { children: ReactNode }) {
       const spin = reduced ? 0 : (Math.random() * 2 - 1) * 420;
       const dur = 1700 + Math.random() * 900;
       const delay = Math.random() * 160;
-      const el = document.createElement('span');
-      el.textContent = EMOJI[Math.random() < 0.5 ? 0 : 1];
+      const kind = ANIMALS[Math.random() < 0.5 ? 0 : 1];
+      const el = document.createElement('img');
+      el.src = ANIMAL_URL[kind];
+      el.alt = '';
+      el.draggable = false;
+      el.dataset.animal = kind;
       Object.assign(el.style, {
         position: 'absolute',
         left: `${ox}px`,
         top: `${oy}px`,
-        fontSize: `${size}px`,
-        lineHeight: '1',
+        width: `${size}px`,
+        height: `${size}px`,
         opacity: '0',
         transform: 'translate(-50%,-50%) scale(0.2)',
         willChange: 'transform, opacity',

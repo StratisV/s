@@ -83,6 +83,7 @@ async function setup(over: Partial<CreateHouseholdInput> = {}) {
 function draft(data: HouseholdData, over: Partial<ItemDraft> = {}): ItemDraft {
   return {
     area_id: data.areas[0].id,
+    kind: 'task',
     title: 'Fix the tap',
     note: 'Drips at night.',
     rag: 'red',
@@ -311,6 +312,7 @@ describe('load', () => {
         'due_date',
         'household_id',
         'id',
+        'kind',
         'note',
         'notify',
         'rag',
@@ -506,6 +508,115 @@ describe('completing', () => {
     const item = await b.createItem(hid, draft(data, { repeat: 'weekly', due_date: null }));
     await b.completeItem(item.id);
     expect((await b.load(hid)).items.find((i) => i.id === item.id)!.due_date).toBe('2026-10-16');
+  });
+});
+
+describe('kinds: To do (task) and To maintain (state)', () => {
+  it('seeds the Firepit as a state in the Garden, looked after by Ela, without a due date', async () => {
+    const { data } = await setup();
+    const garden = data.areas.find((a) => a.name === 'Garden')!;
+    const ela = data.members[2];
+    const firepit = data.items.find((i) => i.title === 'Firepit')!;
+    expect(firepit).toMatchObject({
+      area_id: garden.id,
+      kind: 'state',
+      rag: 'green',
+      note: "New one installed. Keep the cover on when it's not in use.",
+      due_date: null,
+      repeat: 'none',
+      notify: 'none',
+      assignee_id: ela.id,
+      status: 'open',
+    });
+    // Every other seed item is a to-do.
+    expect(data.items.filter((i) => i.kind === 'state').map((i) => i.title)).toEqual(['Firepit']);
+    for (const seed of seedItemsFor(['Kitchen', 'Garden', 'Jacuzzi'])) {
+      expect(data.items.find((i) => i.title === seed.title)!.kind, seed.title).toBe(seed.kind ?? 'task');
+    }
+  });
+
+  it('creates a state without a due date, repeat or reminder, whatever the draft says', async () => {
+    const { b, hid, data } = await setup();
+    const created = await b.createItem(
+      hid,
+      draft(data, { kind: 'state', title: 'Jacuzzi', due_date: '2026-10-20', repeat: 'weekly', notify: 'week_before' }),
+    );
+    expect(created).toMatchObject({ kind: 'state', title: 'Jacuzzi', due_date: null, repeat: 'none', notify: 'none' });
+    expect((await b.load(hid)).items.find((i) => i.id === created.id)).toEqual(created);
+  });
+
+  it('a draft without a kind makes a task; an unknown kind is invalid_input and stores nothing', async () => {
+    const { b, hid, data } = await setup();
+    const { kind: _kind, ...bare } = draft(data);
+    expect((await b.createItem(hid, bare as ItemDraft)).kind).toBe('task');
+    const count = (await b.load(hid)).items.length;
+    await rejectsWithMessage(b.createItem(hid, draft(data, { kind: 'done' as never })), /invalid_input: kind/);
+    expect((await b.load(hid)).items).toHaveLength(count);
+  });
+
+  it('turns a task into a state (dropping its due date) and back into a task', async () => {
+    const { b, hid, data } = await setup();
+    const task = await b.createItem(hid, draft(data, { repeat: 'monthly', notify: 'week_before' }));
+    clock = new Date('2026-10-08T12:00:00Z');
+    await b.updateItem(task.id, { kind: 'state' });
+    let row = (await b.load(hid)).items.find((i) => i.id === task.id)!;
+    expect(row).toMatchObject({ kind: 'state', due_date: null, repeat: 'none', notify: 'none', updated_at: '2026-10-08T12:00:00.000Z' });
+
+    // While it is a state, due dates and reminders do not stick; everything else does.
+    await b.updateItem(task.id, { due_date: '2026-12-01', notify: 'same_day', rag: 'green', title: 'Tap' });
+    row = (await b.load(hid)).items.find((i) => i.id === task.id)!;
+    expect(row).toMatchObject({ kind: 'state', due_date: null, notify: 'none', rag: 'green', title: 'Tap' });
+
+    await b.updateItem(task.id, { kind: 'task', due_date: '2026-10-15', notify: 'day_before' });
+    row = (await b.load(hid)).items.find((i) => i.id === task.id)!;
+    expect(row).toMatchObject({ kind: 'task', due_date: '2026-10-15', repeat: 'none', notify: 'day_before' });
+
+    await rejectsWithMessage(b.updateItem(task.id, { kind: 'archived' as never }), /invalid_input: kind/);
+    expect((await b.load(hid)).items.find((i) => i.id === task.id)!.kind).toBe('task');
+  });
+
+  it('never completes a state: invalid_input: state, nothing logged', async () => {
+    const { b, hid, data } = await setup();
+    const firepit = data.items.find((i) => i.title === 'Firepit')!;
+    const completions = data.completions.length;
+    const err = await b.completeItem(firepit.id).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(BackendError);
+    expect([(err as BackendError).code, (err as BackendError).message]).toEqual(['unknown', 'invalid_input: state']);
+    const after = await b.load(hid);
+    expect(after.completions).toHaveLength(completions);
+    expect(after.items.find((i) => i.id === firepit.id)).toEqual(firepit);
+  });
+
+  it('undoing a completion of an item that has since become a state keeps it without a due date', async () => {
+    const { b, hid, data } = await setup();
+    const item = await b.createItem(hid, draft(data, { repeat: 'monthly', due_date: '2026-10-20' }));
+    const cid = await b.completeItem(item.id);
+    await b.updateItem(item.id, { kind: 'state' });
+    await b.undoCompletion(cid);
+    expect((await b.load(hid)).items.find((i) => i.id === item.id)).toMatchObject({ kind: 'state', due_date: null, status: 'open' });
+  });
+
+  it('reads items stored before kinds existed as tasks', async () => {
+    const { hid } = await setup();
+    const doc = storedDoc();
+    for (const item of doc.items) delete item.kind;
+    storage.setItem(DEMO_STORAGE_KEY, JSON.stringify(doc));
+    const items = (await make().load(hid)).items;
+    expect(items.length).toBeGreaterThan(0);
+    expect(new Set(items.map((i) => i.kind))).toEqual(new Set(['task']));
+  });
+
+  it('refuses a seed item with an unknown kind and stores nothing', async () => {
+    const b = make();
+    await b.signInWithGoogle();
+    await rejectsWithMessage(
+      b.createHousehold(input({ items: [{ ...SEED_ITEMS[0], kind: 'done' as never }] })),
+      /invalid_input: kind/,
+    );
+    expect(await b.getMyHouseholdId()).toBeNull();
   });
 });
 

@@ -227,7 +227,9 @@ Client UI state: current tab (home or stats), the open sheet (edit with an item 
   - The full list is in the `areas` array in the prototype's logic class.
 
 ## Assets
-There are no image files. The avatars, confetti and home scene all use system emoji (Apple Color Emoji on iPhone). Icons are SF Symbols natively; the prototype uses Material Symbols Rounded from Google Fonts as a stand-in. The phone frame (`ios-frame.jsx`) is only for presentation.
+There are no image files. The avatars, confetti and home scene all use system emoji (Apple Color Emoji on iPhone).
+
+> **Built app (follow-up round):** at the household's request the app draws the duck (green) and the hedgehog (brown) as small inline SVGs (`src/ui/animals.ts`) for the home scene and the confetti, in the same places and with the same motion. The house is still the 🏡 emoji and the avatars are still emoji. The scene's sky also follows the time of day in London (see `docs/ARCHITECTURE.md`, "Home scene"); by day it is the 3a scene above. Icons are SF Symbols natively; the prototype uses Material Symbols Rounded from Google Fonts as a stand-in. The phone frame (`ios-frame.jsx`) is only for presentation.
 
 ## Files
 - `HomeOS Directions.dc.html`: the design canvas. **Turn 3 / 3a is the spec.**

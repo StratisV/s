@@ -1,12 +1,13 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
-import { NOTIFY_OPTIONS, REPEAT_OPTIONS, TEXT_LIMITS } from '../../lib/constants';
-import { draftOf, dueDetail, memberLabel, newItemDraft } from '../../lib/logic/items';
-import type { ItemDraft, Notify, Repeat } from '../../lib/types';
+import { KIND_OPTIONS, NOTIFY_OPTIONS, REPEAT_OPTIONS, TEXT_LIMITS } from '../../lib/constants';
+import { draftOf, dueDetail, memberLabel, newItemDraft, withKind } from '../../lib/logic/items';
+import type { ItemDraft, ItemKind, Notify, Repeat } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
 import { ActionSheet } from '../../ui/ActionSheet';
 import { useConfetti } from '../../ui/Confetti';
 import { CheckIcon, XMarkIcon } from '../../ui/icons';
 import { Sheet } from '../../ui/Sheet';
+import { SegmentedControl } from '../stats/SegmentedControl';
 import type { ItemSheetTarget } from '../types';
 import { AutoGrowTextarea } from './AutoGrowTextarea';
 import { DateRow, DetailsCard, SelectRow } from './DetailRows';
@@ -19,6 +20,8 @@ interface ItemSheetProps {
   open: boolean;
   onClose(): void;
   onExited(): void;
+  /** Saved into this area: a new item, or one moved to another area (Home shows it there). */
+  onSaved?(areaId: string): void;
 }
 
 /** Mark as Done waits this long before closing so the confetti can be seen. */
@@ -31,7 +34,7 @@ type Confirm = 'discard' | 'delete' | null;
  * Item sheet, edit and new (README "2. Item sheet"). App mounts a fresh
  * instance per opening, so the draft is taken from the target once.
  */
-export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
+export function ItemSheet({ target, open, onClose, onExited, onSaved }: ItemSheetProps) {
   const home = useHousehold();
   const { data, today } = home;
   const fire = useConfetti();
@@ -70,11 +73,27 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
   const busy = !open || saving || completing;
 
   const update = (patch: Partial<ItemDraft>) => setDraft((d) => ({ ...d, ...patch }));
+  /** To do or To maintain. A state keeps the hidden task fields until it is saved. */
+  const setKind = (kind: ItemKind) => setDraft((d) => withKind(d, kind, today, base.kind));
+  const maintained = draft.kind === 'state';
 
   const close = () => {
     setConfirm(null);
     onClose();
   };
+
+  // Someone else made it To do or To maintain while this sheet was open, and the type
+  // hasn't been touched here: follow them, so Mark as Done and the task rows match.
+  const liveKind = item ? (item.kind ?? 'task') : null;
+  useEffect(() => {
+    if (!item || !liveKind || liveKind === base.kind || draft.kind !== base.kind) return;
+    const follow = (d: ItemDraft): ItemDraft =>
+      liveKind === 'state'
+        ? { ...d, kind: 'state' }
+        : { ...d, kind: 'task', due_date: item.due_date, repeat: item.repeat, notify: item.notify };
+    setBase(follow);
+    setDraft(follow);
+  }, [item, liveKind, base.kind, draft.kind]);
 
   // Deleted or completed elsewhere: nothing left to edit.
   useEffect(() => {
@@ -123,6 +142,7 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
     try {
       if (isNew) await home.createItem(normalizeDraft(effective));
       else await home.updateItem(itemId!, patch);
+      if (isNew || patch.area_id) onSaved?.(effective.area_id);
       close();
     } catch {
       setSaving(false);
@@ -130,7 +150,9 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
   };
 
   const markDone = (e: MouseEvent<HTMLButtonElement>) => {
-    if (!itemId || busy || confirm || completingRef.current) return;
+    if (!itemId || busy || confirm || completingRef.current || maintained) return;
+    // Made To maintain elsewhere a moment ago (before the sheet followed): it can't be done.
+    if (item?.kind === 'state' && draft.kind === base.kind) return;
     completingRef.current = true;
     setCompleting(true);
     fire(e.currentTarget);
@@ -258,6 +280,8 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
             />
           </div>
 
+          <SegmentedControl<ItemKind> label="Type" options={KIND_OPTIONS} value={draft.kind} onChange={setKind} />
+
           <RagPicker value={draft.rag} onChange={(rag) => update({ rag })} />
 
           <DetailsCard>
@@ -268,32 +292,39 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
               onChange={(area_id) => update({ area_id })}
               display={areas.find((a) => a.id === areaId)?.name ?? 'None'}
             />
-            <DateRow
-              label="Due"
-              value={draft.due_date}
-              display={due.text}
-              missed={due.missed}
-              onChange={(due_date) => update({ due_date })}
-            />
+            {/* A state (To maintain) has no due date, repeat or reminder. */}
+            {maintained ? null : (
+              <DateRow
+                label="Due"
+                value={draft.due_date}
+                display={due.text}
+                missed={due.missed}
+                onChange={(due_date) => update({ due_date })}
+              />
+            )}
             <SelectRow
-              label="Assigned to"
+              label={maintained ? 'Looked after by' : 'Assigned to'}
               value={assignee?.id ?? UNASSIGNED}
               options={memberOptions}
               onChange={(id) => update({ assignee_id: id === UNASSIGNED ? null : id })}
               display={memberLabel(assignee)}
             />
-            <SelectRow<Repeat>
-              label="Repeat"
-              value={draft.repeat}
-              options={REPEAT_OPTIONS}
-              onChange={(repeat) => update({ repeat })}
-            />
-            <SelectRow<Notify>
-              label="Notify"
-              value={draft.notify}
-              options={NOTIFY_OPTIONS}
-              onChange={(notify) => update({ notify })}
-            />
+            {maintained ? null : (
+              <>
+                <SelectRow<Repeat>
+                  label="Repeat"
+                  value={draft.repeat}
+                  options={REPEAT_OPTIONS}
+                  onChange={(repeat) => update({ repeat })}
+                />
+                <SelectRow<Notify>
+                  label="Notify"
+                  value={draft.notify}
+                  options={NOTIFY_OPTIONS}
+                  onChange={(notify) => update({ notify })}
+                />
+              </>
+            )}
           </DetailsCard>
 
           {areas.length === 0 ? (
@@ -304,9 +335,12 @@ export function ItemSheet({ target, open, onClose, onExited }: ItemSheetProps) {
 
           {!isNew ? (
             <>
-              <button type="button" className={styles.done} onClick={markDone} aria-disabled={completing || undefined}>
-                Mark as Done
-              </button>
+              {/* A state is never done: it stays on the list. */}
+              {maintained ? null : (
+                <button type="button" className={styles.done} onClick={markDone} aria-disabled={completing || undefined}>
+                  Mark as Done
+                </button>
+              )}
               <button
                 type="button"
                 className={styles.delete}

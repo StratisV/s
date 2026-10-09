@@ -256,8 +256,9 @@ describe('SupabaseBackend offline: requests', () => {
       p_member_name: 'Ada',
       p_member_emoji: '🦔',
       p_areas: ['Kitchen', 'Garden'],
-      p_items: input.items.map(({ area, title, note, rag, due_in_days, repeat, notify }) => ({
+      p_items: input.items.map(({ area, kind, title, note, rag, due_in_days, repeat, notify }) => ({
         area,
+        kind: kind ?? 'task',
         title,
         note,
         rag,
@@ -381,6 +382,7 @@ describe('SupabaseBackend offline: requests', () => {
 
     const draft: ItemDraft = {
       area_id: 'a1',
+      kind: 'task',
       title: ' Bleed the radiators ',
       note: '',
       rag: 'amber',
@@ -392,6 +394,43 @@ describe('SupabaseBackend offline: requests', () => {
     const item = await backend.createItem('h1', draft);
     expect(item.id).toBe('new');
     expect(calls.at(-1)!.body).toEqual({ household_id: 'h1', ...draft, title: 'Bleed the radiators' });
+  });
+
+  it('items carry their kind: read, created, patched, and a state cannot be completed', async () => {
+    const { backend, calls, rest } = fakeServer((call) => {
+      if (call.url.pathname === '/rest/v1/rpc/complete_item') {
+        return { status: 400, body: { message: 'invalid_input', code: 'P0001', details: null, hint: null } };
+      }
+      if (call.url.pathname === '/rest/v1/households') return { body: [{ id: 'h1', weekly_email_time: '08:00:00' }] };
+      if (call.method === 'GET') return { body: [] };
+      return { status: 201, body: [{ id: 'new', ...(call.body as object) }] };
+    });
+    await backend.load('h1');
+    expect(rest('items')[0].url.searchParams.get('select')!.split(',')).toContain('kind');
+
+    const state: ItemDraft = {
+      area_id: 'a1',
+      kind: 'state',
+      title: 'Firepit',
+      note: 'Cover on.',
+      rag: 'green',
+      due_date: null,
+      assignee_id: null,
+      repeat: 'none',
+      notify: 'none',
+    };
+    await backend.createItem('h1', state);
+    expect(calls.at(-1)!.body).toEqual({ household_id: 'h1', ...state });
+    // A draft from older code without a kind is a task.
+    const { kind: _kind, ...bare } = state;
+    await backend.createItem('h1', bare as ItemDraft);
+    expect((calls.at(-1)!.body as { kind: string }).kind).toBe('task');
+
+    await backend.updateItem('i1', { kind: 'task', due_date: '2026-10-15', notify: 'day_before' });
+    expect(calls.at(-1)!.body).toEqual({ kind: 'task', due_date: '2026-10-15', notify: 'day_before' });
+
+    // complete_item raises invalid_input for a state.
+    await rejectsWith(backend.completeItem('i1'), 'unknown', /^invalid_input$/);
   });
 
   it('createArea starts at position 0 in an empty household', async () => {
@@ -923,6 +962,7 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     return found;
   };
   const draft = (over: Partial<ItemDraft> & Pick<ItemDraft, 'area_id'>): ItemDraft => ({
+    kind: 'task',
     title: 'Test item',
     note: '',
     rag: 'amber',
@@ -1006,6 +1046,7 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
       expect(item).toMatchObject({
         household_id: hidA,
         area_id: area(data, seed.area).id,
+        kind: seed.kind ?? 'task',
         note: seed.note,
         rag: seed.rag,
         repeat: seed.repeat,
@@ -1016,6 +1057,13 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
       });
     }
     expect(data.completions).toEqual([]);
+    // The Garden's Firepit is a state (To maintain): no due date, repeat or reminder.
+    expect(data.items.find((i) => i.title === 'Firepit')).toMatchObject({
+      kind: 'state',
+      due_date: null,
+      repeat: 'none',
+      notify: 'none',
+    });
 
     await rejectsWith(
       A().createHousehold({
@@ -1258,6 +1306,42 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     await B().undoCompletion(weeklyCompletion);
     data = await loadA();
     expect(data.items.find((i) => i.id === weekly.id)?.due_date).toBe(addDays(today, -2));
+  });
+
+  it('keeps states (To maintain): no due date, never completed, and they can become tasks', async () => {
+    let data = await loadA();
+    const kitchen = area(data, 'Kitchen');
+    const today = todayIn(data.household.timezone);
+
+    // The database drops a state's due date, repeat and reminder, whatever is sent.
+    const state = await B().createItem(
+      hidA,
+      draft({ area_id: kitchen.id, kind: 'state', title: 'Hot tub', rag: 'green', due_date: addDays(today, 3), repeat: 'weekly', notify: 'same_day' }),
+    );
+    expect(state).toMatchObject({ kind: 'state', due_date: null, repeat: 'none', notify: 'none', rag: 'green', status: 'open' });
+    await A().updateItem(state.id, { due_date: addDays(today, 5), notify: 'week_before', rag: 'amber' });
+    data = await loadA();
+    expect(data.items.find((i) => i.id === state.id)).toMatchObject({ kind: 'state', due_date: null, notify: 'none', rag: 'amber' });
+
+    // Never completed: invalid_input, and no completion is logged.
+    const before = data.completions.length;
+    await rejectsWith(A().completeItem(state.id), 'unknown', /invalid_input/);
+    data = await loadA();
+    expect(data.completions).toHaveLength(before);
+    expect(data.items.some((i) => i.id === state.id)).toBe(true);
+
+    // A state can become a task, which then takes a due date and can be completed.
+    await B().updateItem(state.id, { kind: 'task', due_date: addDays(today, 7), notify: 'day_before' });
+    data = await loadA();
+    expect(data.items.find((i) => i.id === state.id)).toMatchObject({ kind: 'task', due_date: addDays(today, 7), notify: 'day_before' });
+    const cid = await A().completeItem(state.id);
+    expect((await loadA()).items.some((i) => i.id === state.id)).toBe(false);
+    await A().undoCompletion(cid);
+
+    // And a task can become a state again, losing its due date.
+    await A().updateItem(state.id, { kind: 'state' });
+    expect((await loadA()).items.find((i) => i.id === state.id)).toMatchObject({ kind: 'state', due_date: null, notify: 'none' });
+    await A().deleteItem(state.id);
   });
 
   it('deletes an area with its items but keeps their completions', async () => {

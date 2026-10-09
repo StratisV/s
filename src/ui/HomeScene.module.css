@@ -1,24 +1,272 @@
+/*
+ * The sky's colours and light are registered custom properties so they can
+ * animate (gradients themselves can't). The initial values are the 3a day.
+ */
+@property --sky-top {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #eaf3ff;
+}
+@property --sky-middle {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #f0f7ff;
+}
+@property --sky-horizon {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #f6faff;
+}
+@property --ground-top {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #dcefd6;
+}
+@property --ground-bottom {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #cfe8c8;
+}
+@property --sun {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ffd66b;
+}
+@property --sun-halo {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgba(255, 214, 107, 0.22);
+}
+@property --sun-halo-size {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 9px;
+}
+@property --sun-west {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 1;
+}
+@property --sun-lift {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 1;
+}
+@property --sun-opacity {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 1;
+}
+@property --glow {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgba(255, 184, 112, 0.85);
+}
+@property --glow-strength {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+@property --moon {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+@property --stars-bright {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+@property --stars-faint {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+@property --night {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+@property --lamps {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
 /* `isolation` keeps Safari clipping the animated animals to the rounded corners. */
 .scene {
+  --fade: 1.6s ease;
   position: relative;
   isolation: isolate;
   border-radius: var(--r-card);
   overflow: hidden;
-  background: linear-gradient(#eaf3ff 0%, #f6faff 66%, #dcefd6 66%, #cfe8c8 100%);
+  /* Sky down to the horizon (66%); the ground is its own layer, in front of the sun. */
+  background: linear-gradient(var(--sky-top) 0%, var(--sky-middle) 33%, var(--sky-horizon) 66%);
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
+  transition:
+    --sky-top var(--fade),
+    --sky-middle var(--fade),
+    --sky-horizon var(--fade),
+    --ground-top var(--fade),
+    --ground-bottom var(--fade),
+    --sun var(--fade),
+    --sun-halo var(--fade),
+    --sun-halo-size var(--fade),
+    --sun-opacity var(--fade),
+    --glow var(--fade),
+    --glow-strength var(--fade),
+    --moon var(--fade),
+    --stars-bright var(--fade),
+    --stars-faint var(--fade),
+    --night var(--fade),
+    --lamps var(--fade),
+    --sun-west var(--fade),
+    --sun-lift var(--fade);
 }
 
-.sun {
+/*
+ * A jump in time (back from the background, say): the sun is just in its new place, with
+ * no glide (and no cross-fade between corners). The colours still fade.
+ */
+.scene[data-jump] {
+  transition-property:
+    --sky-top, --sky-middle, --sky-horizon, --ground-top, --ground-bottom, --sun, --sun-halo, --sun-halo-size,
+    --sun-opacity, --glow, --glow-strength, --moon, --stars-bright, --stars-faint, --night, --lamps;
+}
+
+.stars,
+.moon,
+.glow,
+.sun,
+.ground,
+.lamplight {
   position: absolute;
-  right: 28px;
-  top: 22px;
+  pointer-events: none;
+}
+
+/* Stars: the bright ones come out at dusk, the faint ones once it is dark. */
+.stars {
+  inset: 0;
+}
+
+/* Whole-pixel sizes, centred with whole-pixel margins (no translate), so they stay round. */
+.star {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  margin: -1px 0 0 -1px;
+  opacity: var(--stars-faint);
+}
+
+.star[data-star='bright'] {
+  width: 3px;
+  height: 3px;
+  margin: -1px 0 0 -1px;
+  opacity: var(--stars-bright);
+}
+
+.star::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: #fffbea;
+  box-shadow: 0 0 3px rgba(255, 251, 234, 0.7);
+  animation: twinkle 3.1s ease-in-out infinite alternate;
+  animation-delay: inherit;
+}
+
+.star:nth-child(3n + 1)::before {
+  animation-duration: 2.3s;
+}
+
+.star:nth-child(4n + 2)::before {
+  animation-duration: 4.2s;
+}
+
+/* Nothing to twinkle in daylight. */
+.stars:not([data-out]) .star::before {
+  animation: none;
+}
+
+@keyframes twinkle {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.35;
+  }
+}
+
+/* A pale crescent with a soft halo, where the 3a sun sits. */
+.moon {
+  right: 33px;
+  top: 21px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  box-shadow: inset -7px 3px 0 0 #f7f0d6;
+  filter: drop-shadow(0 0 7px rgba(255, 244, 210, 0.55));
+  transform: rotate(-12deg);
+  opacity: var(--moon);
+}
+
+/* Warm light along the horizon around the sun at sunrise (left) and sunset (right). */
+.glow {
+  left: calc(42px + (100% - 84px) * var(--sun-west));
+  top: 66%;
+  width: 360px;
+  height: 200px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(closest-side, var(--glow), rgba(255, 190, 140, 0));
+  opacity: var(--glow-strength);
+}
+
+/*
+ * Two suns, one per side, centred 42px in from the edge: the morning (east) one rises on
+ * the left up to the top-left corner; from full day the west one is in the 3a spot (28px
+ * from the right, 22px from the top) and later sets on the right. The swap at the top is
+ * a cross-fade, so the sun never crosses the house. Below the horizon it is behind the
+ * ground.
+ */
+.sun {
+  left: 42px;
+  top: calc(36px + (66% - 24.5px) * (1 - var(--sun-lift)));
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: #ffd66b;
-  box-shadow: 0 0 0 9px rgba(255, 214, 107, 0.22);
+  transform: translate(-50%, -50%);
+  background: var(--sun);
+  box-shadow:
+    0 0 0 var(--sun-halo-size) var(--sun-halo),
+    0 0 calc(30px * var(--glow-strength)) calc(10px * var(--glow-strength)) var(--sun-halo);
+  opacity: calc(var(--sun-opacity) * (1 - var(--sun-west)));
+}
+
+.sun[data-side='west'] {
+  left: calc(100% - 42px);
+  opacity: calc(var(--sun-opacity) * var(--sun-west));
+}
+
+.ground {
+  left: 0;
+  right: 0;
+  top: 66%;
+  bottom: 0;
+  background: linear-gradient(var(--ground-top), var(--ground-bottom));
+}
+
+/* Light from the windows spilling around the house at night. */
+.lamplight {
+  left: 50%;
+  bottom: 12px;
+  width: 200px;
+  height: 120px;
+  transform: translateX(-50%);
+  background: radial-gradient(closest-side, rgba(255, 199, 120, 0.38), rgba(255, 199, 120, 0));
+  opacity: var(--lamps);
 }
 
 .house,
@@ -33,19 +281,52 @@
   bottom: 30px;
   font-size: 88px;
   transform: translateX(-50%);
+  /* Dimmed at night like the animals, only slightly warmer: the tree and lawn stay green. */
+  filter: brightness(calc(1 - 0.26 * var(--night))) sepia(calc(0.12 * var(--lamps)));
+}
+
+/*
+ * Lamplight from inside: a warm glow over the middle of the house that lightens what is
+ * under it (screen never darkens), so the panes look lit rather than grey.
+ */
+.windows {
+  position: absolute;
+  left: 50%;
+  bottom: 43px;
+  width: 62px;
+  height: 22px;
+  transform: translateX(-50%);
+  border-radius: 11px;
+  background: rgb(255, 184, 82);
+  filter: blur(3px);
+  mix-blend-mode: screen;
+  /* Softer while there is still light in the sky. */
+  opacity: calc(var(--lamps) * (0.3 + 0.5 * var(--night)));
+  pointer-events: none;
+}
+
+/* The duck faces right and the hedgehog left, towards the house. */
+.duck,
+.hedgehog {
+  display: block;
+  filter: brightness(calc(1 - 0.32 * var(--night))) saturate(calc(1 - 0.2 * var(--night)));
+  -webkit-user-drag: none;
 }
 
 .duck {
   left: calc(50% - 102px);
   bottom: 16px;
-  font-size: 40px;
+  width: 40px;
+  height: 40px;
   animation: duck 850ms ease-in-out infinite alternate;
 }
 
+/* As wide as the 38px emoji it replaces (which is wider than tall). */
 .hedgehog {
   left: calc(50% + 60px);
   bottom: 16px;
-  font-size: 38px;
+  width: 44px;
+  height: 33px;
   animation: hedgehog 1300ms ease-in-out infinite alternate;
 }
 
@@ -68,8 +349,16 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* Colours still fade; the sun moves without gliding (as after a jump in time). */
+  .scene {
+    transition-property:
+      --sky-top, --sky-middle, --sky-horizon, --ground-top, --ground-bottom, --sun, --sun-halo, --sun-halo-size,
+      --sun-opacity, --glow, --glow-strength, --moon, --stars-bright, --stars-faint, --night, --lamps;
+  }
+
   .duck,
-  .hedgehog {
+  .hedgehog,
+  .star::before {
     animation: none;
   }
 }

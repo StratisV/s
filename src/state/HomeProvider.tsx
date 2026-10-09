@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { BackendError, type Backend, type HouseholdPatch, type ItemPatch, type MemberPatch } from '../lib/backend/types';
+import { STATE_FIELDS } from '../lib/constants';
 import { formatDay, todayIn } from '../lib/logic/dates';
 import { disablePush } from '../lib/push';
-import { nextDueDate } from '../lib/logic/items';
+import { applyKindRules, nextDueDate } from '../lib/logic/items';
 import type {
   Area,
   AuthUser,
@@ -62,10 +63,15 @@ export interface HomeContextValue {
   renameArea(id: string, name: string): Promise<void>;
   deleteArea(id: string): Promise<void>;
   reorderAreas(orderedIds: string[]): Promise<void>;
+  /** A state (To maintain) is created without a due date, repeat or reminder. */
   createItem(draft: ItemDraft): Promise<Item>;
+  /**
+   * Shows the change at once (with a fresh "Updated" day). An item that is, or becomes, a
+   * state (To maintain) drops its due date, repeat and reminder, as the database does.
+   */
   updateItem(id: string, patch: ItemPatch): Promise<void>;
   deleteItem(id: string): Promise<void>;
-  /** Completes the item (optimistically) and shows an Undo toast. */
+  /** Completes a task (optimistically) and shows an Undo toast. A state is never completed: no-op. */
   completeItem(id: string): Promise<void>;
   createInvite(): Promise<string>;
 
@@ -463,7 +469,8 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
   const value = useMemo<HomeContextValue>(() => {
     const completeItem = async (id: string) => {
       const item = requireData().items.find((i) => i.id === id);
-      if (!item) return;
+      // A state (To maintain) stays on the list for good; the backend would refuse it.
+      if (!item || item.kind === 'state') return;
       const next = nextDueDate(item.repeat, item.due_date, today);
       // A repeating item moves to its next date; a one-off leaves the list.
       const done: Revert = (cur) =>
@@ -631,9 +638,22 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       },
       createItem: (draft) => {
         const d = requireData();
-        return mutate(null, () => backend.createItem(d.household.id, draft));
+        return mutate(null, () => backend.createItem(d.household.id, applyKindRules(draft)));
       },
-      updateItem: (id, patch) => mutate(patchChange('items', id, patch), () => backend.updateItem(id, patch)),
+      updateItem: (id, patch) => {
+        const item = dataRef.current?.items.find((i) => i.id === id);
+        // Only what changed is sent (a kind someone else just changed is left alone); a patch
+        // that makes the item a state also clears its due date, repeat and reminder.
+        const write: ItemPatch = applyKindRules(patch);
+        // On screen at once, "Updated" day and all, as the database will store it: whatever
+        // kind it ends up with decides. The reload brings the stored values.
+        const endsState = (patch.kind ?? item?.kind) === 'state';
+        const shown: Partial<Item> = {
+          ...(endsState ? { ...write, ...STATE_FIELDS } : write),
+          updated_at: new Date().toISOString(),
+        };
+        return mutate(patchChange('items', id, shown), () => backend.updateItem(id, write));
+      },
       deleteItem: (id) =>
         mutate(
           (cur) => {

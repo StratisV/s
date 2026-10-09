@@ -117,8 +117,8 @@ describe('Onboarding', () => {
     expect(data.household.name).toBe('Our home');
     expect(data.household.address).toBe('1 Test Street');
     expect(data.areas.map((a) => a.name)).toEqual([...DEFAULT_AREAS.filter((a) => a !== 'Jacuzzi'), 'Garage']);
-    // 13 items on the list, 2 of them in the Jacuzzi.
-    expect(data.items).toHaveLength(11);
+    // 14 items on the list (13 to-dos and the Firepit), 2 of them in the Jacuzzi.
+    expect(data.items).toHaveLength(12);
     expect(data.members[0]).toMatchObject({ name: 'Stratis', emoji: '🦊', role: 'owner' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
