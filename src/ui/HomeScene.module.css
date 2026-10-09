@@ -1,9 +1,13 @@
+/* `isolation` keeps Safari clipping the animated animals to the rounded corners. */
 .scene {
   position: relative;
+  isolation: isolate;
   border-radius: var(--r-card);
   overflow: hidden;
   background: linear-gradient(#eaf3ff 0%, #f6faff 66%, #dcefd6 66%, #cfe8c8 100%);
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .sun {

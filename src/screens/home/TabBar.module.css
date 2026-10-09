@@ -1,0 +1,81 @@
+/* The bar itself lets taps through to the content between the capsule and the add button. */
+.bar {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: var(--tabbar-bottom);
+  z-index: 6;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  pointer-events: none;
+}
+
+.capsule {
+  pointer-events: auto;
+  width: 190px;
+  height: var(--tabbar-height);
+  padding: 4px;
+  border-radius: var(--r-tab);
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 0.5px solid rgba(0, 0, 0, 0.06);
+  box-shadow:
+    var(--shadow-glass),
+    inset 1.5px 1.5px 1px rgba(255, 255, 255, 0.75);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tab {
+  border-radius: 27px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--label-strong);
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.tab[aria-current] {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--tint);
+}
+
+.tab:focus-visible {
+  outline-offset: -2px;
+}
+
+.tab:not([aria-current]):active {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.add {
+  pointer-events: auto;
+  flex: none;
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  background: var(--tint);
+  color: #fff;
+  box-shadow: var(--shadow-add);
+  display: grid;
+  place-items: center;
+  transition: transform 0.12s ease;
+}
+
+.add:active {
+  transform: scale(0.94);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab,
+  .add {
+    transition: none;
+  }
+}

@@ -1,0 +1,99 @@
+/* Its own stacking context so the row's tap layer sits under the text but above the card. */
+.row {
+  position: relative;
+  z-index: 0;
+  display: flex;
+  gap: 14px;
+  padding: 0 18px 0 16px;
+}
+
+.open {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 0 13px;
+  border-top: 0.5px solid var(--separator);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.row:first-child .open {
+  border-top-color: transparent;
+}
+
+/* The whole row (padding included) opens the item; the ring sits above this layer. */
+.open::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  transition: background-color 0.25s ease;
+}
+
+.open:active::after {
+  background: var(--fill-tertiary);
+  transition-duration: 0s;
+}
+
+.open:focus-visible {
+  outline: none;
+}
+
+.open:focus-visible::after {
+  inset: 2px;
+  border-radius: 22px;
+  box-shadow: inset 0 0 0 2px var(--tint);
+}
+
+.title,
+.note,
+.meta {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.title {
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label);
+}
+
+.note {
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.meta {
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 16px;
+  letter-spacing: 0;
+  color: var(--label-secondary);
+}
+
+.date {
+  font-weight: 500;
+}
+
+.date[data-missed] {
+  color: var(--destructive);
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .open::after {
+    transition: none;
+  }
+}

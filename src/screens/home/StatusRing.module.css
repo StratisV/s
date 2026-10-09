@@ -1,0 +1,70 @@
+.ring {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-top: 13px;
+  border: 2px solid var(--ring);
+  border-radius: 50%;
+  background: var(--ring-fill);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  transition:
+    transform 0.12s ease,
+    background-color 0.15s ease;
+}
+
+/* 44px tap target around the 22px ring. */
+.ring::before {
+  content: '';
+  position: absolute;
+  inset: -11px;
+  border-radius: 50%;
+}
+
+.ring:active {
+  transform: scale(0.86);
+}
+
+.check {
+  opacity: 0;
+  transform: scale(0.4);
+  transition:
+    opacity 0.12s ease,
+    transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.ring[data-done] {
+  background: var(--ring);
+  animation: pop 0.25s ease-out;
+}
+
+.ring[data-done] .check {
+  opacity: 1;
+  transform: none;
+}
+
+@keyframes pop {
+  0% {
+    transform: scale(0.86);
+  }
+  55% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ring,
+  .check {
+    transition-duration: 1ms;
+  }
+
+  .ring[data-done] {
+    animation: none;
+  }
+}

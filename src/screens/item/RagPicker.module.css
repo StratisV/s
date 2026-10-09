@@ -1,0 +1,59 @@
+.card {
+  background: var(--card);
+  border-radius: var(--r-sheet-card);
+  padding: 7px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.option {
+  position: relative;
+  height: 52px;
+  border-radius: var(--r-rag);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: normal;
+  color: var(--label-tertiary);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.option[data-selected] {
+  font-weight: 600;
+}
+
+.option:has(.input:focus-visible) {
+  box-shadow: 0 0 0 2px var(--tint);
+}
+
+/* Kept in the accessibility tree and focusable; the label is the visible control. */
+.input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.dot {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .option {
+    transition: none;
+  }
+}
