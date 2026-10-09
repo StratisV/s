@@ -438,9 +438,13 @@ export class DemoBackend implements Backend {
       const doc = { ...emptyDoc(), ...parsed };
       if (!Array.isArray(doc.messages)) doc.messages = [];
       if (!Array.isArray(doc.message_reactions)) doc.message_reactions = [];
-      // Items stored before kinds existed are tasks (the column's default).
+      // Items stored before kinds existed are tasks, and before "What good looks like"
+      // existed have none (the columns' defaults).
       if (Array.isArray(doc.items)) {
-        for (const item of doc.items) if (!isKind(item.kind)) item.kind = 'task';
+        for (const item of doc.items) {
+          if (!isKind(item.kind)) item.kind = 'task';
+          if (typeof item.good !== 'string') item.good = '';
+        }
       }
       return doc;
     } catch {
@@ -711,6 +715,7 @@ export class DemoBackend implements Backend {
         kind: kindOf(seed.kind),
         title: withinLimit(seed.title.trim(), TEXT_LIMITS.itemTitle, 'title'),
         note: withinLimit(seed.note ?? '', TEXT_LIMITS.itemNote, 'note'),
+        good: withinLimit(seed.good ?? '', TEXT_LIMITS.itemGood, 'good'),
         rag: seed.rag,
         due_date: seed.due_in_days === null ? null : addDays(today, seed.due_in_days),
         assignee_id: seed.demo_assignee ? people[seed.demo_assignee].id : null,
@@ -991,6 +996,7 @@ export class DemoBackend implements Backend {
         kind: kindOf(draft.kind),
         title: withinLimit(requireText(draft.title, 'title'), TEXT_LIMITS.itemTitle, 'title'),
         note: withinLimit(draft.note ?? '', TEXT_LIMITS.itemNote, 'note'),
+        good: withinLimit(draft.good ?? '', TEXT_LIMITS.itemGood, 'good'),
         rag: draft.rag,
         due_date: draft.due_date,
         assignee_id: draft.assignee_id,
@@ -1019,6 +1025,7 @@ export class DemoBackend implements Backend {
         next.title = withinLimit(requireText(patch.title, 'title'), TEXT_LIMITS.itemTitle, 'title');
       }
       if (patch.note !== undefined) next.note = withinLimit(patch.note, TEXT_LIMITS.itemNote, 'note');
+      if (patch.good !== undefined) next.good = withinLimit(patch.good, TEXT_LIMITS.itemGood, 'good');
       if (patch.rag !== undefined) next.rag = patch.rag;
       if (patch.due_date !== undefined) next.due_date = patch.due_date;
       if (patch.assignee_id !== undefined) next.assignee_id = patch.assignee_id;

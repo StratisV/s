@@ -103,8 +103,8 @@ export const DEFAULT_ADDRESS = '21 Alderbrook Road';
 
 /**
  * The household's current notes list (from the prototype's logic class), plus the new
- * firepit, kept track of as a "To maintain" item. Due offsets are relative to 8 Oct, the
- * day the list was captured.
+ * firepit, kept track of as a "To maintain" item with what good looks like for it. Due
+ * offsets are relative to 8 Oct, the day the list was captured.
  */
 export const SEED_ITEMS: SeedItem[] = [
   { area: 'Kitchen', title: 'Kitchen paper', note: 'Restocked.', rag: 'green', due_in_days: 28, repeat: 'monthly', notify: 'day_before', demo_assignee: 'me' },
@@ -115,7 +115,7 @@ export const SEED_ITEMS: SeedItem[] = [
   { area: 'Bedroom Large', title: 'Wardrobe door hinge', note: 'Works, but squeaks.', rag: 'green', due_in_days: 23, repeat: 'none', notify: 'day_before', demo_assignee: 'me' },
   { area: 'Garden', title: 'Garden room wall panel', note: 'Collapsed where it was cut for the AC. Solved for now, but the solution is not the most elegant.', rag: 'amber', due_in_days: 22, repeat: 'none', notify: 'day_before', demo_assignee: 'me' },
   { area: 'Garden', title: 'Give away the old firepit', note: 'Ela will take it, she has a garden. She will confirm next week.', rag: 'green', due_in_days: 7, repeat: 'none', notify: 'day_before', demo_assignee: 'ela' },
-  { area: 'Garden', kind: 'state', title: 'Firepit', note: "New one installed. Keep the cover on when it's not in use.", rag: 'green', due_in_days: null, repeat: 'none', notify: 'none', demo_assignee: 'ela' },
+  { area: 'Garden', kind: 'state', title: 'Firepit', note: "New one installed. Keep the cover on when it's not in use.", good: 'Cover on when not in use, ash cleared out, logs dry and stacked under the bench.', rag: 'green', due_in_days: null, repeat: 'none', notify: 'none', demo_assignee: 'ela' },
   { area: 'Garden Lounge', title: 'Clean cushions before winter', note: '', rag: 'green', due_in_days: 23, repeat: 'none', notify: 'day_before', demo_assignee: 'ela' },
   { area: 'Jacuzzi', title: 'Water test strips running low', note: 'Order a new pack.', rag: 'amber', due_in_days: 4, repeat: 'none', notify: 'day_before' },
   { area: 'Jacuzzi', title: 'Change the filter', note: '', rag: 'green', due_in_days: 12, repeat: 'monthly', notify: 'day_before', demo_assignee: 'shea' },
@@ -130,6 +130,8 @@ export const SEND_HOUR = 8;
 export const TEXT_LIMITS = {
   itemTitle: 200,
   itemNote: 4000,
+  /** "What good looks like" on a To maintain item. */
+  itemGood: 4000,
   memberName: 40,
   householdName: 60,
   address: 120,

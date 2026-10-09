@@ -62,7 +62,14 @@ export interface Item {
   /** 'task' (To do) or 'state' (To maintain). */
   kind: ItemKind;
   title: string;
+  /** How it is now, e.g. "Restocked." */
   note: string;
+  /**
+   * "What good looks like": how a To maintain item should be kept, e.g. "Cover on when not
+   * in use, logs dry and stacked". Every item has it (default ''), but only a state shows it,
+   * so it survives switching kind back and forth.
+   */
+  good: string;
   rag: Rag;
   /** Always null for a state. */
   due_date: ISODate | null;
@@ -84,6 +91,8 @@ export interface ItemDraft {
   kind: ItemKind;
   title: string;
   note: string;
+  /** "What good looks like" (shown for a state only). */
+  good: string;
   rag: Rag;
   due_date: ISODate | null;
   assignee_id: string | null;
@@ -135,6 +144,8 @@ export interface SeedItem {
   kind?: ItemKind;
   title: string;
   note: string;
+  /** "What good looks like", default ''. */
+  good?: string;
   rag: Rag;
   /** Due date relative to the creation day in the household's time zone. */
   due_in_days: number | null;

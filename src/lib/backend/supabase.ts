@@ -49,7 +49,7 @@ const MEMBER_COLS =
   'id, household_id, user_id, name, email, emoji, color, role, weekly_email, push_enabled, created_at';
 const AREA_COLS = 'id, household_id, name, position';
 const ITEM_COLS =
-  'id, household_id, area_id, kind, title, note, rag, due_date, assignee_id, repeat, notify, status, created_by, updated_by, created_at, updated_at';
+  'id, household_id, area_id, kind, title, note, good, rag, due_date, assignee_id, repeat, notify, status, created_by, updated_by, created_at, updated_at';
 const COMPLETION_COLS = 'id, household_id, item_id, item_title, credited_to, completed_by, completed_at';
 const MESSAGE_COLS = 'id, household_id, member_id, body, created_at';
 /** A message with every reaction on it, in one request (PostgREST resource embedding). */
@@ -58,7 +58,18 @@ const MESSAGE_WITH_REACTIONS = `${MESSAGE_COLS}, reactions:message_reactions(mes
 /** Columns each patch may write (the DB grants UPDATE on exactly these). */
 const HOUSEHOLD_PATCH_KEYS = ['name', 'address', 'timezone'] as const;
 const MEMBER_PATCH_KEYS = ['name', 'emoji', 'weekly_email', 'push_enabled'] as const;
-const ITEM_PATCH_KEYS = ['area_id', 'kind', 'title', 'note', 'rag', 'due_date', 'assignee_id', 'repeat', 'notify'] as const;
+const ITEM_PATCH_KEYS = [
+  'area_id',
+  'kind',
+  'title',
+  'note',
+  'good',
+  'rag',
+  'due_date',
+  'assignee_id',
+  'repeat',
+  'notify',
+] as const;
 
 /** Rows per request when reading lists. Must not exceed the API's max_rows (1000 by default). */
 const PAGE = 1000;
@@ -479,6 +490,7 @@ export class SupabaseBackend implements Backend {
       kind: i.kind ?? 'task',
       title: i.title,
       note: i.note ?? '',
+      good: i.good ?? '',
       rag: i.rag,
       due_in_days: i.due_in_days,
       repeat: i.repeat,
@@ -578,6 +590,7 @@ export class SupabaseBackend implements Backend {
           kind: draft.kind ?? 'task',
           title: requireText(draft.title, 'title'),
           note: draft.note ?? '',
+          good: draft.good ?? '',
           rag: draft.rag,
           due_date: draft.due_date,
           assignee_id: draft.assignee_id,

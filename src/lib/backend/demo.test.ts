@@ -86,6 +86,7 @@ function draft(data: HouseholdData, over: Partial<ItemDraft> = {}): ItemDraft {
     kind: 'task',
     title: 'Fix the tap',
     note: 'Drips at night.',
+    good: '',
     rag: 'red',
     due_date: '2026-10-20',
     assignee_id: null,
@@ -311,6 +312,7 @@ describe('load', () => {
         'created_by',
         'due_date',
         'household_id',
+        'good',
         'id',
         'kind',
         'note',
@@ -620,6 +622,59 @@ describe('kinds: To do (task) and To maintain (state)', () => {
   });
 });
 
+describe('"What good looks like" (items.good)', () => {
+  const GOOD = 'Cover on when not in use, ash cleared out, logs dry and stacked under the bench.';
+
+  it('seeds the Firepit with one; every other seed item has none', async () => {
+    const { data } = await setup();
+    const firepit = data.items.find((i) => i.title === 'Firepit')!;
+    expect(firepit).toMatchObject({ kind: 'state', good: GOOD, note: "New one installed. Keep the cover on when it's not in use." });
+    expect(data.items.filter((i) => i.good !== '').map((i) => i.title)).toEqual(['Firepit']);
+  });
+
+  it('is created and edited by any member, and kept through kind changes, completion and undo', async () => {
+    const { b, hid, data } = await setup();
+    const created = await b.createItem(hid, draft(data, { kind: 'state', title: 'Jacuzzi', good: 'Clear water, cover on.' }));
+    expect(created).toMatchObject({ kind: 'state', good: 'Clear water, cover on.', due_date: null });
+    // A draft from older code without it stores the column's default.
+    const { good: _good, ...bare } = draft(data, { kind: 'state', title: 'Aga' });
+    expect((await b.createItem(hid, bare as ItemDraft)).good).toBe('');
+
+    await b.updateItem(created.id, { good: 'Clear water, cover on, filter rinsed.' });
+    const row = () => b.load(hid).then((d) => d.items.find((i) => i.id === created.id)!);
+    expect(await row()).toMatchObject({ good: 'Clear water, cover on, filter rinsed.', kind: 'state' });
+
+    // Becomes a task (it is kept, just not shown), is done and undone, then a state again.
+    await b.updateItem(created.id, { kind: 'task', due_date: '2026-10-08', repeat: 'weekly' });
+    const cid = await b.completeItem(created.id);
+    expect(await row()).toMatchObject({ kind: 'task', due_date: '2026-10-15', good: 'Clear water, cover on, filter rinsed.' });
+    await b.undoCompletion(cid);
+    await b.updateItem(created.id, { kind: 'state' });
+    expect(await row()).toMatchObject({ kind: 'state', due_date: null, good: 'Clear water, cover on, filter rinsed.' });
+
+    // Other edits leave it alone; clearing it is an edit like any other.
+    await b.updateItem(created.id, { rag: 'green', note: 'Tested today.' });
+    expect((await row()).good).toBe('Clear water, cover on, filter rinsed.');
+    await b.updateItem(created.id, { good: '' });
+    expect((await row()).good).toBe('');
+  });
+
+  it('reads items stored before it existed as having none', async () => {
+    const { hid } = await setup();
+    const doc = storedDoc();
+    for (const item of doc.items) delete item.good;
+    doc.items[0].good = null;
+    storage.setItem(DEMO_STORAGE_KEY, JSON.stringify(doc));
+    const items = (await make().load(hid)).items;
+    expect(items.length).toBeGreaterThan(0);
+    expect(new Set(items.map((i) => i.good))).toEqual(new Set(['']));
+    // And can be given one.
+    const firepit = items.find((i) => i.title === 'Firepit')!;
+    await make().updateItem(firepit.id, { good: GOOD });
+    expect((await make().load(hid)).items.find((i) => i.id === firepit.id)!.good).toBe(GOOD);
+  });
+});
+
 describe('invites', () => {
   it('creates reusable 14-day tokens with a preview', async () => {
     const { b, hid } = await setup();
@@ -789,6 +844,16 @@ describe('text limits (the database check constraints)', () => {
     expect([after.title, after.note.length, after.rag]).toEqual([long(200), 4000, 'red']);
   });
 
+  it('items: "What good looks like" up to 4000 characters', async () => {
+    const { b, hid, data } = await setup();
+    const item = await b.createItem(hid, draft(data, { kind: 'state', good: long(4000, '🦔') }));
+    expect(Array.from(item.good)).toHaveLength(4000);
+    await rejectsWithMessage(b.createItem(hid, draft(data, { good: long(4001) })), /^invalid_input: good is longer than 4000/);
+    await rejectsWithMessage(b.updateItem(item.id, { good: long(4001), rag: 'green' }), /^invalid_input: good/);
+    const after = (await b.load(hid)).items.find((i) => i.id === item.id)!;
+    expect([Array.from(after.good).length, after.rag]).toEqual([4000, 'red']);
+  });
+
   it('counts characters like Postgres: an emoji is one', async () => {
     const { b, hid, data } = await setup();
     const item = await b.createItem(hid, draft(data, { title: long(200, '🦔') }));
@@ -839,6 +904,10 @@ describe('text limits (the database check constraints)', () => {
     await rejectsWithMessage(
       b.createHousehold(input({ areas: ['Kitchen'], items: [{ ...seed, title: 'Ok', note: long(4001) }] })),
       /^invalid_input: note/,
+    );
+    await rejectsWithMessage(
+      b.createHousehold(input({ areas: ['Kitchen'], items: [{ ...seed, kind: 'state', title: 'Ok', good: long(4001) }] })),
+      /^invalid_input: good/,
     );
     expect(await b.getMyHouseholdId()).toBeNull();
     expect(storedDoc().households).toEqual([]);

@@ -117,6 +117,52 @@
   opacity: 1;
 }
 
+/*
+ * What good looks like (To maintain only): a section header (design "Section header",
+ * 20/25/600) over a white sheet card that is the text field itself, so a tap anywhere on
+ * the card starts typing. Two lines tall when empty, then it grows with the text.
+ */
+.good {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.goodHeader {
+  padding: 0 4px;
+  font-size: 20px;
+  line-height: 25px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  color: var(--label);
+}
+
+.goodText {
+  display: block;
+  width: 100%;
+  min-height: 74px;
+  margin: 0;
+  padding: 15px 18px;
+  border: 0;
+  border-radius: var(--r-sheet-card);
+  background: var(--card);
+  resize: none;
+  overflow: hidden;
+  outline: none;
+  caret-color: var(--tint);
+  appearance: none;
+  -webkit-appearance: none;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label);
+}
+
+.goodText::placeholder {
+  color: rgba(60, 60, 67, 0.3);
+  opacity: 1;
+}
+
 /* Under the details card when there is no area to save into (Save stays disabled). */
 .caption {
   margin: -10px 0 0;

@@ -231,3 +231,108 @@ test.describe('To maintain', () => {
     await expect(meta(page, 'Olive oil')).toHaveText('🦔 Stratis · Thu 12 Nov');
   });
 });
+
+test.describe('What good looks like', () => {
+  const FIREPIT_GOOD = 'Cover on when not in use, ash cleared out, logs dry and stacked under the bench.';
+
+  function goodField(sheet: Locator): Locator {
+    return sheet.getByRole('textbox', { name: 'What good looks like', exact: true });
+  }
+
+  test('the seeded Firepit shows it between the type and the RAG picker; a To do has none', async ({ page }) => {
+    const sheet = await openState(page, 'Firepit');
+    const field = goodField(sheet);
+    await expect(field).toBeVisible();
+    await expect(field).toHaveValue(FIREPIT_GOOD);
+    // The note (how it is now) stays its own field.
+    await expect(sheet.getByLabel('Note', { exact: true })).toHaveValue("New one installed. Keep the cover on when it's not in use.");
+    // Laid out top to bottom: type, header, field, RAG picker.
+    const header = sheet.getByText('What good looks like', { exact: true });
+    const boxes = await Promise.all(
+      [sheet.getByRole('radiogroup', { name: 'Type' }), header, field, sheet.getByRole('radiogroup', { name: 'Status' })].map(
+        async (l) => (await l.boundingBox())!,
+      ),
+    );
+    for (let i = 1; i < boxes.length; i++) expect(boxes[i].y).toBeGreaterThanOrEqual(boxes[i - 1].y + boxes[i - 1].height);
+    // A white card the width of the others, the text wrapping inside it (nothing cut off).
+    expect(Math.round(boxes[2].width)).toBe(Math.round(boxes[3].width));
+    await expect(field).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    expect(await field.evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(true);
+    // Tapping the header puts the cursor in the field.
+    await header.click();
+    await expect(field).toBeFocused();
+    await sheet.getByRole('button', { name: 'Close' }).click();
+    await expect(sheet).toHaveCount(0);
+
+    const task = await openItem(page, 'Heaters not working');
+    await expect(goodField(task)).toHaveCount(0);
+    await expect(task.getByText('What good looks like', { exact: true })).toHaveCount(0);
+  });
+
+  test('adds a To maintain item with it: saved, kept when reopened and after a reload', async ({ page }) => {
+    const sheet = await openNewItem(page);
+    // A To do has no such field.
+    await expect(goodField(sheet)).toHaveCount(0);
+    await sheet.getByLabel('Title', { exact: true }).fill('Log store');
+    await sheet.getByLabel('Note', { exact: true }).fill('Half full.');
+    await sheet.getByRole('radio', { name: 'To maintain' }).click();
+
+    const field = goodField(sheet);
+    await expect(field).toBeVisible();
+    await expect(field).toHaveValue('');
+    await expect(field).toHaveAttribute('placeholder', 'Describe how it should be kept, e.g. cover on, logs dry and stacked');
+    const empty = (await field.boundingBox())!.height;
+    const good = 'Logs dry and stacked bark side up.\nKindling in the crate on the left.\nCover on when it rains.\nNo more than two rows deep.';
+    await field.fill(good);
+    // It grows with the text instead of scrolling.
+    await expect.poll(async () => (await field.boundingBox())!.height).toBeGreaterThan(empty);
+    expect(await field.evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(true);
+
+    // Switching to To do hides it; switching back brings the text back.
+    await sheet.getByRole('radio', { name: 'To do' }).click();
+    await expect(goodField(sheet)).toHaveCount(0);
+    await sheet.getByRole('radio', { name: 'To maintain' }).click();
+    await expect(goodField(sheet)).toHaveValue(good);
+
+    await sheet.getByLabel('Area', { exact: true }).selectOption({ label: 'Garden' });
+    await sheet.getByRole('button', { name: 'Save' }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(stateRow(page, 'Log store')).toBeVisible();
+
+    const again = await openState(page, 'Log store');
+    await expect(goodField(again)).toHaveValue(good);
+    await expect(again.getByLabel('Note', { exact: true })).toHaveValue('Half full.');
+    // An edit to it is a change: closing asks first.
+    await goodField(again).fill(`${good}\nSweep the floor.`);
+    await again.getByRole('button', { name: 'Close' }).click();
+    const discard = page.getByRole('alertdialog', { name: 'Discard your changes?' });
+    await expect(discard).toBeVisible();
+    await discard.getByRole('button', { name: 'Keep Editing' }).click();
+    await again.getByRole('button', { name: 'Save' }).click();
+    await expect(again).toHaveCount(0);
+
+    await reopen(page);
+    const reloaded = await openState(page, 'Log store');
+    await expect(goodField(reloaded)).toHaveValue(`${good}\nSweep the floor.`);
+    await expectTaskRows(reloaded, false);
+  });
+
+  test('a To maintain item turned into a To do keeps it, hidden, for when it is To maintain again', async ({ page }) => {
+    const sheet = await openState(page, 'Firepit');
+    await sheet.getByRole('radio', { name: 'To do' }).click();
+    await expect(goodField(sheet)).toHaveCount(0);
+    await sheet.getByRole('button', { name: 'Save' }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(ring(page, 'Firepit')).toBeVisible();
+
+    const task = await openItem(page, 'Firepit');
+    await expect(goodField(task)).toHaveCount(0);
+    await task.getByRole('radio', { name: 'To maintain' }).click();
+    await expect(goodField(task)).toHaveValue(FIREPIT_GOOD);
+    await task.getByRole('button', { name: 'Save' }).click();
+    await expect(task).toHaveCount(0);
+
+    const state = await openState(page, 'Firepit');
+    await expect(goodField(state)).toHaveValue(FIREPIT_GOOD);
+  });
+});
