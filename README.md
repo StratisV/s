@@ -11,6 +11,7 @@ one is missed.
 It is an installable web app (PWA): no App Store needed. Add it to the iPhone Home Screen
 and it behaves like a native app, including notifications (iOS 16.4 or later).
 
+- Live: https://home-os-orpin.vercel.app (demo mode until Supabase is configured)
 - Design spec: [`design/README.md`](design/README.md) (Turn 3, option 3a)
 - How it is built: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 
