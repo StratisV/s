@@ -145,6 +145,10 @@ Details beyond the list above (all covered by `supabase/tests`):
 - Internal helpers `next_due_date(text, date, date)` and `is_valid_timezone(text)` are not
   callable by clients.
 - Realtime DELETE events carry only the primary key (RLS tables), so clients reload on any event.
+  Realtime checks RLS when it reads each change, so an INSERT/UPDATE whose row is already gone
+  is dropped. Supabase applies no RLS to deletes: someone outside a household who knows its
+  (unguessable) id could receive DELETE notices carrying only the deleted row's id. The live
+  suite pins exactly this and nothing more.
 
 ## Backend contract
 
@@ -157,6 +161,8 @@ messages above (`network` for fetch failures).
 - `?dry=1` returns the plan as JSON without claiming or sending (`&now=<ISO timestamp>` plans
   another moment, dry runs only). The response summarises counts per channel; a channel whose
   secrets are missing is skipped and named in `skipped`.
+- Optional `RESEND_API_URL` replaces `https://api.resend.com/emails` (local testing against a
+  fake only).
 - Scheduled by `supabase/cron.sql` (job `home-os-scheduler`; Vault secrets
   `home_os_project_url` and `home_os_cron_secret`).
 - Uses the service role key. For each household, works in the household's time zone and only

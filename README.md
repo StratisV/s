@@ -119,7 +119,10 @@ Any static host works. Build command `npm run build`, output folder `dist`, plus
 With Docker running, `npx supabase start` gives you a full local Supabase stack;
 `npx supabase db reset` applies the migrations to it, and
 `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres npm run test:db` runs the
-database tests against it.
+database tests against it. The live backend suite runs with
+`SUPABASE_TEST_URL=http://127.0.0.1:54321 SUPABASE_TEST_ANON_KEY=<anon key> SUPABASE_TEST_SERVICE_KEY=<service role key> npx vitest run src/lib/backend/supabase.integration.test.ts`
+(keys from `npx supabase status`), and
+`npx supabase functions serve scheduler --no-verify-jwt --env-file <file>` serves the scheduler.
 
 ## Permissions
 
