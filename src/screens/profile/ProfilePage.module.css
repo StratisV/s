@@ -1,0 +1,55 @@
+/* 44px tap target; the text sits where the 3a frame puts it (20px from the edge). */
+.done {
+  height: 44px;
+  margin-right: -10px;
+  padding: 0 10px;
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  color: var(--tint);
+  border-radius: 12px;
+}
+
+.done:active {
+  opacity: 0.5;
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 20px 0;
+}
+
+/* Looks like the 28/34/700 heading; edits in place. */
+.name {
+  width: 100%;
+  margin-top: 6px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  text-align: center;
+  font-size: 28px;
+  line-height: 34px;
+  height: 34px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--label);
+  transition: background-color 0.15s ease;
+}
+
+.name:focus,
+.name:focus-visible {
+  outline: none;
+  background: var(--fill-tertiary);
+}
+
+.account {
+  font-size: 15px;
+  line-height: 18px;
+  letter-spacing: normal;
+  color: var(--label-secondary);
+}

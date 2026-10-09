@@ -1,0 +1,153 @@
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Delete · name · grip, with the same geometry as a Home item row (text at 52px). */
+.row {
+  position: relative;
+  min-height: 52px;
+  padding-left: 5px;
+  display: flex;
+  align-items: stretch;
+  background: var(--card);
+  font-size: 17px;
+  letter-spacing: -0.4px;
+}
+
+/* 44px tap target around the 22px icon, whose left edge sits 16px in. */
+.delete {
+  flex: none;
+  width: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+}
+
+.delete:active {
+  opacity: 0.6;
+}
+
+.main {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  margin-left: 3px;
+  display: flex;
+  align-items: center;
+}
+
+.row[data-separator] .main::before,
+.add:not([data-first])::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 18px;
+  border-top: 0.5px solid var(--separator);
+  pointer-events: none;
+}
+
+.add:not([data-first])::before {
+  left: 52px;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  height: 52px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 17px;
+  letter-spacing: -0.4px;
+  color: var(--label);
+  text-overflow: ellipsis;
+}
+
+.name:focus,
+.name:focus-visible {
+  outline: none;
+}
+
+.grip {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  color: #c7c7cc;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  border-radius: 14px;
+}
+
+.grip:focus-visible,
+.delete:focus-visible {
+  outline-offset: -4px;
+}
+
+/* While dragging: the others step aside smoothly; the lifted row follows the finger. */
+.list[data-dragging] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.list[data-dragging] .row {
+  transition: transform 0.22s var(--sheet-ease);
+}
+
+.list[data-dragging] .row[data-lifted] {
+  z-index: 2;
+  transition: none;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.04),
+    0 8px 22px rgba(0, 0, 0, 0.14);
+}
+
+.list[data-dragging] .row[data-lifted][data-dropping] {
+  transition: transform 0.2s ease;
+}
+
+.list[data-dragging] .row[data-lifted] .grip {
+  cursor: grabbing;
+}
+
+.add {
+  position: relative;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 18px 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 17px;
+  letter-spacing: -0.4px;
+  text-align: left;
+}
+
+.add:active {
+  background: var(--avatar-bg);
+}
+
+.add:focus-visible {
+  outline: 2px solid var(--tint);
+  outline-offset: -2px;
+  border-radius: 14px;
+}
+
+.addLabel {
+  flex: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .list[data-dragging] .row,
+  .list[data-dragging] .row[data-lifted][data-dropping] {
+    transition: none;
+  }
+}

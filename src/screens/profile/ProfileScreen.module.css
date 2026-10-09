@@ -1,0 +1,64 @@
+/* Full-screen cover: slides up over everything in the app column. */
+.cover {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  overflow: hidden;
+  background: var(--bg);
+  outline: none;
+  transform: translateY(100%);
+  transition: transform var(--sheet-duration) var(--sheet-ease);
+  will-change: transform;
+}
+
+.cover[data-shown] {
+  transform: none;
+}
+
+/* Navigation stack inside the cover: Profile, then Household pushed from the right. */
+.layer {
+  position: absolute;
+  inset: 0;
+  transition: transform var(--sheet-duration) var(--sheet-ease);
+}
+
+/* The page underneath shifts left and dims, as in UINavigationController. */
+.layer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background: rgba(0, 0, 0, 0.08);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--sheet-duration) var(--sheet-ease);
+}
+
+.layer[data-covered] {
+  transform: translateX(-30%);
+}
+
+.layer[data-covered]::after {
+  opacity: 1;
+}
+
+.pushed {
+  transform: translateX(100%);
+  box-shadow: -6px 0 24px rgba(0, 0, 0, 0.08);
+}
+
+.pushed::after {
+  display: none;
+}
+
+.pushed[data-shown] {
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cover,
+  .layer,
+  .layer::after {
+    transition-duration: 1ms;
+  }
+}

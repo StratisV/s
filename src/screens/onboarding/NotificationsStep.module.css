@@ -53,3 +53,27 @@
   vertical-align: -3px;
   color: var(--tint);
 }
+
+.notice {
+  margin: 0 0 12px;
+  padding: 0 16px;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  text-align: center;
+  color: var(--label-secondary);
+  animation: notice-in 0.3s ease both;
+}
+
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notice {
+    animation: none;
+  }
+}

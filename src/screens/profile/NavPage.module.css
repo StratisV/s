@@ -1,0 +1,72 @@
+.page {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: calc(var(--top-inset) + var(--nav-row)) 0 calc(60px + var(--bottom-inset));
+}
+
+/* The status bar area plus the 52px nav row. */
+.bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  height: calc(var(--top-inset) + var(--nav-row));
+  padding: var(--top-inset) 20px 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  transition:
+    background-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.bar[data-scrolled] {
+  background: rgba(242, 242, 247, 0.84);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: 0 0.5px 0 var(--separator);
+}
+
+.leading {
+  display: flex;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.trailing {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.title {
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.title[data-visible] {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar,
+  .title {
+    transition: none;
+  }
+}

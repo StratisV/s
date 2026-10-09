@@ -35,6 +35,7 @@ export function Welcome({ enter }: { enter: Enter }) {
 
   return (
     <StepPage label={`Welcome to ${APP_NAME}`} enter={enter}>
+      <div className={styles.before} />
       <div className={styles.top}>
         <div className={styles.scene}>
           <HomeScene height={196} />
@@ -42,11 +43,14 @@ export function Welcome({ enter }: { enter: Enter }) {
         <h1 className={styles.wordmark}>{APP_NAME}</h1>
         <p className={styles.tagline}>Everything your home needs, in one place.</p>
       </div>
-      <div className={shared.spacer} />
+      <div className={styles.after} />
       <div className={shared.footer}>
         {pendingInvite ? (
           <p className={styles.invite} role="status">
-            You&rsquo;ve been invited to join a home on {APP_NAME}.
+            <span className={styles.inviteIcon} aria-hidden="true">
+              💌
+            </span>
+            <span>You&rsquo;ve been invited to join a home on {APP_NAME}.</span>
           </p>
         ) : null}
         <button

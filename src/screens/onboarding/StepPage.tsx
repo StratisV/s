@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ButtonHTMLAttributes, type MouseEvent, type ReactNode } from 'react';
+import { Avatar } from '../../ui/Avatar';
 import styles from './Onboarding.module.css';
 
 /** How a step arrives: pushed (forward), popped (back), or not animated (first screen). */
@@ -70,4 +71,9 @@ export function PrimaryButton({ busy = false, busyLabel, children, onClick, type
 
 export function Spinner({ size }: { size?: 'large' }) {
   return <span className={styles.spinner} data-size={size} aria-hidden="true" />;
+}
+
+/** The 112px white circle with a 62px emoji (the Profile avatar style) that heads a centred step. */
+export function HeroIcon({ emoji }: { emoji: string }) {
+  return <Avatar emoji={emoji} size={112} emojiSize={62} background="var(--card)" shadow="0 2px 12px rgba(0,0,0,0.06)" />;
 }

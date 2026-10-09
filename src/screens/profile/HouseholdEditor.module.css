@@ -1,0 +1,94 @@
+/* iOS back button: chevron + previous title, 44px tall. */
+.back {
+  height: 44px;
+  margin-left: -14px;
+  padding: 0 8px 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--tint);
+  border-radius: 12px;
+}
+
+.back:active {
+  opacity: 0.5;
+}
+
+.details {
+  margin-top: 18px;
+}
+
+/* Right-aligned value you can edit in place. */
+.input {
+  flex: 1;
+  min-width: 0;
+  height: 52px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: right;
+  font-size: 17px;
+  letter-spacing: -0.4px;
+  color: var(--label-secondary);
+  text-overflow: ellipsis;
+}
+
+.input:focus,
+.input:focus-visible {
+  outline: none;
+  color: var(--label);
+}
+
+.input::placeholder {
+  color: rgba(60, 60, 67, 0.3);
+}
+
+.selectValue {
+  transition: color 0.15s ease;
+}
+
+.selectRow:focus-within .selectValue {
+  color: var(--tint);
+}
+
+.select {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font-size: 17px;
+  background: transparent;
+  color: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.select:focus,
+.select:focus-visible {
+  outline: none;
+}
+
+.selectRow:not([data-pointer]):has(.select:focus-visible)::after {
+  content: '';
+  position: absolute;
+  inset: 5px 8px;
+  border-radius: 14px;
+  box-shadow: 0 0 0 2px var(--tint);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .selectValue {
+    transition: none;
+  }
+}

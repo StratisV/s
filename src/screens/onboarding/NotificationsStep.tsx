@@ -2,20 +2,21 @@ import { useState } from 'react';
 import { APP_NAME } from '../../lib/constants';
 import { enablePush, pushState, type PushState } from '../../lib/push';
 import { useHome } from '../../state/HomeProvider';
-import { Avatar } from '../../ui/Avatar';
 import { ShareIcon } from '../../ui/icons';
 import styles from './NotificationsStep.module.css';
 import shared from './Onboarding.module.css';
-import { PrimaryButton, StepPage, type Enter } from './StepPage';
+import { HeroIcon, PrimaryButton, StepPage, type Enter } from './StepPage';
 
 /**
  * Step 4, right after creating or joining: ask for notifications, but only
  * after a tap. iPhone Safari first needs the app on the Home Screen.
  */
 export function NotificationsStep({ enter }: { enter: Enter }) {
-  const { backend, me, updateMember, finishOnboarding, showToast } = useHome();
+  const { backend, me, updateMember, finishOnboarding } = useHome();
   const [state, setState] = useState<PushState>(() => pushState());
   const [busy, setBusy] = useState(false);
+  // Shown above the buttons when a tap didn't turn them on (a toast would cover the buttons here).
+  const [notice, setNotice] = useState<string | null>(null);
 
   // 'granted' only means this browser allowed it before; this member still has to opt in.
   const offer = state === 'default' || (state === 'granted' && !me?.push_enabled);
@@ -25,6 +26,7 @@ export function NotificationsStep({ enter }: { enter: Enter }) {
     // Nothing may be awaited before this: Safari only prompts while it still counts as the tap.
     const pending = enablePush(backend, me.id);
     setBusy(true);
+    setNotice(null);
     void pending.then(async (ok) => {
       if (ok) {
         try {
@@ -37,7 +39,11 @@ export function NotificationsStep({ enter }: { enter: Enter }) {
       } else {
         const now = pushState();
         setState(now);
-        if (now !== 'denied') showToast('Notifications are still off. You can turn them on in your profile.');
+        setNotice(
+          now === 'granted'
+            ? 'Couldn’t turn on notifications right now. You can try again from your profile.'
+            : 'Notifications are still off. You can turn them on later in your profile.',
+        );
       }
       setBusy(false);
     });
@@ -46,8 +52,9 @@ export function NotificationsStep({ enter }: { enter: Enter }) {
   if (state === 'needs-install') {
     return (
       <StepPage label="Add to Home Screen" enter={enter} nav={null}>
+        <div className={shared.heroBefore} />
         <div className={shared.hero}>
-          <Icon emoji="📲" />
+          <HeroIcon emoji="📲" />
           <h1 className={shared.title}>Add to Home Screen</h1>
           <p className={shared.subtitle}>iPhone only sends notifications to apps on the Home Screen.</p>
         </div>
@@ -80,7 +87,7 @@ export function NotificationsStep({ enter }: { enter: Enter }) {
           </li>
         </ol>
         <p className={shared.caption}>Then turn on notifications in your profile.</p>
-        <div className={shared.spacer} />
+        <div className={shared.heroAfter} />
         <div className={shared.footer}>
           <PrimaryButton onClick={finishOnboarding}>Continue</PrimaryButton>
         </div>
@@ -91,15 +98,21 @@ export function NotificationsStep({ enter }: { enter: Enter }) {
   if (offer) {
     return (
       <StepPage label="Notifications" enter={enter} nav={null}>
+        <div className={shared.heroBefore} />
         <div className={shared.hero}>
-          <Icon emoji="🔔" />
-          <h1 className={shared.title}>Turn On Notifications</h1>
+          <HeroIcon emoji="🔔" />
+          <h1 className={shared.title}>Get Reminders</h1>
           <p className={shared.subtitle}>
             Get a reminder before something is due, and a nudge the morning after a deadline is missed.
           </p>
         </div>
-        <div className={shared.spacer} />
+        <div className={shared.heroAfter} />
         <div className={shared.footer}>
+          {notice ? (
+            <p className={styles.notice} role="status">
+              {notice}
+            </p>
+          ) : null}
           <PrimaryButton onClick={turnOn} busy={busy}>
             Turn On Notifications
           </PrimaryButton>
@@ -112,26 +125,23 @@ export function NotificationsStep({ enter }: { enter: Enter }) {
   }
 
   let detail: string;
-  if (state === 'granted') detail = 'Notifications are on. You will get a reminder before things are due.';
+  if (state === 'granted') detail = 'Notifications are on. You’ll get a reminder before things are due.';
   else if (state === 'denied')
-    detail = `Notifications are blocked for ${APP_NAME} in this browser. You will still get the weekly email.`;
-  else detail = 'You will get a weekly email with everything your home needs.';
+    detail = `Notifications are blocked for ${APP_NAME} in this browser. You’ll still get the weekly email.`;
+  else detail = 'You’ll get a weekly email with everything your home needs.';
 
   return (
     <StepPage label="You're all set" enter={enter} nav={null}>
+      <div className={shared.heroBefore} />
       <div className={shared.hero}>
-        <Icon emoji={me?.emoji ?? '🎉'} />
+        <HeroIcon emoji={me?.emoji ?? '🎉'} />
         <h1 className={shared.title}>You&rsquo;re all set</h1>
         <p className={shared.subtitle}>{detail}</p>
       </div>
-      <div className={shared.spacer} />
+      <div className={shared.heroAfter} />
       <div className={shared.footer}>
         <PrimaryButton onClick={finishOnboarding}>Continue</PrimaryButton>
       </div>
     </StepPage>
   );
-}
-
-function Icon({ emoji }: { emoji: string }) {
-  return <Avatar emoji={emoji} size={112} emojiSize={62} background="var(--card)" shadow="0 2px 12px rgba(0,0,0,0.06)" />;
 }

@@ -132,9 +132,10 @@
   overflow-wrap: anywhere;
 }
 
-/* Centred hero (Notifications): icon, title, one paragraph. */
+/* Centred hero (Notifications, invite problems): icon, title, one paragraph. */
 .hero {
-  padding: 12px 32px 0;
+  flex: none;
+  padding: 0 32px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -143,6 +144,11 @@
 
 .hero .title {
   margin-top: 26px;
+}
+
+.hero .title,
+.hero .subtitle {
+  text-wrap: balance;
 }
 
 .hero .subtitle {
@@ -167,10 +173,21 @@
   color: var(--label-secondary);
 }
 
+/* Space around a hero: it sits at the optical centre (a third down) of the room over the footer. */
+.heroBefore {
+  flex: 1 0 12px;
+}
+
+.heroAfter {
+  flex: 2 0 28px;
+}
+
 /* ── Cards and rows ────────────────────────────────────── */
 
+/* Only horizontal margins, so a step's own class can add space above without fighting import order. */
 .card {
-  margin: 0 16px;
+  margin-left: 16px;
+  margin-right: 16px;
   padding: 0 18px;
   background: var(--card);
   border-radius: var(--r-card);

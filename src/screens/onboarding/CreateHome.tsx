@@ -62,7 +62,7 @@ export function CreateHome({ enter, profile, value, onChange, onBack }: CreateHo
   };
 
   let seedCaption: string;
-  if (seedCount === 0) seedCaption = 'None of these areas are on the current list, so you will start with an empty one.';
+  if (seedCount === 0) seedCaption = 'None of these areas are on the current list, so you’ll start with an empty one.';
   else if (!value.seed) seedCaption = 'Start with an empty list and add things as they come up.';
   else seedCaption = `Adds the ${seedCount} ${seedCount === 1 ? 'item' : 'items'} from our current notes list to these areas, with their notes and dates.`;
 
