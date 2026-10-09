@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planNotifications, type PlanInput, type PushMessage } from './plan.ts';
+import { planNotifications, withItemKinds, type PlanInput, type PushMessage } from './plan.ts';
 import { area, completion, household, item, member } from './test-fixtures.ts';
 import type { AreaRow, HouseholdRow, ItemRow, MemberRow } from './types.ts';
 
@@ -300,5 +300,53 @@ describe('weekly email', () => {
     );
     expect(emails).toHaveLength(3);
     expect(pushes).toEqual([]);
+  });
+});
+
+describe('states (To maintain)', () => {
+  // Monday 12 Oct 2026, 08:00 BST: the default weekly email slot.
+  const MONDAY_8AM = new Date('2026-10-12T07:00:00Z');
+
+  it('never get a reminder or a missed alert, even if a row still had a due date', () => {
+    const ctx = home();
+    // A stale row as if the trigger had not run: due today, yesterday, tomorrow, all with Notify.
+    const states = [
+      item(ctx.kitchen, { kind: 'state', title: 'Firepit', due_date: '2026-10-08', notify: 'same_day', assignee_id: ctx.shea.id }),
+      item(ctx.kitchen, { kind: 'state', title: 'Jacuzzi', due_date: '2026-10-07', notify: 'none', assignee_id: ctx.shea.id }),
+      item(ctx.kitchen, { kind: 'state', title: 'Cover', due_date: '2026-10-09', notify: 'day_before', assignee_id: null }),
+      item(ctx.kitchen, { kind: 'state', title: 'Undated', due_date: null, notify: 'none' }),
+    ];
+    expect(run(ctx, states, LONDON_8AM).pushes).toEqual([]);
+    // The same rows as to-dos would all fire.
+    const tasks = states.map((s) => ({ ...s, kind: 'task' as const }));
+    expect(run(ctx, tasks, LONDON_8AM).pushes.length).toBeGreaterThan(0);
+  });
+
+  it('are listed in the weekly email under their area, marked "To maintain"', () => {
+    const ctx = home();
+    const firepit = item(ctx.kitchen, { kind: 'state', title: 'Firepit', rag: 'green', assignee_id: ctx.ela.id });
+    const { emails } = planNotifications(
+      input({ now: MONDAY_8AM, households: [ctx.h], members: ctx.members, areas: ctx.areas, items: [firepit] }),
+    );
+    expect(emails).toHaveLength(3);
+    expect(emails[0].text).toContain('* [Green] Firepit\n  🦊 Ela · To maintain');
+  });
+});
+
+describe('withItemKinds', () => {
+  it('marks the listed ids as states and everything else as tasks', () => {
+    const ctx = home();
+    const a = item(ctx.kitchen, { title: 'A' });
+    const b = item(ctx.kitchen, { title: 'B', kind: 'state' });
+    const c = item(ctx.kitchen, { title: 'C' });
+    const marked = withItemKinds([a, b, c], [c.id, 'unknown-id']);
+    expect(marked.map((it) => [it.title, it.kind])).toEqual([
+      ['A', 'task'],
+      ['B', 'task'],
+      ['C', 'state'],
+    ]);
+    // The rows themselves are left alone.
+    expect(a.kind).toBeUndefined();
+    expect(withItemKinds([], [])).toEqual([]);
   });
 });

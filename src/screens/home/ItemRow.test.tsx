@@ -8,6 +8,7 @@ const item: Item = {
   id: 'item-1',
   household_id: 'h1',
   area_id: 'a1',
+  kind: 'task',
   title: 'Heaters not working',
   note: 'No heat since the weekend.',
   rag: 'red',
@@ -87,7 +88,7 @@ describe('ItemRow', () => {
     fireEvent.click(ring);
     fireEvent.click(ring);
     expect(ring.hasAttribute('data-done')).toBe(true);
-    expect(document.querySelectorAll('[data-confetti] span')).toHaveLength(36);
+    expect(document.querySelectorAll('[data-confetti] > div > *')).toHaveLength(36);
     // A row tap during the feedback must not open the sheet.
     fireEvent.click(row);
     expect(onOpen).not.toHaveBeenCalled();
@@ -117,5 +118,85 @@ describe('ItemRow', () => {
       vi.advanceTimersByTime(COMPLETE_FEEDBACK_MS);
     });
     expect(onComplete).toHaveBeenCalledTimes(2);
+  });
+
+  describe('a state (To maintain)', () => {
+    const firepit: Partial<Item> = {
+      kind: 'state',
+      title: 'Firepit',
+      note: "New one installed. Keep the cover on when it's not in use.",
+      rag: 'green',
+      due_date: null,
+      repeat: 'none',
+      notify: 'none',
+    };
+    const updated: Meta = { who: '🦊 Ela', date: 'Updated Tue 6 Oct', missed: false };
+
+    function setupState(over: Partial<Item> = {}, meta: Meta = updated) {
+      const onOpen = vi.fn();
+      const onComplete = vi.fn(() => Promise.resolve());
+      const view = render(
+        <ConfettiProvider>
+          <ul>
+            <ItemRow item={{ ...item, ...firepit, ...over }} meta={meta} onOpen={onOpen} onComplete={onComplete} />
+          </ul>
+        </ConfettiProvider>,
+      );
+      const row = view.container.querySelector<HTMLButtonElement>('[data-item-open]')!;
+      return { onOpen, onComplete, row, view };
+    }
+
+    it('shows a solid dot in its RAG colour instead of the ring, and it is not a button', () => {
+      const { view } = setupState();
+      expect(screen.queryByRole('button', { name: /as done$/ })).toBeNull();
+      // The row's only button opens it.
+      expect(screen.getAllByRole('button')).toHaveLength(1);
+      const dot = view.container.querySelector('li > [aria-hidden="true"] > [data-rag]') as HTMLElement;
+      expect(dot.dataset.rag).toBe('green');
+      expect(dot.style.getPropertyValue('--ring')).toBe('#34C759');
+      expect(view.container.querySelector('li')!.dataset.kind).toBe('state');
+    });
+
+    it('reads "<emoji> <name> · Updated Tue 6 Oct" (or Unassigned) under the note', () => {
+      const { row } = setupState();
+      expect(row.textContent).toBe(
+        "Firepit, Green, to maintain.New one installed. Keep the cover on when it's not in use.🦊 Ela · Updated Tue 6 Oct",
+      );
+      const date = screen.getByText('Updated Tue 6 Oct');
+      expect(date.hasAttribute('data-updated')).toBe(true);
+      expect(date.hasAttribute('data-missed')).toBe(false);
+      cleanup();
+      const unassigned = setupState({}, { who: 'Unassigned', date: 'Updated Thu 8 Oct', missed: false });
+      expect(unassigned.row.textContent!.endsWith('Unassigned · Updated Thu 8 Oct')).toBe(true);
+    });
+
+    it('tells assistive tech "<title>, Red, to maintain"', () => {
+      for (const [rag, label] of [
+        ['red', 'Red'],
+        ['amber', 'Amber'],
+        ['green', 'Green'],
+      ] as const) {
+        const { row, view } = setupState({ rag });
+        expect(row.querySelector('.visually-hidden')!.textContent).toBe(`, ${label}, to maintain.`);
+        // jsdom puts a space between the title and the hidden span; browsers do not.
+        expect(screen.getByRole('button', { name: new RegExp(`^Firepit ?, ${label}, to maintain\\.`) })).toBe(row);
+        view.unmount();
+      }
+    });
+
+    it('opens on a tap or from the keyboard, and never completes', async () => {
+      const { row, onOpen, onComplete } = setupState();
+      fireEvent.click(row);
+      expect(onOpen).toHaveBeenCalledWith('item-1');
+      row.focus();
+      expect(document.activeElement).toBe(row);
+      fireEvent.click(row);
+      expect(onOpen).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+      });
+      expect(onComplete).not.toHaveBeenCalled();
+      expect(document.querySelectorAll('[data-confetti] > div > *')).toHaveLength(0);
+    });
   });
 });

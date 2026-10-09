@@ -1,4 +1,4 @@
-import type { Notify, Rag, Repeat, SeedItem } from './types';
+import type { ItemKind, Notify, Rag, Repeat, SeedItem } from './types';
 
 export const APP_NAME = 'home.os';
 
@@ -34,6 +34,17 @@ export const RAG_PICK_BG: Record<Rag, string> = {
 /** Accessible text tone. */
 export const RAG_TEXT: Record<Rag, string> = { red: '#D70015', amber: '#C93400', green: '#248A3D' };
 
+/** The two kinds of item, as the Item sheet offers them ("To do" is the default). */
+export const KIND_OPTIONS: { value: ItemKind; label: string }[] = [
+  { value: 'task', label: 'To do' },
+  { value: 'state', label: 'To maintain' },
+];
+
+export const KIND_LABEL: Record<ItemKind, string> = { task: 'To do', state: 'To maintain' };
+
+/** What a 'state' (To maintain) always has: no due date, repeat or reminder. */
+export const STATE_FIELDS = { due_date: null, repeat: 'none', notify: 'none' } as const;
+
 export const REPEAT_OPTIONS: { value: Repeat; label: string }[] = [
   { value: 'none', label: 'Never' },
   { value: 'weekly', label: 'Weekly' },
@@ -65,8 +76,9 @@ export const REPEAT_MONTHS: Record<Exclude<Repeat, 'none' | 'weekly'>, number> =
   yearly: 12,
 };
 
-/** New item defaults (README: Amber, due in 7 days, Unassigned, Never, 1 day before). */
+/** New item defaults (README: To do, Amber, due in 7 days, Unassigned, Never, 1 day before). */
 export const NEW_ITEM_DEFAULTS = {
+  kind: 'task' as ItemKind,
   rag: 'amber' as Rag,
   due_in_days: 7,
   repeat: 'none' as Repeat,
@@ -90,8 +102,9 @@ export const DEFAULT_AREAS = [
 export const DEFAULT_ADDRESS = '21 Alderbrook Road';
 
 /**
- * The household's current notes list (from the prototype's logic class).
- * Due offsets are relative to 8 Oct, the day the list was captured.
+ * The household's current notes list (from the prototype's logic class), plus the new
+ * firepit, kept track of as a "To maintain" item. Due offsets are relative to 8 Oct, the
+ * day the list was captured.
  */
 export const SEED_ITEMS: SeedItem[] = [
   { area: 'Kitchen', title: 'Kitchen paper', note: 'Restocked.', rag: 'green', due_in_days: 28, repeat: 'monthly', notify: 'day_before', demo_assignee: 'me' },
@@ -102,6 +115,7 @@ export const SEED_ITEMS: SeedItem[] = [
   { area: 'Bedroom Large', title: 'Wardrobe door hinge', note: 'Works, but squeaks.', rag: 'green', due_in_days: 23, repeat: 'none', notify: 'day_before', demo_assignee: 'me' },
   { area: 'Garden', title: 'Garden room wall panel', note: 'Collapsed where it was cut for the AC. Solved for now, but the solution is not the most elegant.', rag: 'amber', due_in_days: 22, repeat: 'none', notify: 'day_before', demo_assignee: 'me' },
   { area: 'Garden', title: 'Give away the old firepit', note: 'Ela will take it, she has a garden. She will confirm next week.', rag: 'green', due_in_days: 7, repeat: 'none', notify: 'day_before', demo_assignee: 'ela' },
+  { area: 'Garden', kind: 'state', title: 'Firepit', note: "New one installed. Keep the cover on when it's not in use.", rag: 'green', due_in_days: null, repeat: 'none', notify: 'none', demo_assignee: 'ela' },
   { area: 'Garden Lounge', title: 'Clean cushions before winter', note: '', rag: 'green', due_in_days: 23, repeat: 'none', notify: 'day_before', demo_assignee: 'ela' },
   { area: 'Jacuzzi', title: 'Water test strips running low', note: 'Order a new pack.', rag: 'amber', due_in_days: 4, repeat: 'none', notify: 'day_before' },
   { area: 'Jacuzzi', title: 'Change the filter', note: '', rag: 'green', due_in_days: 12, repeat: 'monthly', notify: 'day_before', demo_assignee: 'shea' },

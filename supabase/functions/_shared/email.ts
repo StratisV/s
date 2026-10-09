@@ -4,6 +4,10 @@
 //   4. unassigned items, 5. done this week per person, 6. a button that opens home.os.
 // Empty sections are left out. The HTML is inline-styled tables (what email clients render
 // reliably) in the app's look: system font, #F2F2F7 page, white rounded cards, RAG dots.
+//
+// A state (To maintain) is never missed or due: it is listed in section 3 under its area,
+// after that area's to-dos, marked "To maintain", and left out of the unassigned list (which
+// is about to-dos nobody has picked up).
 
 import { addDays, daysBetween, formatDay, type ISODate } from './dates.ts';
 import type { AreaRow, CompletionRow, HouseholdRow, ItemRow, MemberRow, Rag } from './types.ts';
@@ -59,6 +63,8 @@ interface DueLabel {
 
 export interface DigestRow {
   title: string;
+  /** A state (To maintain): shown with the "To maintain" marker instead of a due date. */
+  maintain: boolean;
   note: string;
   rag: Rag;
   area: string;
@@ -92,8 +98,15 @@ export function dueLabel(due: ISODate | null, today: ISODate): DueLabel | null {
   return { text: formatDay(due, today), missed: false };
 }
 
-/** Earliest due date first, no date last, then oldest first (as on Home). */
+/** What marks a state in the email (the app's label for the kind). */
+export const MAINTAIN_LABEL = 'To maintain';
+
+const isState = (it: ItemRow) => it.kind === 'state';
+
+/** As on Home: to-dos by earliest due date (no date last, then oldest first), then states by title. */
 function compareItems(a: ItemRow, b: ItemRow): number {
+  if (isState(a) !== isState(b)) return isState(a) ? 1 : -1;
+  if (isState(a)) return a.title.localeCompare(b.title) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   if (a.due_date !== b.due_date) {
     if (a.due_date === null) return 1;
     if (b.due_date === null) return -1;
@@ -124,11 +137,13 @@ export function buildDigest(input: WeeklyEmailInput): Digest {
 
   const row = (it: ItemRow): DigestRow => ({
     title: it.title,
+    maintain: isState(it),
     note: squash(it.note ?? '', NOTE_MAX),
     rag: it.rag,
     area: areaName.get(it.area_id) ?? '',
     who: memberLabel(it.assignee_id ? memberById.get(it.assignee_id) : undefined),
-    due: dueLabel(it.due_date, today),
+    // A state is never due (it has no due date; this holds even for a stale row).
+    due: isState(it) ? null : dueLabel(it.due_date, today),
   });
 
   const soonEnd = addDays(today, DUE_SOON_DAYS);
@@ -136,7 +151,8 @@ export function buildDigest(input: WeeklyEmailInput): Digest {
   const dueSoon: DigestRow[] = [];
   const rest: ItemRow[] = [];
   for (const it of items) {
-    if (it.due_date !== null && it.due_date < today) missed.push(row(it));
+    if (isState(it)) rest.push(it);
+    else if (it.due_date !== null && it.due_date < today) missed.push(row(it));
     else if (it.due_date !== null && it.due_date <= soonEnd) dueSoon.push(row(it));
     else rest.push(it);
   }
@@ -150,7 +166,7 @@ export function buildDigest(input: WeeklyEmailInput): Digest {
   if (orphans.length) others.push({ area: 'Other', rows: orphans });
 
   const unassigned = items
-    .filter((it) => !it.assignee_id || !memberById.has(it.assignee_id))
+    .filter((it) => !isState(it) && (!it.assignee_id || !memberById.has(it.assignee_id)))
     .map(row);
 
   // Done this week: completions in the last 7 days, per person credited.
@@ -245,6 +261,7 @@ function dot(rag: Rag): string {
   );
 }
 
+/** 'due' is the due date for a to-do, or the "To maintain" marker for a state. */
 type MetaPart = 'area' | 'who' | 'due';
 
 function itemRow(row: DigestRow, first: boolean, parts: MetaPart[], showNote: boolean): string {
@@ -254,6 +271,7 @@ function itemRow(row: DigestRow, first: boolean, parts: MetaPart[], showNote: bo
   for (const part of parts) {
     if (part === 'area' && row.area) meta.push(escapeHtml(row.area));
     if (part === 'who') meta.push(escapeHtml(row.who));
+    if (part === 'due' && row.maintain) meta.push(`<span style="font-weight:600;">${MAINTAIN_LABEL}</span>`);
     if (part === 'due' && row.due) {
       meta.push(
         row.due.missed
@@ -372,6 +390,7 @@ function textRow(row: DigestRow, parts: MetaPart[], showNote: boolean): string[]
   for (const part of parts) {
     if (part === 'area' && row.area) meta.push(row.area);
     if (part === 'who') meta.push(row.who);
+    if (part === 'due' && row.maintain) meta.push(MAINTAIN_LABEL);
     if (part === 'due' && row.due) meta.push(row.due.text);
   }
   const lines = [`* [${RAG_LABEL[row.rag]}] ${row.title}`];

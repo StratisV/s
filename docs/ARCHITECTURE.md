@@ -14,7 +14,12 @@ top of Supabase. The design spec is `design/README.md` (Turn 3, option 3a in
   profile. There are no owner-only permissions. The `owner` role only decides
   who gets the "missed" push alert (README "Push").
 - One household per user.
-- Radical simplicity: no filters, counters, dashboards or settings beyond the spec.
+- Two kinds of item (see "Item kinds" below): **To do** (`task`, the default: a job with a due
+  date, repeat and reminder that Mark as Done completes) and **To maintain** (`state`: a thing
+  whose condition is kept track of, like the firepit; never done, always on the list).
+- Radical simplicity: no filters, counters, dashboards or settings beyond the spec. The one
+  exception the household asked for: each area header shows how many of its items are red,
+  amber and green (see "Home" below).
 
 ## Layout
 
@@ -25,15 +30,18 @@ src/
   state/HomeProvider.tsx   app state + actions (optimistic), toast, today in household tz
   lib/types.ts             domain types (match SQL columns)
   lib/constants.ts         emoji set, colours, labels, default areas, seed items
-  lib/logic/*.ts           pure logic: dates, items (missed, sort, repeat), stats (donut)
+  lib/logic/*.ts           pure logic: dates, items (missed, sort, repeat, kinds), stats (donut),
+                           chat, sun (London sun position), sky (time-of-day sky colours)
   lib/backend/types.ts     Backend interface (the contract both backends implement)
   lib/backend/supabase.ts  production backend (supabase-js)
   lib/backend/demo.ts      localStorage backend (no env vars, e2e tests)
   lib/push.ts              Web Push subscribe/unsubscribe + iOS install detection
   lib/sw-register.ts       service worker registration
   ui/                      shared primitives: Screen, Sheet, ActionSheet, Toggle, Avatar, Toast, Confetti, HomeScene, icons
+  ui/animals.ts            the drawn green duck and brown hedgehog (SVG) for HomeScene and Confetti
   lib/preview.ts           `?frame` simulates the 54px status bar inset for screenshots
-  screens/home/            Home screen (per-area add buttons), item rows, home scene, floating tab bar
+  screens/home/            Home screen (collapsible areas with status counts and an add button),
+                           item rows, floating tab bar
   screens/chat/            Household group chat with emoji reactions
   state/ChatProvider.tsx   chat state: pages, realtime merge, optimistic send/react, unread dot
   screens/item/            Item sheet (edit / new)
@@ -65,7 +73,7 @@ All ids are `uuid default gen_random_uuid()`. Timestamps are `timestamptz defaul
 | `households` | id, name text not null, address text not null default '', timezone text not null default 'Europe/London', weekly_email_day smallint not null default 1 (0=Sun…6=Sat), weekly_email_time time not null default '08:00', created_at, updated_at, updated_by uuid null |
 | `members` | id, household_id → households on delete cascade, user_id uuid not null **unique** → auth.users on delete cascade, name text not null, email text not null default '', emoji text not null default '🦔', color text not null, role text not null default 'member' check (owner, member), weekly_email bool not null default true, push_enabled bool not null default false, created_at |
 | `areas` | id, household_id → households on delete cascade, name text not null, position int not null default 0, created_at |
-| `items` | id, household_id → households on delete cascade, area_id → areas on delete cascade, title text not null (non-blank), note text not null default '', rag text not null default 'amber' check (red, amber, green), due_date date null, assignee_id → members on delete set null, repeat text not null default 'none' check (none, weekly, monthly, quarterly, biannual, yearly), notify text not null default 'day_before' check (none, same_day, day_before, week_before), status text not null default 'open' check (open, done), created_by → members on delete set null, updated_by → members on delete set null, created_at, updated_at, completed_at timestamptz null |
+| `items` | id, household_id → households on delete cascade, area_id → areas on delete cascade, kind text not null default 'task' check (task, state), title text not null (non-blank), note text not null default '', rag text not null default 'amber' check (red, amber, green), due_date date null, assignee_id → members on delete set null, repeat text not null default 'none' check (none, weekly, monthly, quarterly, biannual, yearly), notify text not null default 'day_before' check (none, same_day, day_before, week_before), status text not null default 'open' check (open, done), created_by → members on delete set null, updated_by → members on delete set null, created_at, updated_at, completed_at timestamptz null |
 | `completions` | id, household_id → households on delete cascade, item_id → items **on delete set null**, item_title text not null, credited_to → members on delete set null, completed_by → members on delete set null, completed_at, prev_due_date date null, prev_status text not null |
 | `invites` | id, household_id → households on delete cascade, token text not null unique, created_by → members on delete set null, created_at, expires_at timestamptz not null default now() + 14 days |
 | `push_subs` | id, member_id → members on delete cascade, user_id uuid not null default auth.uid(), endpoint text not null unique, p256dh text not null, auth text not null, user_agent text, created_at |
@@ -77,6 +85,10 @@ Triggers:
   `updated_by = current_member_id()` (and `created_by` on insert when null). On UPDATE
   `created_by` and `created_at` keep their values; only the on-delete-set-null cascade from
   `members` may clear `created_by`.
+- `items` BEFORE INSERT/UPDATE (`items_kind_rules`, after the one above): when
+  `kind = 'state'`, `due_date := null`, `repeat := 'none'`, `notify := 'none'`, whatever the
+  client sends (so a task that becomes a state loses them; a state that becomes a task takes
+  whatever the update gives it).
 - `households` BEFORE UPDATE: `updated_at`, `updated_by`.
 
 Helper functions (`security definer`, `stable`, `set search_path = ''`):
@@ -108,7 +120,8 @@ Errors are raised with these exact messages so clients can map them:
    Creates the household (an unknown time zone falls back to 'Europe/London'), the caller's
    member row (role owner, colour `#007AFF`, email from `auth.jwt() ->> 'email'`), the areas in
    the given order (blank names skipped, positions 0…n-1), and the items in `p_items`:
-   `[{area, title, note, rag, due_in_days (int|null), repeat, notify}]`, matched to areas by
+   `[{area, kind ('task' default | 'state'), title, note, rag, due_in_days (int|null), repeat,
+   notify}]` (a state is stored without a due date, repeat or reminder), matched to areas by
    name case-insensitively (unknown area skipped), due date = today in the household time
    zone + `due_in_days`, unassigned. Raises `already_member` if the caller has a member row.
 2. `invite_preview(p_token text) returns json` → `{"household_name": …, "address": …}` for a
@@ -121,7 +134,8 @@ Errors are raised with these exact messages so clients can map them:
 4. `create_invite() returns text` → a fresh token (32 hex chars from `gen_random_uuid()`),
    expires in 14 days.
 5. `complete_item(p_item_id uuid) returns uuid` (completion id). Caller must be a member of
-   the item's household; item must be open (`not_found` otherwise). Inserts a completion with
+   the item's household; item must be open (`not_found` otherwise); a state raises
+   `invalid_input` and nothing is logged (it is never done). Inserts a completion with
    `credited_to = coalesce(assignee_id, caller)`, `completed_by = caller`, `item_title`,
    `prev_due_date`, `prev_status`. If `repeat <> 'none'`: keep open and move `due_date` one
    interval forward from the old due date (null due date: from today); if that is still before
@@ -137,8 +151,11 @@ publication (guarded so the migration also runs on plain Postgres).
 
 Details beyond the list above (all covered by `supabase/tests`):
 - `invalid_input`: a blank household or member name, an unknown time zone on update,
-  `weekly_email_day` outside 0 to 6, or an invalid rag/repeat/notify in seed items. A blank
-  emoji becomes 🦔. Invite tokens are trimmed.
+  `weekly_email_day` outside 0 to 6, an invalid kind/rag/repeat/notify in seed items, or
+  completing a state. A blank emoji becomes 🦔. Invite tokens are trimmed.
+- `items.kind` outside ('task', 'state') violates `items_kind_check` (23514); null violates
+  not null (23502). Undoing a completion of an item that has since become a state leaves it
+  without a due date (the kind trigger runs on that update too).
 - Member email comes from the JWT, falling back to `auth.users`.
 - `join_household` with a token for the caller's own household returns its id even after the
   token expired; otherwise an unknown or expired token raises `invalid_invite` before
@@ -157,7 +174,8 @@ Details beyond the list above (all covered by `supabase/tests`):
   longer values). Lengths are characters (Postgres `length()`); `TEXT_LIMITS` in
   `src/lib/constants.ts` holds the same numbers and the inputs use them as `maxLength`.
 - View `scheduler_open_items` (`security_invoker`, service role only): open items with the note
-  whitespace-squashed and cut to 200 characters, read by the scheduler.
+  whitespace-squashed and cut to 200 characters, read by the scheduler. It has no `kind`
+  column; the scheduler reads the ids of open states from `items` itself (see below).
 - Internal helpers `next_due_date(text, date, date)` and `is_valid_timezone(text)` are not
   callable by clients.
 - Realtime DELETE events carry only the primary key (RLS tables), so clients reload on any event.
@@ -169,7 +187,90 @@ Details beyond the list above (all covered by `supabase/tests`):
 ## Backend contract
 
 `src/lib/backend/types.ts` is authoritative. `BackendError.code` mirrors the RPC error
-messages above (`network` for fetch failures).
+messages above (`network` for fetch failures). `completeItem` on a state throws
+`BackendError('unknown', 'invalid_input: state')` in the demo backend and
+`BackendError('unknown', 'invalid_input')` from Supabase; the UI never calls it for a state.
+
+## Home
+
+- **Areas collapse.** Each area name is a disclosure button (`aria-expanded`, `aria-controls`)
+  inside the area's `h2`, with a small chevron that stays on the line with the name's last
+  letter. Collapsed, the card slides shut (about 320ms, none with Reduce Motion) and its rows
+  are inert and hidden. **Collapse All** / **Expand All** (15px tint text, right-aligned above
+  the first area) does every area at once.
+- **Remembered per device**: the collapsed area ids are kept in localStorage under
+  `homeos.collapsed.<householdId>` (every read and write in try/catch; deleted areas are
+  forgotten). Nothing is stored on the server.
+- **Status counts**: on the right of each header, red, then amber, then green chips (a dot
+  and a number, 13px/600, the RAG text colour on the RAG tint), only for non-zero counts,
+  shown open or collapsed. Every open item in the area counts by its RAG, To maintain items
+  included. Assistive tech reads one label, such as "1 urgent, 2 at risk, 3 on track".
+- **Add**: after the counts, a small tinted + ("Add item to <area>", 44 × 44 tap target)
+  opens the new-item sheet with that area chosen.
+- **Saving into a collapsed area opens it**: when an item is created, or moved to another
+  area, the Item sheet reports the area (`onSaved`), App passes it to Home (`revealArea`)
+  and Home expands it, so the item can be seen. Closing without saving changes nothing.
+  This covers the area's + and the round + in the tab bar.
+- **Keyboard focus** never lands on a row in a collapsed area: after a completion
+  (`ItemRow`) or when the Item sheet closes on a row that is gone (`App` `restoreFocus`),
+  focus goes to the nearest row that can be seen (`inCollapsedArea()` in
+  `screens/home/areaPanel.ts`), else to the area's name.
+
+### Home scene: the sky in London
+
+`HomeScene` (Home, Welcome and Join) shows the sky as it is now at the house:
+`lib/logic/sun.ts` works out the sun's elevation in London (`skyAt()`), and
+`lib/logic/sky.ts` (`skyLook()`) turns it into colours that blend smoothly with the
+elevation, with a softer, pinker morning and a warmer evening.
+
+- **Day** (12° and up, `FULL_DAY`): exactly the 3a colours and picture, the sun 22px from the
+  top and 28px from the right.
+- **Sunrise and sunset** (0° to 8°): peach, coral and pink, a low orange sun with a bigger
+  halo and a glow along the horizon. **Dawn and dusk** (-6° to 0°): indigo to rose, the first
+  bright stars. **Night**: navy sky, darker ground, a crescent moon where the 3a sun sits,
+  twinkling stars (still with Reduce Motion), the house and animals dimmed and the windows
+  warmly lit.
+- **The sun's path**: in the morning it rises on the left (east) and climbs to the top-left
+  corner; by full day it is in the 3a spot, top right, and in the evening it sinks down the
+  right (west) side behind the ground. It is two elements, one per side; they swap with a
+  cross-fade at the top, so the sun never crosses the house.
+- **Updates**: every minute and when the app comes back into view (`visibilitychange`,
+  `pageshow`). Colours fade over 1.6s (registered custom properties, `@property`; Safari
+  16.4+ fades, older engines just switch). The sun glides between minutes, but after a jump
+  in time (back from the background the next morning, say) it is simply in its new place
+  (`data-jump` on the scene turns its transitions off for that change).
+- The scene has `data-phase` (night, dawn, sunrise, day, sunset, dusk) and `data-sun` (east
+  or west), and its label says the time of day: "A duck and a hedgehog outside their house at
+  sunset".
+- The duck (green) and hedgehog (brown) are SVG drawings in `ui/animals.ts`, used in the
+  scene and the confetti (`<img data-animal="duck|hedgehog">`). Avatars are still emoji.
+
+## Item kinds: To do and To maintain
+
+Migration `supabase/migrations/20261010000200_item_kind.sql`; types `Item.kind`,
+`ItemDraft.kind`, `SeedItem.kind?` (`'task' | 'state'`, `ItemKind` in `src/lib/types.ts`).
+
+- **To do** (`task`, default): as before. A one-off one leaves the list when done, a repeating
+  one moves to its next due date.
+- **To maintain** (`state`): kept track of, never done. No due date, repeat or reminder (the
+  database trigger, `applyKindRules()` in `src/lib/logic/items.ts`, the demo backend and the
+  Item sheet all agree). Its RAG status, note, area and who looks after it are edited as usual.
+- Changing kind is allowed both ways. A state that becomes a task gets the new-item defaults
+  (due in 7 days, Never, 1 day before) from the Item sheet (`withKind()`); a task that becomes
+  a state keeps its task fields in the sheet's draft until it is saved, so switching back
+  before saving restores them.
+- **Item sheet**: a two-option segmented control (**To do**, **To maintain**; the Stats control
+  style) under the title and note, above the RAG picker. For To maintain the Due, Repeat and
+  Notify rows and Mark as Done are hidden and "Assigned to" reads **Looked after by**.
+- **Home row**: a task keeps its hollow status ring (tap to complete). A state shows a solid
+  14px dot in its RAG colour in the ring's place; it is not a button and taps go through to the
+  row, which opens the sheet. Its meta line reads `🦊 Ela · Updated Tue 6 Oct` (or
+  `Unassigned · Updated …`), from `updated_at` in the household time zone (`itemMeta(item,
+  members, today, timeZone)`). Assistive tech hears `<title>, Red, to maintain`.
+- **Order** within an area (`compareItems`): tasks first (due date, undated last, then oldest),
+  then states by title.
+- **Seed**: SEED_ITEMS has the state "Firepit" (Garden, green, Ela in the demo).
+- Demo documents stored before kinds existed read their items as tasks.
 
 ## Chat (household group chat)
 
@@ -218,7 +319,8 @@ emits them for its own writes and on `storage` events from other tabs.
   "+" for the full grid) with Copy and, for your own messages, Delete. Older messages load as
   you scroll up. The composer sits above the tab bar; while typing, the tab bar hides and the
   composer follows the iPhone keyboard (`visualViewport`).
-- Home: each area header has a small + that opens the new-item sheet with that area chosen.
+- Home: each area header has a small + that opens the new-item sheet with that area chosen
+  (see "Home" above).
 
 ## Edge Function `scheduler` (runs every 15 minutes via pg_cron + pg_net)
 
@@ -232,18 +334,22 @@ emits them for its own writes and on `storage` events from other tabs.
   `home_os_project_url` and `home_os_cron_secret`).
 - Uses the service role key. For each household, works in the household's time zone and only
   sends at or after 08:00 local (SEND_HOUR).
-- **Reminders**: open items with `notify <> 'none'` and a due date where
+- **Kinds**: the function reads the ids of open states (`items` where `kind = 'state'`) next to
+  the view and marks the items (`withItemKinds()` in `_shared/plan.ts`). States get no
+  reminders and no missed alerts.
+- **Reminders**: open tasks with `notify <> 'none'` and a due date where
   `due_date - days_before == today` (same_day 0, day_before 1, week_before 7). Recipients: the
   assignee, or every member if unassigned. Only members with `push_enabled`.
   Log key: (reminder, member, item, ref_date = due_date).
-- **Missed**: open items with `due_date` between today − 3 and today − 1 ("the morning after").
+- **Missed**: open tasks with `due_date` between today − 3 and today − 1 ("the morning after").
   Recipients: assignee and owner(s), deduplicated, `push_enabled` only.
   Log key: (missed, member, item, ref_date = due_date).
 - **Weekly email**: on `weekly_email_day` at or after `weekly_email_time` local, to each member
   with `weekly_email = true`. Log key: (weekly, member, null, ref_date = today). Content, in
   order: missed deadlines (title, area, assignee, days late); due in the next 7 days; everything
-  else open grouped by area with RAG; unassigned items; done this week per person; a button
-  that opens home.os (`APP_URL`). Sent with Resend (`RESEND_API_KEY`, `EMAIL_FROM`).
+  else open grouped by area with RAG (each area's states after its tasks, marked "To
+  maintain"; a state is never missed or due); unassigned tasks; done this week per person; a
+  button that opens home.os (`APP_URL`). Sent with Resend (`RESEND_API_KEY`, `EMAIL_FROM`).
 - Idempotency: claim the log row first (`insert … on conflict do nothing returning id`); only
   send if claimed; delete the claim if sending fails so the next run retries.
 - Web Push: VAPID (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`), aes128gcm payload

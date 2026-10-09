@@ -10,6 +10,8 @@
 //   two more days to catch up if a run was missed). To the assignee and the owner(s).
 // - Weekly email: on weekly_email_day at or after weekly_email_time, to every member with
 //   weekly_email on and an email address.
+// - A state (To maintain) never gets a reminder or a missed alert (it has no due date
+//   anyway); the weekly email lists it under its area, marked "To maintain".
 
 import { addDays, formatDay, minutesOfDay, zonedParts, type ISODate } from './dates.ts';
 import { renderWeeklyEmail } from './email.ts';
@@ -85,6 +87,15 @@ export interface Plan {
   emails: WeeklyEmail[];
 }
 
+/**
+ * The items as the scheduler plans with them: those in `stateIds` (the open items whose
+ * kind is 'state', read from items) marked as states, the rest as tasks.
+ */
+export function withItemKinds(items: ItemRow[], stateIds: Iterable<string>): ItemRow[] {
+  const states = new Set(stateIds);
+  return items.map((it) => ({ ...it, kind: states.has(it.id) ? 'state' : 'task' }));
+}
+
 function clip(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
@@ -141,7 +152,7 @@ export function planNotifications(input: PlanInput): Plan {
       const missedFrom = addDays(today, -MISSED_WINDOW_DAYS);
 
       for (const it of items) {
-        if (!it.due_date) continue;
+        if (it.kind === 'state' || !it.due_date) continue;
         const title = clip(it.title, PUSH_TITLE_MAX);
         const area = clip(areaName.get(it.area_id) ?? '', PUSH_AREA_MAX);
         const withArea = (text: string) => (area ? `${text} · ${area}` : text);

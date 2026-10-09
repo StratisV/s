@@ -1,11 +1,25 @@
 import type { ItemPatch } from '../../lib/backend/types';
+import { applyKindRules } from '../../lib/logic/items';
 import type { ItemDraft } from '../../lib/types';
 
-const FIELDS: (keyof ItemDraft)[] = ['area_id', 'title', 'note', 'rag', 'due_date', 'assignee_id', 'repeat', 'notify'];
+const FIELDS: (keyof ItemDraft)[] = [
+  'area_id',
+  'kind',
+  'title',
+  'note',
+  'rag',
+  'due_date',
+  'assignee_id',
+  'repeat',
+  'notify',
+];
 
-/** The draft as it is saved: title and note trimmed. */
+/**
+ * The draft as it is saved: title and note trimmed, and a state (To maintain) without the
+ * due date, repeat and reminder it may still carry from being a task.
+ */
 export function normalizeDraft(draft: ItemDraft): ItemDraft {
-  return { ...draft, title: draft.title.trim(), note: draft.note.trim() };
+  return applyKindRules({ ...draft, title: draft.title.trim(), note: draft.note.trim() });
 }
 
 /** Only the fields that differ from `base` (both normalised), ready for updateItem(). */

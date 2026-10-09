@@ -2,11 +2,18 @@
 
 A radically simple, iPhone-first app for looking after a home. It lists the **areas** of
 the house (Kitchen, Garden, Jacuzzi…) and the **items** that need attention in each, with a
-red, amber or green status, a note, a due date, an assignee, an optional repeat and a push
-reminder. Everyone in the household signs in with **Google**, picks an emoji for their
-profile, and **can edit everything**. A Stats tab shows who has done what, everyone gets a
-weekly email with the full status, and push notifications arrive before deadlines and when
-one is missed.
+red, amber or green status, a note and an assignee. An item is either **To do** (a job like
+"fix the gate", with a due date, an optional repeat and a push reminder, ticked off when it is
+done) or **To maintain** (something whose condition you keep track of, like the firepit: it
+never gets done and stays on the list). Everyone in the household signs in with **Google**,
+picks an emoji for their profile, and **can edit everything**. A Stats tab shows who has done
+what, everyone gets a weekly email with the full status, and push notifications arrive
+before deadlines and when one is missed.
+
+Home shows each area with how many of its items are red, amber and green; areas fold away
+with a tap (or all at once) and stay that way on that phone. Above them a green duck and a
+brown hedgehog live under the sky as it is in London right now: sunrise, daytime, sunset, dusk
+or a starry night.
 
 It is an installable web app (PWA): no App Store needed. Add it to the iPhone Home Screen
 and it behaves like a native app, including notifications (iOS 16.4 or later).
@@ -77,7 +84,7 @@ Set the same three variables in your host's dashboard for production builds.
    `openssl rand -hex 32`.
 4. Deploy the scheduler function and give it its secrets. The function reads a view that the
    migrations create, so run `npx supabase db push` (step 1) first, and again before
-   redeploying the function after an update:
+   redeploying the function after an update (see "Updating" below):
 
    ```bash
    npx supabase functions deploy scheduler --no-verify-jwt
@@ -118,6 +125,19 @@ also set `VITE_BASE=/your-path/`.
 3. Tap **Share → Add to Home Screen**, then open home.os from the Home Screen.
 4. In **Profile**, turn on **Push notifications**.
 
+### 7. Updating
+
+After pulling an update, **apply the database migrations before anything else**, because
+Vercel redeploys the app as soon as the default branch changes and the new app reads the new
+columns (for example `items.kind`): an app deployed ahead of its migrations can't load any
+household. The migrations are backward compatible (new tables and columns with defaults), so
+the app that is live keeps working on the new schema. In order:
+
+1. `npx supabase db push` (for this release: the chat and item kind migrations,
+   `20261010000100_chat.sql` and `20261010000200_item_kind.sql`).
+2. `npx supabase functions deploy scheduler --no-verify-jwt`.
+3. Push or merge to the default branch (Vercel deploys the app).
+
 ## Development
 
 | Command | What it does |
@@ -140,7 +160,8 @@ database tests against it. The live backend suite runs with
 ## Permissions
 
 Everyone who belongs to a household can edit everything in it: the household's name,
-address and time zone, its areas, every item, completions (undo) and each other's profiles
+address and time zone, its areas, every item (To do or To maintain, and switching between
+them), completions (undo) and each other's profiles
 (name and emoji, under **Profile → Household → People**).
 People outside the household can't see or change any of it. New people join only through an
 invite link (valid for 14 days).

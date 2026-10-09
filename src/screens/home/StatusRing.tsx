@@ -12,7 +12,7 @@ interface StatusRingProps {
   onClick(event: MouseEvent<HTMLButtonElement>): void;
 }
 
-/** The 22px RAG ring at the start of an item row; tapping it marks the item done. */
+/** The 22px RAG ring at the start of a to-do's row; tapping it marks the item done. */
 export function StatusRing({ rag, done, label, onClick }: StatusRingProps) {
   const colours = { '--ring': RAG_RING[rag], '--ring-fill': RAG_TINT[rag] } as CSSProperties;
   return (
@@ -26,5 +26,17 @@ export function StatusRing({ rag, done, label, onClick }: StatusRingProps) {
     >
       <CheckIcon className={styles.check} size={14} strokeWidth={3.2} />
     </button>
+  );
+}
+
+/**
+ * A state's (To maintain) status: a solid dot in its RAG colour, in the ring's place. It is
+ * not a button (a state is never done); the row says the status to assistive tech.
+ */
+export function StatusDot({ rag }: { rag: Rag }) {
+  return (
+    <span className={styles.dotSlot} aria-hidden="true">
+      <span className={styles.dot} style={{ '--ring': RAG_RING[rag] } as CSSProperties} data-rag={rag} />
+    </span>
   );
 }

@@ -82,7 +82,7 @@ describe('focus after the Item sheet closes', () => {
     expect(document.activeElement).toBe(next);
   });
 
-  it('falls back to the + button when no rows are left', async () => {
+  it('falls back to the area’s name when no rows are left', async () => {
     await setup(async (backend) => {
       const data = await backend.load((await backend.getMyHouseholdId())!);
       for (const item of data.items.filter((i) => i.title !== 'Olive oil')) await backend.deleteItem(item.id);
@@ -90,7 +90,22 @@ describe('focus after the Item sheet closes', () => {
     const sheet = await openWith(rowButton('Olive oil'));
     fireEvent.click(within(sheet).getByRole('button', { name: 'Delete' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Delete Item' }));
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'New item' })));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Kitchen', expanded: true })));
+  });
+
+  it('skips rows in collapsed areas', async () => {
+    await setup(async (backend) => {
+      const data = await backend.load((await backend.getMyHouseholdId())!);
+      const kitchen = data.areas.find((a) => a.name === 'Kitchen')!.id;
+      for (const area of data.areas.filter((a) => a.id !== kitchen && a.name !== 'Garden')) await backend.deleteArea(area.id);
+    });
+    // Garden collapsed: its rows can't take focus.
+    fireEvent.click(screen.getByRole('button', { name: 'Garden', expanded: true }));
+    const sheet = await openWith(rowButton('Olive oil'));
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Delete' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete Item' }));
+    // Kitchen paper is left (above), not the Garden rows (below).
+    await waitFor(() => expect(document.activeElement).toBe(rowButton('Kitchen paper')));
   });
 
   it('is left alone after a tap (no focus ring or scroll on touch)', async () => {

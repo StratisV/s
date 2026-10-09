@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { inCollapsedArea } from './screens/home/areaPanel';
 import { HomeScreen } from './screens/home/HomeScreen';
 import { TabBar } from './screens/home/TabBar';
 import { ItemSheet } from './screens/item/ItemSheet';
@@ -50,6 +51,8 @@ interface FocusReturn {
   target: HTMLElement;
   /** Fallbacks if the target's row is gone (completed or deleted): the rows after it, then before it. */
   nearby: HTMLElement[];
+  /** The target's area, whose name (a disclosure button) is the last fallback on Home. */
+  section: HTMLElement | null;
 }
 
 /**
@@ -62,15 +65,19 @@ function takeFocusReturn(stage: HTMLElement | null): FocusReturn | null {
   const rows = Array.from(stage.querySelectorAll<HTMLElement>('[data-item-open]'));
   const i = rows.indexOf(el);
   const nearby = i < 0 ? [] : [...rows.slice(i + 1), ...rows.slice(0, i).reverse()];
-  return { target: el, nearby };
+  return { target: el, nearby, section: el.closest('section') };
 }
 
-function restoreFocus({ target, nearby }: FocusReturn, stage: HTMLElement) {
+function restoreFocus({ target, nearby, section }: FocusReturn, stage: HTMLElement) {
   // Only when focus was left behind (on the page, or in the closing sheet).
   const active = document.activeElement;
   if (active && active !== document.body && !active.closest('[role="dialog"]')) return;
+  // Rows in a collapsed area can't take focus: skip them.
+  const reachable = (el: HTMLElement | null | undefined): el is HTMLElement =>
+    !!el && el.isConnected && stage.contains(el) && !inCollapsedArea(el);
   const next =
-    [target, ...nearby].find((el) => el.isConnected && stage.contains(el)) ??
+    [target, ...nearby].find(reachable) ??
+    [section?.querySelector<HTMLElement>('button[aria-expanded]')].find(reachable) ??
     stage.querySelector<HTMLElement>('button[aria-label="New item"]');
   next?.focus({ preventScroll: true });
 }
@@ -81,6 +88,9 @@ function MainApp() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetKey, setSheetKey] = useState(0);
   const [profileOpen, setProfileOpen] = useState(false);
+  // The area an item was just saved into, for Home to expand if it is collapsed.
+  const [revealArea, setRevealArea] = useState<string | null>(null);
+  const clearReveal = useCallback(() => setRevealArea(null), []);
   const stageRef = useRef<HTMLDivElement>(null);
 
   // Page-sheet push-back: scale the stage so it sits 18px in from each side.
@@ -127,7 +137,13 @@ function MainApp() {
     <div className={styles.main} data-pushed={sheetOpen || undefined}>
       <div ref={stageRef} className={styles.stage}>
         {tab === 'home' ? (
-          <HomeScreen onOpenItem={(itemId) => openSheet({ kind: 'edit', itemId })} onOpenProfile={() => setProfileOpen(true)} />
+          <HomeScreen
+            onOpenItem={(itemId) => openSheet({ kind: 'edit', itemId })}
+            onOpenProfile={() => setProfileOpen(true)}
+            onAddItem={(areaId) => openSheet({ kind: 'new', areaId })}
+            revealArea={revealArea}
+            onRevealed={clearReveal}
+          />
         ) : (
           <StatsScreen onOpenProfile={() => setProfileOpen(true)} />
         )}
@@ -141,6 +157,7 @@ function MainApp() {
           open={sheetOpen}
           onClose={() => setSheetOpen(false)}
           onExited={() => setSheetTarget(null)}
+          onSaved={setRevealArea}
         />
       ) : null}
       <ProfileScreen open={profileOpen} onClose={() => setProfileOpen(false)} />

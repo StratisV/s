@@ -20,6 +20,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { isAuthorized } from '../_shared/auth.ts';
+import { withItemKinds } from '../_shared/plan.ts';
 import {
   runScheduler,
   type LogClaim,
@@ -66,7 +67,7 @@ function supabaseStore(url: string, serviceRoleKey: string): SchedulerStore {
 
   return {
     async load(since: Date): Promise<SchedulerData> {
-      const [households, members, areas, items, completions] = await Promise.all([
+      const [households, members, areas, items, states, completions] = await Promise.all([
         readAll<HouseholdRow>((a, b) =>
           db
             .from('households')
@@ -93,6 +94,11 @@ function supabaseStore(url: string, serviceRoleKey: string): SchedulerStore {
             .order('id')
             .range(a, b),
         ),
+        // Which open items are states (To maintain), straight from items: the view above is
+        // unchanged. States never have a due date or a reminder; the weekly email marks them.
+        readAll<{ id: string }>((a, b) =>
+          db.from('items').select('id').eq('status', 'open').eq('kind', 'state').order('id').range(a, b),
+        ),
         readAll<CompletionRow>((a, b) =>
           db
             .from('completions')
@@ -102,7 +108,13 @@ function supabaseStore(url: string, serviceRoleKey: string): SchedulerStore {
             .range(a, b),
         ),
       ]);
-      return { households, members, areas, items, completions };
+      return {
+        households,
+        members,
+        areas,
+        items: withItemKinds(items, states.map((s) => s.id)),
+        completions,
+      };
     },
 
     async pushSubs(memberIds: string[]): Promise<PushSubRow[]> {

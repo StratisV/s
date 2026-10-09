@@ -411,3 +411,75 @@ describe('setup', () => {
     expect((home().data as HouseholdData).areas.map((a) => a.name)).toEqual(['Kitchen']);
   });
 });
+
+describe('kinds: To do and To maintain', () => {
+  it('never completes a state (no request, no toast, it stays)', async () => {
+    const { backend, home } = await seeded();
+    const complete = vi.spyOn(backend, 'completeItem');
+    const firepit = itemNamed(home, 'Firepit')!;
+    expect(firepit.kind).toBe('state');
+    await act(() => home().completeItem(firepit.id));
+    expect(complete).not.toHaveBeenCalled();
+    expect(home().toast).toBeNull();
+    expect(itemNamed(home, 'Firepit')).toEqual(firepit);
+  });
+
+  it('shows a task becoming a state at once, without its due date and with a fresh Updated time', async () => {
+    const { backend, home } = await seeded();
+    const gate = deferred();
+    const update = vi.spyOn(backend, 'updateItem').mockImplementation(() => gate.promise);
+    const before = itemNamed(home, 'Kitchen paper')!;
+    expect(before).toMatchObject({ kind: 'task', repeat: 'monthly' });
+    let result: Promise<void> | undefined;
+    act(() => {
+      result = home().updateItem(before.id, { kind: 'state' });
+    });
+    const shown = itemNamed(home, 'Kitchen paper')!;
+    expect(shown).toMatchObject({ kind: 'state', due_date: null, repeat: 'none', notify: 'none' });
+    expect(shown.updated_at > before.updated_at).toBe(true);
+    // What is sent: the kind and what it clears.
+    expect(update).toHaveBeenCalledWith(before.id, { kind: 'state', due_date: null, repeat: 'none', notify: 'none' });
+    gate.resolve();
+    await act(async () => {
+      await result;
+    });
+  });
+
+  it('sends only what changed when a state is edited, and takes it all back if that fails', async () => {
+    const { backend, home } = await seeded();
+    vi.spyOn(backend, 'load').mockRejectedValue(offline());
+    const update = vi.spyOn(backend, 'updateItem').mockRejectedValue(offline());
+    const firepit = itemNamed(home, 'Firepit')!;
+    let result: Promise<void> | undefined;
+    act(() => {
+      result = home().updateItem(firepit.id, { rag: 'amber' });
+    });
+    expect(update).toHaveBeenCalledWith(firepit.id, { rag: 'amber' });
+    expect(itemNamed(home, 'Firepit')!.rag).toBe('amber');
+    await act(async () => {
+      await expect(result).rejects.toThrow();
+    });
+    expect(itemNamed(home, 'Firepit')).toEqual(firepit);
+  });
+
+  it('creates a state without a due date, repeat or reminder', async () => {
+    const { backend, home } = await seeded();
+    const create = vi.spyOn(backend, 'createItem');
+    const garden = home().data!.areas.find((a) => a.name === 'Garden')!;
+    await act(async () => {
+      await home().createItem({
+        area_id: garden.id,
+        kind: 'state',
+        title: 'Pizza oven',
+        note: '',
+        rag: 'green',
+        due_date: '2026-10-20',
+        assignee_id: null,
+        repeat: 'weekly',
+        notify: 'day_before',
+      });
+    });
+    expect(create.mock.calls[0][1]).toMatchObject({ kind: 'state', due_date: null, repeat: 'none', notify: 'none' });
+    await waitFor(() => expect(itemNamed(home, 'Pizza oven')).toMatchObject({ kind: 'state', due_date: null }));
+  });
+});

@@ -261,3 +261,60 @@ describe('escapeHtml', () => {
     expect(escapeHtml(`<a href="x">Tom & Jerry's</a>`)).toBe('&lt;a href=&quot;x&quot;&gt;Tom &amp; Jerry&#39;s&lt;/a&gt;');
   });
 });
+
+describe('states (To maintain)', () => {
+  /** The fixture plus states: a Pizza oven (Garden, Ela), an unassigned Jacuzzi (Hallway), an Aga (Kitchen). */
+  function withStates() {
+    const f = fixture();
+    const [kitchen, garden, hallway] = f.input.areas;
+    const states = [
+      item(garden, { kind: 'state', title: 'Pizza oven', note: 'Keep the cover on.', rag: 'green', assignee_id: f.ela.id }),
+      // A stale row with a past due date is still never missed.
+      item(hallway, { kind: 'state', title: 'Jacuzzi', rag: 'amber', due_date: '2026-10-01', assignee_id: null }),
+      item(kitchen, { kind: 'state', title: 'Aga', rag: 'red', assignee_id: f.stratis.id }),
+    ];
+    return { ...f, input: { ...f.input, items: [...states, ...f.input.items] } };
+  }
+
+  it('are never missed or due: they go under their area, after its to-dos, by title', () => {
+    const d = buildDigest(withStates().input);
+    const titles = (rows: { title: string }[]) => rows.map((r) => r.title);
+    expect(titles(d.missed)).not.toContain('Jacuzzi');
+    expect(titles(d.dueSoon)).not.toContain('Pizza oven');
+    expect(d.others.map((g) => [g.area, titles(g.rows)])).toEqual([
+      ['Kitchen', ['Olive oil', 'Aga']],
+      ['Hallway', ['Paint skirting', 'Jacuzzi']],
+      ['Garden', ['Clean cushions', 'Pizza oven']],
+    ]);
+    const oven = d.others[2].rows[1];
+    expect(oven).toMatchObject({ maintain: true, due: null, who: '🦊 Ela', note: 'Keep the cover on.' });
+    expect(d.others[0].rows[0].maintain).toBe(false);
+  });
+
+  it('are left out of the unassigned list, which is about to-dos', () => {
+    const d = buildDigest(withStates().input);
+    expect(d.unassigned.map((r) => r.title)).toEqual(['Descale kettle', 'Water strips', 'Paint skirting']);
+  });
+
+  it('carry a "To maintain" marker in the HTML and the plain text', () => {
+    const { html, text } = renderWeeklyEmail(withStates().input);
+    expectInOrder(html, ['Pizza oven', 'Keep the cover on.', '🦊 Ela', 'To maintain']);
+    expectInOrder(text, ['Garden', '* [Green] Clean cushions', '* [Green] Pizza oven', '  Keep the cover on.', '  🦊 Ela · To maintain']);
+    expect(text).toContain('* [Amber] Jacuzzi\n  Unassigned · To maintain');
+    expect(text.match(/To maintain/g)).toHaveLength(3);
+    // Never "late".
+    expect(text).not.toMatch(/Jacuzzi[^\n]*\n[^\n]*late/);
+  });
+
+  it('count as open: only states open is not "nothing open"', () => {
+    const f = fixture();
+    const garden = f.input.areas[1];
+    const input = { ...f.input, items: [item(garden, { kind: 'state', title: 'Firepit', rag: 'green' })] };
+    const d = buildDigest(input);
+    expect(d.nothingOpen).toBe(false);
+    expect(d.others).toEqual([{ area: 'Garden', rows: [expect.objectContaining({ title: 'Firepit', maintain: true })] }]);
+    const { text } = renderWeeklyEmail(input);
+    expect(text).toContain('EVERYTHING OPEN');
+    expect(text).not.toContain(NOTHING_OPEN);
+  });
+});
