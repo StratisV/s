@@ -222,6 +222,13 @@ for (const width of [320, 375]) {
       await page.keyboard.press('Escape');
       await goToTab(page, 'Stats');
       await noSideways('Stats');
+      await goToTab(page, 'Chat');
+      await expect(page.getByRole('log', { name: 'Messages' }).getByRole('article').first()).toBeVisible();
+      await noSideways('Chat');
+      // The composer and the tab bar fit side to side.
+      const composer = (await page.getByRole('form', { name: 'New message' }).boundingBox())!;
+      expect(composer.x).toBeGreaterThanOrEqual(0);
+      expect(composer.x + composer.width).toBeLessThanOrEqual(width);
       const dialog = await openProfile(page);
       await noSideways('Profile');
       await dialog.getByRole('button', { name: /^Household/ }).click();
