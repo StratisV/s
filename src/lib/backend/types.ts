@@ -60,6 +60,11 @@ export interface Backend {
   /** Starts Google sign-in. Supabase redirects away; demo resolves immediately. */
   signInWithGoogle(): Promise<void>;
   signOut(): Promise<void>;
+  /**
+   * The error from a failed or cancelled Google sign-in redirect, once (then null).
+   * Supabase reads it from the URL on start-up and removes it; demo always returns null.
+   */
+  takeAuthError(): string | null;
 
   // ── Household membership ──────────────────────────────
   /** The household the signed-in user belongs to, or null if none yet. */

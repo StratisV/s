@@ -105,6 +105,17 @@ export async function enablePush(backend: Backend, memberId: string): Promise<bo
   }
 }
 
+/** Whether this device currently holds a push subscription for the app. Never throws. */
+export async function hasPushSubscription(): Promise<boolean> {
+  try {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return false;
+    const registration = await navigator.serviceWorker.getRegistration(import.meta.env.BASE_URL);
+    return !!(await registration?.pushManager?.getSubscription());
+  } catch {
+    return false;
+  }
+}
+
 /** Unsubscribes this device and removes its stored subscription. Never throws. */
 export async function disablePush(backend: Backend): Promise<void> {
   try {

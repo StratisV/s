@@ -111,3 +111,13 @@ export const SEED_ITEMS: SeedItem[] = [
 
 /** Hour (household time) after which reminders, missed alerts and the weekly email go out. */
 export const SEND_HOUR = 8;
+
+/** Maximum text lengths (inputs use maxLength; the database enforces the same limits). */
+export const TEXT_LIMITS = {
+  itemTitle: 200,
+  itemNote: 4000,
+  memberName: 40,
+  householdName: 60,
+  address: 120,
+  areaName: 60,
+} as const;

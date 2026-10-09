@@ -43,6 +43,8 @@ export interface HomeContextValue {
   /** True right after creating/joining a household: Onboarding shows its last step. */
   onboardingTail: boolean;
   finishOnboarding(): void;
+  /** Forget the pending invite (declined, or signing out). */
+  dismissInvite(): void;
 
   signIn(): Promise<void>;
   signOut(): Promise<void>;
@@ -317,12 +319,19 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       pendingInvite,
       onboardingTail,
       finishOnboarding: () => setOnboardingTail(false),
+      dismissInvite: () => {
+        clearStoredInvite();
+        setPendingInvite(null);
+      },
 
       signIn: () => backend.signInWithGoogle(),
       signOut: async () => {
         dismissToast();
         // Stop this device getting the previous person's pushes (only the owner can delete the row).
         await disablePush(backend);
+        // An invite opened on this device shouldn't follow the next person who signs in.
+        clearStoredInvite();
+        setPendingInvite(null);
         await backend.signOut();
       },
       createHousehold: async (input) => {

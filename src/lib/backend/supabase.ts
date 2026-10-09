@@ -192,11 +192,41 @@ export interface SupabaseBackendOptions {
   client?: SupabaseClient;
 }
 
+/**
+ * A failed or cancelled OAuth redirect comes back as ?error=…&error_description=… (or in the
+ * hash). Read it and strip it from the URL before supabase-js starts.
+ */
+function takeAuthErrorFromUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const url = new URL(window.location.href);
+    const hash = new URLSearchParams(url.hash.replace(/^#/, ''));
+    const keys = ['error', 'error_code', 'error_description'];
+    const message =
+      url.searchParams.get('error_description') ??
+      hash.get('error_description') ??
+      url.searchParams.get('error') ??
+      hash.get('error');
+    if (!message) return null;
+    for (const k of keys) {
+      url.searchParams.delete(k);
+      hash.delete(k);
+    }
+    const rest = hash.toString();
+    window.history.replaceState(null, '', url.pathname + url.search + (rest ? `#${rest}` : ''));
+    return message;
+  } catch {
+    return null;
+  }
+}
+
 export class SupabaseBackend implements Backend {
   readonly kind = 'supabase' as const;
   readonly client: SupabaseClient;
+  private authError: string | null;
 
   constructor(url: string, anonKey: string, options: SupabaseBackendOptions = {}) {
+    this.authError = options.client ? null : takeAuthErrorFromUrl();
     this.client =
       options.client ??
       createClient(url, anonKey, {
@@ -210,6 +240,12 @@ export class SupabaseBackend implements Backend {
   }
 
   // ── Auth ───────────────────────────────────────────────
+
+  takeAuthError(): string | null {
+    const message = this.authError;
+    this.authError = null;
+    return message;
+  }
 
   private async session(): Promise<Session | null> {
     const { data, error } = await this.client.auth.getSession();

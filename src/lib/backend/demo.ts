@@ -924,4 +924,9 @@ export class DemoBackend implements Backend {
       doc.push_subs = doc.push_subs.filter((s) => !(s.endpoint === endpoint && s.user_id === user.id));
     });
   }
+
+  /** Demo sign-in can't fail. */
+  takeAuthError(): string | null {
+    return null;
+  }
 }
