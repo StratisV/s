@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
 import {
   buildRows,
   reactionChipLabel,
@@ -10,8 +19,7 @@ import {
 import { useChat } from '../../state/ChatProvider';
 import { useHousehold } from '../../state/HomeProvider';
 import { ActionSheet } from '../../ui/ActionSheet';
-import { Avatar } from '../../ui/Avatar';
-import { LargeTitle } from '../../ui/Screen';
+import { ScreenHeader } from '../../ui/Screen';
 import { copyText } from './clipboard';
 import { Composer } from './Composer';
 import { ArrowDownIcon } from './icons';
@@ -22,8 +30,10 @@ import styles from './ChatScreen.module.css';
 
 interface ChatScreenProps {
   onOpenProfile(): void;
-  /** The composer has focus (the tab bar steps aside while typing). */
-  onTypingChange(typing: boolean): void;
+  /** The tab switch, under the hero. */
+  tabs?: ReactNode;
+  /** The composer has focus. */
+  onTypingChange?(typing: boolean): void;
 }
 
 /** Closer than this to the bottom counts as "at the bottom" (new messages follow, and it counts as read). */
@@ -69,7 +79,7 @@ interface MenuState {
  * messages as a log (newest at the bottom, older ones load as you scroll up),
  * reactions, the long-press menu, and the composer above the tab bar.
  */
-export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
+export function ChatScreen({ onOpenProfile, tabs, onTypingChange }: ChatScreenProps) {
   const { data, me, showToast } = useHousehold();
   const chat = useChat();
   const { entries, status, hasMore, loadingOlder, loadOlder, markRead } = chat;
@@ -154,8 +164,8 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
   }, []);
   const typingRef = useRef(onTypingChange);
   typingRef.current = onTypingChange;
-  useEffect(() => typingRef.current(typing), [typing]);
-  useEffect(() => () => typingRef.current(false), []);
+  useEffect(() => typingRef.current?.(typing), [typing]);
+  useEffect(() => () => typingRef.current?.(false), []);
 
   const composerRef = useRef<HTMLFormElement>(null);
   const [composerHeight, setComposerHeight] = useState(48);
@@ -179,9 +189,7 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
       '--toast-bottom',
       typing && keyboard > 0
         ? `calc(${keyboard + 8}px + ${above})`
-        : typing && !kbPending
-          ? `calc(max(10px, var(--bottom-inset)) + ${above})`
-          : `calc(var(--tabbar-bottom) + var(--tabbar-height) + 10px + ${above})`,
+        : `calc(max(10px, var(--bottom-inset)) + ${above})`,
     );
   }, [composerHeight, typing, keyboard, kbPending]);
   useEffect(
@@ -377,12 +385,7 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
       style={style}
     >
       <div ref={scrollRef} className={styles.scroll} onScroll={onScroll}>
-        <div className={styles.nav}>
-          <button type="button" className={styles.avatarButton} onClick={onOpenProfile} aria-label="Profile">
-            <Avatar emoji={me.emoji} size={38} emojiSize={22} />
-          </button>
-        </div>
-        <LargeTitle title="Chat" />
+        <ScreenHeader title="Chat" avatarEmoji={me.emoji} onAvatar={onOpenProfile} tabs={tabs} scrollRef={scrollRef} />
 
         {hasMore ? (
           <div className={styles.older} aria-hidden={!loadingOlder}>
@@ -437,8 +440,6 @@ export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
           )}
         </div>
       </div>
-      <div className={styles.fade} aria-hidden="true" />
-
       {showNew ? (
         <button type="button" className={styles.newPill} onClick={() => scrollToBottom(true)}>
           New messages

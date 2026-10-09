@@ -1,15 +1,16 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { RAG_ORDER, RAG_RING, RAG_TEXT, RAG_TINT } from '../../lib/constants';
 import { itemMeta, itemsByArea } from '../../lib/logic/items';
 import type { Area, ISODate, Item, Member, Rag } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
-import { HomeScene } from '../../ui/HomeScene';
 import { ChevronRightIcon, PlusIcon } from '../../ui/icons';
-import { LargeTitle, Screen } from '../../ui/Screen';
+import { Screen } from '../../ui/Screen';
 import { ItemRow } from './ItemRow';
 import styles from './HomeScreen.module.css';
 
 interface HomeScreenProps {
+  /** The tab switch, under the hero. */
+  tabs?: ReactNode;
   onOpenItem(itemId: string): void;
   onOpenProfile(): void;
   /** The + on an area header: opens the new-item sheet with that area chosen. */
@@ -68,7 +69,7 @@ function useCollapsedAreas(householdId: string, areaIds: string[]) {
 }
 
 /** Home: the household's areas, each with its open items (README "1. Home"). */
-export function HomeScreen({ onOpenItem, onOpenProfile, onAddItem, revealArea, onRevealed }: HomeScreenProps) {
+export function HomeScreen({ tabs, onOpenItem, onOpenProfile, onAddItem, revealArea, onRevealed }: HomeScreenProps) {
   const { data, me, today, completeItem } = useHousehold();
   const sections = useMemo(() => itemsByArea(data.areas, data.items), [data.areas, data.items]);
   const areaIds = useMemo(() => sections.map((s) => s.area.id), [sections]);
@@ -94,11 +95,14 @@ export function HomeScreen({ onOpenItem, onOpenProfile, onAddItem, revealArea, o
   };
 
   return (
-    <Screen label="Home" avatarEmoji={me.emoji} onAvatar={onOpenProfile}>
-      <LargeTitle title="Home" subtitle={data.household.address.trim() || undefined} />
-      <div className={styles.scene}>
-        <HomeScene height={150} />
-      </div>
+    <Screen
+      label="Home"
+      title="Home"
+      subtitle={data.household.address.trim() || undefined}
+      avatarEmoji={me.emoji}
+      onAvatar={onOpenProfile}
+      tabs={tabs}
+    >
       {sections.length ? (
         <>
           <div className={styles.toolbar}>

@@ -11,11 +11,11 @@ import {
   ring,
   rowButton,
   settled,
-  tabs,
   test,
   titlesIn,
   type Locator,
   type Page,
+  addButton,
 } from './fixtures';
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
@@ -279,7 +279,7 @@ test.describe('Add to an area', () => {
 
     // The round + in the tab bar too (it starts on the first area, Kitchen).
     await disclosure(page, 'Kitchen').click();
-    await tabs(page).getByRole('button', { name: 'New item' }).click();
+    await addButton(page).click();
     sheet = itemSheet(page, 'New item');
     await settled(sheet.getByRole('button', { name: 'Close' }));
     await expect(detailValue(sheet, 'Area')).toHaveText('Kitchen');

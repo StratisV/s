@@ -48,9 +48,9 @@ describe('ItemRow', () => {
     vi.useRealTimers();
   });
 
-  it('shows the title, note and meta, with the missed date marked', () => {
+  it('shows the title, then the meta and the note on one line, with the missed date marked', () => {
     const { row } = setup();
-    expect(row.textContent).toBe('Heaters not working, Red.No heat since the weekend.🦆 Shea · Missed · Tue 6 Oct');
+    expect(row.textContent).toBe('Heaters not working, Red.🦆 Shea · Missed · Tue 6 Oct · No heat since the weekend.');
     expect(screen.getByText('Missed · Tue 6 Oct').hasAttribute('data-missed')).toBe(true);
   });
 
@@ -68,9 +68,9 @@ describe('ItemRow', () => {
       const { row, ring, view } = setup({ rag });
       const hidden = row.querySelector('.visually-hidden')!;
       expect(hidden.textContent).toBe(`, ${label}.`);
-      // Inside the title, so the row keeps its title / note / meta lines.
+      // Inside the title, so the row keeps its two lines: the title, then the meta and note.
       expect(hidden.parentElement!.textContent).toBe(`Heaters not working, ${label}.`);
-      expect(row.querySelectorAll(':scope > span')).toHaveLength(3);
+      expect(row.querySelectorAll(':scope > span')).toHaveLength(2);
       expect(ring.getAttribute('aria-label')).toBe('Mark Heaters not working as done');
       view.unmount();
     }
@@ -157,17 +157,17 @@ describe('ItemRow', () => {
       expect(view.container.querySelector('li')!.dataset.kind).toBe('state');
     });
 
-    it('reads "<emoji> <name> · Updated Tue 6 Oct" (or Unassigned) under the note', () => {
+    it('reads "<emoji> <name> · Updated Tue 6 Oct" (or Unassigned) before the note', () => {
       const { row } = setupState();
       expect(row.textContent).toBe(
-        "Firepit, Green, to maintain.New one installed. Keep the cover on when it's not in use.🦊 Ela · Updated Tue 6 Oct",
+        "Firepit, Green, to maintain.🦊 Ela · Updated Tue 6 Oct · New one installed. Keep the cover on when it's not in use.",
       );
       const date = screen.getByText('Updated Tue 6 Oct');
       expect(date.hasAttribute('data-updated')).toBe(true);
       expect(date.hasAttribute('data-missed')).toBe(false);
       cleanup();
       const unassigned = setupState({}, { who: 'Unassigned', date: 'Updated Thu 8 Oct', missed: false });
-      expect(unassigned.row.textContent!.endsWith('Unassigned · Updated Thu 8 Oct')).toBe(true);
+      expect(unassigned.row.textContent).toContain('Unassigned · Updated Thu 8 Oct · ');
     });
 
     it('tells assistive tech "<title>, Red, to maintain"', () => {

@@ -11,6 +11,8 @@ interface StepPageProps {
   enter: Enter;
   /** Contents of the 52px nav row; omitted when the step has no nav controls. */
   nav?: ReactNode;
+  /** The content starts at the very top of the screen, under the status bar (a hero). */
+  fullBleed?: boolean;
   children: ReactNode;
 }
 
@@ -19,7 +21,7 @@ interface StepPageProps {
  * scroll-edge fade. Children lay out in a column, so a `.spacer` followed by a
  * `.footer` keeps the actions at the bottom (and sticky while content scrolls).
  */
-export function StepPage({ label, enter, nav, children }: StepPageProps) {
+export function StepPage({ label, enter, nav, fullBleed = false, children }: StepPageProps) {
   const ref = useRef<HTMLElement>(null);
 
   // Move focus to the new step so screen readers and keyboards start there.
@@ -29,11 +31,11 @@ export function StepPage({ label, enter, nav, children }: StepPageProps) {
 
   return (
     <section ref={ref} className={styles.page} data-enter={enter ?? undefined} aria-label={label} tabIndex={-1}>
-      <div className={styles.scroll}>
+      <div className={styles.scroll} data-bleed={fullBleed || undefined}>
         {nav !== undefined ? <div className={styles.nav}>{nav}</div> : null}
         {children}
       </div>
-      <div className={styles.fade} aria-hidden="true" />
+      {fullBleed ? null : <div className={styles.fade} aria-hidden="true" />}
     </section>
   );
 }

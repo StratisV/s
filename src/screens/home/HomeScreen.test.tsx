@@ -101,7 +101,9 @@ describe('HomeScreen', () => {
     expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(11);
     expect(screen.queryByText('No areas yet')).toBeNull();
     // jsdom's name computation may put a space before the comma.
-    const heaters = screen.getByRole('button', { name: /^Heaters not working ?, Red\. No heat since the weekend/ });
+    const heaters = screen.getByRole('button', {
+      name: /^Heaters not working ?, Red\. 🦆 Shea · Missed · .* · No heat since the weekend\./,
+    });
     expect(heaters.hasAttribute('data-item-open')).toBe(true);
     expect(screen.getByRole('button', { name: /^Olive oil ?, Green\./ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /^Shower draining slowly ?, Amber\./ })).toBeTruthy();

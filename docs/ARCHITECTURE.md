@@ -38,11 +38,12 @@ src/
   lib/backend/demo.ts      localStorage backend (no env vars, e2e tests)
   lib/push.ts              Web Push subscribe/unsubscribe + iOS install detection
   lib/sw-register.ts       service worker registration
-  ui/                      shared primitives: Screen, Sheet, ActionSheet, Toggle, Avatar, Toast, Confetti, HomeScene, icons
+  ui/                      shared primitives: Screen (+ ScreenHeader), Hero, StatusSky, Sheet, ActionSheet, Toggle,
+                           Avatar, Toast, Confetti, HomeScene (Join), icons
   ui/animals.ts            the drawn green duck and brown hedgehog (SVG) for HomeScene and Confetti
   lib/preview.ts           `?frame` simulates the 54px status bar inset for screenshots
   screens/home/            Home screen (collapsible areas with status counts and an add button),
-                           item rows, floating tab bar
+                           item rows, tab switch (TabBar) and the floating + (AddButton)
   screens/chat/            Household group chat with emoji reactions
   state/ChatProvider.tsx   chat state: pages, realtime merge, optimistic send/react, unread dot
   screens/item/            Item sheet (edit / new)
@@ -64,6 +65,14 @@ e2e/                       Playwright tests (demo mode)
   falls below 4.5:1 (selected reaction chips, the chat's "New messages" pill).
 - Sizes from the README are CSS px at the 402×874 reference. The OS draws the status bar:
   layouts use `var(--top-inset)` (= `env(safe-area-inset-top)`) instead of a fixed 54px.
+- The app draws under the status bar (`apple-mobile-web-app-status-bar-style` is
+  `black-translucent`, so the hero reaches the top of the screen) and the status bar text is
+  always white. `StatusSky` keeps it readable: a fixed strip, `--top-inset` tall, in the colour
+  of the top of the hero's sky, shown wherever no hero is under the status bar (a tab scrolled
+  past its hero, Profile, the setup steps). Screens with a hero at the top say so with
+  `useHeroAtTop()` (`data-hero-top` on `<html>`); App sets `data-cover` while Profile is open
+  and `data-sheet` while a sheet is up (the screen behind goes black). The strip's colour is
+  also written to `<meta name="theme-color">`.
 - Icons are inline SVG from `src/ui/icons.tsx` (SF Symbols stand-ins).
 - Respect `prefers-reduced-motion`.
 
@@ -225,15 +234,31 @@ messages above (`network` for fetch failures). `completeItem` on a state throws
 - **Saving into a collapsed area opens it**: when an item is created, or moved to another
   area, the Item sheet reports the area (`onSaved`), App passes it to Home (`revealArea`)
   and Home expands it, so the item can be seen. Closing without saving changes nothing.
-  This covers the area's + and the round + in the tab bar.
+  This covers the area's + and the round + at the bottom right.
 - **Keyboard focus** never lands on a row in a collapsed area: after a completion
   (`ItemRow`) or when the Item sheet closes on a row that is gone (`App` `restoreFocus`),
   focus goes to the nearest row that can be seen (`inCollapsedArea()` in
   `screens/home/areaPanel.ts`), else to the area's name.
 
+### The hero and the tab switch
+
+Every tab (Home, Chat, Stats) starts with `ScreenHeader` (`ui/Screen.tsx`): the `Hero`
+(`ui/Hero.tsx`) from the very top of the screen, with the title (an `h1`), a secondary line
+(the address on Home) and the Profile avatar on it, then the Home / Chat / Stats switch
+(`TabBar`, a `nav` named "Tabs" whose buttons carry `aria-current="page"`). The switch is
+`position: sticky` at `--top-inset`: once the hero has scrolled away it stays at the top on a
+frosted background (`data-stuck`), and `StatusSky` fills in behind the status bar. Welcome
+uses the same hero, full bleed, over the wordmark. The round + (`AddButton`) floats at the
+bottom right on Home and Stats; Chat's composer sits at the bottom.
+
+The hero draws the house, the green duck and the brown hedgehog under the sky as it is in
+London (`skyAt()` in `lib/logic/sun.ts`), recomputed every minute and when the app comes back
+into view. It exposes `data-phase` and `data-tone` (white or black text over the sky); the
+illustration is decorative and a visually hidden sentence describes it.
+
 ### Home scene: the sky in London
 
-`HomeScene` (Home, Welcome and Join) shows the sky as it is now at the house:
+`HomeScene` (now on the Join screen's invite card) shows the sky as it is now at the house:
 `lib/logic/sun.ts` works out the sun's elevation in London (`skyAt()`), and
 `lib/logic/sky.ts` (`skyLook()`) turns it into colours that blend smoothly with the
 elevation, with a softer, pinker morning and a warmer evening.
@@ -363,8 +388,8 @@ matches. Messages order by `created_at` to the microsecond (`instantOf` in
 
 ### UI
 
-- Floating tab bar: **Home, Chat, Stats**. The round + (new item) shows on Home and Stats, not
-  on Chat. A small dot on Chat means unread messages from others (last-read time is kept per
+- Tab switch under the hero: **Home, Chat, Stats**. The round + (new item) floats at the bottom
+  right on Home and Stats, not on Chat. A small dot on Chat means unread messages from others (last-read time is kept per
   member on this device).
 - Chat screen: large title "Chat", message bubbles (own on the right in the tint colour, others
   on the left in white with the sender's emoji and name), reactions as small chips under a
@@ -379,13 +404,13 @@ matches. Messages order by `created_at` to the microsecond (`instantOf` in
   "Former member".
 - The unread dot uses a last-read time per member on this device, in localStorage under
   `homeos.chat.read.<memberId>`.
-- Composer: sits above the tab bar. While typing, the tab bar slides away (hidden and inert)
-  and the composer follows the iPhone keyboard (`visualViewport`); when the field was tapped
+- Composer: sits at the bottom. While typing it follows the iPhone keyboard
+  (`visualViewport`); when the field was tapped
   with a finger, it stays where it was until the keyboard's height is known (or 600 ms pass),
   so it never drops behind the rising keyboard first. Tapped with a finger, Return starts a new
   line and the round button sends (like Messages); with a hardware keyboard, Enter sends and
   Shift+Enter starts a new line; Ctrl or Cmd+Enter always sends. The send button is
-  `aria-disabled` while blank, so Tab from the field reaches it and then the tab bar. On Chat,
+  `aria-disabled` while blank, so Tab from the field reaches it. On Chat,
   toasts sit above the composer (`--toast-bottom`, set by ChatScreen and read by `Toast`).
 - Home: each area header has a small + that opens the new-item sheet with that area chosen
   (see "Home" above).

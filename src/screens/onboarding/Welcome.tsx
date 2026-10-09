@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react';
 import { APP_NAME } from '../../lib/constants';
 import { errorMessage, useHome } from '../../state/HomeProvider';
-import { HomeScene } from '../../ui/HomeScene';
+import { Hero } from '../../ui/Hero';
+import { useHeroAtTop } from '../../ui/StatusSky';
 import { GoogleGIcon } from '../../ui/icons';
 import shared from './Onboarding.module.css';
 import { StepPage, type Enter } from './StepPage';
 import styles from './Welcome.module.css';
 
-/** Step 1 (signed out): the home scene, the wordmark and "Continue with Google". */
+/** Step 1 (signed out): the hero from the top of the screen, the wordmark and "Continue with Google". */
 export function Welcome({ enter }: { enter: Enter }) {
   const { backend, signIn, showToast, pendingInvite } = useHome();
   const [busy, setBusy] = useState(false);
+  useHeroAtTop(true);
 
   // Back from Google with an error (cancelled, or the provider failed): say so once.
   useEffect(() => {
@@ -39,12 +41,12 @@ export function Welcome({ enter }: { enter: Enter }) {
   };
 
   return (
-    <StepPage label={`Welcome to ${APP_NAME}`} enter={enter}>
+    <StepPage label={`Welcome to ${APP_NAME}`} enter={enter} fullBleed>
+      <div className={styles.hero}>
+        <Hero />
+      </div>
       <div className={styles.before} />
       <div className={styles.top}>
-        <div className={styles.scene}>
-          <HomeScene height={196} />
-        </div>
         <h1 className={styles.wordmark}>{APP_NAME}</h1>
         <p className={styles.tagline}>Everything your home needs, in one place.</p>
       </div>

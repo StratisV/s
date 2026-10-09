@@ -1,55 +1,53 @@
-/* The bar itself lets taps through to the content between the capsule and the add button. */
+/* The segmented control (as Stats' period switch), one segment per tab. */
 .bar {
-  position: absolute;
-  left: 16px;
-  right: 16px;
-  bottom: var(--tabbar-bottom);
-  z-index: 6;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  pointer-events: none;
-  transition:
-    transform 0.38s var(--sheet-ease),
-    opacity 0.25s ease;
-}
-
-/* While typing in the chat the bar slides down out of the way. */
-.bar[data-hidden] {
-  transform: translateY(calc(100% + var(--tabbar-bottom) + 12px));
-  opacity: 0;
-}
-
-.capsule {
-  pointer-events: auto;
-  /* Three tabs; next to the 62px add button with room to spare on a 375px screen. */
-  width: min(264px, calc(100% - 62px - 12px));
-  height: var(--tabbar-height);
-  padding: 4px;
-  border-radius: var(--r-tab);
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 0.5px solid rgba(0, 0, 0, 0.06);
-  box-shadow:
-    var(--shadow-glass),
-    inset 1.5px 1.5px 1px rgba(255, 255, 255, 0.75);
+  position: relative;
+  padding: 3px;
+  border-radius: 100px;
+  background: var(--fill-tertiary);
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The open tab's white pill, sliding under the labels. */
+.thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / 3);
+  border-radius: 100px;
+  background: #fff;
+  box-shadow: var(--shadow-segment);
+  transform: translateX(calc(100% * var(--index)));
+  transition: transform 0.34s var(--sheet-ease);
 }
 
 .tab {
-  border-radius: 27px;
+  position: relative;
+  height: 38px;
+  border-radius: 100px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  font-weight: 500;
+  color: var(--label);
+}
+
+.tab[aria-current] {
   font-weight: 600;
-  letter-spacing: 0;
-  color: var(--label-strong);
-  transition:
-    background-color 0.2s ease,
-    color 0.2s ease;
+}
+
+.tab:focus-visible {
+  outline-offset: -2px;
+}
+
+.tab:not([aria-current]):active {
+  opacity: 0.6;
 }
 
 .label {
@@ -67,22 +65,13 @@
   background: var(--rag-red);
 }
 
-.tab[aria-current] {
-  background: rgba(0, 0, 0, 0.06);
-  color: var(--tint);
-}
-
-.tab:focus-visible {
-  outline-offset: -2px;
-}
-
-.tab:not([aria-current]):active {
-  background: rgba(0, 0, 0, 0.03);
-}
+/* ── Add button ────────────────────────────────────────── */
 
 .add {
-  pointer-events: auto;
-  flex: none;
+  position: absolute;
+  right: 16px;
+  bottom: var(--tabbar-bottom);
+  z-index: 6;
   width: 62px;
   height: 62px;
   border-radius: 50%;
@@ -111,8 +100,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .bar,
-  .tab,
+  .thumb,
   .add,
   .add[data-enter] {
     transition: none;

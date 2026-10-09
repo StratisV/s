@@ -5,20 +5,24 @@
   background: var(--bg);
 }
 
+/* The hero reaches the top of the screen, so the scroll area starts at 0, not under the status bar. */
 .scroll {
   position: absolute;
   inset: 0;
   overflow-y: auto;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
-  padding: var(--top-inset) 0 calc(60px + var(--bottom-inset));
+  padding: 0 0 calc(60px + var(--bottom-inset));
 }
 
-.scroll[data-tabbar] {
-  padding-bottom: 128px;
+/* Room for the floating add button. */
+.scroll[data-add] {
+  padding-bottom: calc(104px + var(--bottom-inset));
 }
 
-.nav {
+/* ── On the hero ───────────────────────────────────────── */
+
+.heroNav {
   height: var(--nav-row);
   padding: 0 16px;
   display: flex;
@@ -30,6 +34,15 @@
   position: relative;
   border-radius: 50%;
   display: grid;
+  text-shadow: none;
+}
+
+/* Frosted glass over the sky. */
+.avatar {
+  background: var(--hero-glass, rgba(255, 255, 255, 0.24)) !important;
+  box-shadow: inset 0 0 0 0.5px var(--hero-glass-border, rgba(255, 255, 255, 0.32));
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
 }
 
 /* The avatar is drawn at 38px; the tap target reaches 44px. */
@@ -42,18 +55,6 @@
 
 .avatarButton:active {
   opacity: 0.7;
-}
-
-/* Scroll-edge fade under the status bar (58px with the 54px inset, solid to 55%). */
-.fade {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: calc(var(--top-inset) + 4px);
-  background: linear-gradient(var(--bg) 55%, rgba(242, 242, 247, 0));
-  z-index: 4;
-  pointer-events: none;
 }
 
 .titleBlock {
@@ -69,11 +70,66 @@
   line-height: 41px;
   font-weight: 700;
   letter-spacing: -0.02em;
+  color: var(--hero-ink, #fff);
+  overflow-wrap: anywhere;
 }
 
 .subtitle {
   font-size: 17px;
   line-height: 20px;
   letter-spacing: -0.4px;
+  color: var(--hero-ink-secondary, rgba(255, 255, 255, 0.9));
+  overflow-wrap: anywhere;
+}
+
+/* ── Tab switch dock ───────────────────────────────────── */
+
+/* Just under the hero; held under the status bar once the hero has scrolled away. */
+.dock {
+  position: sticky;
+  top: var(--top-inset);
+  z-index: 5;
+  padding: 2px 16px 10px;
+  background: var(--bg);
+  transition:
+    background-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.dock[data-stuck] {
+  padding-top: 8px;
+  background: rgba(242, 242, 247, 0.94);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: 0 0.5px 0 var(--separator);
+}
+
+/* ── Large title (pages without a hero) ────────────────── */
+
+.plainTitleBlock {
+  padding: 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.plainTitle {
+  margin: 0;
+  font-size: 34px;
+  line-height: 41px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.plainSubtitle {
+  font-size: 17px;
+  line-height: 20px;
+  letter-spacing: -0.4px;
   color: var(--label-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock {
+    transition: none;
+  }
 }

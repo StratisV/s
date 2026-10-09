@@ -1,0 +1,22 @@
+.strip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--top-inset);
+  z-index: 900;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+/* A hero is under the status bar (and Profile isn't over it), or a sheet is up (the page behind goes black). */
+:global(html[data-hero-top]:not([data-cover])) .strip,
+:global(html[data-sheet]) .strip {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .strip {
+    transition: none;
+  }
+}

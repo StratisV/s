@@ -42,6 +42,10 @@
   padding-top: var(--top-inset);
 }
 
+.scroll[data-bleed] {
+  padding-top: 0;
+}
+
 /* A form step is the scroll content itself, so the footer can stick inside it. */
 .form {
   flex: 1 0 auto;

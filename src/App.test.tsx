@@ -142,17 +142,22 @@ describe('adding an item from an area header', () => {
 describe('tab bar', () => {
   const tabBar = () => screen.getByRole('navigation', { name: 'Tabs' });
 
-  it('has Home, Chat and Stats; the + is on Home and Stats only', async () => {
+  it('has Home, Chat and Stats under the hero; the + is on Home and Stats only', async () => {
     await setup();
     await within(tabBar()).findByRole('button', { name: 'Chat, unread messages' });
-    const tabs = within(tabBar()).getAllByRole('button').filter((b) => b.getAttribute('aria-label') !== 'New item');
-    expect(tabs.map((b) => b.textContent)).toEqual(['Home', 'Chat', 'Stats']);
+    expect(within(tabBar()).getAllByRole('button').map((b) => b.textContent)).toEqual(['Home', 'Chat', 'Stats']);
+    // In the screen, right after the hero with the title on it.
+    const home = screen.getByRole('region', { name: 'Home' });
+    expect(home.contains(tabBar())).toBe(true);
+    expect(within(home).getByRole('heading', { name: 'Home', level: 1 })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'New item' })).toBeTruthy();
     fireEvent.click(within(tabBar()).getByRole('button', { name: /^Chat/ }));
     await screen.findByRole('heading', { name: 'Chat', level: 1 });
-    expect(within(tabBar()).queryByRole('button', { name: 'New item' })).toBeNull();
+    expect(screen.getByRole('region', { name: 'Chat' }).contains(tabBar())).toBe(true);
+    expect(screen.queryByRole('button', { name: 'New item' })).toBeNull();
     fireEvent.click(within(tabBar()).getByRole('button', { name: 'Stats' }));
     await screen.findByRole('heading', { name: 'Stats', level: 1 });
-    expect(within(tabBar()).getByRole('button', { name: 'New item' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'New item' })).toBeTruthy();
   });
 
   it('shows a dot on Chat for unread messages until the chat has been seen', async () => {
@@ -165,15 +170,13 @@ describe('tab bar', () => {
     expect(within(tabBar()).getByRole('button', { name: 'Chat' })).toBeTruthy();
   });
 
-  it('steps aside while typing a message', async () => {
+  it('stays where it is while typing a message', async () => {
     await setup();
     fireEvent.click(within(tabBar()).getByRole('button', { name: /^Chat/ }));
     const field = await screen.findByRole('textbox', { name: 'Message' });
-    const nav = document.querySelector('nav[aria-label="Tabs"]') as HTMLElement;
     act(() => field.focus());
-    expect(nav.hasAttribute('data-hidden')).toBe(true);
-    expect(nav.getAttribute('aria-hidden')).toBe('true');
+    expect(tabBar().hasAttribute('aria-hidden')).toBe(false);
+    expect(within(tabBar()).getByRole('button', { name: 'Home' })).toBeTruthy();
     act(() => field.blur());
-    expect(nav.hasAttribute('data-hidden')).toBe(false);
   });
 });

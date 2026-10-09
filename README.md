@@ -8,11 +8,14 @@ done) or **To maintain** (something whose condition you keep track of, like the 
 never gets done and stays on the list). Everyone in the household signs in with **Google**,
 picks an emoji for their profile, and **can edit everything**.
 
-- **Home**: every area and its items, with how many are red, amber and green. Areas fold away
-  with a tap (or all at once) and stay that way on that phone. Add an item with the round + in
-  the tab bar, or with the small + in an area's header, which starts the item in that area.
-  Above them a green duck and a brown hedgehog live under the sky as it is in London right now:
-  sunrise, daytime, sunset, dusk or a starry night.
+- **Home**: every area and its items, with how many are red, amber and green. Each item is
+  one slim row: its title, then who, when and its note on one line. Areas fold away with a
+  tap (or all at once) and stay that way on that phone. Add an item with the round + at the
+  bottom right, or with the small + in an area's header, which starts the item in that area.
+- **The hero**: every tab opens on an illustration that runs to the very top of the screen: the
+  house in its garden, with a green duck and a brown hedgehog, under the sky as it is in London
+  right now (sunrise, daytime, sunset, dusk or a starry night). The Home / Chat / Stats switch
+  sits just under it and stays at the top as you scroll.
 - **Chat**: one group chat for the whole household. Messages are kept for good (no limit on how
   long they stay), anyone can react to a message with emoji (long-press it, or tap a reaction
   to add yours), and a dot on the Chat tab shows unread messages.

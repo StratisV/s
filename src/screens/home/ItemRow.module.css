@@ -10,11 +10,11 @@
 .open {
   flex: 1;
   min-width: 0;
-  padding: 12px 0 13px;
+  padding: 8px 0 9px;
   border-top: 0.5px solid var(--separator);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   text-align: left;
   user-select: none;
   -webkit-user-select: none;
@@ -52,10 +52,12 @@
 }
 
 .title,
-.note,
 .meta {
   display: block;
-  overflow-wrap: anywhere;
+  /* One line each: the full title and note are in the Item sheet. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .title {
@@ -65,23 +67,14 @@
   color: var(--label);
 }
 
-.note {
-  font-size: 15px;
-  line-height: 20px;
-  letter-spacing: -0.2px;
+.meta {
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: 0;
   color: var(--label-secondary);
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
 }
 
-.meta {
-  margin-top: 3px;
-  font-size: 13px;
-  line-height: 16px;
-  letter-spacing: 0;
+.note {
   color: var(--label-secondary);
 }
 

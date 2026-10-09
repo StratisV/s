@@ -47,7 +47,7 @@ describe('StatsScreen', () => {
     expect(legend()).toEqual(['🦔Stratis4', '🦆Shea2', '🦊Ela1']);
     expect(screen.getByRole('img').getAttribute('aria-label')).toBe('7 tasks done this month: Stratis 4, Shea 2, Ela 1.');
     // One arc per member with completions.
-    expect(document.querySelectorAll('svg g circle')).toHaveLength(3);
+    expect(screen.getByRole('img').querySelectorAll('svg g circle')).toHaveLength(3);
   });
 
   it('switches to Lifetime by tap and back with the arrow keys', async () => {

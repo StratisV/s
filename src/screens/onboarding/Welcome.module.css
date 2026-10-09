@@ -1,6 +1,11 @@
-/* The hero sits a little above the middle of the space over the button. */
+/* Full height, whatever the room below. */
+.hero {
+  flex: none;
+}
+
+/* The wordmark sits a little above the middle of the space between the hero and the button. */
 .before {
-  flex: 2 0 var(--nav-row);
+  flex: 2 0 20px;
 }
 
 .after {
@@ -15,13 +20,8 @@
   text-align: center;
 }
 
-.scene {
-  align-self: stretch;
-  padding: 16px 16px 0;
-}
-
 .wordmark {
-  margin: 30px 0 0;
+  margin: 0;
   padding: 0 20px;
   font-size: 34px;
   line-height: 41px;

@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { countCompletions } from '../../lib/logic/stats';
 import type { StatsPeriod } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
 import { Avatar } from '../../ui/Avatar';
-import { LargeTitle, Screen } from '../../ui/Screen';
+import { Screen } from '../../ui/Screen';
 import { Donut } from './Donut';
 import { SegmentedControl } from './SegmentedControl';
 import styles from './StatsScreen.module.css';
@@ -17,7 +17,7 @@ const PERIODS: { value: StatsPeriod; label: string }[] = [
 let lastPeriod: StatsPeriod = 'month';
 
 /** Stats: tasks done per person, this month or ever (README "3. Stats"). */
-export function StatsScreen({ onOpenProfile }: { onOpenProfile(): void }) {
+export function StatsScreen({ onOpenProfile, tabs }: { onOpenProfile(): void; tabs?: ReactNode }) {
   const { data, me, today } = useHousehold();
   const [period, setPeriodState] = useState<StatsPeriod>(lastPeriod);
   const setPeriod = (p: StatsPeriod) => {
@@ -38,8 +38,13 @@ export function StatsScreen({ onOpenProfile }: { onOpenProfile(): void }) {
     (rows.length ? `: ${rows.map((r) => `${r.member.name} ${r.count}`).join(', ')}.` : '.');
 
   return (
-    <Screen label="Stats" avatarEmoji={me.emoji} onAvatar={onOpenProfile}>
-      <LargeTitle title="Stats" />
+    <Screen
+      label="Stats"
+      title="Stats"
+      avatarEmoji={me.emoji}
+      onAvatar={onOpenProfile}
+      tabs={tabs}
+    >
       <SegmentedControl label="Period" options={PERIODS} value={period} onChange={setPeriod} className={styles.period} />
       <div className={styles.donut}>
         <Donut rows={rows} total={total} label={summary} />

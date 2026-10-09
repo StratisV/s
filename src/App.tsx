@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChatScreen } from './screens/chat/ChatScreen';
 import { inCollapsedArea } from './screens/home/areaPanel';
 import { HomeScreen } from './screens/home/HomeScreen';
-import { TabBar } from './screens/home/TabBar';
+import { AddButton, TabBar } from './screens/home/TabBar';
 import { ItemSheet } from './screens/item/ItemSheet';
 import { Onboarding } from './screens/onboarding/Onboarding';
 import { ProfileScreen } from './screens/profile/ProfileScreen';
@@ -10,6 +10,7 @@ import { StatsScreen } from './screens/stats/StatsScreen';
 import type { ItemSheetTarget, Tab } from './screens/types';
 import { ChatProvider, useChat } from './state/ChatProvider';
 import { useHome, useHousehold } from './state/HomeProvider';
+import { StatusSky } from './ui/StatusSky';
 import { Toast } from './ui/Toast';
 import styles from './App.module.css';
 
@@ -25,6 +26,7 @@ export default function App() {
   return (
     <div className={styles.viewport}>
       <div className={styles.column}>{content}</div>
+      <StatusSky />
       <Toast />
     </div>
   );
@@ -97,7 +99,6 @@ function MainApp() {
 function MainShell() {
   const { unread } = useChat();
   const [tab, setTab] = useState<Tab>('home');
-  const [typing, setTyping] = useState(false);
   const [sheetTarget, setSheetTarget] = useState<ItemSheetTarget | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetKey, setSheetKey] = useState(0);
@@ -132,6 +133,17 @@ function MainShell() {
     if (stageRef.current) stageRef.current.inert = covered;
   }, [covered]);
 
+  // For the strip behind the status bar (StatusSky): Profile covers the hero; behind a sheet the screen goes black.
+  useEffect(() => {
+    const html = document.documentElement;
+    html.toggleAttribute('data-cover', profileOpen);
+    html.toggleAttribute('data-sheet', sheetOpen);
+    return () => {
+      html.removeAttribute('data-cover');
+      html.removeAttribute('data-sheet');
+    };
+  }, [profileOpen, sheetOpen]);
+
   // Once the stage is interactive again, focus goes back to the row (or the + button).
   // The Profile cover returns focus itself (ProfileScreen).
   useEffect(() => {
@@ -147,11 +159,15 @@ function MainShell() {
     setSheetOpen(true);
   }, []);
 
+  // The tab switch sits under the hero on every tab.
+  const tabs = <TabBar tab={tab} onTab={setTab} unread={unread} />;
+
   return (
     <div className={styles.main} data-pushed={sheetOpen || undefined}>
       <div ref={stageRef} className={styles.stage}>
         {tab === 'home' ? (
           <HomeScreen
+            tabs={tabs}
             onOpenItem={(itemId) => openSheet({ kind: 'edit', itemId })}
             onOpenProfile={() => setProfileOpen(true)}
             onAddItem={(areaId) => openSheet({ kind: 'new', areaId })}
@@ -159,17 +175,11 @@ function MainShell() {
             onRevealed={clearReveal}
           />
         ) : tab === 'chat' ? (
-          <ChatScreen onOpenProfile={() => setProfileOpen(true)} onTypingChange={setTyping} />
+          <ChatScreen tabs={tabs} onOpenProfile={() => setProfileOpen(true)} />
         ) : (
-          <StatsScreen onOpenProfile={() => setProfileOpen(true)} />
+          <StatsScreen tabs={tabs} onOpenProfile={() => setProfileOpen(true)} />
         )}
-        <TabBar
-          tab={tab}
-          onTab={setTab}
-          onAdd={() => openSheet({ kind: 'new' })}
-          unread={unread}
-          hidden={tab === 'chat' && typing}
-        />
+        <AddButton tab={tab} onAdd={() => openSheet({ kind: 'new' })} />
         <div className={styles.dim} aria-hidden="true" />
       </div>
       {sheetTarget ? (

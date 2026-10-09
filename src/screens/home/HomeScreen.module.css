@@ -1,7 +1,3 @@
-.scene {
-  padding: 16px 16px 0;
-}
-
 /* "Collapse All" / "Expand All", right-aligned above the first area. */
 .toolbar {
   display: flex;
@@ -199,7 +195,7 @@ section[data-collapsed] .chevron {
 
 .empty {
   margin: 0;
-  padding: 13px 18px;
+  padding: 11px 18px;
   font-size: 17px;
   line-height: 20px;
   letter-spacing: 0;

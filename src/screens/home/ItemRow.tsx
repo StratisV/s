@@ -31,8 +31,9 @@ interface ItemRowProps {
 }
 
 /**
- * A Home row: status ring, then title, note (2 lines max) and meta.
- * The ring completes the item; anywhere else on the row opens it.
+ * A Home row, two lines tall: status ring, then the title, and under it the meta
+ * with the note after it (`🦆 Shea · Tue 20 Oct · Order a new pack.`), each cut
+ * to one line. The ring completes the item; anywhere else on the row opens it.
  * A state (To maintain) has a solid dot instead of the ring: it is never completed, and
  * the whole row opens it.
  */
@@ -114,7 +115,6 @@ export function ItemRow({ item, meta, onOpen, onComplete }: ItemRowProps) {
           {item.title}
           <span className="visually-hidden">{spoken}</span>
         </span>
-        {item.note.trim() ? <span className={styles.note}>{item.note}</span> : null}
         <span className={styles.meta}>
           {meta.who}
           {meta.date ? (
@@ -127,6 +127,12 @@ export function ItemRow({ item, meta, onOpen, onComplete }: ItemRowProps) {
               >
                 {meta.date}
               </span>
+            </>
+          ) : null}
+          {item.note.trim() ? (
+            <>
+              {' · '}
+              <span className={styles.note}>{item.note.trim().replace(/\s+/g, ' ')}</span>
             </>
           ) : null}
         </span>

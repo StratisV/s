@@ -12,6 +12,7 @@ import {
   test,
   type Locator,
   type Page,
+  addButton,
 } from './fixtures';
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
@@ -87,9 +88,11 @@ test.describe('Chat', () => {
     await expect(last).toBeInViewport();
     const lastBox = (await messageRow(page, "I'll order a new pack today.").boundingBox())!;
     const composerBox = (await chatScreen(page).getByRole('form', { name: 'New message' }).boundingBox())!;
-    const barBox = (await tabs(page).boundingBox())!;
     expect(lastBox.y + lastBox.height).toBeLessThanOrEqual(composerBox.y);
-    expect(composerBox.y + composerBox.height).toBeLessThanOrEqual(barBox.y);
+    // The composer is at the bottom (the tab switch is at the top, under the hero).
+    expect(composerBox.y + composerBox.height).toBeLessThanOrEqual(874);
+    expect(composerBox.y + composerBox.height).toBeGreaterThan(874 - 24);
+    expect((await tabs(page).boundingBox())!.y).toBeLessThan(composerBox.y);
 
     // Others on the left in white, yours on the right in the tint.
     await expect(bubble(page, 'The heating engineer')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
@@ -176,22 +179,19 @@ test.describe('Chat', () => {
     await expect(field(page)).toBeFocused();
   });
 
-  test('Tab from the empty composer goes to Send, then to the tab bar', async ({ page }) => {
+  test('Tab from the empty composer goes to Send', async ({ page }) => {
     await openSeeded(page);
     await openChat(page);
-    // Reached from the keyboard (Shift+Tab back from the tab bar would do the same).
+    // Reached from the keyboard.
     await field(page).focus();
-    await expect(page.locator('nav[data-hidden]')).toHaveCount(1);
     await page.keyboard.press('Tab');
     const send = chatScreen(page).getByRole('button', { name: 'Send' });
     await expect(send).toBeFocused();
     await expect(send).toBeDisabled(); // aria-disabled: off, but reachable
     await page.keyboard.press('Enter');
     await expect(bubbles(page)).toHaveCount(8);
-    // Out of the field, the tab bar is back.
+    // The tab switch never went anywhere.
     await expect(tabs(page)).toBeVisible();
-    await page.keyboard.press('Tab');
-    await expect(tabButton(page, 'Home')).toBeFocused();
   });
 
   test('messages from another tab or person arrive live; scrolled up, a pill offers them', async ({ page }) => {
@@ -432,11 +432,11 @@ test.describe('Chat', () => {
     await expect(tabButton(page, 'Chat')).toHaveAccessibleName('Chat');
   });
 
-  test('while typing the tab bar steps aside and the composer follows the keyboard', async ({ page }) => {
+  test('while typing the composer follows the keyboard and the tab switch stays', async ({ page }) => {
     await openSeeded(page);
     await openChat(page);
     // No + on Chat.
-    await expect(tabs(page).getByRole('button', { name: 'New item' })).toHaveCount(0);
+    await expect(addButton(page)).toHaveCount(0);
     const form = chatScreen(page).getByRole('form', { name: 'New message' });
     const resting = (await form.boundingBox())!;
 
@@ -447,11 +447,11 @@ test.describe('Chat', () => {
       (window as unknown as { __vv: typeof vv }).__vv = vv;
     });
     await field(page).focus();
-    await expect(tabs(page)).toHaveCount(0); // hidden from assistive tech while it is away
-    await expect(page.locator('nav[data-hidden]')).toHaveCount(1);
+    await expect(tabs(page)).toBeVisible();
+    // No keyboard yet (a hardware one): the composer stays at the bottom.
     await expect(async () => {
       const typing = (await form.boundingBox())!;
-      expect(typing.y).toBeGreaterThan(resting.y + 50);
+      expect(Math.abs(typing.y - resting.y)).toBeLessThan(2);
       expect(typing.y + typing.height).toBeGreaterThan(874 - 20);
     }).toPass();
 
@@ -475,7 +475,7 @@ test.describe('Chat', () => {
     const lifted = (await form.boundingBox())!;
     expect(sent.y + sent.height).toBeLessThanOrEqual(lifted.y);
 
-    // Done typing: the tab bar comes back.
+    // Done typing: the composer goes back to the bottom.
     await page.evaluate(() => {
       const vv = (window as unknown as { __vv: EventTarget & { height: number } }).__vv;
       vv.height = window.innerHeight;
@@ -548,7 +548,7 @@ test.describe('Chat with Reduce Motion', () => {
     await openSeeded(page);
     await openChat(page);
     await goToTab(page, 'Home');
-    const add = tabs(page).getByRole('button', { name: 'New item' });
+    const add = addButton(page);
     await expect(add).toBeVisible();
     expect(await add.evaluate((el) => el.getAnimations().length)).toBe(0);
   });

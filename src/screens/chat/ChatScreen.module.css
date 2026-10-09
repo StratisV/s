@@ -1,20 +1,11 @@
 .screen {
-  /* Where the composer sits: above the tab bar, or (typing) at the bottom or on the keyboard. */
-  --composer-bottom: calc(var(--tabbar-bottom) + var(--tabbar-height) + 10px);
+  /* Where the composer sits: at the bottom, or (typing) on the keyboard. */
+  --composer-bottom: max(10px, var(--bottom-inset));
   --chat-bottom-space: calc(var(--composer-bottom) + var(--composer-h, 48px) + 14px);
   position: absolute;
   inset: 0;
   overflow: hidden;
   background: var(--bg);
-}
-
-.screen[data-typing] {
-  --composer-bottom: max(10px, var(--bottom-inset));
-}
-
-/* Tapped, keyboard on its way: stay put until its height is known (ChatScreen). */
-.screen[data-typing][data-kb-pending] {
-  --composer-bottom: calc(var(--tabbar-bottom) + var(--tabbar-height) + 10px);
 }
 
 .screen[data-typing][data-keyboard] {
@@ -29,44 +20,8 @@
   -webkit-overflow-scrolling: touch;
   /* Older messages are put in place by hand (ChatScreen), not by the browser. */
   overflow-anchor: none;
-  padding: var(--top-inset) 0 var(--chat-bottom-space);
-}
-
-/* Nav row and fade: the same as the other tabs (src/ui/Screen). */
-.nav {
-  height: var(--nav-row);
-  padding: 0 16px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-}
-
-.avatarButton {
-  position: relative;
-  border-radius: 50%;
-  display: grid;
-}
-
-.avatarButton::before {
-  content: '';
-  position: absolute;
-  inset: -3px;
-  border-radius: 50%;
-}
-
-.avatarButton:active {
-  opacity: 0.7;
-}
-
-.fade {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: calc(var(--top-inset) + 4px);
-  background: linear-gradient(var(--bg) 55%, rgba(242, 242, 247, 0));
-  z-index: 4;
-  pointer-events: none;
+  /* The hero reaches the top of the screen. */
+  padding: 0 0 var(--chat-bottom-space);
 }
 
 .log {

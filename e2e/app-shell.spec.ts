@@ -17,6 +17,7 @@ import {
   tabs,
   test,
   toast,
+  addButton,
 } from './fixtures';
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
@@ -114,7 +115,7 @@ test.describe('App shell', () => {
     await expect(itemSheet(page)).toBeVisible();
   });
 
-  test('the last item can be scrolled clear of the floating tab bar', async ({ page }) => {
+  test('the last item can be scrolled clear of the floating add button', async ({ page }) => {
     await openSeeded(page);
     // Scroll Home all the way down.
     await homeScreen(page).evaluate((el) => {
@@ -122,8 +123,23 @@ test.describe('App shell', () => {
       scroller.scrollTop = scroller.scrollHeight;
     });
     const row = (await rowButton(page, 'Trim the hedges').boundingBox())!;
-    const bar = (await tabs(page).boundingBox())!;
-    expect(row.y + row.height).toBeLessThanOrEqual(bar.y);
+    const add = (await addButton(page).boundingBox())!;
+    expect(row.y + row.height).toBeLessThanOrEqual(add.y);
+  });
+
+  test('the tab switch is just under the hero, then stays at the top while Home scrolls', async ({ page }) => {
+    await openSeeded(page);
+    const hero = homeScreen(page).locator('[data-phase]').first();
+    const heroBox = (await hero.boundingBox())!;
+    expect(heroBox.y).toBe(0); // the hero reaches the top of the screen
+    const before = (await tabs(page).boundingBox())!;
+    expect(before.y).toBeGreaterThanOrEqual(heroBox.y + heroBox.height - 1);
+    expect(before.y).toBeLessThan(heroBox.y + heroBox.height + 24);
+    await homeScreen(page).evaluate((el) => {
+      (el.firstElementChild as HTMLElement).scrollTop = 900;
+    });
+    await expect.poll(async () => (await tabs(page).boundingBox())!.y).toBeLessThan(40);
+    await expect(tabs(page).getByRole('button', { name: 'Stats' })).toBeVisible();
   });
 
   test('signing out in one tab signs out the other', async ({ page, context }) => {
@@ -211,10 +227,11 @@ for (const width of [320, 375]) {
 
       await openSeeded(page);
       await noSideways('Home');
-      // The tab bar and the add button both fit.
-      const add = (await tabs(page).getByRole('button', { name: 'New item' }).boundingBox())!;
-      const stats = (await tabs(page).getByRole('button', { name: 'Stats' }).boundingBox())!;
-      expect(stats.x + stats.width).toBeLessThan(add.x);
+      // The tab switch and the add button both fit.
+      const add = (await addButton(page).boundingBox())!;
+      const bar = (await tabs(page).boundingBox())!;
+      expect(bar.x).toBeGreaterThanOrEqual(0);
+      expect(bar.x + bar.width).toBeLessThanOrEqual(width);
       expect(add.x + add.width).toBeLessThanOrEqual(width);
 
       await openItem(page, 'Heaters not working');
@@ -225,7 +242,7 @@ for (const width of [320, 375]) {
       await goToTab(page, 'Chat');
       await expect(page.getByRole('log', { name: 'Messages' }).getByRole('article').first()).toBeVisible();
       await noSideways('Chat');
-      // The composer and the tab bar fit side to side.
+      // The composer fits.
       const composer = (await page.getByRole('form', { name: 'New message' }).boundingBox())!;
       expect(composer.x).toBeGreaterThanOrEqual(0);
       expect(composer.x + composer.width).toBeLessThanOrEqual(width);

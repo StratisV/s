@@ -12,11 +12,11 @@ import {
   ring,
   row,
   rowButton,
-  tabs,
   test,
   titlesIn,
   toast,
   type Locator,
+  addButton,
 } from './fixtures';
 
 /** Focuses a control as the keyboard would (so it matches :focus-visible). */
@@ -293,7 +293,7 @@ test.describe('Item sheet: keyboard', () => {
     await expect(open).toBeFocused();
 
     // The same for the + button.
-    const add = tabs(page).getByRole('button', { name: 'New item' });
+    const add = addButton(page);
     await keyboardFocus(add);
     await page.keyboard.press('Enter');
     const fresh = itemSheet(page, 'New item');

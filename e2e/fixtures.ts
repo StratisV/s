@@ -91,6 +91,11 @@ export function tabs(page: Page): Locator {
   return page.getByRole('navigation', { name: 'Tabs' });
 }
 
+/** The round + floating at the bottom right on Home and Stats. */
+export function addButton(page: Page): Locator {
+  return page.getByRole('button', { name: 'New item', exact: true });
+}
+
 /** A tab button. Chat is named "Chat, unread messages" while it has its dot. */
 export function tabButton(page: Page, name: 'Home' | 'Chat' | 'Stats'): Locator {
   return tabs(page).getByRole('button', { name: name === 'Chat' ? /^Chat(, unread messages)?$/ : name, exact: true });
@@ -173,7 +178,7 @@ export async function openItem(page: Page, title: string): Promise<Locator> {
 
 /** The + button; resolves once the new-item sheet is in place. */
 export async function openNewItem(page: Page): Promise<Locator> {
-  await tabs(page).getByRole('button', { name: 'New item' }).click();
+  await addButton(page).click();
   const sheet = itemSheet(page, 'New item');
   await settled(sheet.getByRole('button', { name: 'Close' }));
   return sheet;
