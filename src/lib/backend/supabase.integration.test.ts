@@ -23,7 +23,8 @@ import type {
   ItemDraft,
   PushSubscriptionInput,
 } from '../types';
-import { SupabaseBackend, instantOf, toAuthUser, toBackendError, toHHMM } from './supabase';
+import { instantOf } from '../logic/chat';
+import { SupabaseBackend, toAuthUser, toBackendError, toHHMM } from './supabase';
 import { BackendError, type BackendErrorCode } from './types';
 
 async function rejectsWith(p: Promise<unknown>, code: BackendErrorCode, message?: RegExp) {
@@ -581,19 +582,22 @@ describe('SupabaseBackend offline: auth and realtime wiring', () => {
 
     rt.handlers[3].cb();
     expect(onChange).toHaveBeenCalledTimes(1);
-    // First join: nothing missed. A rejoin after a dropped connection: reload.
-    rt.setStatus('SUBSCRIBED');
-    expect(onChange).toHaveBeenCalledTimes(1);
-    rt.setStatus('CHANNEL_ERROR');
+    // Every join reloads: changes between the caller's load and the first join, or while a
+    // dropped connection was down, are never replayed.
     rt.setStatus('SUBSCRIBED');
     expect(onChange).toHaveBeenCalledTimes(2);
+    rt.setStatus('CHANNEL_ERROR');
+    expect(onChange).toHaveBeenCalledTimes(2);
+    rt.setStatus('SUBSCRIBED');
+    expect(onChange).toHaveBeenCalledTimes(3);
 
     stop();
     stop();
     expect(rt.client.removeChannel).toHaveBeenCalledTimes(1);
     expect(rt.client.removeChannel).toHaveBeenCalledWith(rt.channel);
     rt.handlers[0].cb();
-    expect(onChange).toHaveBeenCalledTimes(2);
+    rt.setStatus('SUBSCRIBED');
+    expect(onChange).toHaveBeenCalledTimes(3);
   });
 
   it('subscribe() uses a fresh channel topic each time', () => {
@@ -638,13 +642,16 @@ describe('SupabaseBackend offline: auth and realtime wiring', () => {
       { type: 'resync' },
     ]);
 
-    // First join: nothing missed. A rejoin after a dropped connection: resync.
+    // Every join resyncs, the first included: a message posted between the first page and
+    // the join, or while a dropped connection was down, is never replayed.
     rt.setStatus('SUBSCRIBED');
-    expect(seen).toHaveLength(6);
+    expect(seen).toHaveLength(7);
+    expect(seen.at(-1)).toEqual({ type: 'resync' });
     rt.setStatus('CHANNEL_ERROR');
+    expect(seen).toHaveLength(7);
     rt.setStatus('SUBSCRIBED');
     expect(seen.at(-1)).toEqual({ type: 'resync' });
-    expect(seen).toHaveLength(7);
+    expect(seen).toHaveLength(8);
 
     stop();
     stop();
@@ -652,7 +659,7 @@ describe('SupabaseBackend offline: auth and realtime wiring', () => {
     expect(rt.client.removeChannel).toHaveBeenCalledWith(rt.channel);
     messages.cb(change('INSERT', { id: 'm3' }));
     rt.setStatus('SUBSCRIBED');
-    expect(seen).toHaveLength(7);
+    expect(seen).toHaveLength(8);
   });
 
   it('subscribeChat() keeps delivering when a listener throws', () => {
@@ -864,8 +871,9 @@ describe('SupabaseBackend offline: chat requests', () => {
     // RLS keeps the delete to the caller's own reactions.
     expect(remove.url.searchParams.has('member_id')).toBe(false);
 
-    await backend.setReaction(uid(1), '👨‍👩‍👧‍👦', true); // 7 code points
-    for (const emoji of ['', '🦔'.repeat(17)]) {
+    await backend.setReaction(uid(1), '🛠️', true); // two code points (U+FE0F)
+    // Only REACTION_EMOJIS (message_reactions_emoji_allowed), refused before any request.
+    for (const emoji of ['', '🦔'.repeat(17), '👨‍👩‍👧‍👦', '❤', 'pay rent 1234']) {
       await rejectsWith(backend.setReaction(uid(1), emoji, true), 'unknown', /^invalid_input: emoji$/);
     }
     await rejectsWith(backend.setReaction('nope', '👍', true), 'not_found');
@@ -1433,13 +1441,17 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
 
     try {
       expect(await waitFor(() => joined(people.a) && joined(people.c), 10_000), 'realtime channels joined').toBe(true);
+      // The join itself asks for a reload (changes made before it are never replayed).
+      expect(await waitFor(() => changes > 0, 5000), 'the first join asks for a reload').toBe(true);
       // Postgres changes start flowing a moment after the join, so keep editing until one arrives.
       const until = Date.now() + 20_000;
-      for (let n = 1; changes === 0 && Date.now() < until; n++) {
+      let flowing = false;
+      for (let n = 1; !flowing && Date.now() < until; n++) {
+        const before = changes;
         await B().renameArea(data.areas[0].id, `Renamed ${runId} ${n}`);
-        await waitFor(() => changes > 0, 1500);
+        flowing = await waitFor(() => changes > before, 1500);
       }
-      expect(changes, 'postgres_changes events heard by a member').toBeGreaterThan(0);
+      expect(flowing, 'postgres_changes events heard by a member').toBe(true);
 
       // An insert, an update and a delete, with both channels listening. Realtime checks RLS
       // when it reads the change, and drops an insert or update whose row is already gone, so
@@ -1621,14 +1633,14 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     await A().setReaction(msg.id, '❤️', true); // again: still one
     await A().setReaction(msg.id, '🎉', true);
     await B().setReaction(msg.id, '❤️', true);
-    await B().setReaction(msg.id, '👨‍👩‍👧‍👦', true); // one emoji of 7 code points
+    await B().setReaction(msg.id, '🛠️', true); // one emoji of two code points (U+FE0F)
 
     let [got] = await B().getMessages([msg.id]);
     expect(got.reactions.map((r) => [r.member_id, r.emoji])).toEqual([
       [memberA, '❤️'],
       [memberA, '🎉'],
       [memberB, '❤️'],
-      [memberB, '👨‍👩‍👧‍👦'],
+      [memberB, '🛠️'],
     ]);
     expect(got.reactions.every((r) => r.message_id === msg.id)).toBe(true);
     // The newest page carries the same message with the same reactions.
@@ -1642,17 +1654,23 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     expect(got.reactions.map((r) => [r.member_id, r.emoji])).toEqual([
       [memberA, '❤️'],
       [memberA, '🎉'],
-      [memberB, '👨‍👩‍👧‍👦'],
+      [memberB, '🛠️'],
     ]);
     // The database fills in the member and the message's household.
     expect(await storedReactions(msg.id)).toEqual([
       { member_id: memberA, household_id: hidA, emoji: '❤️' },
       { member_id: memberA, household_id: hidA, emoji: '🎉' },
-      { member_id: memberB, household_id: hidA, emoji: '👨‍👩‍👧‍👦' },
+      { member_id: memberB, household_id: hidA, emoji: '🛠️' },
     ]);
 
-    for (const emoji of ['', '🦔'.repeat(17)]) {
+    for (const emoji of ['', '🦔'.repeat(17), '👨‍👩‍👧‍👦', '❤', 'pay rent 1234']) {
       await rejectsWith(B().setReaction(msg.id, emoji, true), 'unknown', /^invalid_input: emoji$/);
+    }
+    // The database refuses anything else too, for a client that skips the backend's check.
+    for (const emoji of ['<b>hi</b>', '👨‍👩‍👧‍👦', '❤']) {
+      const { error } = await people.b.client.from('message_reactions').insert({ message_id: msg.id, emoji });
+      expect(error?.code, emoji).toBe('23514');
+      expect(error?.message).toMatch(/message_reactions_emoji_allowed/);
     }
     await rejectsWith(B().setReaction(crypto.randomUUID(), '👍', true), 'not_found');
     await B().setReaction(crypto.randomUUID(), '👍', false);
@@ -1708,8 +1726,12 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     const sentInA: string[] = [];
     const sentInC: string[] = [];
 
+    const resyncs = (list: ChatChange[]) => list.filter((c) => c.type === 'resync').length;
     try {
       expect(await waitFor(() => joined(people.b) && joined(people.c), 10_000), 'realtime channels joined').toBe(true);
+      // Every join resyncs, the first included: a message posted between the first page and
+      // the join is never replayed.
+      expect(await waitFor(() => resyncs(heardB) === 1 && resyncs(heardC) === 1, 5000), 'the first join resyncs').toBe(true);
       // Postgres changes start flowing a moment after the join, so keep posting until one arrives.
       const until = Date.now() + 20_000;
       let flowing = false;
@@ -1761,7 +1783,7 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
       const sinceWarmUp = named(heardB).slice(named(heardB).indexOf(sentInA[0]));
       expect(sinceWarmUp.filter((id) => !sentInA.includes(id)), 'B heard only its own household').toEqual([]);
       expect(named(heardC).filter((id) => sentInA.includes(id)), 'C heard nothing of A').toEqual([]);
-      expect(heardB.some((c) => c.type === 'resync')).toBe(false);
+      expect(resyncs(heardB), 'no resync without a rejoin').toBe(1);
       for (const heard of outsiderHeard) {
         expect(heard.eventType, `outsider heard ${heard.eventType} on ${heard.table}`).toBe('DELETE');
         expect(heard.new).toEqual({});
@@ -1776,7 +1798,7 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
       const socket = realtime.socketAdapter?.socket?.conn ?? realtime.conn;
       expect(socket, 'the realtime WebSocket').toBeTruthy();
       socket!.close(4000, 'test: connection dropped');
-      expect(await waitFor(() => heardB.some((c) => c.type === 'resync'), 15_000), 'B told to resync').toBe(true);
+      expect(await waitFor(() => resyncs(heardB) > 1, 15_000), 'B told to resync').toBe(true);
       const rejoined = Date.now() + 20_000;
       flowing = false;
       for (let n = 1; !flowing && Date.now() < rejoined; n++) {

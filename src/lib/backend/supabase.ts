@@ -11,7 +11,8 @@ import {
   type User,
 } from '@supabase/supabase-js';
 import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
-import { CHAT_PAGE_SIZE, TEXT_LIMITS } from '../constants';
+import { CHAT_PAGE_SIZE, REACTION_EMOJIS, TEXT_LIMITS } from '../constants';
+import { instantOf } from '../logic/chat';
 import type {
   Area,
   AuthUser,
@@ -219,15 +220,6 @@ interface MessageRow {
   reactions?: ChatReaction[] | null;
 }
 
-/**
- * Microseconds since the epoch. Postgres keeps microseconds and PostgREST prints them
- * ('2026-10-09T19:13:24.1021+00:00'), while a JS Date stops at milliseconds.
- */
-export function instantOf(ts: ISOTimestamp): number {
-  const fraction = /[T ][\d:]+\.(\d+)/.exec(ts)?.[1] ?? '';
-  return Date.parse(ts) * 1000 + Number(fraction.slice(3, 6).padEnd(3, '0'));
-}
-
 const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** Chat order: created_at (to the microsecond), then id. */
@@ -266,6 +258,8 @@ function chatPageSize(limit: number | undefined): number {
 
 /** Characters as Postgres length() counts them (code points): an emoji is one. */
 const charCount = (value: string) => Array.from(value).length;
+
+const isReactionEmoji = (value: string) => (REACTION_EMOJIS as readonly string[]).includes(value);
 
 type ChangePayload = RealtimePostgresChangesPayload<Record<string, unknown>>;
 
@@ -467,12 +461,10 @@ export class SupabaseBackend implements Backend {
     for (const [table, filter] of tables) {
       channel.on('postgres_changes', { event: '*', schema: 'public', table, filter }, notify);
     }
-    let joinedBefore = false;
     channel.subscribe((status) => {
-      if (status !== 'SUBSCRIBED') return;
-      // Rejoined after a dropped connection: changes may have been missed meanwhile.
-      if (joinedBefore) notify();
-      joinedBefore = true;
+      // Every join, the first included: changes made before it (since the caller's last load,
+      // or while a dropped connection was down) are never replayed, so reload.
+      if (status === 'SUBSCRIBED') notify();
     });
     return () => {
       if (closed) return;
@@ -729,7 +721,8 @@ export class SupabaseBackend implements Backend {
       await run<null>(this.client.from('message_reactions').delete().eq('message_id', messageId).eq('emoji', value));
       return;
     }
-    if (!value || charCount(value) > REACTION_EMOJI_MAX) throw invalidInput('emoji');
+    // Only the app's reaction emoji (the migration's message_reactions_emoji_allowed).
+    if (!value || charCount(value) > REACTION_EMOJI_MAX || !isReactionEmoji(value)) throw invalidInput('emoji');
     if (!UUID.test(messageId)) throw new BackendError('not_found');
     // Only message_id and emoji are insertable: the database adds the caller and the message's
     // household. A reaction that is already there is left alone. A missing message raises
@@ -775,12 +768,11 @@ export class SupabaseBackend implements Backend {
         emit(typeof id === 'string' ? { type: 'reaction', messageId: id } : { type: 'resync' });
       },
     );
-    let joinedBefore = false;
     channel.subscribe((status) => {
-      if (status !== 'SUBSCRIBED') return;
-      // Rejoined after a dropped connection: messages and reactions may have been missed.
-      if (joinedBefore) emit({ type: 'resync' });
-      joinedBefore = true;
+      // Every join, the first included: a message posted between the caller's first page and
+      // the join (a slow mobile connection, a join that had to retry), or while a dropped
+      // connection was down, is never replayed. Resync picks it up.
+      if (status === 'SUBSCRIBED') emit({ type: 'resync' });
     });
     return () => {
       if (closed) return;

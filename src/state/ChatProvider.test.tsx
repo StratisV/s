@@ -24,12 +24,19 @@ class FlakyBackend extends DemoBackend {
   fail: { send?: boolean; react?: boolean; remove?: boolean; list?: boolean } = {};
   /** Holds sendMessage's answer until released (realtime arriving first). */
   holdSend: Promise<void> | null = null;
+  /** Holds sendMessage before it stores anything (a slow request). */
+  holdSendBefore: Promise<void> | null = null;
+  /** Holds listMessages' answer until released (a page still loading). */
+  holdList: Promise<void> | null = null;
 
   async listMessages(...args: Parameters<DemoBackend['listMessages']>) {
     if (this.fail.list) throw new BackendError('network');
-    return super.listMessages(...args);
+    const page = await super.listMessages(...args);
+    if (this.holdList) await this.holdList;
+    return page;
   }
   async sendMessage(householdId: string, body: string) {
+    if (this.holdSendBefore) await this.holdSendBefore;
     if (this.fail.send) throw new BackendError('network');
     const sent = await super.sendMessage(householdId, body);
     if (this.holdSend) await this.holdSend;
@@ -78,6 +85,26 @@ async function setup(prepare?: (storage: MemoryStorage) => void, spy?: (backend:
 }
 
 const bodies = () => chat.entries.map((e) => e.message.body);
+const keysAreUnique = () => new Set(chat.entries.map((e) => e.key)).size === chat.entries.length;
+
+/** A promise to hold a backend call on, and its release. */
+function gate() {
+  let release!: () => void;
+  const held = new Promise<void>((r) => (release = r));
+  return { held, release: () => act(async () => release()) };
+}
+
+/** Renders without waiting for the first page (setup() waits for it). */
+function renderLoading(backend: FlakyBackend) {
+  render(
+    <HomeProvider backend={backend}>
+      <Ready />
+    </HomeProvider>,
+  );
+}
+
+/** Stratis's own seeded message from this morning (always at least half an hour old). */
+const OLIVE = 'Restocked the olive oil, the 5L tin is in the pantry.';
 const meId = () => home.me!.id;
 const shea = () => home.data!.members.find((m) => m.name === 'Shea')!;
 
@@ -346,6 +373,120 @@ describe('ChatProvider', () => {
     await act(() => chat.reload());
     expect(chat.status).toBe('ready');
     expect(chat.entries).toHaveLength(8);
+  });
+
+  it('never takes an older message with the same text for a send made while the first page loads', async () => {
+    for (const outcome of ['fails', 'succeeds'] as const) {
+      cleanup();
+      const backend = new FlakyBackend({ storage: new MemoryStorage(), search: '?demo-seed=1', latency: 0 });
+      const list = gate();
+      const send = gate();
+      backend.holdList = list.held;
+      backend.holdSendBefore = send.held;
+      backend.fail.send = outcome === 'fails';
+      renderLoading(backend);
+      await waitFor(() => expect(chat?.status).toBe('loading'));
+      act(() => chat.send(OLIVE));
+      await list.release();
+      await waitFor(() => expect(chat.status).toBe('ready'));
+      // The 08:05 message keeps its own key, and the send is still on its way.
+      expect(chat.entries).toHaveLength(9);
+      expect(chat.entries.at(-1)).toMatchObject({ state: 'sending', message: { body: OLIVE } });
+      expect(keysAreUnique()).toBe(true);
+
+      await send.release();
+      if (outcome === 'fails') {
+        await waitFor(() => expect(chat.entries.at(-1)!.state).toBe('failed'));
+        expect(chat.entries).toHaveLength(9);
+      } else {
+        await waitFor(() => expect(chat.entries.every((e) => e.state === 'sent')).toBe(true));
+        expect(bodies().filter((b) => b === OLIVE)).toHaveLength(2);
+      }
+      expect(keysAreUnique()).toBe(true);
+    }
+  });
+
+  it('a send made while the chat shows an error survives Try Again', async () => {
+    const backend = new FlakyBackend({ storage: new MemoryStorage(), search: '?demo-seed=1', latency: 0 });
+    backend.fail.list = true;
+    renderLoading(backend);
+    await waitFor(() => expect(chat?.status).toBe('error'));
+    const send = gate();
+    backend.holdSendBefore = send.held;
+    backend.fail.send = true;
+    act(() => chat.send(OLIVE));
+    backend.fail.list = false;
+    await act(() => chat.reload());
+    expect(chat.status).toBe('ready');
+    expect(chat.entries.at(-1)).toMatchObject({ state: 'sending', message: { body: OLIVE } });
+    await send.release();
+    await waitFor(() => expect(chat.entries.at(-1)!.state).toBe('failed'));
+    expect(chat.entries).toHaveLength(9);
+    expect(keysAreUnique()).toBe(true);
+  });
+
+  it('gives a failed send its bubble back when another message was taken for it', async () => {
+    let emit!: (c: ChatChange) => void;
+    const { backend } = await setup(undefined, (b) => {
+      vi.spyOn(b, 'subscribeChat').mockImplementation((_h, onChange) => {
+        emit = onChange;
+        return () => {};
+      });
+    });
+    const send = gate();
+    backend.holdSendBefore = send.held;
+    backend.fail.send = true;
+    act(() => chat.send('ok'));
+    const key = chat.entries.at(-1)!.key;
+    // Another device of Stratis's sends the same text, and realtime reports it first.
+    const elsewhere = await DemoBackend.prototype.sendMessage.call(backend, home.data!.household.id, 'ok');
+    await act(async () => emit({ type: 'message', messageId: elsewhere.id, deleted: false }));
+    await waitFor(() => expect(chat.entries.at(-1)).toMatchObject({ key, state: 'sent', message: { id: elsewhere.id } }));
+    expect(chat.entries).toHaveLength(9);
+
+    // This device's send fails after all: that message was not it.
+    await send.release();
+    await waitFor(() => expect(chat.entries.at(-1)).toMatchObject({ key, state: 'failed', message: { body: 'ok' } }));
+    expect(chat.entries).toHaveLength(10);
+    expect(chat.entries.at(-2)).toMatchObject({ key: elsewhere.id, state: 'sent', message: { body: 'ok' } });
+    expect(keysAreUnique()).toBe(true);
+  });
+
+  it('a resync also refreshes older loaded messages (reactions and deletes from another tab)', async () => {
+    const { storage } = await setup((storage) => {
+      const doc = JSON.parse(storage.getItem(DEMO_STORAGE_KEY)!);
+      const hid = doc.households[0].id;
+      const sender = doc.members[1].id;
+      const start = Date.parse(doc.messages[0].created_at) - 60 * 60_000;
+      for (let i = 0; i < 60; i++) {
+        doc.messages.push({
+          id: `old-${i}`,
+          household_id: hid,
+          member_id: sender,
+          body: `Old message ${i}`,
+          created_at: new Date(start - (60 - i) * 60_000).toISOString(),
+        });
+      }
+      storage.setItem(DEMO_STORAGE_KEY, JSON.stringify(doc));
+    });
+    await act(() => chat.loadOlder());
+    expect(chat.entries).toHaveLength(68);
+    const hid = home.data!.household.id;
+    const newest = chat.entries.at(-1)!.message;
+    act(() =>
+      otherTab(storage, (doc) => {
+        for (const id of ['old-3', newest.id]) {
+          doc.message_reactions.push({ message_id: id, member_id: shea().id, household_id: hid, emoji: '🔥', created_at: new Date().toISOString() });
+        }
+        doc.messages = doc.messages.filter((m) => m.id !== 'old-5');
+      }),
+    );
+    const reactionsOn = (id: string) => chat.entries.find((e) => e.message.id === id)?.message.reactions.map((r) => r.emoji);
+    await waitFor(() => expect(reactionsOn(newest.id)).toContain('🔥'));
+    await waitFor(() => expect(reactionsOn('old-3')).toEqual(['🔥']));
+    await waitFor(() => expect(bodies()).not.toContain('Old message 5'));
+    expect(chat.entries).toHaveLength(67);
+    expect(chat.hasMore).toBe(false);
   });
 
   it('keeps the composer draft', async () => {

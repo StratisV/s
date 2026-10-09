@@ -4,6 +4,7 @@
 // kept forever (a former member's messages stay, with member_id null).
 
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { before, describe, test } from 'node:test';
 import {
   asService,
@@ -28,6 +29,13 @@ const NOT_NULL_VIOLATION = '23502';
 const TABLES = ['messages', 'message_reactions'];
 
 const chars = (n, c = 'x') => c.repeat(n);
+
+/** REACTION_EMOJIS from src/lib/constants.ts: the only emoji a reaction may be. */
+async function reactionEmojis() {
+  const source = await readFile(new URL('../../src/lib/constants.ts', import.meta.url), 'utf8');
+  const list = /REACTION_EMOJIS = \[([\s\S]*?)\] as const/.exec(source)?.[1] ?? '';
+  return [...list.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+}
 
 /** Asserts a Postgres error with this SQLSTATE (and, for a check, naming `constraint`). */
 async function failsWith(promise, code, constraint) {
@@ -268,12 +276,12 @@ describe('members: post, read, react, delete their own', () => {
     );
     await react(h.owner, msg.id, '👍');
     await react(second.user, msg.id, '❤️');
-    await react(second.user, msg.id, '👨‍👩‍👧‍👦');
+    await react(second.user, msg.id, '🎉');
     assert.deepEqual(await reactionsOf(msg.id), [
       { member_id: h.member.id, household_id: h.id, emoji: '❤️' },
       { member_id: h.member.id, household_id: h.id, emoji: '👍' },
       { member_id: second.member.id, household_id: h.id, emoji: '❤️' },
-      { member_id: second.member.id, household_id: h.id, emoji: '👨‍👩‍👧‍👦' },
+      { member_id: second.member.id, household_id: h.id, emoji: '🎉' },
     ]);
 
     // The same emoji twice is refused; an upsert that ignores duplicates is a no-op.
@@ -299,12 +307,32 @@ describe('members: post, read, react, delete their own', () => {
     assert.equal((await react(h.owner, msg.id, '🙌')).member_id, h.member.id);
   });
 
-  test('emoji: 1 to 16 characters', async () => {
-    const msg = await post(h.owner, h.id, 'Limits');
-    assert.equal((await react(second.user, msg.id, chars(16, '🦔'))).emoji, chars(16, '🦔'));
-    await failsWith(react(second.user, msg.id, chars(17, '🦔')), CHECK_VIOLATION, 'message_reactions_emoji_length');
-    await failsWith(react(second.user, msg.id, ''), CHECK_VIOLATION, 'message_reactions_emoji_length');
-    await failsWith(react(second.user, msg.id, null), NOT_NULL_VIOLATION);
+  test("emoji: only the app's reaction emoji (REACTION_EMOJIS)", async () => {
+    const allowed = await reactionEmojis();
+    assert.equal(allowed.length, 32);
+    const msg = await post(h.owner, h.id, 'Every reaction');
+    for (const emoji of allowed) assert.equal((await react(second.user, msg.id, emoji)).emoji, emoji);
+    assert.equal((await reactionsOf(msg.id)).length, allowed.length);
+
+    // Anything else is refused (check constraints run in name order, so _allowed reports
+    // before _length), including text, other emoji and ❤ without its U+FE0F.
+    const other = await post(h.owner, h.id, 'Limits');
+    for (const bad of ['👨‍👩‍👧‍👦', '❤', ' 👍', 'x', '<b>hi</b>', 'pay rent 1234', chars(17, '🦔'), '']) {
+      await failsWith(react(second.user, other.id, bad), CHECK_VIOLATION, 'message_reactions_emoji_allowed');
+    }
+    await failsWith(react(second.user, other.id, null), NOT_NULL_VIOLATION);
+    // The service role too.
+    await failsWith(
+      db('insert into public.message_reactions (message_id, member_id, household_id, emoji) values ($1, $2, $3, $4)', [
+        other.id,
+        h.member.id,
+        h.id,
+        '🦄',
+      ]),
+      CHECK_VIOLATION,
+      'message_reactions_emoji_allowed',
+    );
+    assert.deepEqual(await reactionsOf(other.id), []);
   });
 
   test('reacting to a message that does not exist is not_found', async () => {
@@ -555,7 +583,7 @@ describe('lifetime', () => {
     const msg = await post(leaver.user, h.id, 'Moving out, bye!');
     const ownerMsg = await post(h.owner, h.id, 'We will miss you');
     await react(h.owner, msg.id, '😢');
-    await react(leaver.user, msg.id, '👋');
+    await react(leaver.user, msg.id, '🙌');
     await react(leaver.user, ownerMsg.id, '❤️');
 
     await db('delete from auth.users where id = $1', [leaver.user.id]);

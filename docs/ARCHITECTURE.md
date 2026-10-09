@@ -31,7 +31,8 @@ src/
   lib/types.ts             domain types (match SQL columns)
   lib/constants.ts         emoji set, colours, labels, default areas, seed items
   lib/logic/*.ts           pure logic: dates, items (missed, sort, repeat, kinds), stats (donut),
-                           chat, sun (London sun position), sky (time-of-day sky colours)
+                           chat (order, merge, runs, separators, reactions, unread, keyboard),
+                           sun (London sun position), sky (time-of-day sky colours)
   lib/backend/types.ts     Backend interface (the contract both backends implement)
   lib/backend/supabase.ts  production backend (supabase-js)
   lib/backend/demo.ts      localStorage backend (no env vars, e2e tests)
@@ -59,6 +60,8 @@ e2e/                       Playwright tests (demo mode)
 ## Styling conventions
 
 - CSS Modules (`X.module.css`) next to each component; tokens in `src/styles/tokens.css`.
+  `--tint-text` (#0058b9) is the tint for small text on tinted fills or glass, where `--tint`
+  falls below 4.5:1 (selected reaction chips, the chat's "New messages" pill).
 - Sizes from the README are CSS px at the 402×874 reference. The OS draws the status bar:
   layouts use `var(--top-inset)` (= `env(safe-area-inset-top)`) instead of a fixed 54px.
 - Icons are inline SVG from `src/ui/icons.tsx` (SF Symbols stand-ins).
@@ -180,9 +183,21 @@ Details beyond the list above (all covered by `supabase/tests`):
   callable by clients.
 - Realtime DELETE events carry only the primary key (RLS tables), so clients reload on any event.
   Realtime checks RLS when it reads each change, so an INSERT/UPDATE whose row is already gone
-  is dropped. Supabase applies no RLS to deletes: someone outside a household who knows its
-  (unguessable) id could receive DELETE notices carrying only the deleted row's id. The live
-  suite pins exactly this and nothing more.
+  is dropped (its DELETE still arrives). Supabase applies no RLS to deletes: any signed-in user
+  who subscribes without a filter receives DELETE notices from every household, without
+  knowing any id. Each notice carries only the deleted row's primary key: the row id for
+  `households`, `members`, `areas`, `items`, `completions` and `messages`, and
+  (message_id, member_id, emoji) for `message_reactions`, where emoji is one of the app's
+  reaction emoji. No text, names or household ids. This is how Supabase Realtime treats deletes,
+  and it cannot be filtered per table in the publication. The app's own subscriptions
+  (`subscribe`, `subscribeChat`) always filter by household: by `household_id` on the tables
+  that carry it (all with replica identity full, so the filter also applies to deletes) and by
+  `id`, the primary key, on `households`. Members therefore never receive other households'
+  notices. The live suite pins
+  exactly this and nothing more.
+- Both subscriptions ask for a reload on every join, the first included: Realtime never replays
+  changes made before a join (between the client's first load and the join, or while a dropped
+  connection was down).
 
 ## Backend contract
 
@@ -285,17 +300,28 @@ edited.
 | table | columns |
 | --- | --- |
 | `messages` | id uuid pk, household_id → households on delete cascade, member_id → members on delete set null (null = former member), body text not null (trimmed, 1 to 4000 chars), created_at timestamptz not null default now(); index (household_id, created_at desc) |
-| `message_reactions` | message_id → messages on delete cascade, member_id → members on delete cascade, household_id → households on delete cascade (copied from the message), emoji text not null (1 to 16 chars), created_at; primary key (message_id, member_id, emoji) |
+| `message_reactions` | message_id → messages on delete cascade, member_id → members on delete cascade, household_id → households on delete cascade (copied from the message), emoji text not null (one of the app's reaction emoji, `REACTION_EMOJIS`), created_at; primary key (message_id, member_id, emoji) |
 
-Triggers: on INSERT into `messages`, `member_id := current_member_id()` and `body := btrim(body)`
-(the service role keeps what it sends); on INSERT into `message_reactions`,
-`member_id := current_member_id()` and `household_id` from the message.
+Check constraints (SQLSTATE 23514, which the client maps to `invalid_input`):
+`messages_body_length` (1 to 4000 characters after trimming), `message_reactions_emoji_length`
+(1 to 16 characters) and `message_reactions_emoji_allowed` (exactly one of the 32
+`REACTION_EMOJIS` in `src/lib/constants.ts`, same code points including U+FE0F;
+`src/lib/constants.test.ts` compares the two lists). Check constraints run in name order, so
+`_allowed` reports first.
 
-RLS: `messages` SELECT and INSERT where `is_household_member(household_id)`, DELETE where
-`member_id = current_member_id()`, no UPDATE. `message_reactions` SELECT and INSERT where
-member of the household, DELETE where `member_id = current_member_id()`. Grants: messages
-select, insert (household_id, body), delete; message_reactions select, insert (message_id,
-emoji), delete. `anon` gets nothing. Both tables join the `supabase_realtime` publication.
+Triggers (security definer, empty `search_path`, not callable by clients): on INSERT into
+`messages`, `member_id := coalesce(current_member_id(), member_id)` (the service role keeps
+what it sends) and the body is trimmed of the same whitespace as JavaScript's `trim()` (not
+only spaces, so a body of only newlines is rejected); on INSERT into `message_reactions`, the
+same for `member_id`, and `household_id` from the message (a missing message raises
+`not_found`).
+
+RLS: `messages` SELECT where `is_household_member(household_id)`, INSERT where member and
+`member_id = current_member_id()`, DELETE where `member_id = current_member_id()`, no UPDATE.
+`message_reactions` the same. Grants: messages select, insert (household_id, body), delete;
+message_reactions select, insert (message_id, emoji), delete. `anon` gets nothing. Both tables
+join the `supabase_realtime` publication with replica identity full, like the other published
+tables.
 
 ### Backend methods (`src/lib/backend/types.ts`)
 
@@ -307,18 +333,60 @@ a reaction changed on a message, or `resync`. The Supabase backend maps realtime
 both tables to these (a DELETE carries the primary key, which is enough); the demo backend
 emits them for its own writes and on `storage` events from other tabs.
 
+Both backends behave the same on the edges: a household the caller cannot see is `not_found`;
+a blank body or one over 4000 characters (an emoji counts as one) is `invalid_input: body`;
+deleting a message that is not yours (or is gone) is `not_found`; adding a reaction is
+idempotent, needs one of `REACTION_EMOJIS` (`invalid_input: emoji` otherwise) and an existing
+message (`not_found`); removing one touches only your own and never errors when nothing
+matches. Messages order by `created_at` to the microsecond (`instantOf` in
+`src/lib/logic/chat.ts`; a JS Date stops at milliseconds), then id.
+
+- Supabase: `listMessages` embeds reactions in one request (`reactions:message_reactions(...)`,
+  sorted oldest first in the client), caps `limit` at 999 (the API returns at most 1000 rows
+  and one extra row tells `hasMore`), never ends a page inside a group of messages sharing one
+  `created_at` (a group bigger than the page is returned whole, so a page can then be longer
+  than `limit`), and passes `before` on unchanged, microseconds included (never through a JS
+  Date). `sendMessage` sends only `household_id` and `body`. `subscribeChat` listens on one
+  channel to both tables with `household_id=eq.<id>` for every event, deletes included,
+  maps a messages DELETE `old.id` and a message_reactions `message_id` to `ChatChange`, and
+  emits `resync` on every join (the first included). A new subscription may first replay
+  changes made shortly before it joined, so handling is idempotent.
+- Demo: messages and reactions live in the same localStorage document (`messages`,
+  `message_reactions`). Listeners hear a write synchronously, just before its promise
+  resolves; no-op writes emit nothing; another tab's change to this household's chat emits
+  `resync`. Every demo household starts with a short seeded conversation between Stratis,
+  Shea and Ela.
+- `ChatProvider` merges by id only, keeps a sent message's bubble key, takes a stored message
+  for a pending send only if it was posted after the send began (and gives the bubble back if
+  the send then fails), and on `resync` reloads the newest page and then the older loaded
+  messages it doesn't cover.
+
 ### UI
 
 - Floating tab bar: **Home, Chat, Stats**. The round + (new item) shows on Home and Stats, not
   on Chat. A small dot on Chat means unread messages from others (last-read time is kept per
   member on this device).
 - Chat screen: large title "Chat", message bubbles (own on the right in the tint colour, others
-  on the left in light grey with the sender's emoji and name), day separators, reactions as
-  small chips under a bubble (tap a chip to add or remove that reaction), long-press (or the
-  context-menu key / right-click) on a bubble opens the reaction bar (six quick reactions plus
-  "+" for the full grid) with Copy and, for your own messages, Delete. Older messages load as
-  you scroll up. The composer sits above the tab bar; while typing, the tab bar hides and the
-  composer follows the iPhone keyboard (`visualViewport`).
+  on the left in white with the sender's emoji and name), reactions as small chips under a
+  bubble (tap a chip to add or remove that reaction), long-press (or the context-menu key /
+  right-click / Enter on a focused bubble) on a bubble opens the reaction bar (six quick
+  reactions plus "+" for the full grid) with Copy and, for your own messages, Delete (confirmed;
+  from the keyboard, focus moves on to the next message). Older messages load as you scroll up.
+- Runs group one sender's messages within 5 minutes (the name over the first, the avatar beside
+  the last, the tail on the last bubble). Separators read "Today 08:05", "Yesterday 18:42" or
+  "Tue 6 Oct 18:42" in the household's time zone and also appear after an hour's pause. A
+  message of only one to three emoji shows large with no bubble. A missing sender reads
+  "Former member".
+- The unread dot uses a last-read time per member on this device, in localStorage under
+  `homeos.chat.read.<memberId>`.
+- Composer: sits above the tab bar. While typing, the tab bar slides away (hidden and inert)
+  and the composer follows the iPhone keyboard (`visualViewport`); when the field was tapped
+  with a finger, it stays where it was until the keyboard's height is known (or 600 ms pass),
+  so it never drops behind the rising keyboard first. Tapped with a finger, Return starts a new
+  line and the round button sends (like Messages); with a hardware keyboard, Enter sends and
+  Shift+Enter starts a new line; Ctrl or Cmd+Enter always sends. The send button is
+  `aria-disabled` while blank, so Tab from the field reaches it and then the tab bar. On Chat,
+  toasts sit above the composer (`--toast-bottom`, set by ChatScreen and read by `Toast`).
 - Home: each area header has a small + that opens the new-item sheet with that area chosen
   (see "Home" above).
 

@@ -6,7 +6,7 @@
 //   ?demo-seed=1   wipe, sign in as Stratis, and recreate the prototype household
 //   ?demo-reset=1  wipe everything (signed out, no household)
 
-import { CHAT_PAGE_SIZE, DEFAULT_ADDRESS, DEFAULT_AREAS, MEMBER_COLORS, SEED_ITEMS, TEXT_LIMITS } from '../constants';
+import { CHAT_PAGE_SIZE, DEFAULT_ADDRESS, DEFAULT_AREAS, MEMBER_COLORS, REACTION_EMOJIS, SEED_ITEMS, TEXT_LIMITS } from '../constants';
 import { addDays, addMonths, daysBetween, deviceTimeZone, parseISODate, todayIn, zonedParts } from '../logic/dates';
 import { applyKindRules, nextDueDate } from '../logic/items';
 import type {
@@ -1250,7 +1250,10 @@ export class DemoBackend implements Backend {
       const me = this.meIn(doc);
       const mine = (r: ReactionRow) => r.message_id === messageId && r.member_id === me.id && r.emoji === value;
       const done = (didChange: boolean) => ({ result: undefined, householdId: me.household_id, change: didChange ? changed : null });
-      if (!value || charCount(value) > REACTION_EMOJI_MAX) throw invalidInput('emoji');
+      // Only the app's reaction emoji, like the migration's message_reactions_emoji_allowed.
+      if (!value || charCount(value) > REACTION_EMOJI_MAX || !(REACTION_EMOJIS as readonly string[]).includes(value)) {
+        throw invalidInput('emoji');
+      }
       const message = doc.messages.find((m) => m.id === messageId && m.household_id === me.household_id);
       if (!message) throw new BackendError('not_found', 'Message not found');
       if (doc.message_reactions.some(mine)) return done(false);

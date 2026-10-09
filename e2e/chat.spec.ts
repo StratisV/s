@@ -123,10 +123,75 @@ test.describe('Chat', () => {
     // The send button keeps the field focused (and the iPhone keyboard up).
     await expect(field(page)).toBeFocused();
 
+    // Only emoji: large, with no bubble.
+    await field(page).fill('🎉');
+    await field(page).press('Enter');
+    await expect(bubbles(page).last()).toHaveText('🎉');
+    await expect(bubbles(page).last()).toHaveCSS('font-size', '46px');
+    await expect(bubbles(page).last()).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+
     await reopen(page);
     await openChat(page);
-    await expect(bubbles(page)).toHaveCount(10);
+    await expect(bubbles(page)).toHaveCount(11);
     await expect(bubbles(page).nth(8)).toHaveText('Bin day tomorrow');
+  });
+
+  test('tapped with a finger, Return starts a new line and the round button sends', async ({ page }) => {
+    await openSeeded(page);
+    await openChat(page);
+    const form = chatScreen(page).getByRole('form', { name: 'New message' });
+    const resting = (await form.boundingBox())!;
+    // A stand-in for the iPhone's visual viewport, so the keyboard can be simulated.
+    await page.evaluate(() => {
+      const vv = Object.assign(new EventTarget(), { height: window.innerHeight, offsetTop: 0, width: window.innerWidth });
+      (window as unknown as { visualViewport: unknown }).visualViewport = vv;
+      (window as unknown as { __vv: typeof vv }).__vv = vv;
+    });
+    await field(page).tap();
+    await expect(field(page)).toBeFocused();
+    await expect(field(page)).toHaveAttribute('enterkeyhint', 'enter');
+    // The keyboard is on its way: the composer waits where it was instead of dropping first.
+    const waiting = await page.evaluate(() => ({
+      pending: document.querySelector('section[aria-label="Chat"]')!.hasAttribute('data-kb-pending'),
+      bottom: document.querySelector('form[aria-label="New message"]')!.getBoundingClientRect().bottom,
+    }));
+    expect(waiting.pending).toBe(true);
+    expect(Math.abs(waiting.bottom - (resting.y + resting.height))).toBeLessThan(2);
+    await page.evaluate(() => {
+      const vv = (window as unknown as { __vv: EventTarget & { height: number } }).__vv;
+      vv.height = window.innerHeight - 336;
+      vv.dispatchEvent(new Event('resize'));
+    });
+    await expect(async () => {
+      const lifted = (await form.boundingBox())!;
+      expect(Math.round(lifted.y + lifted.height)).toBe(874 - 336 - 8);
+    }).toPass();
+
+    await page.keyboard.type('Shopping list');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('Milk');
+    await expect(field(page)).toHaveValue('Shopping list\nMilk');
+    await chatScreen(page).getByRole('button', { name: 'Send' }).tap();
+    await expect(bubbles(page).last()).toHaveText('Shopping list\nMilk');
+    await expect(field(page)).toBeFocused();
+  });
+
+  test('Tab from the empty composer goes to Send, then to the tab bar', async ({ page }) => {
+    await openSeeded(page);
+    await openChat(page);
+    // Reached from the keyboard (Shift+Tab back from the tab bar would do the same).
+    await field(page).focus();
+    await expect(page.locator('nav[data-hidden]')).toHaveCount(1);
+    await page.keyboard.press('Tab');
+    const send = chatScreen(page).getByRole('button', { name: 'Send' });
+    await expect(send).toBeFocused();
+    await expect(send).toBeDisabled(); // aria-disabled: off, but reachable
+    await page.keyboard.press('Enter');
+    await expect(bubbles(page)).toHaveCount(8);
+    // Out of the field, the tab bar is back.
+    await expect(tabs(page)).toBeVisible();
+    await page.keyboard.press('Tab');
+    await expect(tabButton(page, 'Home')).toBeFocused();
   });
 
   test('messages from another tab or person arrive live; scrolled up, a pill offers them', async ({ page }) => {
@@ -242,6 +307,51 @@ test.describe('Chat', () => {
     await openChat(page);
     await expect(bubbles(page)).toHaveCount(7);
     await expect(bubble(page, 'Restocked the olive oil')).toHaveCount(0);
+  });
+
+  test('deleting from the keyboard moves focus to the next message', async ({ page }) => {
+    await openSeeded(page);
+    await openChat(page);
+    await bubble(page, "I'm in all morning").focus();
+    await page.keyboard.press('Enter');
+    await menu(page).getByRole('button', { name: 'Delete' }).focus();
+    await page.keyboard.press('Enter');
+    const confirm = await confirmation(page, 'Delete this message?');
+    await expect(confirm.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(confirm.getByRole('button', { name: 'Delete Message' })).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(bubble(page, "I'm in all morning")).toHaveCount(0);
+    await expect(bubble(page, 'Thank you! The hallway')).toBeFocused();
+  });
+
+  test('a menu opened while a message is sending is placed again once it is stored', async ({ page }) => {
+    await openSeeded(page);
+    await openChat(page);
+    // Hold the demo backend's (timer-driven) answer, as a slow network would.
+    const now = await page.evaluate(() => Date.now());
+    await page.clock.pauseAt(now + 1000);
+    await field(page).fill('Slow one');
+    await field(page).press('Enter');
+    const sending = bubble(page, 'Slow one');
+    await expect(sending).toHaveAttribute('aria-label', /, sending$/);
+    await sending.click({ button: 'right' });
+    await expect(menu(page).getByRole('button', { name: 'Copy' })).toBeVisible();
+    await expect(menu(page).getByRole('group', { name: 'Reactions' })).toHaveCount(0);
+    await expect(menu(page).getByRole('button', { name: 'Delete' })).toHaveCount(0);
+
+    await page.clock.resume();
+    const bar = menu(page).getByRole('group', { name: 'Reactions' });
+    await expect(bar).toBeVisible();
+    await expect(menu(page).getByRole('button', { name: 'Delete' })).toBeVisible();
+    const box = (await bar.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(402);
+    const remove = (await menu(page).getByRole('button', { name: 'Delete' }).boundingBox())!;
+    expect(remove.y + remove.height).toBeLessThanOrEqual(874);
+    // The bar sits above the lifted copy of the bubble, not on it.
+    const copy = (await menu(page).locator('[aria-hidden="true"]', { hasText: 'Slow one' }).boundingBox())!;
+    expect(box.y + box.height).toBeLessThanOrEqual(copy.y);
   });
 
   test('Copy puts the message on the clipboard', async ({ page, context }) => {
@@ -402,5 +512,44 @@ test.describe('Chat', () => {
     await retry.click();
     await expect(retry).toHaveCount(0);
     await expect(bubble(page, 'Are you there?')).toHaveAttribute('aria-label', /^You, Today \d\d:\d\d$/);
+  });
+
+  test('a toast floats above the composer, clear of the field', async ({ page }) => {
+    await openSeeded(page);
+    await openChat(page);
+    // Signed out behind this tab's back: reacting fails with a toast.
+    await page.evaluate((key) => {
+      const doc = JSON.parse(localStorage.getItem(key)!);
+      doc.session = null;
+      localStorage.setItem(key, JSON.stringify(doc));
+    }, DEMO_STORAGE_KEY);
+    await messageRow(page, 'Restocked the olive oil').getByRole('button', { name: '👍, 1 reaction from Shea' }).click();
+    const toast = page.getByText('Couldn’t react. Please sign in again.');
+    await expect(toast).toBeVisible();
+    const form = (await chatScreen(page).getByRole('form', { name: 'New message' }).boundingBox())!;
+    // Once it has slid in (it rises 16px as it appears).
+    await expect(async () => {
+      const toastBox = (await toast.boundingBox())!;
+      expect(toastBox.y + toastBox.height).toBeLessThanOrEqual(form.y - 8);
+    }).toPass();
+    // A tap on the field reaches the field.
+    const hit = await page.evaluate(
+      ([x, y]) => document.elementFromPoint(x, y)?.tagName,
+      [form.x + 60, form.y + form.height / 2] as const,
+    );
+    expect(hit).toBe('TEXTAREA');
+  });
+});
+
+test.describe('Chat with Reduce Motion', () => {
+  test.use({ contextOptions: { reducedMotion: 'reduce' } });
+
+  test('the + comes back from Chat without the pop', async ({ page }) => {
+    await openSeeded(page);
+    await openChat(page);
+    await goToTab(page, 'Home');
+    const add = tabs(page).getByRole('button', { name: 'New item' });
+    await expect(add).toBeVisible();
+    expect(await add.evaluate((el) => el.getAnimations().length)).toBe(0);
   });
 });

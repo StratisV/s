@@ -6,14 +6,19 @@ red, amber or green status, a note and an assignee. An item is either **To do** 
 "fix the gate", with a due date, an optional repeat and a push reminder, ticked off when it is
 done) or **To maintain** (something whose condition you keep track of, like the firepit: it
 never gets done and stays on the list). Everyone in the household signs in with **Google**,
-picks an emoji for their profile, and **can edit everything**. A Stats tab shows who has done
-what, everyone gets a weekly email with the full status, and push notifications arrive
-before deadlines and when one is missed.
+picks an emoji for their profile, and **can edit everything**.
 
-Home shows each area with how many of its items are red, amber and green; areas fold away
-with a tap (or all at once) and stay that way on that phone. Above them a green duck and a
-brown hedgehog live under the sky as it is in London right now: sunrise, daytime, sunset, dusk
-or a starry night.
+- **Home**: every area and its items, with how many are red, amber and green. Areas fold away
+  with a tap (or all at once) and stay that way on that phone. Add an item with the round + in
+  the tab bar, or with the small + in an area's header, which starts the item in that area.
+  Above them a green duck and a brown hedgehog live under the sky as it is in London right now:
+  sunrise, daytime, sunset, dusk or a starry night.
+- **Chat**: one group chat for the whole household. Messages are kept for good (no limit on how
+  long they stay), anyone can react to a message with emoji (long-press it, or tap a reaction
+  to add yours), and a dot on the Chat tab shows unread messages.
+- **Stats**: who has done what.
+- A **weekly email** with the full status, and **push notifications** before deadlines and when
+  one is missed.
 
 It is an installable web app (PWA): no App Store needed. Add it to the iPhone Home Screen
 and it behaves like a native app, including notifications (iOS 16.4 or later).
@@ -163,5 +168,15 @@ Everyone who belongs to a household can edit everything in it: the household's n
 address and time zone, its areas, every item (To do or To maintain, and switching between
 them), completions (undo) and each other's profiles
 (name and emoji, under **Profile → Household → People**).
+
+The household chat has its own rules:
+
+- Everyone in the household reads and posts in it.
+- Messages are kept forever: nothing deletes them by age. If someone's account is removed,
+  their messages stay (shown as from a former member).
+- Anyone can react to any message, with several different emoji, once each, and can take back
+  only their own reactions.
+- Only the author can delete a message (for everyone); nobody can edit one.
+
 People outside the household can't see or change any of it. New people join only through an
 invite link (valid for 14 days).

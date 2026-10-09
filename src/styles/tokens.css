@@ -10,6 +10,8 @@
   --label-strong: #1c1c1e;
   --separator: rgba(60, 60, 67, 0.16);
   --tint: #007aff;
+  /* Tint for small text on light tinted fills and glass (5.2:1 or better; #007aff is 3 to 4:1 there). */
+  --tint-text: #0058b9;
   --destructive: #d70015;
   --fill-tertiary: rgba(118, 118, 128, 0.12);
   --toggle-on: #34c759;
