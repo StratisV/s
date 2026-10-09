@@ -12,7 +12,9 @@
 // - An advisory lock stops two builds from migrating at the same time.
 //
 // Flags: --dry-run applies the pending migrations in one transaction and rolls back (to
-// check them); --all treats every migration as pending (with --dry-run, to check them all).
+// check them); --all treats every migration as pending (with --dry-run, to check them all);
+// --no-record applies without recording (a shared local test database whose history the
+// Supabase CLI also manages, so its `migration up` never meets a version it doesn't have).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,6 +26,7 @@ const dir = path.join(root, 'supabase', 'migrations');
 const args = new Set(process.argv.slice(2));
 const dryRun = args.has('--dry-run');
 const all = args.has('--all');
+const record = !args.has('--no-record');
 
 const url = process.env.MIGRATE_DATABASE_URL || process.env.SUPABASE_DB_URL || process.env.POSTGRES_URL_NON_POOLING;
 if (!url) {
@@ -85,11 +88,13 @@ try {
       await client.query('begin');
       try {
         await client.query(sql);
-        await client.query(
-          `insert into supabase_migrations.schema_migrations (version, name, statements)
-           values ($1, $2, array[$3]) on conflict (version) do nothing`,
-          [version, rest.join('_'), sql],
-        );
+        if (record) {
+          await client.query(
+            `insert into supabase_migrations.schema_migrations (version, name, statements)
+             values ($1, $2, array[$3]) on conflict (version) do nothing`,
+            [version, rest.join('_'), sql],
+          );
+        }
         await client.query('commit');
         console.log(`migrate: applied ${f}`);
       } catch (err) {
