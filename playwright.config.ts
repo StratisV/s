@@ -1,6 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
-const PORT = 4173;
+// E2E_PORT lets two checkouts run their e2e suites side by side.
+const PORT = Number(process.env.E2E_PORT || 4173);
 
 /** iPhone-sized Chromium (WebKit isn't needed: layout is plain CSS). */
 export default defineConfig({
