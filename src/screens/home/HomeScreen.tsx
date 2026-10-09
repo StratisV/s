@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { RAG_ORDER, RAG_RING, RAG_TEXT, RAG_TINT } from '../../lib/constants';
+import { longDay } from '../../lib/logic/dates';
 import { itemMeta, itemsByArea } from '../../lib/logic/items';
 import type { Area, ISODate, Item, Member, Rag } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
@@ -99,6 +100,7 @@ export function HomeScreen({ tabs, onOpenItem, onOpenProfile, onAddItem, revealA
       label="Home"
       title="Home"
       subtitle={data.household.address.trim() || undefined}
+      eyebrow={<time dateTime={today}>{longDay(today)}</time>}
       avatarEmoji={me.emoji}
       onAvatar={onOpenProfile}
       tabs={tabs}

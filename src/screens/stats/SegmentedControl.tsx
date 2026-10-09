@@ -8,13 +8,22 @@ interface SegmentedControlProps<T extends string> {
   value: T;
   onChange(value: T): void;
   className?: string;
+  /** Smaller (30px), for a control that sits under another one. */
+  compact?: boolean;
 }
 
 /**
  * iOS segmented control: a white thumb slides between the segments.
  * A radio group: arrow keys (and Home/End) move the selection.
  */
-export function SegmentedControl<T extends string>({ label, options, value, onChange, className }: SegmentedControlProps<T>) {
+export function SegmentedControl<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+  className,
+  compact = false,
+}: SegmentedControlProps<T>) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const index = Math.max(0, options.findIndex((o) => o.value === value));
 
@@ -38,6 +47,7 @@ export function SegmentedControl<T extends string>({ label, options, value, onCh
       className={`${styles.track} ${className ?? ''}`}
       style={{ '--count': options.length, '--index': index } as CSSProperties}
       onKeyDown={onKeyDown}
+      data-compact={compact || undefined}
     >
       <span className={styles.thumb} aria-hidden="true" />
       {options.map((o, i) => (

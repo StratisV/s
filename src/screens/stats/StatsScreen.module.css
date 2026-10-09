@@ -1,5 +1,7 @@
+/* Under the tab switch, so smaller and narrower: it only picks the period. */
 .period {
-  margin: 10px 16px 0;
+  width: min(240px, calc(100% - 32px));
+  margin: 14px auto 0;
 }
 
 .donut {

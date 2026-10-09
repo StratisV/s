@@ -5,6 +5,7 @@ import {
   daysBetween,
   deviceTimeZone,
   formatDay,
+  longDay,
   monthKey,
   monthName,
   parseISODate,
@@ -173,5 +174,12 @@ describe('monthKey', () => {
     expect(monthKey(at('2026-12-31T23:30:00Z'), 'Europe/London')).toBe('2026-12');
     expect(monthKey(at('2026-12-31T23:30:00Z'), 'Europe/Berlin')).toBe('2027-01');
     expect(monthKey(at('2027-01-01T03:00:00Z'), 'America/New_York')).toBe('2026-12');
+  });
+});
+
+describe('longDay', () => {
+  it('writes the day out in full, UK style', () => {
+    expect(longDay('2026-10-09')).toBe('Friday 9 October');
+    expect(longDay('2027-01-01')).toBe('Friday 1 January');
   });
 });

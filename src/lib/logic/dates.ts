@@ -94,6 +94,11 @@ export function formatDay(d: ISODate, today: ISODate): string {
 }
 
 /** "October", for captions. */
+/** "Friday 9 October": a day written out in full (UK style). */
+export function longDay(d: ISODate): string {
+  return new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }).format(toUTC(d));
+}
+
 export function monthName(d: ISODate): string {
   return toUTC(d).toLocaleString('en-GB', { month: 'long', timeZone: 'UTC' });
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { RAG_LABEL } from '../../lib/constants';
 import type { Item } from '../../lib/types';
 import { useConfetti } from '../../ui/Confetti';
+import { EmojiText } from '../../ui/EmojiText';
 import { inCollapsedArea } from './areaPanel';
 import { StatusDot, StatusRing } from './StatusRing';
 import styles from './ItemRow.module.css';
@@ -116,8 +117,10 @@ export function ItemRow({ item, meta, onOpen, onComplete }: ItemRowProps) {
           <span className="visually-hidden">{spoken}</span>
         </span>
         <span className={styles.meta}>
-          <span data-meta="">
-            {meta.who}
+          <span data-meta="" className={styles.lead}>
+            <span className={styles.who}>
+              <EmojiText text={meta.who} />
+            </span>
             {meta.date ? (
               <>
                 {' · '}
@@ -132,10 +135,10 @@ export function ItemRow({ item, meta, onOpen, onComplete }: ItemRowProps) {
             ) : null}
           </span>
           {item.note.trim() ? (
-            <>
+            <span className={styles.note}>
               {' · '}
-              <span className={styles.note}>{item.note.trim().replace(/\s+/g, ' ')}</span>
-            </>
+              {item.note.trim().replace(/\s+/g, ' ')}
+            </span>
           ) : null}
         </span>
       </button>
