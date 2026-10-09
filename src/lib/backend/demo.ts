@@ -1225,7 +1225,7 @@ export class DemoBackend implements Backend {
       const me = this.meIn(doc);
       const mine = (r: ReactionRow) => r.message_id === messageId && r.member_id === me.id && r.emoji === value;
       const done = (didChange: boolean) => ({ result: undefined, householdId: me.household_id, change: didChange ? changed : null });
-      if (!value.trim() || charCount(value) > REACTION_EMOJI_MAX) throw invalidInput('emoji');
+      if (!value || charCount(value) > REACTION_EMOJI_MAX) throw invalidInput('emoji');
       const message = doc.messages.find((m) => m.id === messageId && m.household_id === me.household_id);
       if (!message) throw new BackendError('not_found', 'Message not found');
       if (doc.message_reactions.some(mine)) return done(false);

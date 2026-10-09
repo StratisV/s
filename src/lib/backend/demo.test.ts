@@ -838,7 +838,8 @@ describe('chat', () => {
   const later = (ms: number) => {
     clock = new Date(clock.getTime() + ms);
   };
-  const reactionsOf = (doc: { message_reactions: { message_id: string }[] }, id: string) =>
+  type StoredReaction = { message_id: string; member_id: string; household_id: string; emoji: string };
+  const reactionsOf = (doc: { message_reactions: StoredReaction[] }, id: string) =>
     doc.message_reactions.filter((r) => r.message_id === id);
 
   /** Bob joins Stratis's household; the shared document is left signed in as Bob. */
@@ -863,7 +864,7 @@ describe('chat', () => {
     expect(all).toMatch(/heating engineer/i);
     expect(all).toMatch(/firepit/i);
     expect(all).toMatch(/olive oil/i);
-    expect(all).not.toMatch(/—/); // no em dashes in copy
+    expect(all).not.toMatch(/\u2014/); // no em dashes in copy
     const [stratis, shea, ela] = data.members;
     expect(new Set(messages.map((m) => m.member_id))).toEqual(new Set([stratis.id, shea.id, ela.id]));
 
@@ -1131,14 +1132,14 @@ describe('chat', () => {
     ]);
 
     // message_reactions.emoji: 1 to 16 characters.
-    for (const emoji of ['', '  ', '🦔'.repeat(17)]) {
+    for (const emoji of ['', '🦔'.repeat(17)]) {
       await rejectsWithMessage(bob.setReaction(msg.id, emoji, true), /^invalid_input: emoji$/);
     }
     await bob.setReaction(msg.id, '👨‍👩‍👧‍👦', true);
     await rejectsWith(bob.setReaction('nope', '👍', true), 'not_found');
     await bob.setReaction('nope', '👍', false);
 
-    const rows = reactionsOf(storedDoc(), msg.id) as { household_id: string; member_id: string }[];
+    const rows = reactionsOf(storedDoc(), msg.id);
     expect(rows).toHaveLength(3);
     expect(rows.every((r) => r.household_id === hid)).toBe(true);
     expect(rows.filter((r) => r.member_id === bobMe.id)).toHaveLength(1);

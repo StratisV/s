@@ -10,16 +10,22 @@ import {
   type SupabaseClient,
   type User,
 } from '@supabase/supabase-js';
-import type { ChatChange, ChatMessage, ChatPage } from '../types';
+import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
+import { CHAT_PAGE_SIZE, TEXT_LIMITS } from '../constants';
 import type {
   Area,
   AuthUser,
+  ChatChange,
+  ChatMessage,
+  ChatPage,
+  ChatReaction,
   Completion,
   CreateHouseholdInput,
   Household,
   HouseholdData,
   InvitePreview,
   Item,
+  ISOTimestamp,
   ItemDraft,
   JoinHouseholdInput,
   Member,
@@ -44,6 +50,9 @@ const AREA_COLS = 'id, household_id, name, position';
 const ITEM_COLS =
   'id, household_id, area_id, title, note, rag, due_date, assignee_id, repeat, notify, status, created_by, updated_by, created_at, updated_at';
 const COMPLETION_COLS = 'id, household_id, item_id, item_title, credited_to, completed_by, completed_at';
+const MESSAGE_COLS = 'id, household_id, member_id, body, created_at';
+/** A message with every reaction on it, in one request (PostgREST resource embedding). */
+const MESSAGE_WITH_REACTIONS = `${MESSAGE_COLS}, reactions:message_reactions(message_id, member_id, emoji, created_at)`;
 
 /** Columns each patch may write (the DB grants UPDATE on exactly these). */
 const HOUSEHOLD_PATCH_KEYS = ['name', 'address', 'timezone'] as const;
@@ -52,6 +61,12 @@ const ITEM_PATCH_KEYS = ['area_id', 'title', 'note', 'rag', 'due_date', 'assigne
 
 /** Rows per request when reading lists. Must not exceed the API's max_rows (1000 by default). */
 const PAGE = 1000;
+
+/** message_reactions.emoji: 1 to 16 characters (constraint message_reactions_emoji_length). */
+const REACTION_EMOJI_MAX = 16;
+/** Message ids per getMessages request, so the URL stays short. */
+const IDS_PER_REQUEST = 100;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Messages the RPCs and triggers raise that map straight onto a BackendErrorCode. */
 const RPC_CODES: ReadonlySet<string> = new Set<BackendErrorCode>([
@@ -191,6 +206,72 @@ function toHousehold(row: Household): Household {
     weekly_email_day: Number(row.weekly_email_day),
     weekly_email_time: toHHMM(row.weekly_email_time),
   };
+}
+
+// ── Chat rows ──────────────────────────────────────────────
+
+interface MessageRow {
+  id: string;
+  household_id: string;
+  member_id: string | null;
+  body: string;
+  created_at: ISOTimestamp;
+  reactions?: ChatReaction[] | null;
+}
+
+/**
+ * Microseconds since the epoch. Postgres keeps microseconds and PostgREST prints them
+ * ('2026-10-09T19:13:24.1021+00:00'), while a JS Date stops at milliseconds.
+ */
+export function instantOf(ts: ISOTimestamp): number {
+  const fraction = /[T ][\d:]+\.(\d+)/.exec(ts)?.[1] ?? '';
+  return Date.parse(ts) * 1000 + Number(fraction.slice(3, 6).padEnd(3, '0'));
+}
+
+const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/** Chat order: created_at (to the microsecond), then id. */
+function byCreated(a: MessageRow, b: MessageRow): number {
+  return instantOf(a.created_at) - instantOf(b.created_at) || compareText(a.id, b.id);
+}
+
+/** Exactly the contract's shape, reactions oldest first. */
+function toChatMessage(row: MessageRow): ChatMessage {
+  const reactions = (row.reactions ?? [])
+    .map((r) => ({ message_id: r.message_id, member_id: r.member_id, emoji: r.emoji, created_at: r.created_at }))
+    .sort(
+      (a, b) =>
+        instantOf(a.created_at) - instantOf(b.created_at) ||
+        compareText(a.member_id, b.member_id) ||
+        compareText(a.emoji, b.emoji),
+    );
+  return {
+    id: row.id,
+    household_id: row.household_id,
+    member_id: row.member_id,
+    body: row.body,
+    created_at: row.created_at,
+    reactions,
+  };
+}
+
+/**
+ * listMessages' page size: a positive whole number, CHAT_PAGE_SIZE when missing or not a
+ * number, and below the API's max_rows so the extra row that tells "there is more" fits.
+ */
+function chatPageSize(limit: number | undefined): number {
+  if (limit === undefined || Number.isNaN(limit)) return CHAT_PAGE_SIZE;
+  return Math.min(PAGE - 1, Math.max(1, Math.floor(limit)));
+}
+
+/** Characters as Postgres length() counts them (code points): an emoji is one. */
+const charCount = (value: string) => Array.from(value).length;
+
+type ChangePayload = RealtimePostgresChangesPayload<Record<string, unknown>>;
+
+/** The row a realtime change is about: the new row, or for a DELETE the old one (its primary key). */
+function changedRow(payload: ChangePayload): Record<string, unknown> {
+  return (payload.eventType === 'DELETE' ? payload.old : payload.new) ?? {};
 }
 
 let channelSeq = 0;
@@ -571,23 +652,162 @@ export class SupabaseBackend implements Backend {
     await runAffecting(this.client.from(table).update(values).eq('id', id).select('id'));
   }
 
-  // ── Chat (STUB: replaced by the backend agent) ─────────
-  listMessages(_householdId: string, _opts?: { before?: string; limit?: number }): Promise<ChatPage> {
-    return Promise.reject(new Error('chat not implemented'));
+  // ── Chat (one group chat per household, kept forever) ──
+  // supabase/migrations/20261010000100_chat.sql: members read and post, and delete only
+  // their own messages and reactions. The database sets the sender (and a reaction's
+  // household) and trims the body, so a client sends only household_id and body.
+
+  async listMessages(householdId: string, opts: { before?: ISOTimestamp; limit?: number } = {}): Promise<ChatPage> {
+    const limit = chatPageSize(opts.limit);
+    const { before } = opts;
+    if (before != null && Number.isNaN(Date.parse(before))) throw invalidInput('before');
+    if (!UUID.test(householdId)) throw new BackendError('not_found');
+    // One row more than the page tells whether older messages exist.
+    const rows = await this.newestMessages(householdId, before, limit + 1);
+    let hasMore = rows.length > limit;
+    let page = rows.slice(0, limit);
+    if (hasMore) {
+      // The next page starts strictly before this page's oldest message, so a page must not
+      // end inside a group of messages sharing one created_at (rows written in a single
+      // transaction): the rest of the group would never be listed.
+      const boundary = rows[limit].created_at;
+      const whole = page.filter((m) => m.created_at !== boundary);
+      if (whole.length > 0) {
+        page = whole;
+      } else {
+        // The whole page shares that created_at: return the whole group instead.
+        page = await this.messagesAt(householdId, boundary);
+        hasMore = (await this.newestMessages(householdId, boundary, 1)).length > 0;
+      }
+    }
+    // RLS shows an outsider an empty chat. Like load(), report a household the caller cannot see.
+    if (page.length === 0) await runAffecting(this.client.from('households').select('id').eq('id', householdId).limit(1));
+    return { messages: page.reverse().map(toChatMessage), hasMore };
   }
-  getMessages(_ids: string[]): Promise<ChatMessage[]> {
-    return Promise.reject(new Error('chat not implemented'));
+
+  async getMessages(ids: string[]): Promise<ChatMessage[]> {
+    // RLS filters rather than refuses: a message in another household is simply missing,
+    // like a deleted one. Anything that is not a uuid cannot be a message id.
+    const wanted = [...new Set(ids)].filter((id) => UUID.test(id));
+    const requests: Promise<MessageRow[] | null>[] = [];
+    for (let i = 0; i < wanted.length; i += IDS_PER_REQUEST) {
+      const chunk = wanted.slice(i, i + IDS_PER_REQUEST);
+      requests.push(run<MessageRow[] | null>(this.client.from('messages').select(MESSAGE_WITH_REACTIONS).in('id', chunk)));
+    }
+    const rows = (await Promise.all(requests)).flatMap((r) => r ?? []);
+    return rows.sort(byCreated).map(toChatMessage);
   }
-  sendMessage(_householdId: string, _body: string): Promise<ChatMessage> {
-    return Promise.reject(new Error('chat not implemented'));
+
+  async sendMessage(householdId: string, body: string): Promise<ChatMessage> {
+    const text = (body ?? '').trim();
+    if (!text || charCount(text) > TEXT_LIMITS.chatMessage) throw invalidInput('body');
+    if (!UUID.test(householdId)) throw new BackendError('not_found');
+    // Not a member: RLS rejects the insert (not_found).
+    const rows = await run<MessageRow[] | null>(
+      this.client.from('messages').insert({ household_id: householdId, body: text }).select(MESSAGE_COLS),
+    );
+    if (!rows?.[0]) throw new BackendError('not_found');
+    return toChatMessage({ ...rows[0], reactions: [] });
   }
-  deleteMessage(_id: string): Promise<void> {
-    return Promise.reject(new Error('chat not implemented'));
+
+  async deleteMessage(id: string): Promise<void> {
+    if (!UUID.test(id)) throw new BackendError('not_found');
+    // RLS deletes only the caller's own messages: someone else's touches zero rows. Its
+    // reactions go with it (on delete cascade).
+    await runAffecting(this.client.from('messages').delete().eq('id', id).select('id'));
   }
-  setReaction(_messageId: string, _emoji: string, _on: boolean): Promise<void> {
-    return Promise.reject(new Error('chat not implemented'));
+
+  async setReaction(messageId: string, emoji: string, on: boolean): Promise<void> {
+    const value = emoji ?? '';
+    if (!on) {
+      // RLS deletes only the caller's own reactions, so another member's same emoji stays.
+      // Removing one that is not there (or from a message that is gone) is fine.
+      if (!UUID.test(messageId) || !value) return;
+      await run<null>(this.client.from('message_reactions').delete().eq('message_id', messageId).eq('emoji', value));
+      return;
+    }
+    if (!value || charCount(value) > REACTION_EMOJI_MAX) throw invalidInput('emoji');
+    if (!UUID.test(messageId)) throw new BackendError('not_found');
+    // Only message_id and emoji are insertable: the database adds the caller and the message's
+    // household. A reaction that is already there is left alone. A missing message raises
+    // not_found, and one in another household fails RLS (not_found too).
+    await run<null>(
+      this.client
+        .from('message_reactions')
+        .upsert({ message_id: messageId, emoji: value }, { onConflict: 'message_id,member_id,emoji', ignoreDuplicates: true }),
+    );
   }
-  subscribeChat(_householdId: string, _onChange: (change: ChatChange) => void): Unsubscribe {
-    return () => {};
+
+  subscribeChat(householdId: string, onChange: (change: ChatChange) => void): Unsubscribe {
+    // A unique topic, like subscribe().
+    const channel = this.client.channel(`chat:${householdId}:${++channelSeq}`);
+    let closed = false;
+    const emit = (change: ChatChange) => {
+      if (closed) return;
+      try {
+        onChange(change);
+      } catch (err) {
+        // Keep realtime delivering the other events.
+        console.error(err);
+      }
+    };
+    // Both tables carry household_id, and with replica identity full Realtime applies the
+    // filter to deletes too. An INSERT carries the whole row (Realtime checks RLS first);
+    // a DELETE carries only the primary key, which names the message either way. A change
+    // that names no message asks for a reload.
+    const filter = `household_id=eq.${householdId}`;
+    channel.on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter }, (payload: ChangePayload) => {
+      const id = changedRow(payload).id;
+      emit(
+        typeof id === 'string'
+          ? { type: 'message', messageId: id, deleted: payload.eventType === 'DELETE' }
+          : { type: 'resync' },
+      );
+    });
+    channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'message_reactions', filter },
+      (payload: ChangePayload) => {
+        const id = changedRow(payload).message_id;
+        emit(typeof id === 'string' ? { type: 'reaction', messageId: id } : { type: 'resync' });
+      },
+    );
+    let joinedBefore = false;
+    channel.subscribe((status) => {
+      if (status !== 'SUBSCRIBED') return;
+      // Rejoined after a dropped connection: messages and reactions may have been missed.
+      if (joinedBefore) emit({ type: 'resync' });
+      joinedBefore = true;
+    });
+    return () => {
+      if (closed) return;
+      closed = true;
+      void this.client.removeChannel(channel);
+    };
+  }
+
+  /** Up to `count` of the household's newest messages created strictly before `before`. */
+  private async newestMessages(householdId: string, before: string | undefined, count: number): Promise<MessageRow[]> {
+    let query = this.client.from('messages').select(MESSAGE_WITH_REACTIONS).eq('household_id', householdId);
+    // Passed on exactly as given: PostgREST prints microseconds, and going through a JS Date
+    // would cut them to milliseconds and skip a message posted within the same millisecond.
+    if (before != null) query = query.lt('created_at', before);
+    const rows = await run<MessageRow[] | null>(
+      query.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(count),
+    );
+    return rows ?? [];
+  }
+
+  /** Every message of the household created at exactly `createdAt`, newest-first order. */
+  private messagesAt(householdId: string, createdAt: string): Promise<MessageRow[]> {
+    return runAll<MessageRow>((from, to) =>
+      this.client
+        .from('messages')
+        .select(MESSAGE_WITH_REACTIONS)
+        .eq('household_id', householdId)
+        .eq('created_at', createdAt)
+        .order('id', { ascending: false })
+        .range(from, to),
+    );
   }
 }
