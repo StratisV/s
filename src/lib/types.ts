@@ -130,6 +130,8 @@ export interface HouseholdData {
   items: Item[];
   /** All completions for the household (used by Stats). */
   completions: Completion[];
+  /** The Housekeeping tab: the message, the task list and every visit (see HousekeepingData). */
+  housekeeping: HousekeepingData;
 }
 
 export interface InvitePreview {
@@ -213,3 +215,107 @@ export type ChatChange =
   | { type: 'message'; messageId: string; deleted: boolean }
   | { type: 'reaction'; messageId: string }
   | { type: 'resync' };
+
+// ── Housekeeping (the weekly visit; docs/ARCHITECTURE.md "Housekeeping") ──
+// Tables in supabase/migrations/20261010000400_housekeeping.sql. Every member (the
+// housekeeper is one) reads and edits all of it.
+
+/**
+ * The household's "Message for the housekeeper" (table housekeeping_notes, one row per
+ * household). It stays until someone changes or clears it. A household that never wrote
+ * one reads as `{ body: '', updated_at: null, updated_by: null }`.
+ */
+export interface HousekeepingNote {
+  /** Multi-line, trimmed, up to TEXT_LIMITS.housekeepingNote characters. '' = no message. */
+  body: string;
+  /** When it was last changed (cleared included); null if never written. */
+  updated_at: ISOTimestamp | null;
+  /** Member who last changed it; null if never written or that member is gone. */
+  updated_by: string | null;
+}
+
+/** One task on the household's housekeeping task list (the template every visit copies). */
+export interface HousekeepingTask {
+  id: string;
+  household_id: string;
+  /** Trimmed, 1 to TEXT_LIMITS.housekeepingTask characters. */
+  title: string;
+  /** Order on the list (0 first). New tasks go last. */
+  position: number;
+}
+
+/**
+ * One task as it stood on one visit (table housekeeping_visit_tasks): a copy of the task
+ * list made when the visit was created, so renaming or deleting a task never rewrites an
+ * earlier visit. One row per visit and task, ticked and unticked atomically.
+ */
+export interface HousekeepingVisitTask {
+  id: string;
+  visit_id: string;
+  household_id: string;
+  /** The task on the list it was copied from; null once that task is deleted. */
+  task_id: string | null;
+  /** The task's title as it was on that visit. */
+  title: string;
+  position: number;
+  done: boolean;
+  /** Who ticked it (null while not done, or if that member is gone). */
+  done_by: string | null;
+  /** When it was ticked (null while not done). */
+  done_at: ISOTimestamp | null;
+}
+
+/**
+ * One housekeeping visit: at most one per household and day (household time zone), never
+ * in the future. Created by the first write for that day (a tick, comments, the price) or
+ * by "Add a visit".
+ */
+export interface HousekeepingVisit {
+  id: string;
+  household_id: string;
+  /** The day of the visit in the household's time zone. */
+  visit_date: ISODate;
+  /**
+   * The message for the housekeeper as it stood that day: copied from HousekeepingNote when
+   * the visit was created, if the note was last changed on or before visit_date (household
+   * time), else ''. Never changed afterwards (read-only in the app).
+   */
+  note: string;
+  /** Free text, trimmed, up to TEXT_LIMITS.housekeepingComments characters. */
+  comments: string;
+  /** Price for the day in whole pence (0 to HOUSEKEEPING_PRICE_MAX_PENCE); null = not entered. */
+  price_pence: number | null;
+  /** Who recorded the visit (the first write); null if that member is gone. */
+  created_by: string | null;
+  created_at: ISOTimestamp;
+  /** Who changed it last (a tick, comments or price); null if that member is gone. */
+  updated_by: string | null;
+  updated_at: ISOTimestamp;
+  /** Its tasks by position, then title, then id. */
+  tasks: HousekeepingVisitTask[];
+}
+
+/** The housekeeping part of HouseholdData, loaded with the rest of the household. */
+export interface HousekeepingData {
+  note: HousekeepingNote;
+  /** The task list, by position (then created_at, then id). */
+  tasks: HousekeepingTask[];
+  /** Every visit (kept forever), newest first (visit_date descending). */
+  visits: HousekeepingVisit[];
+}
+
+/**
+ * Which checklist row a tick is for. A row whose task is still on the list is named by
+ * that task (`taskId`): this also works for a day with no visit yet, which the tick then
+ * creates. A row whose task has since been deleted (task_id null) is named by its own id
+ * (`visitTaskId`). checklistFor() in src/lib/logic/housekeeping.ts picks the right one.
+ */
+export type HousekeepingTickTarget = { taskId: string } | { visitTaskId: string };
+
+/** Fields of a visit the app saves (only the keys present are written). */
+export interface HousekeepingVisitPatch {
+  /** Trimmed by the backend; up to TEXT_LIMITS.housekeepingComments characters. */
+  comments?: string;
+  /** Whole pence, 0 to HOUSEKEEPING_PRICE_MAX_PENCE, or null to clear the price. */
+  price_pence?: number | null;
+}

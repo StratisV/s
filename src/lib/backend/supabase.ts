@@ -13,6 +13,7 @@ import {
 import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { CHAT_PAGE_SIZE, REACTION_EMOJIS, TEXT_LIMITS } from '../constants';
 import { instantOf } from '../logic/chat';
+import { emptyHousekeeping } from '../logic/housekeeping';
 import type {
   Area,
   AuthUser,
@@ -24,8 +25,12 @@ import type {
   CreateHouseholdInput,
   Household,
   HouseholdData,
+  HousekeepingTask,
+  HousekeepingTickTarget,
+  HousekeepingVisitPatch,
   InvitePreview,
   Item,
+  ISODate,
   ISOTimestamp,
   ItemDraft,
   JoinHouseholdInput,
@@ -451,7 +456,10 @@ export class SupabaseBackend implements Backend {
     ]);
     // RLS hides other households, so "not a member" also lands here.
     if (!households[0]) throw new BackendError('not_found');
-    return { household: toHousehold(households[0]), members, areas, items, completions };
+    // CONTRACT STUB: housekeeping is not read yet (tables in
+    // supabase/migrations/20261010000400_housekeeping.sql); every household reads as empty.
+    const housekeeping = emptyHousekeeping();
+    return { household: toHousehold(households[0]), members, areas, items, completions, housekeeping };
   }
 
   subscribe(householdId: string, onChange: () => void): Unsubscribe {
@@ -818,4 +826,49 @@ export class SupabaseBackend implements Backend {
         .range(from, to),
     );
   }
+
+  // ── Housekeeping (docs/ARCHITECTURE.md "Housekeeping") ──
+  // CONTRACT STUBS: to be implemented against the tables and RPCs in
+  // supabase/migrations/20261010000400_housekeeping.sql.
+
+  setHousekeepingNote(householdId: string, body: string): Promise<void> {
+    return notImplemented('setHousekeepingNote', householdId, body);
+  }
+
+  createHousekeepingTask(householdId: string, title: string): Promise<HousekeepingTask> {
+    return notImplemented('createHousekeepingTask', householdId, title);
+  }
+
+  renameHousekeepingTask(id: string, title: string): Promise<void> {
+    return notImplemented('renameHousekeepingTask', id, title);
+  }
+
+  deleteHousekeepingTask(id: string): Promise<void> {
+    return notImplemented('deleteHousekeepingTask', id);
+  }
+
+  reorderHousekeepingTasks(householdId: string, orderedIds: string[]): Promise<void> {
+    return notImplemented('reorderHousekeepingTasks', householdId, orderedIds);
+  }
+
+  setHousekeepingTaskDone(householdId: string, date: ISODate, target: HousekeepingTickTarget, done: boolean): Promise<string> {
+    return notImplemented('setHousekeepingTaskDone', householdId, date, target, done);
+  }
+
+  saveHousekeepingVisit(householdId: string, date: ISODate, patch: HousekeepingVisitPatch): Promise<string> {
+    return notImplemented('saveHousekeepingVisit', householdId, date, patch);
+  }
+
+  addHousekeepingVisit(householdId: string, date: ISODate): Promise<string> {
+    return notImplemented('addHousekeepingVisit', householdId, date);
+  }
+
+  deleteHousekeepingVisit(id: string): Promise<void> {
+    return notImplemented('deleteHousekeepingVisit', id);
+  }
+}
+
+/** CONTRACT STUB helper: a clear failure for a housekeeping method not built yet. */
+function notImplemented(method: string, ..._args: unknown[]): Promise<never> {
+  return Promise.reject(new BackendError('unknown', `not_implemented: SupabaseBackend.${method}`));
 }

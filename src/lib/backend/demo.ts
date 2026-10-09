@@ -8,6 +8,7 @@
 
 import { CHAT_PAGE_SIZE, DEFAULT_ADDRESS, DEFAULT_AREAS, MEMBER_COLORS, REACTION_EMOJIS, SEED_ITEMS, TEXT_LIMITS } from '../constants';
 import { addDays, addMonths, daysBetween, deviceTimeZone, parseISODate, todayIn, zonedParts } from '../logic/dates';
+import { emptyHousekeeping } from '../logic/housekeeping';
 import { applyKindRules, nextDueDate } from '../logic/items';
 import type {
   Area,
@@ -20,6 +21,9 @@ import type {
   CreateHouseholdInput,
   Household,
   HouseholdData,
+  HousekeepingTask,
+  HousekeepingTickTarget,
+  HousekeepingVisitPatch,
   InvitePreview,
   ISODate,
   ISOTimestamp,
@@ -612,7 +616,9 @@ export class DemoBackend implements Backend {
         .filter((c) => c.household_id === householdId)
         .sort((a, b) => (a.completed_at < b.completed_at ? 1 : a.completed_at > b.completed_at ? -1 : 0))
         .map(toCompletion);
-      return { household: toHousehold(household), members, areas, items, completions };
+      // CONTRACT STUB: housekeeping is not stored yet; every household reads as empty.
+      const housekeeping = emptyHousekeeping();
+      return { household: toHousehold(household), members, areas, items, completions, housekeeping };
     });
   }
 
@@ -1331,4 +1337,49 @@ export class DemoBackend implements Backend {
     }
     return result;
   }
+
+  // ── Housekeeping (docs/ARCHITECTURE.md "Housekeeping") ──
+  // CONTRACT STUBS: to be implemented (collections housekeeping_notes, housekeeping_tasks,
+  // housekeeping_visits and housekeeping_visit_tasks in the document, mirroring the SQL).
+
+  setHousekeepingNote(householdId: string, body: string): Promise<void> {
+    return notImplemented('setHousekeepingNote', householdId, body);
+  }
+
+  createHousekeepingTask(householdId: string, title: string): Promise<HousekeepingTask> {
+    return notImplemented('createHousekeepingTask', householdId, title);
+  }
+
+  renameHousekeepingTask(id: string, title: string): Promise<void> {
+    return notImplemented('renameHousekeepingTask', id, title);
+  }
+
+  deleteHousekeepingTask(id: string): Promise<void> {
+    return notImplemented('deleteHousekeepingTask', id);
+  }
+
+  reorderHousekeepingTasks(householdId: string, orderedIds: string[]): Promise<void> {
+    return notImplemented('reorderHousekeepingTasks', householdId, orderedIds);
+  }
+
+  setHousekeepingTaskDone(householdId: string, date: ISODate, target: HousekeepingTickTarget, done: boolean): Promise<string> {
+    return notImplemented('setHousekeepingTaskDone', householdId, date, target, done);
+  }
+
+  saveHousekeepingVisit(householdId: string, date: ISODate, patch: HousekeepingVisitPatch): Promise<string> {
+    return notImplemented('saveHousekeepingVisit', householdId, date, patch);
+  }
+
+  addHousekeepingVisit(householdId: string, date: ISODate): Promise<string> {
+    return notImplemented('addHousekeepingVisit', householdId, date);
+  }
+
+  deleteHousekeepingVisit(id: string): Promise<void> {
+    return notImplemented('deleteHousekeepingVisit', id);
+  }
+}
+
+/** CONTRACT STUB helper: a clear failure for a housekeeping method not built yet. */
+function notImplemented(method: string, ..._args: unknown[]): Promise<never> {
+  return Promise.reject(new BackendError('unknown', `not_implemented: DemoBackend.${method}`));
 }

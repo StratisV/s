@@ -9,6 +9,9 @@ import type {
   AuthUser,
   CreateHouseholdInput,
   HouseholdData,
+  HousekeepingTask,
+  HousekeepingTickTarget,
+  HousekeepingVisitPatch,
   ISODate,
   Item,
   ItemDraft,
@@ -74,6 +77,46 @@ export interface HomeContextValue {
   /** Completes a task (optimistically) and shows an Undo toast. A state is never completed: no-op. */
   completeItem(id: string): Promise<void>;
   createInvite(): Promise<string>;
+
+  // ── Housekeeping (data.housekeeping; docs/ARCHITECTURE.md "Housekeeping") ──
+  // Same contract as the edits above: shown at once, and on failure only that change is
+  // taken back, a "Couldn't save" toast shows and the promise rejects. Dates are ISODate
+  // days in the household's time zone (`today` is today's); a day after today is refused
+  // without writing (rejects with BackendError('unknown', 'invalid_input: date'), no toast).
+  // The optimistic copies come from the helpers in src/lib/logic/housekeeping.ts
+  // (newVisit, applyTick, applyVisitPatch, withTask*), stamped with `me` and the time now.
+
+  /**
+   * Saves the "Message for the housekeeper" (trimmed; '' clears it). Shown at once with
+   * `me` and now as who changed it. Unchanged text: no write.
+   */
+  setHousekeepingNote(body: string): Promise<void>;
+  /**
+   * Adds a task at the end of the list (and to today's visit, if any). Like createArea it
+   * is not optimistic: resolves to the stored task once written, so the sheet can focus it.
+   */
+  createHousekeepingTask(title: string): Promise<HousekeepingTask>;
+  /** Renames a task on the list and on today's visit (withTaskRenamed). */
+  renameHousekeepingTask(id: string, title: string): Promise<void>;
+  /** Deletes a task from the list; today's visit drops it unless ticked (withTaskDeleted). */
+  deleteHousekeepingTask(id: string): Promise<void>;
+  /** Reorders the task list (all its ids); today's visit follows (withTasksReordered). */
+  reorderHousekeepingTasks(orderedIds: string[]): Promise<void>;
+  /**
+   * Ticks or unticks one row of the checklist for `date` (ChecklistRow.target). With no
+   * visit that day yet, a pending visit (newVisit, rows `pending:<taskId>`) shows at once
+   * and the backend creates the real one; the reload swaps it in under the same row keys.
+   */
+  setHousekeepingTaskDone(date: ISODate, target: HousekeepingTickTarget, done: boolean): Promise<void>;
+  /**
+   * Saves comments and/or the price for `date` (only the keys present), creating the visit
+   * if there is none yet. The UI calls it only with values that differ from what is shown.
+   */
+  saveHousekeepingVisit(date: ISODate, patch: HousekeepingVisitPatch): Promise<void>;
+  /** "Add a visit" on a past day (or today) without one: creates it, nothing ticked. */
+  addHousekeepingVisit(date: ISODate): Promise<void>;
+  /** Deletes a visit (the UI confirms first). Taken off the calendar at once. */
+  deleteHousekeepingVisit(id: string): Promise<void>;
 
   toast: ToastState | null;
   showToast(message: string, action?: ToastState['action']): void;
@@ -199,6 +242,11 @@ function restoreRows<T extends { id: string }>(rows: T[], removed: T[]): T[] {
 }
 
 const byPosition = (a: Area, b: Area) => a.position - b.position;
+
+/** CONTRACT STUB helper: a clear failure for a housekeeping action not built yet. */
+function notImplemented(action: string, ..._args: unknown[]): Promise<never> {
+  return Promise.reject(new BackendError('unknown', `not_implemented: HomeProvider.${action}`));
+}
 
 export function HomeProvider({ backend, children }: { backend: Backend; children: ReactNode }) {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
@@ -665,6 +713,18 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         ),
       completeItem,
       createInvite: () => backend.createInvite(),
+
+      // CONTRACT STUBS (docs/ARCHITECTURE.md "Housekeeping"): to be implemented with
+      // mutate() and the optimistic helpers in src/lib/logic/housekeeping.ts.
+      setHousekeepingNote: (body) => notImplemented('setHousekeepingNote', body),
+      createHousekeepingTask: (title) => notImplemented('createHousekeepingTask', title),
+      renameHousekeepingTask: (id, title) => notImplemented('renameHousekeepingTask', id, title),
+      deleteHousekeepingTask: (id) => notImplemented('deleteHousekeepingTask', id),
+      reorderHousekeepingTasks: (orderedIds) => notImplemented('reorderHousekeepingTasks', orderedIds),
+      setHousekeepingTaskDone: (date, target, done) => notImplemented('setHousekeepingTaskDone', date, target, done),
+      saveHousekeepingVisit: (date, patch) => notImplemented('saveHousekeepingVisit', date, patch),
+      addHousekeepingVisit: (date) => notImplemented('addHousekeepingVisit', date),
+      deleteHousekeepingVisit: (id) => notImplemented('deleteHousekeepingVisit', id),
 
       toast,
       showToast,

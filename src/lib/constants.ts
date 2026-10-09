@@ -139,6 +139,12 @@ export const TEXT_LIMITS = {
   /** No input: emoji come from EMOJI_SET. The database still caps what a client can store. */
   memberEmoji: 16,
   chatMessage: 4000,
+  /** A task on the housekeeping task list (and its copy on a visit). */
+  housekeepingTask: 200,
+  /** The "Message for the housekeeper" (and its copy on a visit). */
+  housekeepingNote: 4000,
+  /** A visit's comments. */
+  housekeepingComments: 4000,
 } as const;
 
 /** Messages per chat page (the newest page first, older ones as you scroll up). */
@@ -159,3 +165,138 @@ export const REACTION_EMOJIS = [
   '🥳', '😅', '🙌', '💪', '🏡', '🧹', '🛠️', '🦔',
   '🦆', '🦊', '🌻', '⭐', '☕', '🍕', '😴', '🤞',
 ] as const;
+
+// ── Housekeeping (docs/ARCHITECTURE.md "Housekeeping") ──────
+
+/**
+ * Highest price for a day, in pence (£10,000.00). The database check
+ * housekeeping_visits_price_range allows 0 to this, or null (not entered).
+ */
+export const HOUSEKEEPING_PRICE_MAX_PENCE = 1_000_000;
+
+/**
+ * The task list every new household starts with, in this order. Keep in step with the
+ * array in create_household and the backfill in
+ * supabase/migrations/20261010000400_housekeeping.sql (same titles, same order; a unit
+ * test compares them, like the reaction emoji).
+ */
+export const HOUSEKEEPING_STARTER_TASKS = [
+  'Change the bed sheets',
+  'Hoover and mop the floors',
+  'Clean the bathrooms',
+  'Clean the kitchen',
+  'Dust the surfaces',
+  'Empty the bins',
+  'Ironing',
+] as const;
+
+/** Title a task gets from "Add Task" in the task list sheet (then focused to type over). */
+export const HOUSEKEEPING_NEW_TASK = 'New task';
+
+/** Comments and the message save this long after the last keystroke (and on blur). */
+export const HOUSEKEEPING_SAVE_DELAY_MS = 1000;
+
+/** A demo person, as in SeedItem.demo_assignee ('me' = the signed-in user). */
+export type DemoPersonKey = 'me' | 'shea' | 'ela';
+
+/**
+ * The demo household's "Message for the housekeeper" (src/lib/backend/demo.ts): written by
+ * `by`, `daysBack` days before today at hour:minute household time.
+ */
+export const HOUSEKEEPING_DEMO_NOTE: {
+  body: string;
+  by: DemoPersonKey;
+  daysBack: number;
+  hour: number;
+  minute: number;
+} = {
+  body: 'Guests arrive Friday, please do the spare room first.',
+  by: 'shea',
+  daysBack: 1,
+  hour: 19,
+  minute: 20,
+};
+
+/** One past visit in the demo household (see HOUSEKEEPING_DEMO_VISITS). */
+export interface HousekeepingSeedVisit {
+  /**
+   * Which Thursday: 0 = the latest Thursday strictly before today (household time zone),
+   * 1 = the Thursday a week before that, and so on. Never today, never in the future.
+   */
+  weeksBack: number;
+  /** Who recorded it: created_by, updated_by and done_by of its ticks. */
+  by: DemoPersonKey;
+  /** Household-time wall clock of the first tick (created_at). */
+  hour: number;
+  minute: number;
+  /** The visit's copy of the message that day ('' = none). */
+  note: string;
+  /**
+   * Titles from HOUSEKEEPING_STARTER_TASKS that were ticked; the others are on the visit
+   * but not done. Ticks are one minute apart from hour:minute, in list order; updated_at is
+   * one minute after the last tick.
+   */
+  done: string[];
+  comments: string;
+  price_pence: number | null;
+}
+
+/**
+ * The demo household's past visits (every demo household, ?demo-seed=1 included, gets
+ * them along with the starter task list and HOUSEKEEPING_DEMO_NOTE). Each visit's tasks
+ * are the seven starter tasks in order. With the e2e clock (Thu 8 Oct 2026, 10:00 London)
+ * they fall on Thu 1 Oct, 24 Sep, 17 Sep, 10 Sep and 3 Sep, so October shows
+ * "1 visit · £60.00" and September "4 visits · £240.00".
+ */
+export const HOUSEKEEPING_DEMO_VISITS: HousekeepingSeedVisit[] = [
+  {
+    weeksBack: 0,
+    by: 'ela',
+    hour: 10,
+    minute: 5,
+    note: 'Please leave the ironing for next week.',
+    done: ['Change the bed sheets', 'Hoover and mop the floors', 'Clean the bathrooms', 'Clean the kitchen', 'Dust the surfaces', 'Empty the bins'],
+    comments: "Ironing left for next week as asked. We're out of bin bags.",
+    price_pence: 6000,
+  },
+  {
+    weeksBack: 1,
+    by: 'shea',
+    hour: 9,
+    minute: 50,
+    note: '',
+    done: [...HOUSEKEEPING_STARTER_TASKS],
+    comments: 'Oven cleaned as well, it took an extra half hour.',
+    price_pence: 6500,
+  },
+  {
+    weeksBack: 2,
+    by: 'ela',
+    hour: 10,
+    minute: 10,
+    note: 'Please give the fridge a wipe inside.',
+    done: ['Hoover and mop the floors', 'Clean the bathrooms', 'Clean the kitchen', 'Dust the surfaces', 'Empty the bins', 'Ironing'],
+    comments: 'Fridge done. The hoover bag is nearly full.',
+    price_pence: 6000,
+  },
+  {
+    weeksBack: 3,
+    by: 'me',
+    hour: 10,
+    minute: 0,
+    note: '',
+    done: ['Change the bed sheets', 'Hoover and mop the floors', 'Clean the bathrooms', 'Clean the kitchen', 'Empty the bins'],
+    comments: '',
+    price_pence: 6000,
+  },
+  {
+    weeksBack: 4,
+    by: 'ela',
+    hour: 10,
+    minute: 20,
+    note: '',
+    done: ['Change the bed sheets', 'Hoover and mop the floors', 'Clean the bathrooms', 'Clean the kitchen', 'Dust the surfaces', 'Empty the bins'],
+    comments: 'The bathroom tap is dripping.',
+    price_pence: 5500,
+  },
+];

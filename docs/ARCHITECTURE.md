@@ -21,6 +21,10 @@ top of Supabase. The design spec is `design/README.md` (Turn 3, option 3a in
 - Radical simplicity: no filters, counters, dashboards or settings beyond the spec. The one
   exception the household asked for: each area header shows how many of its items are red,
   amber and green (see "Home" below).
+- **Housekeeping** (see "Housekeeping" below): a tab for the weekly visit by the housekeeper,
+  who is a household member like everyone else (no roles). A message for the housekeeper,
+  today's checklist from the household's task list, comments and the price for the day, and a
+  calendar of every visit.
 
 ## Layout
 
@@ -33,7 +37,8 @@ src/
   lib/constants.ts         emoji set, colours, labels, default areas, seed items
   lib/logic/*.ts           pure logic: dates, items (missed, sort, repeat, kinds), stats (donut),
                            chat (order, merge, runs, separators, reactions, unread, keyboard),
-                           sun (London sun position), sky (time-of-day sky colours)
+                           sun (London sun position), sky (time-of-day sky colours),
+                           housekeeping (month grid, totals, GBP prices, checklist, optimistic edits)
   lib/backend/types.ts     Backend interface (the contract both backends implement)
   lib/backend/supabase.ts  production backend (supabase-js)
   lib/backend/demo.ts      localStorage backend (no env vars, e2e tests)
@@ -46,6 +51,8 @@ src/
   screens/home/            Home screen (collapsible areas with status counts and an add button),
                            item rows, tab switch (TabBar) and the floating + (AddButton)
   screens/chat/            Household group chat with emoji reactions
+  screens/housekeeping/    Housekeeping tab: message, today's checklist, comments, price, calendar,
+                           task list sheet
   state/ChatProvider.tsx   chat state: pages, realtime merge, optimistic send/react, unread dot
   screens/item/            Item sheet (edit / new)
   screens/stats/           Stats screen + donut
@@ -198,9 +205,12 @@ Details beyond the list above (all covered by `supabase/tests`):
   is dropped (its DELETE still arrives). Supabase applies no RLS to deletes: any signed-in user
   who subscribes without a filter receives DELETE notices from every household, without
   knowing any id. Each notice carries only the deleted row's primary key: the row id for
-  `households`, `members`, `areas`, `items`, `completions` and `messages`, and
+  `households`, `members`, `areas`, `items`, `completions`, `messages`,
+  `housekeeping_tasks`, `housekeeping_visits` and `housekeeping_visit_tasks`,
   (message_id, member_id, emoji) for `message_reactions`, where emoji is one of the app's
-  reaction emoji. No text, names or household ids. This is how Supabase Realtime treats deletes,
+  reaction emoji, and the household id for `housekeeping_notes` (whose rows are only ever
+  deleted with their household, alongside that household's own notice). No text, names or
+  other household ids. This is how Supabase Realtime treats deletes,
   and it cannot be filtered per table in the publication. The app's own subscriptions
   (`subscribe`, `subscribeChat`) always filter by household: by `household_id` on the tables
   that carry it (all with replica identity full, so the filter also applies to deletes) and by
@@ -214,7 +224,8 @@ Details beyond the list above (all covered by `supabase/tests`):
 ## Backend contract
 
 `src/lib/backend/types.ts` is authoritative. `BackendError.code` mirrors the RPC error
-messages above (`network` for fetch failures). `completeItem` on a state throws
+messages above (`network` for fetch failures). The housekeeping methods are listed under
+"Housekeeping" below. `completeItem` on a state throws
 `BackendError('unknown', 'invalid_input: state')` in the demo backend and
 `BackendError('unknown', 'invalid_input')` from Supabase; the UI never calls it for a state.
 
@@ -245,14 +256,16 @@ messages above (`network` for fetch failures). `completeItem` on a state throws
 
 ### The hero and the tab switch
 
-Every tab (Home, Chat, Stats) starts with `ScreenHeader` (`ui/Screen.tsx`): the `Hero`
-(`ui/Hero.tsx`) from the very top of the screen, with the title (an `h1`), a secondary line
-(the address on Home) and the Profile avatar on it, then the Home / Chat / Stats switch
-(`TabBar`, a `nav` named "Tabs" whose buttons carry `aria-current="page"`). The switch is
+Every tab (Home, Chat, Housekeeping, Stats) starts with `ScreenHeader` (`ui/Screen.tsx`): the
+`Hero` (`ui/Hero.tsx`) from the very top of the screen, with the title (an `h1`), a secondary
+line (the address on Home) and the Profile avatar on it, then the Home / Chat / Housekeeping /
+Stats switch (`TabBar`, a `nav` named "Tabs" whose buttons carry `aria-current="page"`; see
+"Housekeeping" for how four segments size and fit). The switch is
 `position: sticky` at `--top-inset`: once the hero has scrolled away it stays at the top on a
 frosted background (`data-stuck`), and `StatusSky` fills in behind the status bar. Welcome
 uses the same hero, full bleed, over the wordmark. The round + (`AddButton`) floats at the
-bottom right on Home and Stats; Chat's composer sits at the bottom.
+bottom right on Home and Stats only; Chat's composer sits at the bottom; Housekeeping has
+neither.
 
 The hero draws the house, the green duck and the brown hedgehog under the sky as it is in
 London (`skyAt()` in `lib/logic/sun.ts`), recomputed every minute and when the app comes back
@@ -409,8 +422,8 @@ matches. Messages order by `created_at` to the microsecond (`instantOf` in
 
 ### UI
 
-- Tab switch under the hero: **Home, Chat, Stats**. The round + (new item) floats at the bottom
-  right on Home and Stats, not on Chat. A small dot on Chat means unread messages from others (last-read time is kept per
+- Tab switch under the hero: **Home, Chat, Housekeeping, Stats**. The round + (new item) floats
+  at the bottom right on Home and Stats, not on Chat or Housekeeping. A small dot on Chat means unread messages from others (last-read time is kept per
   member on this device).
 - Chat screen: large title "Chat", message bubbles (own on the right in the tint colour, others
   on the left in white with the sender's emoji and name), reactions as small chips under a
@@ -435,6 +448,395 @@ matches. Messages order by `created_at` to the microsecond (`instantOf` in
   toasts sit above the composer (`--toast-bottom`, set by ChatScreen and read by `Toast`).
 - Home: each area header has a small + that opens the new-item sheet with that area chosen
   (see "Home" above).
+
+## Housekeeping
+
+The third tab: the weekly visit by the housekeeper. She is a household member like everyone
+else (signs in with Google, joins with the invite link) and, like everyone, can edit
+everything. There are no roles. Out of scope: push notifications, the weekly email, roles and
+payments.
+
+### Product rules
+
+- **Message for the housekeeper**: one household-wide note that any member writes to give
+  direction. Multi-line, trimmed, up to 4000 characters (`TEXT_LIMITS.housekeepingNote`). It
+  shows who last changed it and when, can be cleared, and stays until someone changes it.
+- **Task list**: the household's housekeeping tasks (the template every visit copies). Anyone
+  adds, renames, deletes and reorders them. Titles are trimmed, 1 to 200 characters
+  (`TEXT_LIMITS.housekeepingTask`). New households start with `HOUSEKEEPING_STARTER_TASKS`:
+  Change the bed sheets; Hoover and mop the floors; Clean the bathrooms; Clean the kitchen;
+  Dust the surfaces; Empty the bins; Ironing. Households that existed before the migration get
+  the same list once (only those with no task and no visit).
+- **Visits**: at most one per household and day (the household's time zone), today or earlier,
+  never in the future. A visit is created by the first write for its day: ticking or unticking
+  a task, saving comments or the price, or "Add a visit". When it is created it copies:
+  - the task list: each task's title and position, none done, one row per task;
+  - the message as it stood that day: its text if it was last changed on or before the visit's
+    day (household time; always so for today), otherwise '' (it has changed since, so what it
+    said that day is not known).
+
+  It records who created it and when ("Recorded by") and who changed it last.
+- **History stays true**: each visit keeps its own rows (title, done, who ticked it and when).
+  Renaming or deleting a task never rewrites an earlier visit. A tick writes only its own row,
+  atomically, so two people ticking at once never undo each other (no read-modify-write of a
+  list).
+- **Today's visit follows the list**: when today's visit exists, adding a task adds it there
+  (not done), renaming or reordering does the same there, and deleting removes it there unless
+  it is ticked (a ticked row stays, as history). Visits on earlier days never change.
+- **Comments**: free text, trimmed, up to 4000 characters. **Price for the day**: GBP, typed on
+  a decimal keypad, stored as whole pence from 0 to 1,000,000 (`HOUSEKEEPING_PRICE_MAX_PENCE`,
+  £10,000.00), shown as £45.00; null means not entered.
+- A visit's copy of the message is read-only. Its ticks, comments and price stay editable on
+  any day (everyone edits everything), and anyone can delete a visit (confirmed), for everyone.
+- **Live**: changes by others show up as they happen, like items (`Backend.subscribe`, reload
+  on any event).
+
+### Tables (migration `supabase/migrations/20261010000400_housekeeping.sql`)
+
+| table | columns |
+| --- | --- |
+| `housekeeping_notes` | household_id uuid **primary key** → households on delete cascade, body text not null default '' (trimmed, <= 4000), updated_at timestamptz not null default now(), updated_by → members on delete set null. No row = never written. |
+| `housekeeping_tasks` | id, household_id → households on delete cascade, title text not null (trimmed, 1 to 200), position int not null default 0, created_at |
+| `housekeeping_visits` | id, household_id → households on delete cascade, visit_date date not null, note text not null default '' (the copy of the message, <= 4000), comments text not null default '' (<= 4000), price_pence int null (0 to 1,000,000), created_by → members on delete set null, created_at, updated_by → members on delete set null, updated_at; **unique (household_id, visit_date)** |
+| `housekeeping_visit_tasks` | id, visit_id → housekeeping_visits on delete cascade, household_id → households on delete cascade (copied from the visit), task_id → housekeeping_tasks **on delete set null**, title text not null (1 to 200), position int not null default 0, done bool not null default false, done_by → members on delete set null, done_at timestamptz null; **unique (visit_id, task_id)** |
+
+Check constraints (SQLSTATE 23514; the client maps them to `invalid_input: <constraint>`):
+`housekeeping_notes_body_length`, `housekeeping_tasks_title_length` (a blank title is trimmed
+to '' and fails it too), `housekeeping_visits_note_length`,
+`housekeeping_visits_comments_length`, `housekeeping_visits_price_range`,
+`housekeeping_visit_tasks_title_length`. Unique constraints: `housekeeping_visits_one_per_day`,
+`housekeeping_visit_tasks_task_once`.
+
+Triggers on `housekeeping_tasks` (security definer, empty `search_path`, not callable by
+clients):
+
+- BEFORE INSERT or UPDATE (`housekeeping_tasks_before_write`): trims the title (the same
+  whitespace as JavaScript's `trim()`, `js_trim()`); an insert always goes last (position =
+  the household's highest + 1, whatever the client sent); an update keeps household_id and
+  created_at.
+- AFTER INSERT (`housekeeping_tasks_after_insert`): adds the task to today's visit, if any.
+- AFTER UPDATE (`housekeeping_tasks_after_update`): a new title or position is copied to today's
+  visit's row for the task (ticked or not).
+- BEFORE DELETE (`housekeeping_tasks_before_delete`): removes today's visit's row for the task
+  unless it is done (before the foreign key sets task_id to null on every visit's rows).
+
+Creating a visit, adding a task and the AFTER UPDATE trigger take a per-household
+transaction-level advisory lock (`housekeeping_lock()`), so a task added or renamed at the
+moment today's visit is created is never missed.
+
+Internal helpers (not callable by clients): `js_trim(text)`, `housekeeping_starter_tasks()`
+(the starter list; `src/lib/constants.test.ts` and `supabase/tests/housekeeping.test.mjs`
+compare it with `HOUSEKEEPING_STARTER_TASKS`), `household_today(uuid)`,
+`housekeeping_lock(uuid)` and `housekeeping_visit_for(household, date, member)` (finds or
+creates the visit with its copies; `not_found` for an unknown household, `invalid_input` for
+a null or future date).
+
+### RLS and grants
+
+- `housekeeping_notes`: SELECT where `is_household_member(household_id)`. Written only by
+  `set_housekeeping_note`.
+- `housekeeping_tasks`: SELECT, INSERT, UPDATE, DELETE where member. Grants: select, delete,
+  insert (household_id, title), update (title). Positions change only through
+  `reorder_housekeeping_tasks` (and the insert trigger).
+- `housekeeping_visits`: SELECT, DELETE where member. Written only by the RPCs.
+- `housekeeping_visit_tasks`: SELECT where member. Written only by the RPCs and the task
+  triggers; deleted with their visit.
+
+`anon` gets nothing; `service_role` gets everything.
+
+### RPCs (`security definer`, `set search_path = ''`, `grant execute … to authenticated`)
+
+Each checks the caller first: no user is `not_signed_in`, and not a member of
+`p_household_id` is `not_found`.
+
+1. `set_housekeeping_note(p_household_id uuid, p_body text) returns void`. Trims; '' clears.
+   The same text again changes nothing (the stamp stays); clearing a message that was never
+   written stores nothing. Otherwise stamps updated_at and updated_by (the caller).
+2. `reorder_housekeeping_tasks(p_household_id uuid, p_task_ids uuid[]) returns void`.
+   position = index in the array; ids from other households are ignored. Today's visit
+   follows (trigger).
+3. `add_housekeeping_visit(p_household_id uuid, p_visit_date date) returns uuid`. "Add a
+   visit": creates the visit on that day (nothing ticked) or returns the one already there.
+4. `tick_housekeeping_task(p_household_id uuid, p_visit_date date, p_task_id uuid,
+   p_visit_task_id uuid, p_done boolean) returns uuid` (the visit id). Exactly one of
+   `p_task_id` (the row copied from that task on the visit on `p_visit_date`, creating the
+   visit first if there is none) and `p_visit_task_id` (that row, on any visit of the
+   household; `p_visit_date` is not used); both, neither or a null `p_done` is
+   `invalid_input`. No such row is `not_found`, and a visit the call created is rolled back
+   with it. A row already in that state is left alone. A tick sets done_by (the caller) and
+   done_at (now), an untick clears both, and the visit's updated_at and updated_by are
+   stamped. The row is locked and written on its own.
+5. `save_housekeeping_visit(p_household_id uuid, p_visit_date date, p_patch jsonb) returns
+   uuid` (the visit id). Keys: `comments` (a string, trimmed) and `price_pence` (a whole
+   number, or null to clear); other keys are ignored; a wrong type (or a patch that is not an
+   object) is `invalid_input`; the ranges are the check constraints'. Creates the visit if
+   needed; stamps updated_at and updated_by only when something changed.
+
+`create_household` is redefined (same signature, copied from
+`20261010000300_item_good.sql`) to also insert the starter task list, in order. A visit is
+deleted with a plain DELETE on `housekeeping_visits` (RLS); its rows go with it.
+
+Realtime: the four tables join `supabase_realtime` (guarded, so the file also runs on plain
+Postgres) with replica identity full; `Backend.subscribe` listens to each with
+`household_id=eq.<id>`.
+
+### Data in the app
+
+`HouseholdData.housekeeping: HousekeepingData` (`src/lib/types.ts`), loaded by `Backend.load`
+with the rest of the household:
+
+- `note: HousekeepingNote`, `{ body, updated_at, updated_by }` (never written:
+  `{ body: '', updated_at: null, updated_by: null }`);
+- `tasks: HousekeepingTask[]`, by position (then created_at, id);
+- `visits: HousekeepingVisit[]`, every visit, newest first, each with its
+  `tasks: HousekeepingVisitTask[]` by position, then title, then id.
+
+`HousekeepingTickTarget` is `{ taskId }` (a row whose task is still on the list; this also
+works for a day with no visit yet, which the tick then creates) or `{ visitTaskId }` (a row
+whose task has been deleted). `checklistFor()` picks it. `HousekeepingVisitPatch` is
+`{ comments?, price_pence? }` (only the keys present are written).
+
+### Backend methods (`src/lib/backend/types.ts`)
+
+| method | Supabase | Demo |
+| --- | --- | --- |
+| `setHousekeepingNote(householdId, body)` | rpc `set_housekeeping_note` | same rules |
+| `createHousekeepingTask(householdId, title)` → `HousekeepingTask` | insert `{ household_id, title }`, select `id, household_id, title, position` | appends, adds to today's visit |
+| `renameHousekeepingTask(id, title)` | update `{ title }` (no row: `not_found`) | renames, today's visit too |
+| `deleteHousekeepingTask(id)` | delete (no row: `not_found`) | today's undone row goes, other rows keep it with task_id null |
+| `reorderHousekeepingTasks(householdId, orderedIds)` | rpc `reorder_housekeeping_tasks` | same rules |
+| `setHousekeepingTaskDone(householdId, date, target, done)` → visit id | rpc `tick_housekeeping_task` | same rules |
+| `saveHousekeepingVisit(householdId, date, patch)` → visit id | rpc `save_housekeeping_visit` (only the keys present) | same rules |
+| `addHousekeepingVisit(householdId, date)` → visit id | rpc `add_housekeeping_visit` | same rules |
+| `deleteHousekeepingVisit(id)` | delete on `housekeeping_visits` (no row: `not_found`) | rows go with it |
+
+- Supabase: `load` adds three reads to its `Promise.all`, all through `runAll`: the note
+  (`body, updated_at, updated_by`; no row reads as never written), the tasks
+  (`id, household_id, title, position`, ordered by position, created_at, id) and the visits
+  with their rows embedded (`id, household_id, visit_date, note, comments, price_pence,
+  created_by, created_at, updated_by, updated_at, tasks:housekeeping_visit_tasks(id, visit_id,
+  household_id, task_id, title, position, done, done_by, done_at)`, ordered by visit_date
+  descending, rows sorted in the client). An id that is not a uuid is `not_found` without a
+  request (like chat); a date that is not `YYYY-MM-DD` is `invalid_input: date`; a blank title
+  is `invalid_input: title` (like `requireText`). `subscribe` adds the four tables.
+- Demo (`src/lib/backend/demo.ts`): four collections in the document (`housekeeping_notes`,
+  `housekeeping_tasks`, `housekeeping_visits`, `housekeeping_visit_tasks`) with the SQL
+  columns. `read()` fills them in for documents stored before them, and a document without the
+  `housekeeping_tasks` key gets the starter list for each household once, like the migration.
+  The semantics mirror the SQL exactly, the copy rules, today's visit following the list,
+  idempotent ticks and the note's "same text" rule included. Errors: `not_found` where SQL
+  says so; `invalid_input: date` (future or malformed), `invalid_input: title` (blank or over
+  200), `invalid_input: note`, `invalid_input: comments` (over 4000), `invalid_input: price`
+  (not a whole number, below 0 or over the maximum), `invalid_input: target` (both or
+  neither). `createHouseholdIn` gives every demo household (`?demo-seed=1` included) the
+  starter list, `HOUSEKEEPING_DEMO_NOTE` and `HOUSEKEEPING_DEMO_VISITS` from
+  `src/lib/constants.ts`, in the household's time zone and never in the future. It must not
+  call the stubbed functions of `src/lib/logic/housekeeping.ts` (only `emptyHousekeeping()`),
+  so the backend and the UI can be built side by side.
+
+### HomeProvider (`src/state/HomeProvider.tsx`)
+
+`HomeContextValue` actions (the names and signatures are fixed; the data is
+`data.housekeeping`): `setHousekeepingNote(body)`, `createHousekeepingTask(title)` →
+`HousekeepingTask`, `renameHousekeepingTask(id, title)`, `deleteHousekeepingTask(id)`,
+`reorderHousekeepingTasks(orderedIds)`, `setHousekeepingTaskDone(date, target, done)`,
+`saveHousekeepingVisit(date, patch)`, `addHousekeepingVisit(date)`,
+`deleteHousekeepingVisit(id)`. All go through `mutate()` with a revert that takes back only
+what the action touched, like the other edits (a failed write shows "Couldn't save." and
+rejects). The optimistic copies come from `src/lib/logic/housekeeping.ts`:
+
+- a write for a day with no visit shows a pending visit at once (`newVisit()`, id
+  `pending:<date>`, rows `pending:<taskId>`); further writes for that day apply to it locally
+  and are sent with `{ taskId }` targets; a failure removes it; the reload swaps in the real
+  visit under the same row keys (`ChecklistRow.key`), so a focused checkbox keeps its focus;
+- ticks use `applyTick()`, comments and price `applyVisitPatch()`, list edits
+  `withTaskRenamed()`, `withTaskDeleted()`, `withTasksReordered()` (today's visit follows);
+- `createHousekeepingTask` is not optimistic: it resolves to the stored task, like
+  `createArea`, so the sheet can focus its name;
+- the message shows `me` and now as who changed it; unchanged text (after trimming) sends
+  nothing;
+- a date after `today` is refused without a write or a toast
+  (`BackendError('unknown', 'invalid_input: date')`).
+
+### Logic (`src/lib/logic/housekeeping.ts`)
+
+Pure functions; each doc comment is the spec and ends with the unit tests it needs ("Tests:",
+for `src/lib/logic/housekeeping.test.ts`). Calendar: `WEEKDAYS` (Monday first), `monthOf`,
+`shiftMonth`, `monthTitle` ("October 2026"), `monthGrid` (weeks of 7, Monday first, null
+padding), `canHaveVisit`, `longDay` ("Thursday 1 October"), `calendarDayLabel`,
+`defaultSelectedDay`. Visits: `visitOn`, `visitDays`, `monthTotals`, `monthSummary`
+("4 visits · £180.00", "2 visits", "No visits"), `doneCount`, `housekeepingSubtitle`. Prices:
+`formatPrice` ("£1,234.50"), `priceInputValue` ("1234.50"), `parsePrice`. Checklist:
+`checklistFor`, `matchesTarget`. Bylines: `visitByline`, `noteByline`, `doneByline`.
+Optimistic edits: `snapshotNote`, `newVisit`, `applyTick`, `applyVisitPatch`,
+`withTaskAdded`, `withTaskRenamed`, `withTaskDeleted`, `withTasksReordered`.
+`emptyHousekeeping()` is the empty state.
+
+### UI
+
+Files under `src/screens/housekeeping/` (each with a `.module.css` where it has styles):
+
+| file | what |
+| --- | --- |
+| `HousekeepingScreen.tsx` (+ `.test.tsx`) | the tab: `Screen` with the sections below, the live region, the sheet |
+| `NoteSection.tsx` | "Message for the housekeeper" |
+| `VisitEditor.tsx` | one day's checklist, comments, price and byline (today, and the selected day) |
+| `Checklist.tsx` | the tasks as checkboxes |
+| `PriceField.tsx` | the £ field: parse, format, error |
+| `Calendar.tsx` | month header and summary, the month grid |
+| `DayDetail.tsx` | the selected day under the calendar |
+| `TaskListSheet.tsx` | the page sheet that edits the task list |
+
+Elsewhere: `screens/types.ts` (`Tab` already includes `'housekeeping'`), `screens/home/TabBar.tsx`
+and its CSS (four tabs), `App.tsx` (renders `HousekeepingScreen` for the tab), the comments in
+`ui/Screen.tsx` and `TabBar.tsx` that say "Home / Chat / Stats", `e2e/fixtures.ts`
+(`housekeepingScreen(page)`, `'Housekeeping'` in `tabButton` and `goToTab`), and the tests that
+pin three tabs (`src/App.test.tsx` "tab bar", `e2e/onboarding.spec.ts` and any other).
+
+**Tab switch.** Home, Chat, Housekeeping, Stats, in that order, in the same `nav` named "Tabs"
+with `aria-current="page"` on the open one (keep that contract and Chat's unread dot). Segments
+size to their labels (Housekeeping is the longest): flex items with equal extra space, labels
+on one line, never truncated. The white thumb follows the open segment: its left and width come
+from that button's `offsetLeft` and `offsetWidth`, measured in a layout effect and again on
+resize (`ResizeObserver`), and it slides over 0.34s (`--sheet-ease`, no animation with Reduce
+Motion; hidden until first measured). It must fit with no truncation and no sideways scroll at
+320, 375 and 402px wide (16px gutters, so 282px inside the switch at 320). Keep 15px labels
+where they fit; if they don't at 320, drop to 14px and tighter padding below 340px only.
+Measure it in the e2e test rather than trusting estimates. The round + shows on Home and Stats only, and
+pops in when you come back from a tab without it.
+
+**Screen**, top to bottom (16px gutters, white cards radius 24, section headers 20/25/600 as
+`h2`, rows 17/22):
+
+1. `ScreenHeader`: the hero with the title **Housekeeping**, the secondary line
+   `housekeepingSubtitle()` ("Today's visit", "Last visit Thu 1 Oct" or "Weekly") and the
+   avatar; then the tab switch. `Screen` with `label="Housekeeping"` and `withAdd={false}`.
+2. **Message for the housekeeper** (`NoteSection`): the `h2`, with **Clear** on the right
+   (15px tint text button, `aria-label="Clear message"`, only while there is a message). A card
+   that is an auto-growing textarea (`AutoGrowTextarea` from `screens/item`, two lines when
+   empty, `maxLength` 4000, labelled by the `h2`), placeholder "Anything to do first, or
+   differently? e.g. please do the spare room first". Under the card, 13/18 secondary:
+   `noteByline()` ("🦆 Shea · Yesterday 19:20"), nothing when empty. It saves
+   `HOUSEKEEPING_SAVE_DELAY_MS` (1s) after the last keystroke and on blur, when the trimmed
+   text differs from the stored one. Clear empties it at once and shows the toast "Message
+   cleared" with **Undo** (puts the old text back).
+3. **Today** (`h2`, with **Edit** on the right: 15px tint text, `aria-label="Edit task list"`,
+   opens `TaskListSheet`), then `VisitEditor` for `today`:
+   - the checklist card (`Checklist`, rows from `checklistFor()`): each row a `label` with a
+     native checkbox drawn as a 24px iOS circle (empty: 1.5px #C7C7CC ring; ticked: filled
+     `--tint` with a white check), the title at 17/22, and when ticked a second line at 13/18
+     secondary, `doneByline()` ("🦊 Ela · 10:42"); rows at least 52px tall, hairlines inset to
+     the text. The whole row toggles; the change is saved at once
+     (`setHousekeepingTaskDone(date, row.target, checked)`). With no tasks: "No tasks yet." and
+     a tint **Add tasks** button that opens the sheet.
+   - **Comments** (section header) and a card that is an auto-growing textarea, placeholder
+     "Anything to mention, e.g. we're out of bin bags", `maxLength` 4000; saved 1s after the
+     last keystroke and on blur when the trimmed text changed.
+   - A card with one row: **Price for the day** on the left, on the right "£" (aria-hidden)
+     and a text field (`inputMode="decimal"`, `enterKeyHint="done"`, `autoComplete="off"`,
+     placeholder "0.00", right-aligned, `aria-label="Price for the day"`) showing
+     `priceInputValue()`. On blur: `parsePrice()`; valid and changed saves (blank clears) and
+     the field shows the formatted value; invalid keeps the text, sets `aria-invalid` and shows
+     under the card (13/18, `--rag-red-text`, `role="alert"`): "Enter an amount like 45.00, up
+     to £10,000.00."
+   - Under the cards, 13/18 secondary: `visitByline()` ("Recorded by 🦊 Ela · Today 10:42"),
+     or with no visit yet "Not started yet. Ticking a task starts today's visit."
+4. **Calendar** (`h2`, `Calendar`): one card. Its top row: a previous-month button (chevron,
+   `aria-label="Previous month"`), the month title centred (17/22/600, `monthTitle()`), a
+   next-month button (`aria-label="Next month"`, disabled on today's month: no visits can be
+   ahead). Under the title, 15/20 secondary: `monthSummary(monthTotals())` ("4 visits ·
+   £180.00"). Then the grid: weekday letters (13/18/600 secondary, `WEEKDAYS`), then the weeks
+   of `monthGrid()`. Each day is a round button (40px; 36px below 360px wide) with its number:
+   today has a tint number and a 1.5px tint ring, the selected day is filled with the tint and
+   has a white number, a day with a visit has a 5px dot under its number (tint; white when
+   selected), and future days are dimmed (`--label-tertiary`) and disabled. The month and the
+   selected day are remembered while the app runs (like Stats' period). On first opening: the
+   month of today and `defaultSelectedDay()` (the latest visit this month before today, else
+   nothing).
+5. **The selected day** (`DayDetail`, under the calendar card):
+   - nothing selected: 15/20 secondary "Tap a day to see its visit."
+   - a heading (`h3`, 20/25/600): `longDay()` ("Thursday 1 October");
+   - today: "Today's visit is above." and a tint **Show** button that scrolls the Today
+     section into view and focuses its heading (`tabIndex={-1}`);
+   - a past day without a visit: "No visit recorded." and a tint **Add a visit** button
+     (`addHousekeepingVisit(date)`; focus then moves to the first checkbox);
+   - a past day with a visit: a card **Message that day** (13/18 secondary label above 17/22
+     text, read-only; "No message that day." when empty), then `VisitEditor` for that date
+     (editable, same as today), then a card with a centred **Delete Visit** button (17px, `--destructive`). It
+     asks first (`ActionSheet`): title "Delete the visit on Thu 1 Oct?", message "Its ticks,
+     comments and price will be deleted for everyone.", action **Delete Visit** (destructive).
+     After deleting, the day shows "No visit recorded." and focus moves to **Add a visit**.
+6. **Task list sheet** (`TaskListSheet`): a page `Sheet` labelled "Task list". Nav bar
+   (`data-sheet-handle`): the title "Task list" centred (17/22/600) and **Done** on the right
+   (17px/600 tint), which closes it. The body (`data-sheet-scroll`) is one card that looks and
+   behaves like the Household editor's areas (`screens/profile/AreaList.tsx`; extract its drag
+   and keyboard reorder into a shared hook if that keeps AreaList and its tests unchanged):
+   each row has a red minus (`aria-label="Delete <title>"`), the title edited in place
+   (`InlineText`, `aria-label="Task name"`, `maxLength` 200; blank puts the old title back)
+   and a grip (`aria-label="Reorder <title>"`, drag, or the up and down arrow keys;
+   announced "<title> moved to position 2 of 7."). The last row is **Add Task** (plus icon,
+   tint): it adds `HOUSEKEEPING_NEW_TASK` ("New task") and focuses its name with the text
+   selected (with the same stand-in input trick so iOS raises the keyboard). Under the card,
+   13/18 secondary: "Changes show in today's visit too. Earlier visits keep their own list."
+   Delete asks first: title "Delete <title>?", message "Earlier visits keep it.", action
+   **Delete Task**. The list may be empty.
+
+**States.** Everything is in `data.housekeeping`, so the tab never shows a spinner. Ticks,
+comments, the price and the message show at once (optimistic) and come back as stored after the
+reload; a failed write shows the provider's "Couldn't save." toast and puts the old value back.
+Changes by others arrive live; a field being edited (focused, with unsaved typing) keeps its
+draft and follows the stored value again once saved or blurred.
+
+**Accessibility.**
+
+- The checklist is a `fieldset` with a visually hidden `legend` ("Tasks today", or "Tasks on
+  Thursday 1 October") and real checkboxes named by their titles; the "who ticked it" line is
+  their description (`aria-describedby`).
+- The calendar is a `table` with `role="grid"`, labelled by the month title (the title is
+  `aria-live="polite"`, so changing month is announced); column headers are `th scope="col"`
+  with the full weekday as `abbr`; each day cell is `role="gridcell"` with `aria-selected` and
+  holds the day's button, named by `calendarDayLabel()` ("Thursday 1 October, visit, 6 of 7
+  done, £60.00"). One day button is in the tab order (the selected day, else today, else the
+  1st); arrow keys move a day or a week, Home and End go to the start and end of the week,
+  Page Up and Page Down change month, moving past the month's edge changes month, and focus
+  never lands on a future day.
+- One polite, visually hidden live region on the screen announces what was saved: "Saved"
+  (message, comments, price), "<title> done" or "<title> not done" (ticks), "Message cleared",
+  "Visit added", "Visit deleted". Failures are the provider's toast (`role="status"`).
+- Targets are at least 44px except the day buttons below 360px wide (36px, the cell width).
+  Text sizes follow the iOS 3a scale; nothing relies on colour alone (ticks have a check,
+  visit days a dot, today a ring).
+
+**Demo seed.** With the e2e clock (Thu 8 Oct 2026, 10:00 London) the seeded household has the
+message "Guests arrive Friday, please do the spare room first." (Shea, yesterday 19:20), the
+starter list, no visit today, and visits on Thu 1 Oct, 24 Sep, 17 Sep, 10 Sep and 3 Sep: the
+subtitle reads "Last visit Thu 1 Oct", October "1 visit · £60.00", September "4 visits ·
+£240.00", and Thu 1 Oct has the message "Please leave the ironing for next week.", 6 of 7 done
+(not Ironing) and "Ironing left for next week as asked. We're out of bin bags."
+
+**Tests.**
+
+- `src/lib/logic/housekeeping.test.ts`: every "Tests:" list in the logic module.
+- `src/lib/backend/demo.test.ts`: each housekeeping method, mirroring
+  `supabase/tests/housekeeping.test.mjs` (copy rules, today's visit following the list,
+  idempotent ticks, errors, another member's view of the same document), the seed above, and
+  the starter list for an older document.
+- `src/state/HomeProvider.test.tsx`: a tick on a day without a visit shows a pending visit and
+  then the stored one; a failed write takes back only its change; a future date is refused.
+- `src/screens/housekeeping/HousekeepingScreen.test.tsx`: the sections and copy, saving
+  comments and the price, the price error, the calendar labels and keyboard, Add a visit,
+  Delete Visit, and the task list sheet.
+- `supabase/tests/housekeeping.test.mjs` (written with the migration): schema, RLS, RPCs,
+  concurrent ticks, today's visit following the list, the starter list and its backfill.
+- `src/lib/backend/supabase.integration.test.ts` (live suite): load shape, the RPC mappings and
+  realtime on the four tables.
+- `e2e/housekeeping.spec.ts`: the tab order and `aria-current`; no + on Housekeeping; the switch
+  fits at 320, 375 and 402px (no horizontal scroll, every label's `scrollWidth` within its
+  `clientWidth`); the seed as above; ticking starts today's visit (subtitle "Today's visit",
+  today marked); comments and price save and survive a reload; September's summary; a past
+  visit's details; Delete Visit; Add a visit; future days disabled; the task list sheet's add,
+  rename, reorder and delete reach today's checklist while last week's visit keeps the old
+  title. Existing e2e tests keep passing.
 
 ## Edge Function `scheduler` (runs every 15 minutes via pg_cron + pg_net)
 
