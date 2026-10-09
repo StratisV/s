@@ -1,0 +1,428 @@
+/*
+ * The Home hero. Full bleed from the very top of the screen: var(--top-inset)
+ * + 300px tall, the last 24px being a rounded edge of the page colour. The art
+ * is one picture at 1pt per unit (402 by 354, with 40 units of extra land and
+ * sky either side), anchored to the bottom and centred, so the sky lines up
+ * with the title and the avatar for any status bar inset. Only transform and
+ * opacity animate. Animations pause off screen (data-paused) and stop for
+ * Reduce Motion (data-still and the media query).
+ */
+@property --hero-ink {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ffffff;
+}
+
+@property --hero-ink-secondary {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.92);
+}
+
+.hero {
+  --hero-ink: #ffffff;
+  --hero-ink-secondary: rgba(255, 255, 255, 0.92);
+  --hero-text-shadow: 0 1px 2px rgba(6, 12, 40, 0.26), 0 0 18px rgba(6, 12, 40, 0.16);
+  --hero-glass: rgba(255, 255, 255, 0.2);
+  --hero-glass-edge: rgba(255, 255, 255, 0.36);
+  position: relative;
+  isolation: isolate;
+  /* clip, not hidden: the hero must not become a scroll container (the parallax needs the page's). */
+  overflow: hidden;
+  overflow: clip;
+  height: calc(var(--top-inset, 0px) + 300px);
+  background: var(--hero-sky-top, #164faa);
+  color: var(--hero-ink);
+  view-timeline-name: --hero;
+  transition:
+    --hero-ink 600ms ease,
+    --hero-ink-secondary 600ms ease;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.hero[data-tone='dark'] {
+  --hero-ink: #0b1a30;
+  --hero-ink-secondary: rgba(11, 26, 48, 0.72);
+  --hero-text-shadow: 0 1px 1px rgba(255, 255, 255, 0.2);
+  --hero-glass: rgba(255, 255, 255, 0.42);
+  --hero-glass-edge: rgba(255, 255, 255, 0.62);
+}
+
+.stage {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: max(482px, 100%);
+  aspect-ratio: 482 / 354;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+
+/* A positioned piece of the art (left, top, width and height inline, in % of the stage). */
+.piece {
+  position: absolute;
+  display: block;
+}
+
+.piece > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* The page continues below, under a soft rounded edge. */
+.edge {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 25px;
+  border-radius: 24px 24px 0 0;
+  background: var(--bg, #f2f2f7);
+  pointer-events: none;
+}
+
+.overlay {
+  position: relative;
+  z-index: 1;
+  padding-top: var(--top-inset, 0px);
+}
+
+/* ------------------------------------------------------------- parallax */
+
+/*
+ * As the hero scrolls away the sky drifts slowest, then the far hills and the
+ * fields, while the garden moves with the page. Scroll-driven, so it runs on
+ * the compositor; browsers without it simply show no parallax.
+ */
+.depthSky,
+.depthFar,
+.depthMid {
+  position: absolute;
+  inset: 0;
+}
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .hero:not([data-still]) .depthSky,
+    .hero:not([data-still]) .depthFar,
+    .hero:not([data-still]) .depthMid {
+      animation: parallax linear both;
+      animation-timeline: --hero;
+      animation-range: exit 0% exit 100%;
+    }
+    .depthSky {
+      --drift: 40%;
+    }
+    .depthFar {
+      --drift: 24%;
+    }
+    .depthMid {
+      --drift: 11%;
+    }
+  }
+}
+
+@keyframes parallax {
+  from {
+    transform: none;
+  }
+  to {
+    transform: translateY(var(--drift));
+  }
+}
+
+/* ------------------------------------------------------------- motion */
+
+.twinkle {
+  animation: twinkle 3.2s ease-in-out infinite alternate;
+}
+.twinkle[data-group='1'] {
+  animation-duration: 2.3s;
+  animation-delay: -1.1s;
+}
+.twinkle[data-group='2'] {
+  animation-duration: 4.1s;
+  animation-delay: -2.6s;
+}
+@keyframes twinkle {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.3;
+  }
+}
+
+/* A shooting star now and then on the darkest nights. */
+.meteor {
+  opacity: 0;
+  animation: meteor 17s linear -11s infinite;
+}
+@keyframes meteor {
+  0%,
+  90% {
+    opacity: 0;
+    transform: translate(20%, -20%);
+  }
+  91.5% {
+    opacity: 1;
+  }
+  95%,
+  100% {
+    opacity: 0;
+    transform: translate(-24%, 24%);
+  }
+}
+
+/* A cloud drifts right along its lane, fading out at the end and back in at the start. */
+.cloud {
+  animation: drift var(--drift-duration) linear infinite;
+  animation-delay: var(--drift-delay);
+}
+@keyframes drift {
+  0% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(var(--drift-to));
+    opacity: 0;
+  }
+}
+
+.bird {
+  animation: fly 40s linear -12s infinite;
+}
+.bird > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 70%;
+  animation: flap 0.42s ease-in-out infinite alternate;
+}
+.bird > span > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+@keyframes fly {
+  0% {
+    transform: translate(-620%, 120%);
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(620%, -110%);
+    opacity: 0;
+  }
+}
+@keyframes flap {
+  0%,
+  30% {
+    transform: scaleY(1);
+  }
+  100% {
+    transform: scaleY(-0.55);
+  }
+}
+
+.puff {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--smoke) 0%, var(--smoke) 35%, transparent 100%);
+  opacity: 0;
+  animation: puff 7.2s ease-out infinite;
+}
+.puff:nth-child(2) {
+  animation-delay: -1.8s;
+}
+.puff:nth-child(3) {
+  animation-delay: -3.6s;
+}
+.puff:nth-child(4) {
+  animation-delay: -5.4s;
+}
+@keyframes puff {
+  0% {
+    transform: translate(0, 0) scale(0.4);
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.7;
+  }
+  45% {
+    transform: translate(55%, -230%) scale(1.1);
+  }
+  100% {
+    transform: translate(140%, -520%) scale(1.9);
+    opacity: 0;
+  }
+}
+
+/* The duck rides the water; its box ends at the waterline. */
+.waterline {
+  overflow: hidden;
+}
+.waterline > .duck {
+  display: block;
+  width: 100%;
+  height: 116.13%;
+  overflow: visible;
+}
+.duck {
+  transform-origin: 50% 86%;
+  animation: duck 850ms ease-in-out infinite alternate;
+}
+@keyframes duck {
+  from {
+    transform: translateY(0) rotate(-3deg);
+  }
+  to {
+    transform: translateY(-4%) rotate(3deg);
+  }
+}
+
+.ripple {
+  opacity: 0;
+  animation: ripple 3.2s ease-out infinite;
+}
+@keyframes ripple {
+  0% {
+    opacity: 0.75;
+    transform: scale(0.55);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.3);
+  }
+}
+
+.hedgehog {
+  transform-origin: 50% 96%;
+  animation: hedgehog 1300ms ease-in-out infinite alternate;
+}
+@keyframes hedgehog {
+  from {
+    transform: rotate(-5deg);
+  }
+  to {
+    transform: rotate(5deg);
+  }
+}
+
+.beacon {
+  animation: beacon 2.4s steps(1, end) infinite;
+}
+@keyframes beacon {
+  0%,
+  55% {
+    opacity: 1;
+  }
+  56%,
+  100% {
+    opacity: 0.15;
+  }
+}
+
+.firefly {
+  border-radius: 50%;
+  background: radial-gradient(closest-side, #fffbd0 0%, #f4ff8a 30%, rgba(214, 255, 120, 0.35) 55%, transparent 100%);
+  animation:
+    hover var(--ff-duration) ease-in-out infinite alternate,
+    blink var(--ff-blink) ease-in-out infinite;
+  animation-delay: var(--ff-delay), var(--ff-delay);
+}
+@keyframes hover {
+  from {
+    transform: translate(-60%, 40%);
+  }
+  to {
+    transform: translate(70%, -60%);
+  }
+}
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  45%,
+  60% {
+    opacity: 1;
+  }
+}
+
+/* Off screen: hold everything where it is. */
+.hero[data-paused] .m,
+.hero[data-paused] .m > span {
+  animation-play-state: paused !important;
+}
+
+/* Reduce Motion: a still picture, every piece resting where it is drawn. */
+.hero[data-still] .m,
+.hero[data-still] .m > span {
+  animation: none !important;
+}
+.hero[data-still] .puff {
+  opacity: var(--rest-opacity);
+  transform: var(--rest-transform);
+}
+.hero[data-still] .firefly {
+  opacity: 0.8;
+}
+.hero[data-still] .meteor,
+.hero[data-still] .ripple {
+  opacity: 0;
+}
+.hero[data-still] .cloud {
+  transform: translateX(var(--rest-x));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero .m,
+  .hero .m > span {
+    animation: none !important;
+  }
+  .hero .puff {
+    opacity: var(--rest-opacity);
+    transform: var(--rest-transform);
+  }
+  .hero .firefly {
+    opacity: 0.8;
+  }
+  .hero .meteor,
+  .hero .ripple {
+    opacity: 0;
+  }
+  .hero .cloud {
+    transform: translateX(var(--rest-x));
+  }
+}
