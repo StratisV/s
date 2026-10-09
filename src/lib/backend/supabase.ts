@@ -25,9 +25,13 @@ import type {
   CreateHouseholdInput,
   Household,
   HouseholdData,
+  HousekeepingData,
+  HousekeepingNote,
   HousekeepingTask,
   HousekeepingTickTarget,
+  HousekeepingVisit,
   HousekeepingVisitPatch,
+  HousekeepingVisitTask,
   InvitePreview,
   Item,
   ISODate,
@@ -59,6 +63,13 @@ const COMPLETION_COLS = 'id, household_id, item_id, item_title, credited_to, com
 const MESSAGE_COLS = 'id, household_id, member_id, body, created_at';
 /** A message with every reaction on it, in one request (PostgREST resource embedding). */
 const MESSAGE_WITH_REACTIONS = `${MESSAGE_COLS}, reactions:message_reactions(message_id, member_id, emoji, created_at)`;
+const HOUSEKEEPING_NOTE_COLS = 'body, updated_at, updated_by';
+const HOUSEKEEPING_TASK_COLS = 'id, household_id, title, position';
+const HOUSEKEEPING_VISIT_TASK_COLS = 'id, visit_id, household_id, task_id, title, position, done, done_by, done_at';
+/** A visit with its tasks, in one request (PostgREST resource embedding). */
+const HOUSEKEEPING_VISIT_WITH_TASKS =
+  'id, household_id, visit_date, note, comments, price_pence, created_by, created_at, updated_by, updated_at, ' +
+  `tasks:housekeeping_visit_tasks(${HOUSEKEEPING_VISIT_TASK_COLS})`;
 
 /** Columns each patch may write (the DB grants UPDATE on exactly these). */
 const HOUSEHOLD_PATCH_KEYS = ['name', 'address', 'timezone'] as const;
@@ -84,6 +95,8 @@ const REACTION_EMOJI_MAX = 16;
 /** Message ids per getMessages request, so the URL stays short. */
 const IDS_PER_REQUEST = 100;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Stands in for an id that is not a uuid in reorderHousekeepingTasks: it matches no row. */
+const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
 /** Messages the RPCs and triggers raise that map straight onto a BackendErrorCode. */
 const RPC_CODES: ReadonlySet<string> = new Set<BackendErrorCode>([
@@ -186,6 +199,23 @@ function requireText(value: string, what: string): string {
   return v;
 }
 
+const isLeapYear = (y: number) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+
+/** A real calendar day written YYYY-MM-DD (what a SQL date parameter accepts); else invalid_input: date. */
+function requireDate(value: ISODate): ISODate {
+  const m = typeof value === 'string' ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(value) : null;
+  const [y, month, d] = m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [0, 0, 0];
+  const days = [31, isLeapYear(y) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  if (!m || y < 1 || !days || d < 1 || d > days) throw invalidInput('date');
+  return value;
+}
+
+/** Ids PostgREST would refuse to cast never name a row: not_found without a request. */
+function requireUuid(id: string): string {
+  if (typeof id !== 'string' || !UUID.test(id)) throw new BackendError('not_found');
+  return id;
+}
+
 /** Copies the allowed keys that are present (undefined means "leave as is"). */
 function pick<T extends object, K extends keyof T>(patch: T, keys: readonly K[]): Partial<Pick<T, K>> {
   const out: Partial<Pick<T, K>> = {};
@@ -276,6 +306,47 @@ function chatPageSize(limit: number | undefined): number {
 const charCount = (value: string) => Array.from(value).length;
 
 const isReactionEmoji = (value: string) => (REACTION_EMOJIS as readonly string[]).includes(value);
+
+// ── Housekeeping rows ──────────────────────────────────────
+
+interface HousekeepingVisitRow extends Omit<HousekeepingVisit, 'tasks'> {
+  tasks?: HousekeepingVisitTask[] | null;
+}
+
+/** A visit's tasks in their order: position, then title, then id. */
+function byVisitTaskOrder(a: HousekeepingVisitTask, b: HousekeepingVisitTask): number {
+  return a.position - b.position || compareText(a.title, b.title) || compareText(a.id, b.id);
+}
+
+/** Exactly the contract's shape, tasks sorted. */
+function toHousekeepingVisit(row: HousekeepingVisitRow): HousekeepingVisit {
+  const tasks = (row.tasks ?? [])
+    .map((t) => ({
+      id: t.id,
+      visit_id: t.visit_id,
+      household_id: t.household_id,
+      task_id: t.task_id,
+      title: t.title,
+      position: t.position,
+      done: t.done,
+      done_by: t.done_by,
+      done_at: t.done_at,
+    }))
+    .sort(byVisitTaskOrder);
+  return {
+    id: row.id,
+    household_id: row.household_id,
+    visit_date: row.visit_date,
+    note: row.note,
+    comments: row.comments,
+    price_pence: row.price_pence,
+    created_by: row.created_by,
+    created_at: row.created_at,
+    updated_by: row.updated_by,
+    updated_at: row.updated_at,
+    tasks,
+  };
+}
 
 type ChangePayload = RealtimePostgresChangesPayload<Record<string, unknown>>;
 
@@ -413,7 +484,7 @@ export class SupabaseBackend implements Backend {
 
   async load(householdId: string): Promise<HouseholdData> {
     const db = this.client;
-    const [households, members, areas, items, completions] = await Promise.all([
+    const [households, members, areas, items, completions, notes, housekeepingTasks, visits] = await Promise.all([
       run<Household[]>(db.from('households').select(HOUSEHOLD_COLS).eq('id', householdId).limit(1)),
       runAll<Member>((from, to) =>
         db
@@ -453,12 +524,41 @@ export class SupabaseBackend implements Backend {
           .order('id')
           .range(from, to),
       ),
+      // Housekeeping: the message (no row = never written), the task list and every visit
+      // with its tasks embedded.
+      runAll<HousekeepingNote>((from, to) =>
+        db.from('housekeeping_notes').select(HOUSEKEEPING_NOTE_COLS).eq('household_id', householdId).range(from, to),
+      ),
+      runAll<HousekeepingTask>((from, to) =>
+        db
+          .from('housekeeping_tasks')
+          .select(HOUSEKEEPING_TASK_COLS)
+          .eq('household_id', householdId)
+          .order('position')
+          .order('created_at')
+          .order('id')
+          .range(from, to),
+      ),
+      runAll<HousekeepingVisitRow>((from, to) =>
+        db
+          .from('housekeeping_visits')
+          .select(HOUSEKEEPING_VISIT_WITH_TASKS)
+          .eq('household_id', householdId)
+          .order('visit_date', { ascending: false })
+          .order('id')
+          .range(from, to),
+      ),
     ]);
     // RLS hides other households, so "not a member" also lands here.
     if (!households[0]) throw new BackendError('not_found');
-    // CONTRACT STUB: housekeeping is not read yet (tables in
-    // supabase/migrations/20261010000400_housekeeping.sql); every household reads as empty.
-    const housekeeping = emptyHousekeeping();
+    const note = notes[0];
+    const housekeeping: HousekeepingData = {
+      note: note
+        ? { body: note.body ?? '', updated_at: note.updated_at ?? null, updated_by: note.updated_by ?? null }
+        : emptyHousekeeping().note,
+      tasks: housekeepingTasks.map((t) => ({ id: t.id, household_id: t.household_id, title: t.title, position: t.position })),
+      visits: visits.map(toHousekeepingVisit),
+    };
     return { household: toHousehold(households[0]), members, areas, items, completions, housekeeping };
   }
 
@@ -472,6 +572,10 @@ export class SupabaseBackend implements Backend {
       ['areas', `household_id=eq.${householdId}`],
       ['items', `household_id=eq.${householdId}`],
       ['completions', `household_id=eq.${householdId}`],
+      ['housekeeping_notes', `household_id=eq.${householdId}`],
+      ['housekeeping_tasks', `household_id=eq.${householdId}`],
+      ['housekeeping_visits', `household_id=eq.${householdId}`],
+      ['housekeeping_visit_tasks', `household_id=eq.${householdId}`],
     ];
     let closed = false;
     const notify = () => {
@@ -828,47 +932,101 @@ export class SupabaseBackend implements Backend {
   }
 
   // ── Housekeeping (docs/ARCHITECTURE.md "Housekeeping") ──
-  // CONTRACT STUBS: to be implemented against the tables and RPCs in
-  // supabase/migrations/20261010000400_housekeeping.sql.
+  // supabase/migrations/20261010000400_housekeeping.sql. Visits and their ticks are written
+  // only through the RPCs (which create a day's visit on its first write and check the day
+  // against the household's time zone); the task list is written directly, and its triggers
+  // keep today's visit in step. RLS hides other households: a write that touches no row is
+  // not_found, like an RPC called for a household the caller is not in.
 
-  setHousekeepingNote(householdId: string, body: string): Promise<void> {
-    return notImplemented('setHousekeepingNote', householdId, body);
+  async setHousekeepingNote(householdId: string, body: string): Promise<void> {
+    requireUuid(householdId);
+    await run<null>(this.client.rpc('set_housekeeping_note', { p_household_id: householdId, p_body: body ?? '' }));
   }
 
-  createHousekeepingTask(householdId: string, title: string): Promise<HousekeepingTask> {
-    return notImplemented('createHousekeepingTask', householdId, title);
+  async createHousekeepingTask(householdId: string, title: string): Promise<HousekeepingTask> {
+    const clean = requireText(title, 'title');
+    requireUuid(householdId);
+    // Only household_id and title are insertable: the trigger trims and puts it last (and on
+    // today's visit). Not a member: RLS rejects the insert (not_found).
+    const rows = await run<HousekeepingTask[] | null>(
+      this.client.from('housekeeping_tasks').insert({ household_id: householdId, title: clean }).select(HOUSEKEEPING_TASK_COLS),
+    );
+    const row = rows?.[0];
+    if (!row) throw new BackendError('not_found');
+    return { id: row.id, household_id: row.household_id, title: row.title, position: row.position };
   }
 
-  renameHousekeepingTask(id: string, title: string): Promise<void> {
-    return notImplemented('renameHousekeepingTask', id, title);
+  async renameHousekeepingTask(id: string, title: string): Promise<void> {
+    const clean = requireText(title, 'title');
+    await this.updateRow('housekeeping_tasks', requireUuid(id), { title: clean });
   }
 
-  deleteHousekeepingTask(id: string): Promise<void> {
-    return notImplemented('deleteHousekeepingTask', id);
+  async deleteHousekeepingTask(id: string): Promise<void> {
+    // Today's visit drops it unless ticked; every other visit keeps its copy (task_id null).
+    await runAffecting(this.client.from('housekeeping_tasks').delete().eq('id', requireUuid(id)).select('id'));
   }
 
-  reorderHousekeepingTasks(householdId: string, orderedIds: string[]): Promise<void> {
-    return notImplemented('reorderHousekeepingTasks', householdId, orderedIds);
+  async reorderHousekeepingTasks(householdId: string, orderedIds: string[]): Promise<void> {
+    requireUuid(householdId);
+    // An id that is not a uuid names no task, but still takes its place in the order.
+    const ids = (orderedIds ?? []).map((id) => (typeof id === 'string' && UUID.test(id) ? id : NIL_UUID));
+    await run<null>(this.client.rpc('reorder_housekeeping_tasks', { p_household_id: householdId, p_task_ids: ids }));
   }
 
-  setHousekeepingTaskDone(householdId: string, date: ISODate, target: HousekeepingTickTarget, done: boolean): Promise<string> {
-    return notImplemented('setHousekeepingTaskDone', householdId, date, target, done);
+  async setHousekeepingTaskDone(
+    householdId: string,
+    date: ISODate,
+    target: HousekeepingTickTarget,
+    done: boolean,
+  ): Promise<string> {
+    requireDate(date);
+    const t = (target ?? {}) as { taskId?: unknown; visitTaskId?: unknown };
+    const byTask = typeof t.taskId === 'string';
+    if (byTask === (typeof t.visitTaskId === 'string')) throw invalidInput('target');
+    if (typeof done !== 'boolean') throw invalidInput('done');
+    requireUuid(householdId);
+    const taskId = byTask ? requireUuid(t.taskId as string) : null;
+    const visitTaskId = byTask ? null : requireUuid(t.visitTaskId as string);
+    return run<string>(
+      this.client.rpc('tick_housekeeping_task', {
+        p_household_id: householdId,
+        p_visit_date: date,
+        p_task_id: taskId,
+        p_visit_task_id: visitTaskId,
+        p_done: done,
+      }),
+    );
   }
 
-  saveHousekeepingVisit(householdId: string, date: ISODate, patch: HousekeepingVisitPatch): Promise<string> {
-    return notImplemented('saveHousekeepingVisit', householdId, date, patch);
+  async saveHousekeepingVisit(householdId: string, date: ISODate, patch: HousekeepingVisitPatch): Promise<string> {
+    requireDate(date);
+    if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) throw invalidInput('patch');
+    // Only the keys present. JSON would turn NaN or Infinity into null (clearing the price),
+    // so a price must be a whole number or null here; the range is the database's check.
+    const values: HousekeepingVisitPatch = {};
+    if (patch.comments !== undefined) {
+      if (typeof patch.comments !== 'string') throw invalidInput('comments');
+      values.comments = patch.comments;
+    }
+    if (patch.price_pence !== undefined) {
+      const price = patch.price_pence;
+      if (price !== null && !Number.isSafeInteger(price)) throw invalidInput('price');
+      values.price_pence = price;
+    }
+    requireUuid(householdId);
+    return run<string>(
+      this.client.rpc('save_housekeeping_visit', { p_household_id: householdId, p_visit_date: date, p_patch: values }),
+    );
   }
 
-  addHousekeepingVisit(householdId: string, date: ISODate): Promise<string> {
-    return notImplemented('addHousekeepingVisit', householdId, date);
+  async addHousekeepingVisit(householdId: string, date: ISODate): Promise<string> {
+    requireDate(date);
+    requireUuid(householdId);
+    return run<string>(this.client.rpc('add_housekeeping_visit', { p_household_id: householdId, p_visit_date: date }));
   }
 
-  deleteHousekeepingVisit(id: string): Promise<void> {
-    return notImplemented('deleteHousekeepingVisit', id);
+  async deleteHousekeepingVisit(id: string): Promise<void> {
+    // Its tasks go with it (on delete cascade).
+    await runAffecting(this.client.from('housekeeping_visits').delete().eq('id', requireUuid(id)).select('id'));
   }
-}
-
-/** CONTRACT STUB helper: a clear failure for a housekeeping method not built yet. */
-function notImplemented(method: string, ..._args: unknown[]): Promise<never> {
-  return Promise.reject(new BackendError('unknown', `not_implemented: SupabaseBackend.${method}`));
 }

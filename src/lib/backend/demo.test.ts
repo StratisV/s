@@ -1,9 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CHAT_PAGE_SIZE, DEFAULT_ADDRESS, DEFAULT_AREAS, MEMBER_COLORS, REACTION_EMOJIS, SEED_ITEMS } from '../constants';
-import { addDays, deviceTimeZone, monthKey, todayIn } from '../logic/dates';
+import {
+  CHAT_PAGE_SIZE,
+  DEFAULT_ADDRESS,
+  DEFAULT_AREAS,
+  HOUSEKEEPING_DEMO_NOTE,
+  HOUSEKEEPING_DEMO_VISITS,
+  HOUSEKEEPING_PRICE_MAX_PENCE,
+  HOUSEKEEPING_STARTER_TASKS,
+  MEMBER_COLORS,
+  REACTION_EMOJIS,
+  SEED_ITEMS,
+} from '../constants';
+import { addDays, deviceTimeZone, monthKey, todayIn, zonedParts } from '../logic/dates';
 import { seedItemsFor } from '../logic/items';
 import { countCompletions } from '../logic/stats';
-import type { AuthUser, ChatChange, CreateHouseholdInput, HouseholdData, ItemDraft } from '../types';
+import type { AuthUser, ChatChange, CreateHouseholdInput, HouseholdData, HousekeepingData, ItemDraft } from '../types';
 import { DEMO_STORAGE_KEY, DEMO_USER, DemoBackend, type DemoBackendOptions, type StorageLike } from './demo';
 import { BackendError } from './types';
 
@@ -305,6 +316,25 @@ describe('load', () => {
     expect(Object.keys(data).sort()).toEqual(['areas', 'completions', 'household', 'housekeeping', 'items', 'members']);
     expect(Object.keys(data.housekeeping).sort()).toEqual(['note', 'tasks', 'visits']);
     expect(Object.keys(data.housekeeping.note).sort()).toEqual(['body', 'updated_at', 'updated_by']);
+    expect(Object.keys(data.housekeeping.tasks[0]).sort()).toEqual(['household_id', 'id', 'position', 'title']);
+    expect(Object.keys(data.housekeeping.visits[0]).sort()).toEqual(
+      [
+        'comments',
+        'created_at',
+        'created_by',
+        'household_id',
+        'id',
+        'note',
+        'price_pence',
+        'tasks',
+        'updated_at',
+        'updated_by',
+        'visit_date',
+      ].sort(),
+    );
+    expect(Object.keys(data.housekeeping.visits[0].tasks[0]).sort()).toEqual(
+      ['done', 'done_at', 'done_by', 'household_id', 'id', 'position', 'task_id', 'title', 'visit_id'].sort(),
+    );
     expect(Object.keys(data.areas[0]).sort()).toEqual(['household_id', 'id', 'name', 'position']);
     expect(Object.keys(data.items[0]).sort()).toEqual(
       [
@@ -1464,6 +1494,561 @@ describe('chat', () => {
       const unsub = b.subscribeChat(hid, () => {});
       expect(typeof unsub).toBe('function');
       unsub();
+    });
+  });
+});
+
+describe('housekeeping', () => {
+  /** The clock's day in London (Thu 8 Oct, 10:30 BST). */
+  const TODAY = '2026-10-08';
+  const LAST_THURSDAY = '2026-10-01';
+  const later = (ms: number) => {
+    clock = new Date(clock.getTime() + ms);
+  };
+  /** An instant written as London summer time (BST, UTC+1). */
+  const london = (date: string, hhmm: string) => new Date(`${date}T${hhmm}:00+01:00`).toISOString();
+  const hkOf = async (b: DemoBackend, hid: string): Promise<HousekeepingData> => (await b.load(hid)).housekeeping;
+  const visitOn = (hk: HousekeepingData, date: string) => hk.visits.find((v) => v.visit_date === date);
+
+  /** Bob joins Stratis's household; the shared document is left signed in as Bob. */
+  async function joinBob(b: DemoBackend, hid: string) {
+    const token = await b.createInvite();
+    const bob = make({ user: BOB });
+    await bob.signInWithGoogle();
+    await bob.joinHousehold({ token, memberName: 'Bob', memberEmoji: '🐻' });
+    const bobMe = (await bob.load(hid)).members.find((m) => m.user_id === BOB.id)!;
+    return { bob, bobMe };
+  }
+
+  describe('the demo seed', () => {
+    it('gives every new household the starter list, the message and five past Thursday visits', async () => {
+      const { hid, data } = await setup();
+      const hk = data.housekeeping;
+      const [me, shea, ela] = data.members;
+      const people = { me, shea, ela };
+
+      expect(hk.tasks.map((t) => [t.title, t.position])).toEqual(HOUSEKEEPING_STARTER_TASKS.map((t, i) => [t, i]));
+      expect(hk.tasks.every((t) => t.household_id === hid)).toBe(true);
+      expect(hk.note).toEqual({
+        body: 'Guests arrive Friday, please do the spare room first.',
+        updated_at: london('2026-10-07', '19:20'),
+        updated_by: shea.id,
+      });
+
+      expect(hk.visits.map((v) => v.visit_date)).toEqual(['2026-10-01', '2026-09-24', '2026-09-17', '2026-09-10', '2026-09-03']);
+      hk.visits.forEach((visit, i) => {
+        const seed = HOUSEKEEPING_DEMO_VISITS[i];
+        const by = people[seed.by].id;
+        const start = new Date(london(visit.visit_date, `${String(seed.hour).padStart(2, '0')}:${String(seed.minute).padStart(2, '0')}`));
+        const minutes = (n: number) => new Date(start.getTime() + n * 60_000).toISOString();
+        expect(visit).toMatchObject({
+          household_id: hid,
+          note: seed.note,
+          comments: seed.comments,
+          price_pence: seed.price_pence,
+          created_by: by,
+          created_at: minutes(0),
+          updated_by: by,
+          updated_at: minutes(seed.done.length),
+        });
+        // The seven starter tasks in order, ticked one minute apart in list order.
+        expect(visit.tasks.map((r) => [r.task_id, r.title, r.position])).toEqual(hk.tasks.map((t) => [t.id, t.title, t.position]));
+        expect(visit.tasks.every((r) => r.visit_id === visit.id && r.household_id === hid)).toBe(true);
+        const done = visit.tasks.filter((r) => r.done);
+        expect(done.map((r) => r.title)).toEqual(HOUSEKEEPING_STARTER_TASKS.filter((t) => seed.done.includes(t)));
+        expect(done.map((r) => r.done_at)).toEqual(done.map((_, k) => minutes(k)));
+        expect(done.every((r) => r.done_by === by)).toBe(true);
+        expect(visit.tasks.filter((r) => !r.done).every((r) => r.done_by === null && r.done_at === null)).toBe(true);
+      });
+
+      const [first] = hk.visits;
+      expect(first).toMatchObject({
+        note: 'Please leave the ironing for next week.',
+        comments: "Ironing left for next week as asked. We're out of bin bags.",
+        price_pence: 6000,
+        created_by: ela.id,
+      });
+      expect(first.tasks.filter((r) => !r.done).map((r) => r.title)).toEqual(['Ironing']);
+      const sum = (month: string) =>
+        hk.visits.filter((v) => v.visit_date.startsWith(month)).reduce((n, v) => n + (v.price_pence ?? 0), 0);
+      expect([hk.visits.filter((v) => v.visit_date.startsWith('2026-10')).length, sum('2026-10')]).toEqual([1, 6000]);
+      expect([hk.visits.filter((v) => v.visit_date.startsWith('2026-09')).length, sum('2026-09')]).toEqual([4, 24000]);
+    });
+
+    it('counts weeks back from the latest Thursday strictly before today, never today or later', async () => {
+      const cases: [string, string][] = [
+        ['2026-10-09T09:00:00Z', '2026-10-08'], // Friday: yesterday
+        ['2026-10-07T09:00:00Z', '2026-10-01'], // Wednesday
+        ['2026-10-07T23:30:00Z', '2026-10-01'], // 00:30 on Thursday 8 Oct in London: not today
+        ['2026-10-15T22:30:00Z', '2026-10-08'], // 23:30 on Thursday 15 Oct
+      ];
+      for (const [at, latest] of cases) {
+        storage = new MemStorage();
+        clock = new Date(at);
+        const { data } = await setup();
+        const dates = data.housekeeping.visits.map((v) => v.visit_date);
+        expect(dates[0], at).toBe(latest);
+        expect(dates).toEqual([0, 1, 2, 3, 4].map((w) => addDays(latest, -7 * w)));
+        const today = todayIn(TZ, clock);
+        expect(dates.every((d) => d < today)).toBe(true);
+        expect(new Date(data.housekeeping.note.updated_at!).getTime()).toBeLessThanOrEqual(clock.getTime());
+      }
+    });
+
+    it('uses the household zone for the days', async () => {
+      // 11:00 UTC on Thu 8 Oct is 01:00 on Fri 9 Oct in Kiritimati (UTC+14).
+      clock = new Date('2026-10-08T11:00:00Z');
+      const { data } = await setup({ timezone: 'Pacific/Kiritimati' });
+      expect(data.housekeeping.visits[0].visit_date).toBe('2026-10-08');
+      expect(zonedParts(new Date(data.housekeeping.visits[0].created_at), 'Pacific/Kiritimati')).toEqual({
+        date: '2026-10-08',
+        hour: HOUSEKEEPING_DEMO_VISITS[0].hour,
+        minute: HOUSEKEEPING_DEMO_VISITS[0].minute,
+      });
+      expect(zonedParts(new Date(data.housekeeping.note.updated_at!), 'Pacific/Kiritimati')).toMatchObject({
+        date: '2026-10-08',
+        hour: HOUSEKEEPING_DEMO_NOTE.hour,
+      });
+    });
+
+    it('?demo-seed=1 comes with it too', async () => {
+      const b = make({ search: '?demo-seed=1' });
+      const hid = (await b.getMyHouseholdId())!;
+      const hk = await hkOf(b, hid);
+      expect(hk.tasks.map((t) => t.title)).toEqual([...HOUSEKEEPING_STARTER_TASKS]);
+      expect(hk.note.body).toBe(HOUSEKEEPING_DEMO_NOTE.body);
+      expect(hk.visits).toHaveLength(HOUSEKEEPING_DEMO_VISITS.length);
+      const today = todayIn(deviceTimeZone(), clock);
+      expect(hk.visits.every((v) => v.visit_date < today)).toBe(true);
+    });
+  });
+
+  describe('the message for the housekeeper', () => {
+    it('is trimmed and stamped; the same text keeps the stamp; clearing stamps who cleared it', async () => {
+      const { b, hid, me } = await setup();
+      later(60_000);
+      await b.setHousekeepingNote(hid, '  Spare room first.\nThanks!\n ');
+      const written = clock.toISOString();
+      expect((await hkOf(b, hid)).note).toEqual({ body: 'Spare room first.\nThanks!', updated_at: written, updated_by: me.id });
+
+      later(60_000);
+      await b.setHousekeepingNote(hid, 'Spare room first.\nThanks!');
+      expect((await hkOf(b, hid)).note.updated_at).toBe(written);
+
+      const { bob, bobMe } = await joinBob(b, hid);
+      later(60_000);
+      await bob.setHousekeepingNote(hid, ' \n ');
+      expect((await hkOf(bob, hid)).note).toEqual({ body: '', updated_at: clock.toISOString(), updated_by: bobMe.id });
+    });
+
+    it('clearing a message never written stores nothing; up to 4000 characters', async () => {
+      const { b, hid } = await setup();
+      const doc = storedDoc();
+      doc.housekeeping_notes = [];
+      storage.setItem(DEMO_STORAGE_KEY, JSON.stringify(doc));
+      await b.setHousekeepingNote(hid, '   ');
+      expect(storedDoc().housekeeping_notes).toEqual([]);
+      expect((await hkOf(b, hid)).note).toEqual({ body: '', updated_at: null, updated_by: null });
+
+      await b.setHousekeepingNote(hid, '🦔'.repeat(4000));
+      await rejectsWithMessage(b.setHousekeepingNote(hid, 'x'.repeat(4001)), /^invalid_input: note/);
+      expect((await hkOf(b, hid)).note.body).toBe('🦔'.repeat(4000));
+    });
+
+    it('is copied into a visit when it is created, and the copy stays', async () => {
+      const { b, hid } = await setup();
+      const [task] = (await hkOf(b, hid)).tasks;
+      await b.setHousekeepingTaskDone(hid, TODAY, { taskId: task.id }, true);
+      await b.setHousekeepingNote(hid, 'Something else now.');
+      expect(visitOn(await hkOf(b, hid), TODAY)!.note).toBe(HOUSEKEEPING_DEMO_NOTE.body);
+      expect(visitOn(await hkOf(b, hid), LAST_THURSDAY)!.note).toBe('Please leave the ironing for next week.');
+    });
+  });
+
+  describe('the task list', () => {
+    it('adds (trimmed, last), renames and deletes; blank or too long is refused', async () => {
+      const { b, hid } = await setup();
+      const task = await b.createHousekeepingTask(hid, '  Windows \n');
+      expect(task).toEqual({ id: task.id, household_id: hid, title: 'Windows', position: 7 });
+      await b.renameHousekeepingTask(task.id, ' Inside windows ');
+      expect((await hkOf(b, hid)).tasks.at(-1)).toEqual({ ...task, title: 'Inside windows' });
+
+      await rejectsWithMessage(b.createHousekeepingTask(hid, ' \t '), /^invalid_input: title/);
+      await rejectsWithMessage(b.createHousekeepingTask(hid, 'x'.repeat(201)), /^invalid_input: title/);
+      await rejectsWithMessage(b.renameHousekeepingTask(task.id, '  '), /^invalid_input: title/);
+      await rejectsWithMessage(b.renameHousekeepingTask(task.id, 'x'.repeat(201)), /^invalid_input: title/);
+      expect((await b.createHousekeepingTask(hid, '🦔'.repeat(200))).position).toBe(8);
+
+      await b.deleteHousekeepingTask(task.id);
+      await rejectsWith(b.deleteHousekeepingTask(task.id), 'not_found');
+      await rejectsWith(b.renameHousekeepingTask(task.id, 'Back'), 'not_found');
+      const hk = await hkOf(b, hid);
+      expect(hk.tasks.map((t) => t.title)).toEqual([...HOUSEKEEPING_STARTER_TASKS, '🦔'.repeat(200)]);
+      // A new task still goes after the highest position.
+      expect((await b.createHousekeepingTask(hid, 'Fridge')).position).toBe(9);
+    });
+
+    it('reorders by index; ids from elsewhere and unknown ids are ignored', async () => {
+      const { b, hid } = await setup();
+      const bob = make({ user: BOB });
+      await bob.signInWithGoogle();
+      const bobHid = await bob.createHousehold(input({ name: "Bob's" }));
+      const foreign = (await hkOf(bob, bobHid)).tasks[0];
+      await b.signInWithGoogle();
+
+      const ids = (await hkOf(b, hid)).tasks.map((t) => t.id);
+      const order = [ids[6], ...ids.slice(0, 6), foreign.id, 'nope'];
+      await b.reorderHousekeepingTasks(hid, order);
+      const hk = await hkOf(b, hid);
+      expect(hk.tasks.map((t) => t.id)).toEqual(order.slice(0, 7));
+      expect(hk.tasks.map((t) => t.position)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+      await bob.signInWithGoogle();
+      expect((await hkOf(bob, bobHid)).tasks[0]).toEqual(foreign);
+    });
+
+    it('may be emptied', async () => {
+      const { b, hid } = await setup();
+      for (const t of (await hkOf(b, hid)).tasks) await b.deleteHousekeepingTask(t.id);
+      const hk = await hkOf(b, hid);
+      expect(hk.tasks).toEqual([]);
+      // Earlier visits keep their rows.
+      expect(visitOn(hk, LAST_THURSDAY)!.tasks).toHaveLength(7);
+      expect(visitOn(hk, LAST_THURSDAY)!.tasks.every((r) => r.task_id === null)).toBe(true);
+      // A visit on a day with no tasks has no rows.
+      const id = await b.addHousekeepingVisit(hid, TODAY);
+      expect(visitOn(await hkOf(b, hid), TODAY)).toMatchObject({ id, tasks: [] });
+    });
+  });
+
+  describe('visits', () => {
+    it("the first tick creates today's visit: the list and the message copied, one row ticked", async () => {
+      const { b, hid, me } = await setup();
+      const before = await hkOf(b, hid);
+      expect(visitOn(before, TODAY)).toBeUndefined();
+      const id = await b.setHousekeepingTaskDone(hid, TODAY, { taskId: before.tasks[1].id }, true);
+      const hk = await hkOf(b, hid);
+      expect(hk.visits.map((v) => v.visit_date)).toEqual([TODAY, ...before.visits.map((v) => v.visit_date)]);
+      const visit = hk.visits[0];
+      expect(visit).toMatchObject({
+        id,
+        household_id: hid,
+        visit_date: TODAY,
+        note: HOUSEKEEPING_DEMO_NOTE.body,
+        comments: '',
+        price_pence: null,
+        created_by: me.id,
+        created_at: clock.toISOString(),
+        updated_by: me.id,
+        updated_at: clock.toISOString(),
+      });
+      expect(visit.tasks.map((r) => [r.task_id, r.title, r.position, r.done])).toEqual(
+        before.tasks.map((t, i) => [t.id, t.title, t.position, i === 1]),
+      );
+      expect(visit.tasks[1]).toMatchObject({ done_by: me.id, done_at: clock.toISOString(), visit_id: id, household_id: hid });
+    });
+
+    it('ticking again changes nothing; unticking clears who and when; a row id works too', async () => {
+      const { b, hid } = await setup();
+      const [, second] = (await hkOf(b, hid)).tasks;
+      const id = await b.setHousekeepingTaskDone(hid, TODAY, { taskId: second.id }, true);
+      const ticked = visitOn(await hkOf(b, hid), TODAY)!;
+
+      const { bob, bobMe } = await joinBob(b, hid);
+      later(60_000);
+      expect(await bob.setHousekeepingTaskDone(hid, TODAY, { taskId: second.id }, true)).toBe(id);
+      expect(visitOn(await hkOf(bob, hid), TODAY)).toEqual(ticked);
+
+      later(60_000);
+      const row = ticked.tasks[1];
+      expect(await bob.setHousekeepingTaskDone(hid, '2000-01-01', { visitTaskId: row.id }, false)).toBe(id);
+      const unticked = visitOn(await hkOf(bob, hid), TODAY)!;
+      expect(unticked.tasks[1]).toMatchObject({ done: false, done_by: null, done_at: null });
+      expect(unticked).toMatchObject({ updated_by: bobMe.id, updated_at: clock.toISOString() });
+
+      // Another member's tick is theirs.
+      await bob.setHousekeepingTaskDone(hid, TODAY, { taskId: second.id }, true);
+      expect(visitOn(await hkOf(bob, hid), TODAY)!.tasks[1]).toMatchObject({ done: true, done_by: bobMe.id });
+      expect((await hkOf(bob, hid)).visits.filter((v) => v.visit_date === TODAY)).toHaveLength(1);
+    });
+
+    it('two people ticking different rows keep both ticks', async () => {
+      const { b, hid, me } = await setup();
+      const tasks = (await hkOf(b, hid)).tasks;
+      const { bob, bobMe } = await joinBob(b, hid);
+      await bob.setHousekeepingTaskDone(hid, TODAY, { taskId: tasks[0].id }, true);
+      await b.signInWithGoogle();
+      await b.setHousekeepingTaskDone(hid, TODAY, { taskId: tasks[4].id }, true);
+      const rows = visitOn(await hkOf(b, hid), TODAY)!.tasks.filter((r) => r.done);
+      expect(rows.map((r) => [r.title, r.done_by])).toEqual([
+        [tasks[0].title, bobMe.id],
+        [tasks[4].title, me.id],
+      ]);
+    });
+
+    it('bad targets and days: nothing is created', async () => {
+      const { b, hid } = await setup();
+      const hk = await hkOf(b, hid);
+      const [task] = hk.tasks;
+      const row = visitOn(hk, LAST_THURSDAY)!.tasks[0];
+      const count = async () => (await hkOf(b, hid)).visits.length;
+
+      await rejectsWithMessage(b.setHousekeepingTaskDone(hid, TODAY, { taskId: task.id, visitTaskId: row.id } as never, true), /^invalid_input: target/);
+      await rejectsWithMessage(b.setHousekeepingTaskDone(hid, TODAY, {} as never, true), /^invalid_input: target/);
+      await rejectsWithMessage(b.setHousekeepingTaskDone(hid, TODAY, { taskId: task.id }, null as never), /^invalid_input/);
+      await rejectsWith(b.setHousekeepingTaskDone(hid, TODAY, { taskId: 'nope' }, true), 'not_found');
+      await rejectsWith(b.setHousekeepingTaskDone(hid, TODAY, { visitTaskId: 'nope' }, true), 'not_found');
+      expect(await count()).toBe(5);
+
+      const tomorrow = '2026-10-09';
+      await rejectsWithMessage(b.setHousekeepingTaskDone(hid, tomorrow, { taskId: task.id }, true), /^invalid_input: date/);
+      await rejectsWithMessage(b.saveHousekeepingVisit(hid, tomorrow, { comments: 'x' }), /^invalid_input: date/);
+      await rejectsWithMessage(b.addHousekeepingVisit(hid, tomorrow), /^invalid_input: date/);
+      for (const bad of ['2026-10-32', '2026-02-29', '2026-13-01', '8 Oct', '', '2026-10-8', '2026-10-08T10:00']) {
+        await rejectsWithMessage(b.addHousekeepingVisit(hid, bad), /^invalid_input: date/);
+        await rejectsWithMessage(b.setHousekeepingTaskDone(hid, bad, { visitTaskId: row.id }, true), /^invalid_input: date/);
+      }
+      expect(await count()).toBe(5);
+      // A failed tick on a day without a visit creates nothing.
+      await rejectsWith(b.setHousekeepingTaskDone(hid, '2025-10-08', { taskId: 'nope' }, true), 'not_found');
+      expect(visitOn(await hkOf(b, hid), '2025-10-08')).toBeUndefined();
+      // A leap day is a real day.
+      await b.addHousekeepingVisit(hid, '2024-02-29');
+      expect(visitOn(await hkOf(b, hid), '2024-02-29')).toBeDefined();
+    });
+
+    it('comments (trimmed) and the price save independently; null clears the price', async () => {
+      const { b, hid } = await setup();
+      const id = await b.saveHousekeepingVisit(hid, TODAY, { comments: "  We're out of bin bags.\n" });
+      const { bob, bobMe } = await joinBob(b, hid);
+      later(60_000);
+      expect(await bob.saveHousekeepingVisit(hid, TODAY, { price_pence: 6000 })).toBe(id);
+      let visit = visitOn(await hkOf(bob, hid), TODAY)!;
+      expect(visit).toMatchObject({ comments: "We're out of bin bags.", price_pence: 6000, updated_by: bobMe.id });
+      expect(visit.tasks).toHaveLength(7);
+
+      await bob.saveHousekeepingVisit(hid, TODAY, { price_pence: null });
+      visit = visitOn(await hkOf(bob, hid), TODAY)!;
+      expect(visit).toMatchObject({ comments: "We're out of bin bags.", price_pence: null });
+
+      // Saving what is already there changes nothing (the stamp stays).
+      const stamp = visit.updated_at;
+      later(60_000);
+      await bob.saveHousekeepingVisit(hid, TODAY, { comments: "We're out of bin bags. ", price_pence: null });
+      await bob.saveHousekeepingVisit(hid, TODAY, {});
+      expect(visitOn(await hkOf(bob, hid), TODAY)!.updated_at).toBe(stamp);
+      // An undefined key is left alone.
+      await bob.saveHousekeepingVisit(hid, TODAY, { comments: undefined, price_pence: 4550 });
+      expect(visitOn(await hkOf(bob, hid), TODAY)).toMatchObject({ comments: "We're out of bin bags.", price_pence: 4550 });
+    });
+
+    it('limits: a price of 0 to 1,000,000 whole pence; comments up to 4000; failures store nothing', async () => {
+      const { b, hid } = await setup();
+      await b.saveHousekeepingVisit(hid, TODAY, { price_pence: 0 });
+      await b.saveHousekeepingVisit(hid, TODAY, { price_pence: HOUSEKEEPING_PRICE_MAX_PENCE });
+      for (const bad of [HOUSEKEEPING_PRICE_MAX_PENCE + 1, -1, 12.5, Number.NaN, Infinity, '6000']) {
+        await rejectsWithMessage(b.saveHousekeepingVisit(hid, TODAY, { price_pence: bad as number }), /^invalid_input: price/);
+      }
+      await rejectsWithMessage(b.saveHousekeepingVisit(hid, TODAY, { comments: 5 as never }), /^invalid_input: comments/);
+      await rejectsWithMessage(b.saveHousekeepingVisit(hid, TODAY, { comments: 'x'.repeat(4001) }), /^invalid_input: comments/);
+      await rejectsWithMessage(b.saveHousekeepingVisit(hid, TODAY, null as never), /^invalid_input/);
+      await b.saveHousekeepingVisit(hid, TODAY, { comments: '🦔'.repeat(4000) });
+      expect(visitOn(await hkOf(b, hid), TODAY)).toMatchObject({ price_pence: HOUSEKEEPING_PRICE_MAX_PENCE, comments: '🦔'.repeat(4000) });
+      // On a day without a visit, a refused save creates none.
+      await rejectsWithMessage(b.saveHousekeepingVisit(hid, '2026-10-02', { price_pence: -1 }), /^invalid_input: price/);
+      expect(visitOn(await hkOf(b, hid), '2026-10-02')).toBeUndefined();
+    });
+
+    it('a past day without a visit: the first write creates it; the message is copied only if it stood then', async () => {
+      const { b, hid, me } = await setup();
+      // The message was written yesterday evening: after Fri 2 Oct.
+      const friday = '2026-10-02';
+      const id = await b.saveHousekeepingVisit(hid, friday, { comments: 'Recorded late.' });
+      let visit = visitOn(await hkOf(b, hid), friday)!;
+      expect(visit).toMatchObject({ id, note: '', comments: 'Recorded late.', created_by: me.id, created_at: clock.toISOString() });
+      expect(visit.tasks).toHaveLength(7);
+
+      // Yesterday itself: it stood then (written at 19:20 that day).
+      await b.addHousekeepingVisit(hid, '2026-10-07');
+      expect(visitOn(await hkOf(b, hid), '2026-10-07')!.note).toBe(HOUSEKEEPING_DEMO_NOTE.body);
+
+      // "Add a visit": nothing ticked, or the one already there.
+      const added = await b.addHousekeepingVisit(hid, '2026-10-05');
+      visit = visitOn(await hkOf(b, hid), '2026-10-05')!;
+      expect(visit.id).toBe(added);
+      expect(visit.tasks.some((r) => r.done)).toBe(false);
+      expect(await b.addHousekeepingVisit(hid, '2026-10-05')).toBe(added);
+      expect(await b.addHousekeepingVisit(hid, LAST_THURSDAY)).toBe(visitOn(await hkOf(b, hid), LAST_THURSDAY)!.id);
+      // Visits stay newest first.
+      const dates = (await hkOf(b, hid)).visits.map((v) => v.visit_date);
+      expect(dates).toEqual([...dates].sort().reverse());
+    });
+
+    it('any member deletes a visit, and its rows go with it', async () => {
+      const { b, hid } = await setup();
+      const visit = visitOn(await hkOf(b, hid), LAST_THURSDAY)!;
+      const { bob } = await joinBob(b, hid);
+      await bob.deleteHousekeepingVisit(visit.id);
+      expect(visitOn(await hkOf(bob, hid), LAST_THURSDAY)).toBeUndefined();
+      expect(storedDoc().housekeeping_visit_tasks.filter((r: { visit_id: string }) => r.visit_id === visit.id)).toEqual([]);
+      await rejectsWith(bob.deleteHousekeepingVisit(visit.id), 'not_found');
+      await rejectsWith(bob.setHousekeepingTaskDone(hid, TODAY, { visitTaskId: visit.tasks[0].id }, true), 'not_found');
+    });
+
+    it('uses today in the household time zone', async () => {
+      // 11:00 UTC on Thu 8 Oct: 12:00 in London, 01:00 on Fri 9 Oct in Kiritimati.
+      clock = new Date('2026-10-08T11:00:00Z');
+      const { b, hid } = await setup({ timezone: 'Pacific/Kiritimati' });
+      const [task] = (await hkOf(b, hid)).tasks;
+      await b.setHousekeepingTaskDone(hid, '2026-10-09', { taskId: task.id }, true);
+      await rejectsWithMessage(b.addHousekeepingVisit(hid, '2026-10-10'), /^invalid_input: date/);
+      // Today's visit there follows the list.
+      const added = await b.createHousekeepingTask(hid, 'Windows');
+      expect(visitOn(await hkOf(b, hid), '2026-10-09')!.tasks.at(-1)!.task_id).toBe(added.id);
+
+      storage = new MemStorage();
+      const london = await setup();
+      await rejectsWithMessage(london.b.addHousekeepingVisit(london.hid, '2026-10-09'), /^invalid_input: date/);
+    });
+  });
+
+  describe("task list edits reach today's visit, never earlier ones", () => {
+    async function withToday() {
+      const ctx = await setup();
+      await ctx.b.addHousekeepingVisit(ctx.hid, TODAY);
+      return ctx;
+    }
+
+    it('add: joins today, not last week', async () => {
+      const { b, hid } = await withToday();
+      const task = await b.createHousekeepingTask(hid, 'Windows');
+      const hk = await hkOf(b, hid);
+      expect(visitOn(hk, TODAY)!.tasks.at(-1)).toMatchObject({ task_id: task.id, title: 'Windows', position: 7, done: false });
+      expect(visitOn(hk, LAST_THURSDAY)!.tasks).toHaveLength(7);
+    });
+
+    it('rename and reorder: today follows (ticked or not), last week keeps its own', async () => {
+      const { b, hid } = await withToday();
+      const tasks = (await hkOf(b, hid)).tasks;
+      await b.setHousekeepingTaskDone(hid, TODAY, { taskId: tasks[0].id }, true);
+      await b.renameHousekeepingTask(tasks[0].id, 'Bed sheets (all rooms)');
+      await b.reorderHousekeepingTasks(hid, [...tasks.slice(1).map((t) => t.id), tasks[0].id]);
+      const hk = await hkOf(b, hid);
+      const today = visitOn(hk, TODAY)!.tasks;
+      expect(today.at(-1)).toMatchObject({ title: 'Bed sheets (all rooms)', position: 6, done: true });
+      expect(today[0]).toMatchObject({ title: 'Hoover and mop the floors', position: 0 });
+      const old = visitOn(hk, LAST_THURSDAY)!.tasks;
+      expect(old[0]).toMatchObject({ title: 'Change the bed sheets', position: 0, task_id: tasks[0].id });
+    });
+
+    it('delete: today drops it unless ticked; earlier visits keep it with task_id null', async () => {
+      const { b, hid } = await withToday();
+      const tasks = (await hkOf(b, hid)).tasks;
+      const ironing = tasks.find((t) => t.title === 'Ironing')!;
+      const bins = tasks.find((t) => t.title === 'Empty the bins')!;
+      await b.setHousekeepingTaskDone(hid, TODAY, { taskId: ironing.id }, true);
+      await b.deleteHousekeepingTask(ironing.id);
+      await b.deleteHousekeepingTask(bins.id);
+
+      const hk = await hkOf(b, hid);
+      const today = visitOn(hk, TODAY)!.tasks;
+      expect(today.some((r) => r.title === 'Empty the bins')).toBe(false);
+      expect(today.find((r) => r.title === 'Ironing')).toMatchObject({ done: true, task_id: null });
+      const old = visitOn(hk, LAST_THURSDAY)!.tasks;
+      expect(old.filter((r) => ['Ironing', 'Empty the bins'].includes(r.title)).map((r) => r.task_id)).toEqual([null, null]);
+
+      // A row whose task is gone is ticked by its own id, on any day.
+      const oldBins = old.find((r) => r.title === 'Empty the bins')!;
+      expect(oldBins.done).toBe(true);
+      await b.setHousekeepingTaskDone(hid, LAST_THURSDAY, { visitTaskId: oldBins.id }, false);
+      expect(visitOn(await hkOf(b, hid), LAST_THURSDAY)!.tasks.find((r) => r.id === oldBins.id)!.done).toBe(false);
+      // By the task it is gone.
+      await rejectsWith(b.setHousekeepingTaskDone(hid, TODAY, { taskId: ironing.id }, false), 'not_found');
+    });
+
+    it('nothing reaches a visit on another day, even yesterday', async () => {
+      const { b, hid } = await setup();
+      await b.addHousekeepingVisit(hid, '2026-10-07');
+      const before = visitOn(await hkOf(b, hid), '2026-10-07')!;
+      const tasks = (await hkOf(b, hid)).tasks;
+      await b.createHousekeepingTask(hid, 'Windows');
+      await b.renameHousekeepingTask(tasks[0].id, 'Renamed');
+      await b.reorderHousekeepingTasks(hid, tasks.map((t) => t.id).reverse());
+      await b.deleteHousekeepingTask(tasks[1].id);
+      const after = visitOn(await hkOf(b, hid), '2026-10-07')!;
+      expect(after.tasks.map((r) => [r.title, r.position])).toEqual(before.tasks.map((r) => [r.title, r.position]));
+      expect(after.tasks[1].task_id).toBeNull();
+    });
+  });
+
+  it('outsiders, and anyone signed out, can do none of it', async () => {
+    const { b, hid } = await setup();
+    const hk = await hkOf(b, hid);
+    const task = hk.tasks[0];
+    const visit = hk.visits[0];
+    const bob = make({ user: BOB });
+    await bob.signInWithGoogle();
+    await bob.createHousehold(input({ name: "Bob's" }));
+
+    await rejectsWith(bob.setHousekeepingNote(hid, 'Hacked'), 'not_found');
+    await rejectsWith(bob.createHousekeepingTask(hid, 'Hacked'), 'not_found');
+    await rejectsWith(bob.renameHousekeepingTask(task.id, 'Hacked'), 'not_found');
+    await rejectsWith(bob.deleteHousekeepingTask(task.id), 'not_found');
+    await rejectsWith(bob.reorderHousekeepingTasks(hid, [task.id]), 'not_found');
+    await rejectsWith(bob.setHousekeepingTaskDone(hid, TODAY, { taskId: task.id }, true), 'not_found');
+    await rejectsWith(bob.saveHousekeepingVisit(hid, TODAY, { comments: 'Hacked' }), 'not_found');
+    await rejectsWith(bob.addHousekeepingVisit(hid, TODAY), 'not_found');
+    await rejectsWith(bob.deleteHousekeepingVisit(visit.id), 'not_found');
+    // Not through Bob's own household either.
+    const bobHid = (await bob.getMyHouseholdId())!;
+    await rejectsWith(bob.setHousekeepingTaskDone(bobHid, TODAY, { visitTaskId: visit.tasks[0].id }, true), 'not_found');
+    await rejectsWith(bob.setHousekeepingTaskDone(bobHid, TODAY, { taskId: task.id }, true), 'not_found');
+
+    await bob.signOut();
+    await rejectsWith(bob.setHousekeepingNote(hid, 'x'), 'not_signed_in');
+    await rejectsWith(bob.createHousekeepingTask(hid, 'x'), 'not_signed_in');
+    await rejectsWith(bob.deleteHousekeepingVisit(visit.id), 'not_signed_in');
+
+    await b.signInWithGoogle();
+    expect(await hkOf(b, hid)).toEqual(hk);
+  });
+
+  describe('documents stored before housekeeping', () => {
+    function stripHousekeeping() {
+      const doc = storedDoc();
+      for (const key of ['housekeeping_notes', 'housekeeping_tasks', 'housekeeping_visits', 'housekeeping_visit_tasks']) {
+        delete doc[key];
+      }
+      storage.setItem(DEMO_STORAGE_KEY, JSON.stringify(doc));
+    }
+
+    it('give each household the starter list once, with ids that stay', async () => {
+      const { hid } = await setup();
+      stripHousekeeping();
+      const b = make();
+      const first = await hkOf(b, hid);
+      expect(first.note).toEqual({ body: '', updated_at: null, updated_by: null });
+      expect(first.visits).toEqual([]);
+      expect(first.tasks.map((t) => [t.title, t.position])).toEqual(HOUSEKEEPING_STARTER_TASKS.map((t, i) => [t, i]));
+      expect((await hkOf(make(), hid)).tasks).toEqual(first.tasks);
+      expect(Array.isArray(storedDoc().housekeeping_tasks)).toBe(true);
+      expect(storedDoc().version).toBe(1);
+
+      // Emptied later, it stays empty.
+      for (const t of first.tasks) await b.deleteHousekeepingTask(t.id);
+      expect((await hkOf(make(), hid)).tasks).toEqual([]);
+      // And it works as usual.
+      await b.addHousekeepingVisit(hid, TODAY);
+      expect((await hkOf(b, hid)).visits.map((v) => v.visit_date)).toEqual([TODAY]);
+    });
+
+    it('leave a household that already has visits without the list', async () => {
+      const { hid } = await setup();
+      const doc = storedDoc();
+      delete doc.housekeeping_tasks;
+      storage.setItem(DEMO_STORAGE_KEY, JSON.stringify(doc));
+      const hk = await hkOf(make(), hid);
+      expect(hk.tasks).toEqual([]);
+      expect(hk.visits).toHaveLength(5);
     });
   });
 });

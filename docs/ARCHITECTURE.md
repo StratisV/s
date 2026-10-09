@@ -527,9 +527,10 @@ moment today's visit is created is never missed.
 Internal helpers (not callable by clients): `js_trim(text)`, `housekeeping_starter_tasks()`
 (the starter list; `src/lib/constants.test.ts` and `supabase/tests/housekeeping.test.mjs`
 compare it with `HOUSEKEEPING_STARTER_TASKS`), `household_today(uuid)`,
-`housekeeping_lock(uuid)` and `housekeeping_visit_for(household, date, member)` (finds or
-creates the visit with its copies; `not_found` for an unknown household, `invalid_input` for
-a null or future date).
+`housekeeping_lock(uuid)`, `housekeeping_lock_visit(uuid)` (locks a visit row for the write,
+false when it was deleted meanwhile) and `housekeeping_visit_for(household, date, member)`
+(finds or creates the visit with its copies; `not_found` for an unknown household,
+`invalid_input` for a null or future date).
 
 ### RLS and grants
 
@@ -565,12 +566,15 @@ Each checks the caller first: no user is `not_signed_in`, and not a member of
    `invalid_input`. No such row is `not_found`, and a visit the call created is rolled back
    with it. A row already in that state is left alone. A tick sets done_by (the caller) and
    done_at (now), an untick clears both, and the visit's updated_at and updated_by are
-   stamped. The row is locked and written on its own.
+   stamped. The row is locked and written on its own. The visit is locked first, in the
+   order deleting a visit takes them (the visit, then its rows), so a tick and a delete at the
+   same moment never deadlock: the tick waits, then finds the visit gone (`not_found`).
 5. `save_housekeeping_visit(p_household_id uuid, p_visit_date date, p_patch jsonb) returns
    uuid` (the visit id). Keys: `comments` (a string, trimmed) and `price_pence` (a whole
    number, or null to clear); other keys are ignored; a wrong type (or a patch that is not an
    object) is `invalid_input`; the ranges are the check constraints'. Creates the visit if
-   needed; stamps updated_at and updated_by only when something changed.
+   needed; stamps updated_at and updated_by only when something changed. A visit deleted at
+   that very moment is `not_found` (the save is not lost quietly).
 
 `create_household` is redefined (same signature, copied from
 `20261010000300_item_good.sql`) to also insert the starter task list, in order. A visit is
@@ -618,7 +622,12 @@ whose task has been deleted). `checklistFor()` picks it. `HousekeepingVisitPatch
   household_id, task_id, title, position, done, done_by, done_at)`, ordered by visit_date
   descending, rows sorted in the client). An id that is not a uuid is `not_found` without a
   request (like chat); a date that is not `YYYY-MM-DD` is `invalid_input: date`; a blank title
-  is `invalid_input: title` (like `requireText`). `subscribe` adds the four tables.
+  is `invalid_input: title` (like `requireText`). Also refused before any request: a tick
+  target that is not exactly one of `taskId` and `visitTaskId` (`invalid_input: target`), and
+  a price that is not a whole number or null (`invalid_input: price`; JSON would send NaN or
+  Infinity as null and clear the price). In `reorderHousekeepingTasks` an id that is not a uuid
+  is sent as the nil uuid, so it keeps its place in the order and names no task.
+  `subscribe` adds the four tables.
 - Demo (`src/lib/backend/demo.ts`): four collections in the document (`housekeeping_notes`,
   `housekeeping_tasks`, `housekeeping_visits`, `housekeeping_visit_tasks`) with the SQL
   columns. `read()` fills them in for documents stored before them, and a document without the
@@ -652,9 +661,13 @@ rejects). The optimistic copies come from `src/lib/logic/housekeeping.ts`:
 - ticks use `applyTick()`, comments and price `applyVisitPatch()`, list edits
   `withTaskRenamed()`, `withTaskDeleted()`, `withTasksReordered()` (today's visit follows);
 - `createHousekeepingTask` is not optimistic: it resolves to the stored task, like
-  `createArea`, so the sheet can focus its name;
+  `createArea`, so the sheet can focus its name; the stored task shows on the list (and on
+  today's visit, `withTaskAdded()`) as soon as it resolves, before the reload;
 - the message shows `me` and now as who changed it; unchanged text (after trimming) sends
   nothing;
+- each revert puts back only what its write set, where the screen still shows what it set
+  (a later edit to the same field, tick or message is left alone); optimistic stamps always
+  move forward, even within one millisecond, so a revert can tell its own from a later one;
 - a date after `today` is refused without a write or a toast
   (`BackendError('unknown', 'invalid_input: date')`).
 

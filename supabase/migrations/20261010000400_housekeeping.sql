@@ -169,6 +169,22 @@ as $$
   select pg_catalog.pg_advisory_xact_lock(4711, pg_catalog.hashtext(p_household_id::text))
 $$;
 
+-- Locks a visit row for writing (FOR NO KEY UPDATE: rows can still be added to it) until the
+-- end of the transaction. False when it is gone, deleted by a transaction that committed
+-- while this one waited.
+create or replace function public.housekeeping_lock_visit(p_visit_id uuid)
+returns boolean
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+begin
+  perform 1 from public.housekeeping_visits v where v.id = p_visit_id for no key update;
+  return found;
+end;
+$$;
+
 -- The household's visit on p_visit_date, created if there is none yet. Membership must be
 -- checked by the caller (an RPC); p_member_id is who records it. Raises not_found for an
 -- unknown household and invalid_input for a missing or future day (household time zone).
@@ -458,7 +474,9 @@ $$;
 -- updated_at/updated_by are stamped. A row already in that state is left as it is. No such
 -- row: not_found (and a visit created by this call is rolled back with it). Only that one
 -- row is written, under its row lock: concurrent ticks of different rows never clobber each
--- other. Returns the visit id.
+-- other. The visit is locked before the row, the order in which deleting a visit locks them
+-- (the visit, then its rows by the cascade), so a tick and a delete at the same moment never
+-- deadlock: the tick waits, then finds the visit gone (not_found). Returns the visit id.
 create or replace function public.tick_housekeeping_task(
   p_household_id uuid,
   p_visit_date date,
@@ -491,17 +509,21 @@ begin
   end if;
 
   if p_visit_task_id is not null then
-    select * into v_row
+    select vt.visit_id into v_visit_id
     from public.housekeeping_visit_tasks vt
-    where vt.id = p_visit_task_id and vt.household_id = p_household_id
-    for update;
+    where vt.id = p_visit_task_id and vt.household_id = p_household_id;
   else
     v_visit_id := public.housekeeping_visit_for(p_household_id, p_visit_date, v_member_id);
-    select * into v_row
-    from public.housekeeping_visit_tasks vt
-    where vt.visit_id = v_visit_id and vt.task_id = p_task_id
-    for update;
   end if;
+  if v_visit_id is null or not public.housekeeping_lock_visit(v_visit_id) then
+    raise exception 'not_found';
+  end if;
+
+  select * into v_row
+  from public.housekeeping_visit_tasks vt
+  where vt.visit_id = v_visit_id
+    and (case when p_visit_task_id is not null then vt.id = p_visit_task_id else vt.task_id = p_task_id end)
+  for update;
   if v_row.id is null then
     raise exception 'not_found';
   end if;
@@ -584,6 +606,10 @@ begin
   end if;
 
   v_visit_id := public.housekeeping_visit_for(p_household_id, p_visit_date, v_member_id);
+  -- Deleted at this very moment by someone else: say so rather than save into nothing.
+  if not public.housekeeping_lock_visit(v_visit_id) then
+    raise exception 'not_found';
+  end if;
 
   update public.housekeeping_visits v
   set comments = case when v_has_comments then v_comments else v.comments end,
@@ -880,6 +906,7 @@ revoke all on function public.js_trim(text) from public, anon, authenticated;
 revoke all on function public.housekeeping_starter_tasks() from public, anon, authenticated;
 revoke all on function public.household_today(uuid) from public, anon, authenticated;
 revoke all on function public.housekeeping_lock(uuid) from public, anon, authenticated;
+revoke all on function public.housekeeping_lock_visit(uuid) from public, anon, authenticated;
 revoke all on function public.housekeeping_visit_for(uuid, date, uuid) from public, anon, authenticated;
 revoke all on function public.housekeeping_tasks_before_write() from public, anon, authenticated;
 revoke all on function public.housekeeping_tasks_after_insert() from public, anon, authenticated;

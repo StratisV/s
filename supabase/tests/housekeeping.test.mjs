@@ -113,6 +113,7 @@ describe('structure', () => {
       'housekeeping_starter_tasks',
       'household_today',
       'housekeeping_lock',
+      'housekeeping_lock_visit',
       'housekeeping_visit_for',
       'housekeeping_tasks_before_write',
       'housekeeping_tasks_after_insert',
@@ -469,5 +470,471 @@ describe('existing households get the starter list once', () => {
     await db(fs.readFileSync(MIGRATION, 'utf8'));
     assert.deepEqual((await tasksOf(empty.id)).map((t) => t.title), STARTER);
     assert.equal((await tasksOf(withVisits.id)).length, 0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// More: constraints, snapshots, concurrency, time zones, cascades
+// ─────────────────────────────────────────────────────────────────────────────
+
+const UNIQUE_VIOLATION = '23505';
+
+/** A transaction as `user` (role authenticated with their claims) on its own connection. */
+async function session(user) {
+  const client = await pool.connect();
+  await client.query('begin');
+  if (user) {
+    await client.query('set local role authenticated');
+    await client.query("select set_config('request.jwt.claims', $1, true)", [
+      JSON.stringify({ sub: user.id, email: user.email, role: 'authenticated' }),
+    ]);
+  }
+  let open = true;
+  const end = async (how) => {
+    if (!open) return;
+    open = false;
+    try {
+      await client.query(how);
+    } finally {
+      client.release();
+    }
+  };
+  return {
+    query: (sql, params) => client.query(sql, params),
+    commit: () => end('commit'),
+    rollback: () => end('rollback'),
+  };
+}
+
+/** Whether a promise is still pending after `ms` (a statement waiting on a lock). */
+async function stillWaiting(promise, ms = 150) {
+  const marker = Symbol('waiting');
+  const settled = promise.then(
+    () => 'resolved',
+    () => 'rejected',
+  );
+  return (await Promise.race([settled, new Promise((resolve) => setTimeout(() => resolve(marker), ms))])) === marker;
+}
+
+const TICK = 'select public.tick_housekeeping_task($1, $2, $3, $4, $5) as id';
+const SAVE = 'select public.save_housekeeping_visit($1, $2, $3) as id';
+
+describe('constraints the RPCs never reach', () => {
+  let h;
+  let today;
+
+  before(async () => {
+    h = await createHousehold({ name: 'Constraint home' });
+    today = await todayIn('Europe/London');
+    await rpc(h.owner, 'add_housekeeping_visit', [h.id, today]);
+  });
+
+  test('one visit per household and day; one row per visit and task; rows of deleted tasks may repeat', async () => {
+    const visit = await visitOn(h.id, today);
+    const [row] = await rowsOf(visit.id);
+    await assert.rejects(
+      db('insert into public.housekeeping_visits (household_id, visit_date) values ($1, $2)', [h.id, today]),
+      (err) => err.code === UNIQUE_VIOLATION && /housekeeping_visits_one_per_day/.test(err.message),
+    );
+    await assert.rejects(
+      db("insert into public.housekeeping_visit_tasks (visit_id, household_id, task_id, title) values ($1, $2, $3, 'Again')", [
+        visit.id,
+        h.id,
+        row.task_id,
+      ]),
+      (err) => err.code === UNIQUE_VIOLATION && /housekeeping_visit_tasks_task_once/.test(err.message),
+    );
+    for (let i = 0; i < 2; i++) {
+      await db("insert into public.housekeeping_visit_tasks (visit_id, household_id, task_id, title) values ($1, $2, null, 'Gone')", [
+        visit.id,
+        h.id,
+      ]);
+    }
+    assert.equal((await rowsOf(visit.id)).filter((r) => r.title === 'Gone').length, 2);
+  });
+
+  test('lengths of the copies: a row title 1 to 200, the message copy up to 4000', async () => {
+    const visit = await visitOn(h.id, today);
+    await checkViolation(
+      db("insert into public.housekeeping_visit_tasks (visit_id, household_id, title) values ($1, $2, '')", [visit.id, h.id]),
+      'housekeeping_visit_tasks_title_length',
+    );
+    await checkViolation(
+      db('insert into public.housekeeping_visit_tasks (visit_id, household_id, title) values ($1, $2, $3)', [
+        visit.id,
+        h.id,
+        'x'.repeat(201),
+      ]),
+      'housekeeping_visit_tasks_title_length',
+    );
+    await checkViolation(
+      db('update public.housekeeping_visits set note = $2 where id = $1', [visit.id, 'x'.repeat(4001)]),
+      'housekeeping_visits_note_length',
+    );
+    await db('update public.housekeeping_visits set note = $2 where id = $1', [visit.id, '🦔'.repeat(4000)]);
+  });
+
+  test('the task trigger puts a new task last and keeps it in its household, whatever is sent', async () => {
+    const other = await createHousehold({ name: 'Other' });
+    const { rows } = await db(
+      "insert into public.housekeeping_tasks (household_id, title, position) values ($1, '\u00a0Windows\u2003', 0) returning *",
+      [h.id],
+    );
+    assert.equal(rows[0].title, 'Windows');
+    assert.equal(rows[0].position, 7);
+    await db('update public.housekeeping_tasks set household_id = $2 where id = $1', [rows[0].id, other.id]);
+    assert.equal((await one('select household_id from public.housekeeping_tasks where id = $1', [rows[0].id])).household_id, h.id);
+    await db('delete from public.housekeeping_tasks where id = $1', [rows[0].id]);
+  });
+});
+
+describe('snapshots: history stays true', () => {
+  let h;
+  let shea;
+  let today;
+  let lastWeek;
+
+  before(async () => {
+    h = await createHousehold({ name: 'History home' });
+    shea = await joinHousehold(h, { name: 'Shea' });
+    today = await todayIn('Europe/London');
+    lastWeek = await dateAdd(today, '-7 days');
+    await db("update public.housekeeping_tasks set title = title where household_id = $1", [h.id]);
+  });
+
+  test("a visit keeps the message it was given, whatever happens to the message after", async () => {
+    await rpc(h.owner, 'set_housekeeping_note', [h.id, 'Spare room first.']);
+    await db("update public.housekeeping_notes set updated_at = now() - interval '30 days' where household_id = $1", [h.id]);
+    await rpc(shea.user, 'add_housekeeping_visit', [h.id, lastWeek]);
+    await rpc(shea.user, 'set_housekeeping_note', [h.id, 'Changed since.']);
+    await rpc(shea.user, 'add_housekeeping_visit', [h.id, today]);
+    assert.equal((await visitOn(h.id, lastWeek)).note, 'Spare room first.');
+    assert.equal((await visitOn(h.id, today)).note, 'Changed since.');
+    await rpc(h.owner, 'set_housekeeping_note', [h.id, '']);
+    assert.equal((await visitOn(h.id, lastWeek)).note, 'Spare room first.');
+    assert.equal((await visitOn(h.id, today)).note, 'Changed since.');
+  });
+
+  test("the message's day is the household's: just before or after midnight there", async () => {
+    const day = await dateAdd(today, '-21 days');
+    const next = await dateAdd(day, '1 day');
+    // 23:30 on that day in London: it stood then.
+    await db(
+      "update public.housekeeping_notes set body = 'Late evening.', updated_at = ($2::date + time '23:30') at time zone 'Europe/London' where household_id = $1",
+      [h.id, day],
+    );
+    await rpc(h.owner, 'add_housekeeping_visit', [h.id, day]);
+    assert.equal((await visitOn(h.id, day)).note, 'Late evening.');
+    // 00:30 the next day in London (still the day before in UTC in summer): it did not.
+    const before = await dateAdd(today, '-28 days');
+    await db(
+      "update public.housekeeping_notes set updated_at = ($2::date + interval '1 day' + time '00:30') at time zone 'Europe/London' where household_id = $1",
+      [h.id, before],
+    );
+    await rpc(h.owner, 'add_housekeeping_visit', [h.id, before]);
+    assert.equal((await visitOn(h.id, before)).note, '');
+    assert.ok(next);
+  });
+
+  test('renaming, reordering and deleting tasks never rewrites an earlier visit', async () => {
+    const old = await rowsOf((await visitOn(h.id, lastWeek)).id);
+    const tasks = await tasksOf(h.id);
+    await q(shea.user, "update public.housekeeping_tasks set title = 'Renamed' where id = $1", [tasks[2].id]);
+    await rpc(shea.user, 'reorder_housekeeping_tasks', [h.id, tasks.map((t) => t.id).reverse()]);
+    await q(shea.user, 'delete from public.housekeeping_tasks where id = $1', [tasks[3].id]);
+    const after = await rowsOf((await visitOn(h.id, lastWeek)).id);
+    assert.deepEqual(
+      after.map((r) => [r.id, r.title, r.position, r.done]),
+      old.map((r) => [r.id, r.title, r.position, r.done]),
+    );
+    assert.deepEqual(
+      after.map((r) => r.task_id),
+      old.map((r) => (r.task_id === tasks[3].id ? null : r.task_id)),
+    );
+  });
+
+  test('a member who leaves: their visits, ticks and message stay, as a former member', async () => {
+    const leaver = await joinHousehold(h, { name: 'Leaver' });
+    const day = await dateAdd(today, '-35 days');
+    const [task] = await tasksOf(h.id);
+    await tick(leaver.user, h.id, day, { taskId: task.id }, true);
+    await rpc(leaver.user, 'set_housekeeping_note', [h.id, 'From the leaver.']);
+    await db('delete from public.members where id = $1', [leaver.member.id]);
+    const visit = await visitOn(h.id, day);
+    assert.deepEqual([visit.created_by, visit.updated_by], [null, null]);
+    const row = (await rowsOf(visit.id)).find((r) => r.task_id === task.id);
+    assert.deepEqual([row.done, row.done_by], [true, null]);
+    assert.ok(row.done_at);
+    const note = await one('select * from public.housekeeping_notes where household_id = $1', [h.id]);
+    assert.deepEqual([note.body, note.updated_by], ['From the leaver.', null]);
+  });
+
+  test('deleting the household takes all of it', async () => {
+    const gone = await createHousehold({ name: 'Short-lived' });
+    const day = await todayIn('Europe/London');
+    await rpc(gone.owner, 'set_housekeeping_note', [gone.id, 'Bye']);
+    await rpc(gone.owner, 'add_housekeeping_visit', [gone.id, day]);
+    await db('delete from public.households where id = $1', [gone.id]);
+    for (const table of TABLES) {
+      assert.equal((await one(`select count(*)::int as n from public.${table} where household_id = $1`, [gone.id])).n, 0, table);
+    }
+  });
+});
+
+describe('concurrency', () => {
+  let h;
+  let shea;
+  let today;
+
+  before(async () => {
+    h = await createHousehold({ name: 'Busy home' });
+    shea = await joinHousehold(h, { name: 'Shea' });
+    today = await todayIn('Europe/London');
+    await rpc(h.owner, 'add_housekeeping_visit', [h.id, today]);
+  });
+
+  test('two people ticking different rows of one visit at once: both ticks stay', async () => {
+    const day = await dateAdd(today, '-2 days');
+    await rpc(h.owner, 'add_housekeeping_visit', [h.id, day]);
+    const tasks = await tasksOf(h.id);
+    const first = await session(h.owner);
+    const second = await session(shea.user);
+    try {
+      await first.query(TICK, [h.id, day, tasks[1].id, null, true]);
+      const pending = second.query(TICK, [h.id, day, tasks[5].id, null, true]);
+      await first.commit();
+      await pending;
+      await second.commit();
+    } finally {
+      await first.rollback();
+      await second.rollback();
+    }
+    const rows = await rowsOf((await visitOn(h.id, day)).id);
+    assert.deepEqual(
+      rows.filter((r) => r.done).map((r) => [r.title, r.done_by]),
+      [
+        [tasks[1].title, h.member.id],
+        [tasks[5].title, shea.member.id],
+      ],
+    );
+  });
+
+  test('two people ticking the same row at once: one after the other, the last one stays', async () => {
+    const tasks = await tasksOf(h.id);
+    const first = await session(h.owner);
+    const second = await session(shea.user);
+    try {
+      await first.query(TICK, [h.id, today, tasks[0].id, null, true]);
+      const pending = second.query(TICK, [h.id, today, tasks[0].id, null, false]);
+      assert.equal(await stillWaiting(pending), true, 'the second tick waits for the first');
+      await first.commit();
+      await pending;
+      await second.commit();
+    } finally {
+      await first.rollback();
+      await second.rollback();
+    }
+    const row = (await rowsOf((await visitOn(h.id, today)).id)).find((r) => r.task_id === tasks[0].id);
+    assert.deepEqual([row.done, row.done_by, row.done_at], [false, null, null]);
+  });
+
+  test('a tick waits on a visit being deleted without holding its row, then finds it gone', async () => {
+    const day = await dateAdd(today, '-4 days');
+    const visitId = await rpc(h.owner, 'add_housekeeping_visit', [h.id, day]);
+    const [row] = await rowsOf(visitId);
+    // As the delete does: the visit first (here as the admin, to hold it between the steps),
+    // then its rows (the cascade).
+    const deleter = await session(null);
+    const ticker = await session(h.owner);
+    try {
+      await deleter.query('select id from public.housekeeping_visits where id = $1 for update', [visitId]);
+      const ticking = ticker.query(TICK, [h.id, day, null, row.id, true]);
+      assert.equal(await stillWaiting(ticking), true, 'the tick waits for the visit');
+      // The tick holds no lock on the row while it waits, so the delete can take it.
+      const probe = await session(null);
+      try {
+        await probe.query('select id from public.housekeeping_visit_tasks where id = $1 for update nowait', [row.id]);
+      } finally {
+        await probe.rollback();
+      }
+      assert.equal((await deleter.query('delete from public.housekeeping_visits where id = $1', [visitId])).rowCount, 1);
+      await deleter.commit();
+      await assert.rejects(ticking, (err) => err.message === 'not_found');
+    } finally {
+      await deleter.rollback();
+      await ticker.rollback();
+    }
+    assert.equal(await visitOn(h.id, day), undefined);
+  });
+
+  test('a save on a visit deleted at that moment is not_found, not lost quietly', async () => {
+    const day = await dateAdd(today, '-5 days');
+    const visitId = await rpc(h.owner, 'add_housekeeping_visit', [h.id, day]);
+    const deleter = await session(shea.user);
+    const saver = await session(h.owner);
+    try {
+      await deleter.query('delete from public.housekeeping_visits where id = $1', [visitId]);
+      const saving = saver.query(SAVE, [h.id, day, JSON.stringify({ comments: 'Too late.' })]);
+      assert.equal(await stillWaiting(saving), true);
+      await deleter.commit();
+      await assert.rejects(saving, (err) => err.message === 'not_found');
+    } finally {
+      await deleter.rollback();
+      await saver.rollback();
+    }
+    assert.equal(await visitOn(h.id, day), undefined);
+  });
+
+  test('a delete waits for a tick in progress, then takes the visit and its rows', async () => {
+    const day = await dateAdd(today, '-6 days');
+    const visitId = await rpc(h.owner, 'add_housekeeping_visit', [h.id, day]);
+    const [row] = await rowsOf(visitId);
+    const ticker = await session(h.owner);
+    const deleter = await session(shea.user);
+    try {
+      await ticker.query(TICK, [h.id, day, null, row.id, true]);
+      const deleting = deleter.query('delete from public.housekeeping_visits where id = $1', [visitId]);
+      assert.equal(await stillWaiting(deleting), true);
+      await ticker.commit();
+      assert.equal((await deleting).rowCount, 1);
+      await deleter.commit();
+    } finally {
+      await ticker.rollback();
+      await deleter.rollback();
+    }
+    assert.equal((await rowsOf(visitId)).length, 0);
+  });
+
+  test("a task added while today's visit is being created is on it, either way round", async () => {
+    const g = await createHousehold({ name: 'Race home' });
+    const day = await todayIn('Europe/London');
+    const [task] = await tasksOf(g.id);
+
+    // The visit first: the new task waits for it, then joins it.
+    const creator = await session(g.owner);
+    const adder = await session(g.owner);
+    try {
+      await creator.query(TICK, [g.id, day, task.id, null, true]);
+      const adding = adder.query("insert into public.housekeeping_tasks (household_id, title) values ($1, 'Windows')", [g.id]);
+      assert.equal(await stillWaiting(adding), true, 'the insert waits for the visit');
+      await creator.commit();
+      await adding;
+      await adder.commit();
+    } finally {
+      await creator.rollback();
+      await adder.rollback();
+    }
+    let rows = await rowsOf((await visitOn(g.id, day)).id);
+    assert.ok(rows.some((r) => r.title === 'Windows'));
+
+    // The task first: the visit waits for it, then copies it.
+    const yesterday = await dateAdd(day, '-1 day');
+    await db('delete from public.housekeeping_visits where household_id = $1', [g.id]);
+    const adder2 = await session(g.owner);
+    const creator2 = await session(g.owner);
+    try {
+      await adder2.query("insert into public.housekeeping_tasks (household_id, title) values ($1, 'Fridge')", [g.id]);
+      const creating = creator2.query(TICK, [g.id, day, task.id, null, true]);
+      assert.equal(await stillWaiting(creating), true, 'the visit waits for the insert');
+      await adder2.commit();
+      await creating;
+      await creator2.commit();
+    } finally {
+      await adder2.rollback();
+      await creator2.rollback();
+    }
+    rows = await rowsOf((await visitOn(g.id, day)).id);
+    assert.ok(rows.some((r) => r.title === 'Fridge'));
+    assert.ok(yesterday);
+  });
+
+  test("a task renamed while today's visit is being created shows its new title there", async () => {
+    const g = await createHousehold({ name: 'Rename race home' });
+    const day = await todayIn('Europe/London');
+    const tasks = await tasksOf(g.id);
+    const renamer = await session(g.owner);
+    const creator = await session(g.owner);
+    try {
+      await renamer.query("update public.housekeeping_tasks set title = 'Renamed' where id = $1", [tasks[2].id]);
+      const creating = creator.query(TICK, [g.id, day, tasks[0].id, null, true]);
+      assert.equal(await stillWaiting(creating), true);
+      await renamer.commit();
+      await creating;
+      await creator.commit();
+    } finally {
+      await renamer.rollback();
+      await creator.rollback();
+    }
+    const rows = await rowsOf((await visitOn(g.id, day)).id);
+    assert.equal(rows.find((r) => r.task_id === tasks[2].id).title, 'Renamed');
+  });
+});
+
+describe("the household's time zone decides today", () => {
+  test('a household far ahead may record a visit for a day that is still tomorrow in London', async () => {
+    // Kiritimati is UTC+14 and Pago Pago UTC-11: their days are always different.
+    const ahead = await createHousehold({ name: 'Ahead', timezone: 'Pacific/Kiritimati' });
+    const behind = await createHousehold({ name: 'Behind', timezone: 'Pacific/Pago_Pago' });
+    const aheadToday = await todayIn('Pacific/Kiritimati');
+    const behindToday = await todayIn('Pacific/Pago_Pago');
+    assert.notEqual(aheadToday, behindToday);
+    await rpc(ahead.owner, 'add_housekeeping_visit', [ahead.id, aheadToday]);
+    await rejects(rpc(behind.owner, 'add_housekeeping_visit', [behind.id, aheadToday]), 'invalid_input');
+    await rpc(behind.owner, 'add_housekeeping_visit', [behind.id, behindToday]);
+
+    // "Today's visit" for the list triggers is the household's today too.
+    await q(ahead.owner, "insert into public.housekeeping_tasks (household_id, title) values ($1, 'Windows')", [ahead.id]);
+    const rows = await rowsOf((await visitOn(ahead.id, aheadToday)).id);
+    assert.ok(rows.some((r) => r.title === 'Windows'));
+  });
+});
+
+describe('members, the housekeeper among them, edit everything', () => {
+  test('a member who joined by invite runs the whole visit and the list', async () => {
+    const h = await createHousehold({ name: 'Housekeeper home' });
+    const housekeeper = await joinHousehold(h, { name: 'Maria', emoji: '🧹' });
+    const today = await todayIn('Europe/London');
+    const [task] = await tasksOf(h.id);
+    await rpc(housekeeper.user, 'set_housekeeping_note', [h.id, 'Done the spare room.']);
+    const visitId = await tick(housekeeper.user, h.id, today, { taskId: task.id }, true);
+    await save(housekeeper.user, h.id, today, { comments: 'All fine.', price_pence: 4500 });
+    const { rows } = await q(housekeeper.user, "insert into public.housekeeping_tasks (household_id, title) values ($1, 'Oven') returning id", [h.id]);
+    await q(housekeeper.user, "update public.housekeeping_tasks set title = 'Clean the oven' where id = $1", [rows[0].id]);
+    const others = (await tasksOf(h.id)).filter((t) => t.id !== rows[0].id).map((t) => t.id);
+    await rpc(housekeeper.user, 'reorder_housekeeping_tasks', [h.id, [rows[0].id, ...others]]);
+    const visit = await visitOn(h.id, today);
+    assert.equal(visit.id, visitId);
+    assert.deepEqual([visit.created_by, visit.updated_by, visit.comments, visit.price_pence], [
+      housekeeper.member.id,
+      housekeeper.member.id,
+      'All fine.',
+      4500,
+    ]);
+    assert.equal((await rowsOf(visitId))[0].title, 'Clean the oven');
+    assert.equal((await q(housekeeper.user, 'delete from public.housekeeping_visits where id = $1', [visitId])).rowCount, 1);
+    // Reading: everything of the household, through RLS.
+    for (const table of TABLES) {
+      const { rows: seen } = await q(housekeeper.user, `select household_id from public.${table}`);
+      assert.ok(seen.every((r) => r.household_id === h.id), table);
+    }
+  });
+});
+
+describe('applying the migration again', () => {
+  test('keeps every message, task, visit and tick as it was', async () => {
+    const h = await createHousehold({ name: 'Rerun home' });
+    const today = await todayIn('Europe/London');
+    const [task] = await tasksOf(h.id);
+    await rpc(h.owner, 'set_housekeeping_note', [h.id, 'Keep me.']);
+    await tick(h.owner, h.id, today, { taskId: task.id }, true);
+    const snapshot = async () => ({
+      note: await one('select * from public.housekeeping_notes where household_id = $1', [h.id]),
+      tasks: await tasksOf(h.id),
+      visit: await visitOn(h.id, today),
+      rows: await rowsOf((await visitOn(h.id, today)).id),
+    });
+    const before = await snapshot();
+    await db(fs.readFileSync(MIGRATION, 'utf8'));
+    assert.deepEqual(await snapshot(), before);
   });
 });

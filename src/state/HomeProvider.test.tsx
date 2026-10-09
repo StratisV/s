@@ -2,7 +2,9 @@ import { act, cleanup, render, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DemoBackend, DEMO_USER, type StorageLike } from '../lib/backend/demo';
 import { BackendError } from '../lib/backend/types';
-import type { CreateHouseholdInput, HouseholdData } from '../lib/types';
+import { addDays } from '../lib/logic/dates';
+import { checklistFor, visitOn } from '../lib/logic/housekeeping';
+import type { CreateHouseholdInput, HouseholdData, HousekeepingVisit } from '../lib/types';
 import { HomeProvider, notSavedMessage, useHome, type HomeContextValue } from './HomeProvider';
 
 class MemoryStorage implements StorageLike {
@@ -482,5 +484,402 @@ describe('kinds: To do and To maintain', () => {
     });
     expect(create.mock.calls[0][1]).toMatchObject({ kind: 'state', due_date: null, repeat: 'none', notify: 'none' });
     await waitFor(() => expect(itemNamed(home, 'Pizza oven')).toMatchObject({ kind: 'state', due_date: null }));
+  });
+});
+
+describe('housekeeping', () => {
+  const hk = (home: () => HomeContextValue) => home().data!.housekeeping;
+  const dayVisit = (home: () => HomeContextValue, date: string) => visitOn(hk(home).visits, date);
+  /** The seed's latest visit (a Thursday before today). */
+  const lastVisit = (home: () => HomeContextValue): HousekeepingVisit => hk(home).visits[0];
+
+  async function rejected(p: Promise<unknown>): Promise<unknown> {
+    return p.then(
+      () => null,
+      (e: unknown) => e,
+    );
+  }
+
+  it("a tick on a day without a visit shows a pending visit at once, then the stored one under the same keys", async () => {
+    const { backend, home } = await seeded();
+    const today = home().today;
+    expect(dayVisit(home, today)).toBeUndefined();
+    const keys = checklistFor(hk(home), today).map((r) => r.key);
+    const [first, second] = hk(home).tasks;
+    const write = deferred();
+    const real = backend.setHousekeepingTaskDone.bind(backend);
+    const tick = vi.spyOn(backend, 'setHousekeepingTaskDone').mockImplementation(async (...args) => {
+      await write.promise;
+      return real(...args);
+    });
+
+    let result: Promise<void> | undefined;
+    act(() => {
+      result = home().setHousekeepingTaskDone(today, { taskId: first.id }, true);
+    });
+    const pending = dayVisit(home, today)!;
+    expect(pending.id).toBe(`pending:${today}`);
+    expect(pending).toMatchObject({ created_by: home().me!.id, comments: '', price_pence: null, note: hk(home).note.body });
+    expect(pending.tasks.map((r) => r.id)).toEqual(hk(home).tasks.map((t) => `pending:${t.id}`));
+    expect(pending.tasks[0]).toMatchObject({ task_id: first.id, done: true, done_by: home().me!.id });
+    expect(hk(home).visits[0]).toBe(pending);
+
+    // A second tick that day goes on the pending visit, and is sent by task too.
+    act(() => {
+      void home().setHousekeepingTaskDone(today, { taskId: second.id }, true);
+    });
+    expect(dayVisit(home, today)!.tasks.filter((r) => r.done).map((r) => r.task_id)).toEqual([first.id, second.id]);
+    expect(tick.mock.calls.map((c) => c[2])).toEqual([{ taskId: first.id }, { taskId: second.id }]);
+
+    await act(async () => {
+      write.resolve();
+      await result;
+    });
+    await flush();
+    await waitFor(() => expect(dayVisit(home, today)!.id).not.toMatch(/^pending:/));
+    const stored = dayVisit(home, today)!;
+    expect(stored.tasks.filter((r) => r.done).map((r) => r.task_id)).toEqual([first.id, second.id]);
+    expect(checklistFor(hk(home), today).map((r) => r.key)).toEqual(keys);
+    expect(home().toast).toBeNull();
+  });
+
+  it('a failed first write takes the pending visit away and says it was not saved', async () => {
+    const { backend, home } = await seeded();
+    const today = home().today;
+    vi.spyOn(backend, 'load').mockRejectedValue(offline());
+    vi.spyOn(backend, 'saveHousekeepingVisit').mockRejectedValue(offline());
+    const before = home().data;
+    let result: Promise<void> | undefined;
+    act(() => {
+      result = home().saveHousekeepingVisit(today, { comments: 'Out of bin bags.' });
+    });
+    expect(dayVisit(home, today)).toMatchObject({ id: `pending:${today}`, comments: 'Out of bin bags.' });
+    await act(async () => {
+      await expect(result).rejects.toThrow();
+    });
+    expect(dayVisit(home, today)).toBeUndefined();
+    expect(home().data).toEqual(before);
+    expect(home().toast?.message).toBe('Couldn’t save. No connection.');
+  });
+
+  it('a failed tick takes back only its change, not ticks, comments or a price saved meanwhile', async () => {
+    const { backend, home } = await seeded();
+    const visit = lastVisit(home);
+    const undone = visit.tasks.find((r) => !r.done)!;
+    const done = visit.tasks.find((r) => r.done)!;
+    const write = deferred<string>();
+    vi.spyOn(backend, 'setHousekeepingTaskDone').mockImplementationOnce(() => write.promise);
+    // Reloads fail throughout (a flaky connection), so only the revert can fix the screen.
+    vi.spyOn(backend, 'load').mockRejectedValue(offline());
+
+    let failed: Promise<void> | undefined;
+    act(() => {
+      failed = home().setHousekeepingTaskDone(visit.visit_date, { taskId: undone.task_id! }, true);
+    });
+    const shown = dayVisit(home, visit.visit_date)!;
+    expect(shown.tasks.find((r) => r.id === undone.id)).toMatchObject({ done: true, done_by: home().me!.id });
+    expect(shown.updated_by).toBe(home().me!.id);
+
+    await act(() => home().setHousekeepingTaskDone(visit.visit_date, { taskId: done.task_id! }, false));
+    await act(() => home().saveHousekeepingVisit(visit.visit_date, { comments: 'Thanks!', price_pence: 6500 }));
+
+    await act(async () => {
+      write.reject(offline());
+      await expect(failed).rejects.toThrow();
+    });
+    const after = dayVisit(home, visit.visit_date)!;
+    expect(after.tasks.find((r) => r.id === undone.id)).toEqual(undone);
+    expect(after.tasks.find((r) => r.id === done.id)).toMatchObject({ done: false, done_by: null, done_at: null });
+    expect(after).toMatchObject({ comments: 'Thanks!', price_pence: 6500, updated_by: home().me!.id });
+    expect(home().toast?.message).toBe('Couldn’t save. No connection.');
+  });
+
+  it('a failed save puts back the comments and the price, and the stamp', async () => {
+    const { backend, home } = await seeded();
+    const visit = lastVisit(home);
+    vi.spyOn(backend, 'load').mockRejectedValue(offline());
+    vi.spyOn(backend, 'saveHousekeepingVisit').mockRejectedValue(offline());
+    await act(async () => {
+      await home()
+        .saveHousekeepingVisit(visit.visit_date, { comments: '  New  ', price_pence: null })
+        .catch(() => {});
+    });
+    expect(dayVisit(home, visit.visit_date)).toEqual(visit);
+  });
+
+  it('saves comments and the price on a past visit, shown at once and kept', async () => {
+    const { backend, home } = await seeded();
+    const visit = lastVisit(home);
+    const save = vi.spyOn(backend, 'saveHousekeepingVisit');
+    let result: Promise<void> | undefined;
+    act(() => {
+      result = home().saveHousekeepingVisit(visit.visit_date, { comments: '  Oven too. ', price_pence: 7000 });
+    });
+    expect(dayVisit(home, visit.visit_date)).toMatchObject({ id: visit.id, comments: 'Oven too.', price_pence: 7000 });
+    await act(() => result!);
+    expect(save).toHaveBeenCalledWith(home().data!.household.id, visit.visit_date, { comments: '  Oven too. ', price_pence: 7000 });
+    await waitFor(() => expect(dayVisit(home, visit.visit_date)).toMatchObject({ comments: 'Oven too.', price_pence: 7000 }));
+    expect(dayVisit(home, visit.visit_date)!.updated_by).toBe(home().me!.id);
+  });
+
+  it('refuses a day after today without a write or a toast', async () => {
+    const { backend, home } = await seeded();
+    const tomorrow = addDays(home().today, 1);
+    const spies = [
+      vi.spyOn(backend, 'setHousekeepingTaskDone'),
+      vi.spyOn(backend, 'saveHousekeepingVisit'),
+      vi.spyOn(backend, 'addHousekeepingVisit'),
+    ];
+    const before = home().data;
+    const task = hk(home).tasks[0];
+    for (const call of [
+      () => home().setHousekeepingTaskDone(tomorrow, { taskId: task.id }, true),
+      () => home().saveHousekeepingVisit(tomorrow, { comments: 'x' }),
+      () => home().addHousekeepingVisit(tomorrow),
+    ]) {
+      const err = await rejected(call());
+      expect(err).toBeInstanceOf(BackendError);
+      expect((err as BackendError).code).toBe('unknown');
+      expect((err as BackendError).message).toBe('invalid_input: date');
+    }
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    expect(home().toast).toBeNull();
+    expect(home().data).toBe(before);
+  });
+
+  it('"Add a visit" shows the day at once, nothing ticked; a day that has one keeps it', async () => {
+    const { home } = await seeded();
+    const day = addDays(home().today, -2);
+    let result: Promise<void> | undefined;
+    act(() => {
+      result = home().addHousekeepingVisit(day);
+    });
+    expect(dayVisit(home, day)).toMatchObject({ id: `pending:${day}`, comments: '' });
+    expect(dayVisit(home, day)!.tasks.some((r) => r.done)).toBe(false);
+    await act(() => result!);
+    await waitFor(() => expect(dayVisit(home, day)!.id).not.toMatch(/^pending:/));
+
+    const visit = lastVisit(home);
+    const before = home().data;
+    let again: Promise<void> | undefined;
+    act(() => {
+      again = home().addHousekeepingVisit(visit.visit_date);
+    });
+    expect(home().data).toBe(before);
+    await act(() => again!);
+  });
+
+  it('deletes a visit at once; a failure brings it back', async () => {
+    const { backend, home } = await seeded();
+    const visit = lastVisit(home);
+    const failing = vi.spyOn(backend, 'deleteHousekeepingVisit').mockRejectedValueOnce(offline());
+    vi.spyOn(backend, 'load').mockRejectedValueOnce(offline());
+    let result: Promise<void> | undefined;
+    act(() => {
+      result = home().deleteHousekeepingVisit(visit.id);
+    });
+    expect(dayVisit(home, visit.visit_date)).toBeUndefined();
+    await act(async () => {
+      await expect(result).rejects.toThrow();
+    });
+    expect(lastVisit(home)).toEqual(visit);
+
+    failing.mockRestore();
+    await act(() => home().deleteHousekeepingVisit(visit.id));
+    await flush();
+    await waitFor(() => expect(dayVisit(home, visit.visit_date)).toBeUndefined());
+  });
+
+  describe('the message', () => {
+    it('shows at once with me and now; unchanged text sends nothing', async () => {
+      const { backend, home } = await seeded();
+      const set = vi.spyOn(backend, 'setHousekeepingNote');
+      const before = hk(home).note;
+      await act(() => home().setHousekeepingNote(`  ${before.body}\n`));
+      expect(set).not.toHaveBeenCalled();
+
+      const start = Date.now();
+      let result: Promise<void> | undefined;
+      act(() => {
+        result = home().setHousekeepingNote('  Spare room first, please.\n');
+      });
+      const shown = hk(home).note;
+      expect(shown).toMatchObject({ body: 'Spare room first, please.', updated_by: home().me!.id });
+      expect(new Date(shown.updated_at!).getTime()).toBeGreaterThanOrEqual(start);
+      await act(() => result!);
+      expect(set).toHaveBeenCalledWith(home().data!.household.id, 'Spare room first, please.');
+      await waitFor(() => expect(hk(home).note.body).toBe('Spare room first, please.'));
+
+      // Clearing it.
+      await act(() => home().setHousekeepingNote(''));
+      await waitFor(() => expect(hk(home).note).toMatchObject({ body: '', updated_by: home().me!.id }));
+    });
+
+    it('a failure puts the old message back, unless it was changed again meanwhile', async () => {
+      const { backend, home } = await seeded();
+      const before = hk(home).note;
+      vi.spyOn(backend, 'load').mockRejectedValue(offline());
+      vi.spyOn(backend, 'setHousekeepingNote').mockRejectedValueOnce(offline());
+      await act(async () => {
+        await home()
+          .setHousekeepingNote('Lost')
+          .catch(() => {});
+      });
+      expect(hk(home).note).toEqual(before);
+      expect(home().toast?.message).toBe('Couldn’t save. No connection.');
+
+      const first = deferred();
+      vi.spyOn(backend, 'setHousekeepingNote').mockImplementationOnce(() => first.promise);
+      let failed: Promise<void> | undefined;
+      act(() => {
+        failed = home().setHousekeepingNote('First');
+      });
+      await act(() => home().setHousekeepingNote('Second'));
+      await act(async () => {
+        first.reject(offline());
+        await expect(failed).rejects.toThrow();
+      });
+      expect(hk(home).note.body).toBe('Second');
+    });
+  });
+
+  describe('the task list', () => {
+    it('createHousekeepingTask is not optimistic: it resolves to the stored task, then shows it, today too', async () => {
+      const { backend, home } = await seeded();
+      const today = home().today;
+      await act(() => home().addHousekeepingVisit(today));
+      await waitFor(() => expect(dayVisit(home, today)!.id).not.toMatch(/^pending:/));
+      const write = deferred();
+      const real = backend.createHousekeepingTask.bind(backend);
+      vi.spyOn(backend, 'createHousekeepingTask').mockImplementationOnce(async (hid, title) => {
+        await write.promise;
+        return real(hid, title);
+      });
+      // Slow reloads, so what shows first is the stored task itself.
+      const realLoad = backend.load.bind(backend);
+      const reload = deferred();
+      vi.spyOn(backend, 'load').mockImplementation(async (id) => {
+        const data = await realLoad(id);
+        await reload.promise;
+        return data;
+      });
+      const count = hk(home).tasks.length;
+      let created: Promise<unknown> | undefined;
+      act(() => {
+        created = home().createHousekeepingTask('  Windows ');
+      });
+      expect(hk(home).tasks).toHaveLength(count);
+      let task: unknown;
+      await act(async () => {
+        write.resolve();
+        task = await created;
+      });
+      expect(task).toMatchObject({ title: 'Windows', position: count });
+      expect(hk(home).tasks.at(-1)).toEqual(task);
+      expect(dayVisit(home, today)!.tasks.at(-1)).toMatchObject({ task_id: (task as { id: string }).id, done: false });
+      await act(async () => {
+        reload.resolve();
+      });
+      await flush();
+      expect(hk(home).tasks.filter((t) => t.title === 'Windows')).toHaveLength(1);
+    });
+
+    it('a failed create shows nothing new and says so', async () => {
+      const { backend, home } = await seeded();
+      vi.spyOn(backend, 'createHousekeepingTask').mockRejectedValueOnce(offline());
+      const before = hk(home).tasks;
+      await act(async () => {
+        await expect(home().createHousekeepingTask('Windows')).rejects.toThrow();
+      });
+      expect(hk(home).tasks).toEqual(before);
+      expect(home().toast?.message).toBe('Couldn’t save. No connection.');
+    });
+
+    it("rename, delete and reorder show at once on the list and today's visit, and fail back", async () => {
+      const { backend, home } = await seeded();
+      const today = home().today;
+      const [first, second, third] = hk(home).tasks;
+      // Today's visit, with the third task ticked.
+      await act(() => home().setHousekeepingTaskDone(today, { taskId: third.id }, true));
+      await waitFor(() => expect(dayVisit(home, today)!.id).not.toMatch(/^pending:/));
+      const before = home().data!;
+      const last = lastVisit(home).visit_date === today ? hk(home).visits[1] : lastVisit(home);
+
+      vi.spyOn(backend, 'load').mockRejectedValue(offline());
+      const gates = { rename: deferred(), remove: deferred(), removeTicked: deferred(), reorder: deferred() };
+      vi.spyOn(backend, 'renameHousekeepingTask').mockImplementationOnce(() => gates.rename.promise);
+      vi.spyOn(backend, 'deleteHousekeepingTask')
+        .mockImplementationOnce(() => gates.remove.promise)
+        .mockImplementationOnce(() => gates.removeTicked.promise);
+      vi.spyOn(backend, 'reorderHousekeepingTasks').mockImplementationOnce(() => gates.reorder.promise);
+
+      const pending: Promise<void>[] = [];
+      act(() => {
+        pending.push(home().renameHousekeepingTask(first.id, ' Bed sheets (all rooms) '));
+        pending.push(home().deleteHousekeepingTask(second.id));
+        pending.push(home().deleteHousekeepingTask(third.id));
+        pending.push(home().reorderHousekeepingTasks([...hk(home).tasks.map((t) => t.id)].reverse()));
+      });
+      const list = hk(home).tasks;
+      expect(list.at(-1)).toMatchObject({ id: first.id, title: 'Bed sheets (all rooms)' });
+      expect(list.some((t) => t.id === second.id || t.id === third.id)).toBe(false);
+      const todays = dayVisit(home, today)!.tasks;
+      expect(todays.find((r) => r.task_id === first.id)!.title).toBe('Bed sheets (all rooms)');
+      expect(todays.some((r) => r.task_id === second.id)).toBe(false);
+      // The ticked row stays, unlinked; it keeps its place.
+      expect(todays.find((r) => r.title === third.title)).toMatchObject({ task_id: null, done: true });
+      expect(todays.filter((r) => r.task_id !== null).map((r) => r.task_id)).toEqual(list.map((t) => t.id));
+      // Earlier visits keep their titles; their rows are unlinked.
+      const old = dayVisit(home, last.visit_date)!.tasks;
+      expect(old.find((r) => r.id === last.tasks[0].id)!.title).toBe(first.title);
+      expect(old.find((r) => r.id === last.tasks[1].id)!.task_id).toBeNull();
+
+      await act(async () => {
+        for (const g of Object.values(gates)) g.reject(offline());
+        await Promise.allSettled(pending);
+      });
+      expect(home().data).toEqual(before);
+    });
+
+    it('a failed rename leaves a later rename alone', async () => {
+      const { backend, home } = await seeded();
+      const [first] = hk(home).tasks;
+      vi.spyOn(backend, 'load').mockRejectedValue(offline());
+      const gate = deferred();
+      vi.spyOn(backend, 'renameHousekeepingTask').mockImplementationOnce(() => gate.promise);
+      let failed: Promise<void> | undefined;
+      act(() => {
+        failed = home().renameHousekeepingTask(first.id, 'One');
+      });
+      await act(() => home().renameHousekeepingTask(first.id, 'Two'));
+      await act(async () => {
+        gate.reject(offline());
+        await expect(failed).rejects.toThrow();
+      });
+      expect(hk(home).tasks[0].title).toBe('Two');
+    });
+  });
+
+  it('changes by another member arrive with the reload', async () => {
+    const storage = new MemoryStorage();
+    const backend = new DemoBackend({ storage, search: '?demo-seed=1', latency: 0 });
+    const home = mount(backend);
+    await waitFor(() => expect(home().phase.kind).toBe('ready'));
+    const hid = home().data!.household.id;
+    const token = await backend.createInvite();
+    const ela = new DemoBackend({ storage, search: '', latency: 0, user: { id: 'u-ela', email: 'e@x', name: 'Ela' } });
+    await ela.signInWithGoogle();
+    await ela.joinHousehold({ token, memberName: 'Ela', memberEmoji: '🦊' });
+    const today = home().today;
+    const [task] = (await ela.load(hid)).housekeeping.tasks;
+    await ela.setHousekeepingTaskDone(hid, today, { taskId: task.id }, true);
+    await ela.setHousekeepingNote(hid, 'From Ela');
+    await backend.signInWithGoogle();
+
+    await act(() => home().refresh());
+    expect(hk(home).note.body).toBe('From Ela');
+    const visit = dayVisit(home, today)!;
+    const elaId = home().data!.members.find((m) => m.user_id === 'u-ela')!.id;
+    expect(visit.tasks[0]).toMatchObject({ task_id: task.id, done: true, done_by: elaId });
   });
 });
