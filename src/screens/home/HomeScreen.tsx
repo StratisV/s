@@ -7,6 +7,8 @@ import { useHousehold } from '../../state/HomeProvider';
 import { ChevronRightIcon, PlusIcon } from '../../ui/icons';
 import { Screen } from '../../ui/Screen';
 import { ItemRow } from './ItemRow';
+import { PersonFilter } from './PersonFilter';
+import { countsFor, isFor, personFilterKey, validFilter, type PersonFilter as Who } from './personFilter';
 import styles from './HomeScreen.module.css';
 
 interface HomeScreenProps {
@@ -69,23 +71,69 @@ function useCollapsedAreas(householdId: string, areaIds: string[]) {
   return [ids, update] as const;
 }
 
+/** Whose items Home shows, remembered per household on this device. */
+function usePersonFilter(householdId: string, members: Member[]) {
+  const key = personFilterKey(householdId);
+  const read = () => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  };
+  const [state, setState] = useState(() => ({ key, who: read() }));
+  // Another household on this device: its own choice.
+  const stored = state.key === key ? state.who : read();
+  const who = validFilter(stored, members);
+  const setWho = useCallback(
+    (next: Who) => {
+      try {
+        if (next === 'all') localStorage.removeItem(key);
+        else localStorage.setItem(key, next);
+      } catch {
+        /* private mode or storage full: it just isn't remembered */
+      }
+      setState({ key, who: next });
+    },
+    [key],
+  );
+  return [who, setWho] as const;
+}
+
 /** Home: the household's areas, each with its open items (README "1. Home"). */
 export function HomeScreen({ tabs, onOpenItem, onOpenProfile, onAddItem, revealArea, onRevealed }: HomeScreenProps) {
   const { data, me, today, completeItem } = useHousehold();
   const sections = useMemo(() => itemsByArea(data.areas, data.items), [data.areas, data.items]);
   const areaIds = useMemo(() => sections.map((s) => s.area.id), [sections]);
   const [collapsed, setCollapsed] = useCollapsedAreas(data.household.id, areaIds);
-  const allCollapsed = areaIds.length > 0 && areaIds.every((id) => collapsed.has(id));
+  const [who, setWho] = usePersonFilter(data.household.id, data.members);
+  const counts = useMemo(
+    () => countsFor(sections.flatMap((s) => s.items), data.members),
+    [sections, data.members],
+  );
+  // One person (or Unassigned): only their items, and only the areas where they have some.
+  const shown = useMemo(
+    () =>
+      who === 'all'
+        ? sections
+        : sections.map((s) => ({ ...s, items: s.items.filter((it) => isFor(it, who)) })).filter((s) => s.items.length > 0),
+    [sections, who],
+  );
+  const shownIds = shown.map((s) => s.area.id);
+  const allCollapsed = shownIds.length > 0 && shownIds.every((id) => collapsed.has(id));
 
   // An item was saved into a collapsed area: open it so the item shows (the sheet closes over it).
+  // If the filter hides that area, show everyone's again.
   useEffect(() => {
     if (!revealArea) return;
+    if (who !== 'all' && !shownIds.includes(revealArea)) setWho('all');
     if (collapsed.has(revealArea)) {
       const next = new Set(collapsed);
       next.delete(revealArea);
       setCollapsed(next);
     }
     onRevealed?.();
+    // `who` and `shownIds` are only read when an area is revealed.
   }, [revealArea, collapsed, setCollapsed, onRevealed]);
 
   const toggle = (areaId: string) => {
@@ -107,16 +155,25 @@ export function HomeScreen({ tabs, onOpenItem, onOpenProfile, onAddItem, revealA
     >
       {sections.length ? (
         <>
-          <div className={styles.toolbar}>
-            <button
-              type="button"
-              className={styles.toggleAll}
-              onClick={() => setCollapsed(allCollapsed ? new Set() : new Set(areaIds))}
-            >
-              {allCollapsed ? 'Expand All' : 'Collapse All'}
-            </button>
-          </div>
-          {sections.map(({ area, items }) => (
+          <PersonFilter members={data.members} meId={me.id} value={who} counts={counts} onChange={setWho} />
+          {shown.length ? (
+            <div className={styles.toolbar}>
+              <button
+                type="button"
+                className={styles.toggleAll}
+                onClick={() => setCollapsed(allCollapsed ? new Set() : new Set(shownIds))}
+              >
+                {allCollapsed ? 'Expand All' : 'Collapse All'}
+              </button>
+            </div>
+          ) : (
+            <p className={styles.nobody}>
+              {who === 'none'
+                ? 'Nothing unassigned right now.'
+                : `Nothing for ${data.members.find((m) => m.id === who)?.name ?? 'them'} right now.`}
+            </p>
+          )}
+          {shown.map(({ area, items }) => (
             <AreaSection
               key={area.id}
               area={area}

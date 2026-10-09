@@ -9,8 +9,10 @@ never gets done and stays on the list, and says **What good looks like** for it,
 "cover on, ash cleared out, logs dry and stacked"). Everyone in the household signs in with
 **Google**, picks an emoji for their profile, and **can edit everything**.
 
-- **Home**: every area and its items, with how many are red, amber and green. Each item is
-  one slim row: its title, then who, when and its note on one line. Areas fold away with a
+- **Home**: today's date, then every area and its items, with how many are red, amber and green.
+  A row of people at the top (Everyone, you, each person, Unassigned, with counts) shows just
+  one person's items, so everyone can see what they need to do; the phone remembers the choice.
+  Each item is one slim row: its title, then who, when and its note on one line. Areas fold away with a
   tap (or all at once) and stay that way on that phone. Add an item with the round + at the
   bottom right, or with the small + in an area's header, which starts the item in that area.
 - **The hero**: every tab opens on an illustration that runs to the very top of the screen: the
