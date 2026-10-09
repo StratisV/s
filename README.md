@@ -51,6 +51,21 @@ You need four free accounts: **Supabase** (database, Google sign-in, scheduled j
 and a static host such as **Vercel**, **Netlify** or **Cloudflare Pages** (HTTPS is required
 for notifications).
 
+### The quick way: Vercel + Supabase (shared data on every phone)
+
+Without a database the app runs in demo mode and each browser keeps its own data. To share it:
+
+1. In Vercel, open the project, go to **Storage**, choose **Create Database**, then **Supabase**,
+   and connect it to the project (all environments). Vercel adds the database settings to the
+   project (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `POSTGRES_URL_NON_POOLING`, ...).
+2. Redeploy. The build reads those settings (`vite.config.ts`), and `scripts/migrate.mjs` brings
+   the database up to date before building (production builds only; it records what it applied
+   in `supabase_migrations.schema_migrations`, like the Supabase CLI).
+3. Turn on Google sign-in (step 2 below) and, in Supabase **Authentication > URL Configuration**,
+   set the Site URL to the app's address and add `<app address>/**` as a redirect URL.
+
+The numbered steps below do the same by hand, plus push notifications and the weekly email.
+
 ### 1. Supabase project and database
 
 1. Create a project at https://supabase.com/dashboard.
