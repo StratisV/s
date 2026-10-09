@@ -5,6 +5,14 @@ import { DemoBackend, type StorageLike } from './lib/backend/demo';
 import { HomeProvider } from './state/HomeProvider';
 import { ConfettiProvider } from './ui/Confetti';
 
+// The Housekeeping tab's calendar, price, checklist and byline functions are being built
+// alongside the screen; until they land, the screen runs on stand-ins written from their
+// specs (src/screens/housekeeping/testLogic.ts).
+vi.mock('./lib/logic/housekeeping', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./lib/logic/housekeeping')>()),
+  ...(await import('./screens/housekeeping/testLogic')),
+}));
+
 class MemoryStorage implements StorageLike {
   private map = new Map<string, string>();
   getItem(key: string) {
@@ -142,10 +150,14 @@ describe('adding an item from an area header', () => {
 describe('tab bar', () => {
   const tabBar = () => screen.getByRole('navigation', { name: 'Tabs' });
 
-  it('has Home, Chat and Stats under the hero; the + is on Home and Stats only', async () => {
+  it('has Home, Chat, Housekeeping and Stats under the hero; the + is on Home and Stats only', async () => {
     await setup();
     await within(tabBar()).findByRole('button', { name: 'Chat, unread messages' });
-    expect(within(tabBar()).getAllByRole('button').map((b) => b.textContent)).toEqual(['Home', 'Chat', 'Stats']);
+    expect(
+      within(tabBar())
+        .getAllByRole('button')
+        .map((b) => b.textContent),
+    ).toEqual(['Home', 'Chat', 'Housekeeping', 'Stats']);
     // In the screen, right after the hero with the title on it.
     const home = screen.getByRole('region', { name: 'Home' });
     expect(home.contains(tabBar())).toBe(true);
@@ -155,9 +167,31 @@ describe('tab bar', () => {
     await screen.findByRole('heading', { name: 'Chat', level: 1 });
     expect(screen.getByRole('region', { name: 'Chat' }).contains(tabBar())).toBe(true);
     expect(screen.queryByRole('button', { name: 'New item' })).toBeNull();
+    fireEvent.click(within(tabBar()).getByRole('button', { name: 'Housekeeping' }));
+    await screen.findByRole('heading', { name: 'Housekeeping', level: 1 });
+    expect(screen.getByRole('region', { name: 'Housekeeping' }).contains(tabBar())).toBe(true);
+    expect(within(tabBar()).getByRole('button', { name: 'Housekeeping' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.queryByRole('button', { name: 'New item' })).toBeNull();
     fireEvent.click(within(tabBar()).getByRole('button', { name: 'Stats' }));
     await screen.findByRole('heading', { name: 'Stats', level: 1 });
     expect(screen.getByRole('button', { name: 'New item' })).toBeTruthy();
+  });
+
+  it('opens the task list from Housekeeping as a page sheet over the tab', async () => {
+    await setup();
+    fireEvent.click(within(tabBar()).getByRole('button', { name: 'Housekeeping' }));
+    const edit = await screen.findByRole('button', { name: 'Edit task list' });
+    act(() => edit.focus());
+    fireEvent.click(edit);
+    const sheet = await screen.findByRole('dialog', { name: 'Task list' });
+    await waitFor(() => expect(sheet.hasAttribute('data-shown')).toBe(true));
+    // The tab behind is pushed back and out of reach.
+    const inert = (el: HTMLElement | null): boolean => !!el && (el.inert || inert(el.parentElement));
+    expect(inert(screen.getByRole('region', { name: 'Housekeeping', hidden: true }))).toBe(true);
+    expect(document.documentElement.hasAttribute('data-sheet')).toBe(true);
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Task list' })).toBeNull());
+    expect(document.documentElement.hasAttribute('data-sheet')).toBe(false);
   });
 
   it('shows a dot on Chat for unread messages until the chat has been seen', async () => {

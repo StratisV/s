@@ -10,7 +10,7 @@ interface HeaderProps {
   /** The avatar on the hero; tapping it opens Profile. */
   avatarEmoji: string;
   onAvatar(): void;
-  /** The Home / Chat / Stats switch: just under the hero, then held at the top as the page scrolls. */
+  /** The Home / Chat / Housekeeping / Stats switch: just under the hero, then held at the top as the page scrolls. */
   tabs?: ReactNode;
   /** The scroll area the header scrolls in. */
   scrollRef: RefObject<HTMLElement>;
@@ -83,7 +83,7 @@ interface ScreenProps extends Omit<HeaderProps, 'scrollRef'> {
   label: string;
 }
 
-/** A tab screen (Home, Stats): one scroll area, the header (hero and tab switch) at its top. */
+/** A tab screen (Home, Housekeeping, Stats): one scroll area, the header (hero and tab switch) at its top. */
 export function Screen({ children, withAdd = true, label, ...header }: ScreenProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   return (

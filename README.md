@@ -15,11 +15,16 @@ never gets done and stays on the list, and says **What good looks like** for it,
   bottom right, or with the small + in an area's header, which starts the item in that area.
 - **The hero**: every tab opens on an illustration that runs to the very top of the screen: the
   house in its garden, with a green duck and a brown hedgehog, under the sky as it is in London
-  right now (sunrise, daytime, sunset, dusk or a starry night). The Home / Chat / Stats switch
-  sits just under it and stays at the top as you scroll.
+  right now (sunrise, daytime, sunset, dusk or a starry night). The Home / Chat / Housekeeping /
+  Stats switch sits just under it and stays at the top as you scroll.
 - **Chat**: one group chat for the whole household. Messages are kept for good (no limit on how
   long they stay), anyone can react to a message with emoji (long-press it, or tap a reaction
   to add yours), and a dot on the Chat tab shows unread messages.
+- **Housekeeping**: the weekly visit by the housekeeper (a household member like everyone
+  else). A message for the housekeeper at the top, today's checklist from the household's task
+  list (edit it with Edit), comments and the price for the day, all saved as you go, and a
+  calendar of every visit: what was asked, what was done, the comments and the price, with
+  each month's total.
 - **Stats**: who has done what.
 - A **weekly email** with the full status, and **push notifications** before deadlines and when
   one is missed.
