@@ -4,10 +4,10 @@
 // before a write lands. Dates are ISODate days in the household's time zone; nothing here
 // reads the clock (callers pass `today`, `now` and the zone).
 //
-// CONTRACT STUB: everything but emptyHousekeeping() and WEEKDAYS still throws. Each
-// function's doc comment is its spec; the unit tests it needs are listed under it
-// ("Tests:") and belong in src/lib/logic/housekeeping.test.ts.
+// Each function's doc comment is its spec; the unit tests it lists ("Tests:") are in
+// src/lib/logic/housekeeping.test.ts.
 
+import { HOUSEKEEPING_PRICE_MAX_PENCE } from '../constants';
 import type {
   HousekeepingData,
   HousekeepingNote,
@@ -20,13 +20,40 @@ import type {
   ISOTimestamp,
   Member,
 } from '../types';
+import { senderOf, stampLabel, timeOf } from './chat';
+import { formatDay, parseISODate, zonedParts } from './dates';
 
 /** A calendar month, `YYYY-MM`. */
 export type YearMonth = string;
 
-function notYet(name: string, ..._args: unknown[]): never {
-  throw new Error(`not implemented yet: ${name} (src/lib/logic/housekeeping.ts)`);
-}
+const pad = (n: number) => String(n).padStart(2, '0');
+
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+/** Sunday first, as Date.getUTCDay() counts. */
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/** A visit's rows in their order: position, then title, then id (as the backends load them). */
+const byRowOrder = (a: HousekeepingVisitTask, b: HousekeepingVisitTask) =>
+  a.position - b.position || compareText(a.title, b.title) || compareText(a.id, b.id);
+
+/** The task list in its order (a stable sort keeps the loaded order for equal positions). */
+const byPosition = (a: HousekeepingTask, b: HousekeepingTask) => a.position - b.position;
 
 // ── Empty state ───────────────────────────────────────────
 
@@ -48,12 +75,17 @@ export const WEEKDAYS: readonly { short: string; long: string }[] = [
   { short: 'S', long: 'Sunday' },
 ];
 
+function parseMonth(month: YearMonth): { y: number; m: number } {
+  const [y, m] = month.split('-').map(Number);
+  return { y, m };
+}
+
 /**
  * The month a day is in: `monthOf('2026-10-08')` is `'2026-10'`.
  * Tests: a mid-month day; the 1st and the last day of a month; 31 Dec.
  */
 export function monthOf(date: ISODate): YearMonth {
-  return notYet('monthOf', date);
+  return date.slice(0, 7);
 }
 
 /**
@@ -62,7 +94,11 @@ export function monthOf(date: ISODate): YearMonth {
  * Tests: +1 and -1 inside a year; across a year end both ways; n = 0; n = ±13.
  */
 export function shiftMonth(month: YearMonth, n: number): YearMonth {
-  return notYet('shiftMonth', month, n);
+  const { y, m } = parseMonth(month);
+  const total = y * 12 + (m - 1) + Math.trunc(n);
+  const year = Math.floor(total / 12);
+  const index = total - year * 12;
+  return `${year}-${pad(index + 1)}`;
 }
 
 /**
@@ -70,7 +106,8 @@ export function shiftMonth(month: YearMonth, n: number): YearMonth {
  * Tests: October 2026; January; a different year.
  */
 export function monthTitle(month: YearMonth): string {
-  return notYet('monthTitle', month);
+  const { y, m } = parseMonth(month);
+  return `${MONTH_NAMES[m - 1]} ${y}`;
 }
 
 /**
@@ -82,7 +119,16 @@ export function monthTitle(month: YearMonth): string {
  * the month appears once, in order.
  */
 export function monthGrid(month: YearMonth): (ISODate | null)[][] {
-  return notYet('monthGrid', month);
+  const { y, m } = parseMonth(month);
+  const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  // Monday = 0 … Sunday = 6.
+  const lead = (new Date(Date.UTC(y, m - 1, 1)).getUTCDay() + 6) % 7;
+  const cells: (ISODate | null)[] = Array.from({ length: lead }, () => null);
+  for (let d = 1; d <= days; d++) cells.push(`${y}-${pad(m)}-${pad(d)}`);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks: (ISODate | null)[][] = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return weeks;
 }
 
 /**
@@ -91,7 +137,7 @@ export function monthGrid(month: YearMonth): (ISODate | null)[][] {
  * Tests: yesterday true; today true; tomorrow false; across a month and a year end.
  */
 export function canHaveVisit(date: ISODate, today: ISODate): boolean {
-  return notYet('canHaveVisit', date, today);
+  return date <= today;
 }
 
 /**
@@ -100,7 +146,10 @@ export function canHaveVisit(date: ISODate, today: ISODate): boolean {
  * Tests: same year; a different year; the 1st of a month.
  */
 export function longDay(date: ISODate, today: ISODate): string {
-  return notYet('longDay', date, today);
+  const { y, m, d } = parseISODate(date);
+  const weekday = DAY_NAMES[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+  const base = `${weekday} ${d} ${MONTH_NAMES[m - 1]}`;
+  return parseISODate(today).y === y ? base : `${base} ${y}`;
 }
 
 /**
@@ -112,7 +161,14 @@ export function longDay(date: ISODate, today: ISODate): string {
  * Tests: each example above; a visit without a price; a visit with no tasks (`0 of 0 done`).
  */
 export function calendarDayLabel(date: ISODate, today: ISODate, visit: HousekeepingVisit | undefined): string {
-  return notYet('calendarDayLabel', date, today, visit);
+  let label = longDay(date, today);
+  if (date === today) label += ', today';
+  if (visit) {
+    const { done, total } = doneCount(visit);
+    label += `, visit, ${done} of ${total} done`;
+    if (visit.price_pence !== null) label += `, ${formatPrice(visit.price_pence)}`;
+  }
+  return label;
 }
 
 /**
@@ -122,7 +178,14 @@ export function calendarDayLabel(date: ISODate, today: ISODate, visit: Housekeep
  * visit today gives null; only visits last month give null; no visits gives null.
  */
 export function defaultSelectedDay(visits: HousekeepingVisit[], today: ISODate): ISODate | null {
-  return notYet('defaultSelectedDay', visits, today);
+  const month = monthOf(today);
+  let best: ISODate | null = null;
+  for (const v of visits) {
+    if (v.visit_date < today && monthOf(v.visit_date) === month && (best === null || v.visit_date > best)) {
+      best = v.visit_date;
+    }
+  }
+  return best;
 }
 
 // ── Visits ────────────────────────────────────────────────
@@ -132,7 +195,7 @@ export function defaultSelectedDay(visits: HousekeepingVisit[], today: ISODate):
  * Tests: found; not found; the right one among several months.
  */
 export function visitOn(visits: HousekeepingVisit[], date: ISODate): HousekeepingVisit | undefined {
-  return notYet('visitOn', visits, date);
+  return visits.find((v) => v.visit_date === date);
 }
 
 /**
@@ -140,7 +203,7 @@ export function visitOn(visits: HousekeepingVisit[], date: ISODate): Housekeepin
  * Tests: visits in the month, the month before and after (only the month's count); none.
  */
 export function visitDays(visits: HousekeepingVisit[], month: YearMonth): Set<ISODate> {
-  return notYet('visitDays', visits, month);
+  return new Set(visits.filter((v) => monthOf(v.visit_date) === month).map((v) => v.visit_date));
 }
 
 export interface MonthTotals {
@@ -158,7 +221,16 @@ export interface MonthTotals {
  * as priced; visits in neighbouring months are left out; no visits.
  */
 export function monthTotals(visits: HousekeepingVisit[], month: YearMonth): MonthTotals {
-  return notYet('monthTotals', visits, month);
+  const totals: MonthTotals = { visits: 0, pence: 0, priced: 0 };
+  for (const v of visits) {
+    if (monthOf(v.visit_date) !== month) continue;
+    totals.visits += 1;
+    if (v.price_pence !== null) {
+      totals.pence += v.price_pence;
+      totals.priced += 1;
+    }
+  }
+  return totals;
 }
 
 /**
@@ -168,7 +240,9 @@ export function monthTotals(visits: HousekeepingVisit[], month: YearMonth): Mont
  * Tests: each example; 1 visit priced at £0.00 reads `'1 visit · £0.00'`.
  */
 export function monthSummary(totals: MonthTotals): string {
-  return notYet('monthSummary', totals);
+  if (totals.visits === 0) return 'No visits';
+  const count = `${totals.visits} ${totals.visits === 1 ? 'visit' : 'visits'}`;
+  return totals.priced > 0 ? `${count} · ${formatPrice(totals.pence)}` : count;
 }
 
 /**
@@ -176,7 +250,7 @@ export function monthSummary(totals: MonthTotals): string {
  * Tests: all, some, none, a visit with no tasks.
  */
 export function doneCount(visit: HousekeepingVisit): { done: number; total: number } {
-  return notYet('doneCount', visit);
+  return { done: visit.tasks.filter((t) => t.done).length, total: visit.tasks.length };
 }
 
 /**
@@ -187,10 +261,24 @@ export function doneCount(visit: HousekeepingVisit): { done: number; total: numb
  * future (bad data) is ignored.
  */
 export function housekeepingSubtitle(visits: HousekeepingVisit[], today: ISODate): string {
-  return notYet('housekeepingSubtitle', visits, today);
+  let latest: ISODate | null = null;
+  for (const v of visits) {
+    if (v.visit_date > today) continue;
+    if (latest === null || v.visit_date > latest) latest = v.visit_date;
+  }
+  if (latest === null) return 'Weekly';
+  if (latest === today) return "Today's visit";
+  return `Last visit ${formatDay(latest, today)}`;
 }
 
 // ── Prices (GBP, en-GB) ───────────────────────────────────
+
+const GBP = new Intl.NumberFormat('en-GB', {
+  style: 'currency',
+  currency: 'GBP',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
 
 /**
  * A price for display: `formatPrice(6000)` is `'£60.00'`, `formatPrice(123450)` is
@@ -198,7 +286,7 @@ export function housekeepingSubtitle(visits: HousekeepingVisit[], today: ISODate
  * Tests: those three; 1 penny `'£0.01'`; HOUSEKEEPING_PRICE_MAX_PENCE `'£10,000.00'`.
  */
 export function formatPrice(pence: number): string {
-  return notYet('formatPrice', pence);
+  return GBP.format(pence / 100);
 }
 
 /**
@@ -207,10 +295,21 @@ export function formatPrice(pence: number): string {
  * Tests: those; 0 gives `'0.00'`; 5 gives `'0.05'`.
  */
 export function priceInputValue(pence: number | null): string {
-  return notYet('priceInputValue', pence);
+  if (pence === null) return '';
+  const whole = Math.round(pence);
+  const sign = whole < 0 ? '-' : '';
+  const abs = Math.abs(whole);
+  return `${sign}${Math.floor(abs / 100)}.${pad(abs % 100)}`;
 }
 
 export type PriceParse = { ok: true; pence: number | null } | { ok: false };
+
+/** Whole pounds, optionally with thousands commas (`'1,234'`), then optional decimals. */
+const WITH_DOT = /^(\d{1,3}(?:,\d{3})+|\d*)\.(\d{0,2})$/;
+const THOUSANDS = /^\d{1,3}(?:,\d{3})+$/;
+const WHOLE = /^\d+$/;
+/** A decimal comma from a keypad that types one: `'45,50'`, `'45,5'`. */
+const DECIMAL_COMMA = /^(\d+),(\d{1,2})$/;
 
 /**
  * Reads what was typed in the price field. Blank (or only spaces) is `{ ok: true, pence:
@@ -226,7 +325,32 @@ export type PriceParse = { ok: true; pence: number | null } | { ok: false };
  * 1000000; `'10000.01'` is rejected; `'0'` is 0; `' £ 45 '` is 4500; `'4 5'` is rejected.
  */
 export function parsePrice(text: string): PriceParse {
-  return notYet('parsePrice', text);
+  let value = (text ?? '').trim();
+  if (value === '') return { ok: true, pence: null };
+  if (value.startsWith('£')) value = value.slice(1).trim();
+
+  let whole: string;
+  let fraction: string;
+  let match: RegExpExecArray | null;
+  if ((match = WITH_DOT.exec(value))) {
+    [, whole, fraction] = match;
+  } else if (THOUSANDS.test(value) || WHOLE.test(value)) {
+    whole = value;
+    fraction = '';
+  } else if ((match = DECIMAL_COMMA.exec(value))) {
+    [, whole, fraction] = match;
+  } else {
+    return { ok: false };
+  }
+  whole = whole.replace(/,/g, '');
+  // '.' alone has no digits at all.
+  if (whole === '' && fraction === '') return { ok: false };
+  // More digits than any allowed price: never a valid amount (and keeps Number exact).
+  const pounds = whole.replace(/^0+(?=\d)/, '');
+  if (pounds.length > 9) return { ok: false };
+  const pence = Number(pounds || '0') * 100 + Number(fraction.padEnd(2, '0'));
+  if (pence > HOUSEKEEPING_PRICE_MAX_PENCE) return { ok: false };
+  return { ok: true, pence };
 }
 
 // ── Checklist ─────────────────────────────────────────────
@@ -257,7 +381,25 @@ export interface ChecklistRow {
  * and no visit gives [].
  */
 export function checklistFor(housekeeping: HousekeepingData, date: ISODate): ChecklistRow[] {
-  return notYet('checklistFor', housekeeping, date);
+  const visit = visitOn(housekeeping.visits, date);
+  if (visit) {
+    return visit.tasks.map((row) => ({
+      key: row.task_id !== null ? `task:${row.task_id}` : `row:${row.id}`,
+      title: row.title,
+      done: row.done,
+      doneBy: row.done ? row.done_by : null,
+      doneAt: row.done ? row.done_at : null,
+      target: row.task_id !== null ? { taskId: row.task_id } : { visitTaskId: row.id },
+    }));
+  }
+  return [...housekeeping.tasks].sort(byPosition).map((task) => ({
+    key: `task:${task.id}`,
+    title: task.title,
+    done: false,
+    doneBy: null,
+    doneAt: null,
+    target: { taskId: task.id },
+  }));
 }
 
 /**
@@ -267,10 +409,23 @@ export function checklistFor(housekeeping: HousekeepingData, date: ISODate): Che
  * task_id null.
  */
 export function matchesTarget(row: HousekeepingVisitTask, target: HousekeepingTickTarget): boolean {
-  return notYet('matchesTarget', row, target);
+  if ('taskId' in target) return row.task_id !== null && row.task_id === target.taskId;
+  return row.id === target.visitTaskId;
 }
 
 // ── Bylines (who and when, household time zone) ───────────
+
+/** "🦊 Ela", or "👤 Former member" for someone no longer in the household. */
+function who(memberId: string | null, members: Member[]): string {
+  const { emoji, name } = senderOf(memberId, members);
+  return `${emoji} ${name}`;
+}
+
+/** "Today 10:42", "Yesterday 19:20", "Thu 1 Oct 10:05" (chat's stampLabel()). */
+function when(ts: ISOTimestamp, timeZone: string, now: Date): string {
+  const { day, time } = stampLabel(ts, timeZone, now);
+  return `${day} ${time}`;
+}
 
 /**
  * Under the visit: `'Recorded by 🦊 Ela · Today 10:42'` (created_by, created_at), then,
@@ -283,7 +438,9 @@ export function matchesTarget(row: HousekeepingVisitTask, target: HousekeepingTi
  * an older day; another time zone moves the day.
  */
 export function visitByline(visit: HousekeepingVisit, members: Member[], timeZone: string, now: Date): string {
-  return notYet('visitByline', visit, members, timeZone, now);
+  const recorded = `Recorded by ${who(visit.created_by, members)} · ${when(visit.created_at, timeZone, now)}`;
+  if (timeOf(visit.updated_at) - timeOf(visit.created_at) < 60_000) return recorded;
+  return `${recorded} · Updated by ${who(visit.updated_by, members)} · ${when(visit.updated_at, timeZone, now)}`;
 }
 
 /**
@@ -292,7 +449,8 @@ export function visitByline(visit: HousekeepingVisit, members: Member[], timeZon
  * Tests: a message; an empty one (null); never written (null); a former member.
  */
 export function noteByline(note: HousekeepingNote, members: Member[], timeZone: string, now: Date): string | null {
-  return notYet('noteByline', note, members, timeZone, now);
+  if (note.body === '' || note.updated_at === null) return null;
+  return `${who(note.updated_by, members)} · ${when(note.updated_at, timeZone, now)}`;
 }
 
 /**
@@ -307,7 +465,12 @@ export function doneByline(
   timeZone: string,
   now: Date,
 ): string | null {
-  return notYet('doneByline', row, visitDate, members, timeZone, now);
+  if (!row.done) return null;
+  const person = who(row.done_by, members);
+  if (row.done_at === null) return person;
+  const { day, time } = stampLabel(row.done_at, timeZone, now);
+  const tickedOn = zonedParts(new Date(row.done_at), timeZone).date;
+  return tickedOn === visitDate ? `${person} · ${time}` : `${person} · ${day} ${time}`;
 }
 
 // ── Optimistic edits (HomeProvider shows these before the write lands) ──
@@ -323,7 +486,9 @@ export function doneByline(
  * (23:30 UTC on 7 Oct is 8 Oct in London in summer).
  */
 export function snapshotNote(note: HousekeepingNote, date: ISODate, timeZone: string): string {
-  return notYet('snapshotNote', note, date, timeZone);
+  if (note.updated_at === null) return '';
+  const changedOn = zonedParts(new Date(note.updated_at), timeZone).date;
+  return changedOn <= date ? note.body : '';
 }
 
 export interface NewVisitInput {
@@ -346,7 +511,29 @@ export interface NewVisitInput {
  * task list gives no rows; the input data is not mutated.
  */
 export function newVisit(housekeeping: HousekeepingData, input: NewVisitInput): HousekeepingVisit {
-  return notYet('newVisit', housekeeping, input);
+  return {
+    id: input.id,
+    household_id: input.householdId,
+    visit_date: input.date,
+    note: snapshotNote(housekeeping.note, input.date, input.timeZone),
+    comments: '',
+    price_pence: null,
+    created_by: input.memberId,
+    created_at: input.at,
+    updated_by: input.memberId,
+    updated_at: input.at,
+    tasks: [...housekeeping.tasks].sort(byPosition).map((task) => ({
+      id: input.rowId(task.id),
+      visit_id: input.id,
+      household_id: input.householdId,
+      task_id: task.id,
+      title: task.title,
+      position: task.position,
+      done: false,
+      done_by: null,
+      done_at: null,
+    })),
+  };
 }
 
 /**
@@ -363,7 +550,13 @@ export function applyTick(
   memberId: string,
   at: ISOTimestamp,
 ): HousekeepingVisit | null {
-  return notYet('applyTick', visit, target, done, memberId, at);
+  const index = visit.tasks.findIndex((row) => matchesTarget(row, target));
+  if (index < 0) return null;
+  const row = visit.tasks[index];
+  if (row.done === done) return visit;
+  const tasks = [...visit.tasks];
+  tasks[index] = { ...row, done, done_by: done ? memberId : null, done_at: done ? at : null };
+  return { ...visit, tasks, updated_by: memberId, updated_at: at };
 }
 
 /**
@@ -378,7 +571,19 @@ export function applyVisitPatch(
   memberId: string,
   at: ISOTimestamp,
 ): HousekeepingVisit {
-  return notYet('applyVisitPatch', visit, patch, memberId, at);
+  const next: HousekeepingVisit = { ...visit, updated_by: memberId, updated_at: at };
+  if (patch.comments !== undefined) next.comments = patch.comments.trim();
+  if (patch.price_pence !== undefined) next.price_pence = patch.price_pence;
+  return next;
+}
+
+/** `housekeeping` with today's visit (if any) replaced by `change(visit)`. */
+function withTodaysVisit(
+  housekeeping: HousekeepingData,
+  today: ISODate,
+  change: (visit: HousekeepingVisit) => HousekeepingVisit,
+): HousekeepingVisit[] {
+  return housekeeping.visits.map((v) => (v.visit_date === today ? change(v) : v));
 }
 
 /**
@@ -387,7 +592,23 @@ export function applyVisitPatch(
  * Tests: added to the list and to today's visit; earlier visits untouched; no visit today.
  */
 export function withTaskAdded(housekeeping: HousekeepingData, task: HousekeepingTask, today: ISODate): HousekeepingData {
-  return notYet('withTaskAdded', housekeeping, task, today);
+  const tasks = housekeeping.tasks.some((t) => t.id === task.id) ? housekeeping.tasks : [...housekeeping.tasks, task];
+  const visits = withTodaysVisit(housekeeping, today, (visit) => {
+    if (visit.tasks.some((row) => row.task_id === task.id)) return visit;
+    const row: HousekeepingVisitTask = {
+      id: `pending:${task.id}`,
+      visit_id: visit.id,
+      household_id: visit.household_id,
+      task_id: task.id,
+      title: task.title,
+      position: task.position,
+      done: false,
+      done_by: null,
+      done_at: null,
+    };
+    return { ...visit, tasks: [...visit.tasks, row].sort(byRowOrder) };
+  });
+  return { ...housekeeping, tasks, visits };
 }
 
 /**
@@ -397,7 +618,17 @@ export function withTaskAdded(housekeeping: HousekeepingData, task: Housekeeping
  * everything as it was.
  */
 export function withTaskRenamed(housekeeping: HousekeepingData, id: string, title: string, today: ISODate): HousekeepingData {
-  return notYet('withTaskRenamed', housekeeping, id, title, today);
+  if (!housekeeping.tasks.some((t) => t.id === id)) return housekeeping;
+  const clean = title.trim();
+  return {
+    ...housekeeping,
+    tasks: housekeeping.tasks.map((t) => (t.id === id ? { ...t, title: clean } : t)),
+    visits: withTodaysVisit(housekeeping, today, (visit) =>
+      visit.tasks.some((row) => row.task_id === id)
+        ? { ...visit, tasks: visit.tasks.map((row) => (row.task_id === id ? { ...row, title: clean } : row)) }
+        : visit,
+    ),
+  };
 }
 
 /**
@@ -407,7 +638,19 @@ export function withTaskRenamed(housekeeping: HousekeepingData, id: string, titl
  * keep the row with task_id null; unknown id leaves everything as it was.
  */
 export function withTaskDeleted(housekeeping: HousekeepingData, id: string, today: ISODate): HousekeepingData {
-  return notYet('withTaskDeleted', housekeeping, id, today);
+  if (!housekeeping.tasks.some((t) => t.id === id)) return housekeeping;
+  return {
+    ...housekeeping,
+    tasks: housekeeping.tasks.filter((t) => t.id !== id),
+    visits: housekeeping.visits.map((visit) => {
+      if (!visit.tasks.some((row) => row.task_id === id)) return visit;
+      const isToday = visit.visit_date === today;
+      const tasks = visit.tasks
+        .filter((row) => !(isToday && row.task_id === id && !row.done))
+        .map((row) => (row.task_id === id ? { ...row, task_id: null } : row));
+      return { ...visit, tasks };
+    }),
+  };
 }
 
 /**
@@ -418,5 +661,21 @@ export function withTaskDeleted(housekeeping: HousekeepingData, id: string, toda
  * week's does not.
  */
 export function withTasksReordered(housekeeping: HousekeepingData, orderedIds: string[], today: ISODate): HousekeepingData {
-  return notYet('withTasksReordered', housekeeping, orderedIds, today);
+  const onList = new Set(housekeeping.tasks.map((t) => t.id));
+  const position = new Map<string, number>();
+  orderedIds.forEach((id, index) => {
+    // The first mention wins, like the database's update from the array.
+    if (onList.has(id) && !position.has(id)) position.set(id, index);
+  });
+  const tasks = housekeeping.tasks.map((t) => (position.has(t.id) ? { ...t, position: position.get(t.id)! } : t));
+  tasks.sort(byPosition);
+  const visits = withTodaysVisit(housekeeping, today, (visit) => ({
+    ...visit,
+    tasks: visit.tasks
+      .map((row) =>
+        row.task_id !== null && position.has(row.task_id) ? { ...row, position: position.get(row.task_id)! } : row,
+      )
+      .sort(byRowOrder),
+  }));
+  return { ...housekeeping, tasks, visits };
 }

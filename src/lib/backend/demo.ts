@@ -6,7 +6,20 @@
 //   ?demo-seed=1   wipe, sign in as Stratis, and recreate the prototype household
 //   ?demo-reset=1  wipe everything (signed out, no household)
 
-import { CHAT_PAGE_SIZE, DEFAULT_ADDRESS, DEFAULT_AREAS, MEMBER_COLORS, REACTION_EMOJIS, SEED_ITEMS, TEXT_LIMITS } from '../constants';
+import {
+  CHAT_PAGE_SIZE,
+  DEFAULT_ADDRESS,
+  DEFAULT_AREAS,
+  HOUSEKEEPING_DEMO_NOTE,
+  HOUSEKEEPING_DEMO_VISITS,
+  HOUSEKEEPING_PRICE_MAX_PENCE,
+  HOUSEKEEPING_STARTER_TASKS,
+  MEMBER_COLORS,
+  REACTION_EMOJIS,
+  SEED_ITEMS,
+  TEXT_LIMITS,
+  type DemoPersonKey,
+} from '../constants';
 import { addDays, addMonths, daysBetween, deviceTimeZone, parseISODate, todayIn, zonedParts } from '../logic/dates';
 import { emptyHousekeeping } from '../logic/housekeeping';
 import { applyKindRules, nextDueDate } from '../logic/items';
@@ -21,9 +34,12 @@ import type {
   CreateHouseholdInput,
   Household,
   HouseholdData,
+  HousekeepingData,
   HousekeepingTask,
   HousekeepingTickTarget,
+  HousekeepingVisit,
   HousekeepingVisitPatch,
+  HousekeepingVisitTask,
   InvitePreview,
   ISODate,
   ISOTimestamp,
@@ -55,7 +71,7 @@ const DEMO_PEOPLE = [
   { key: 'ela', name: 'Ela', emoji: '🦊', color: '#30B0C7', email: 'ela@example.com' },
 ] as const;
 
-type DemoPerson = 'me' | 'shea' | 'ela';
+type DemoPerson = DemoPersonKey;
 
 /** Completions credited to each person so Stats matches the prototype. */
 const HISTORY_TOTALS: Record<DemoPerson, { month: number; lifetime: number }> = {
@@ -210,6 +226,20 @@ interface MessageRow {
 interface ReactionRow extends ChatReaction {
   household_id: string;
 }
+/** housekeeping_notes: one row per household (primary key household_id); none = never written. */
+interface HousekeepingNoteRow {
+  household_id: string;
+  body: string;
+  updated_at: ISOTimestamp;
+  updated_by: string | null;
+}
+interface HousekeepingTaskRow extends HousekeepingTask {
+  created_at: ISOTimestamp;
+}
+/** housekeeping_visits (unique household_id + visit_date); its tasks are separate rows. */
+type HousekeepingVisitRow = Omit<HousekeepingVisit, 'tasks'>;
+/** housekeeping_visit_tasks (unique visit_id + task_id); household_id is copied from the visit. */
+type HousekeepingVisitTaskRow = HousekeepingVisitTask;
 
 interface DemoDoc {
   version: 1;
@@ -226,6 +256,14 @@ interface DemoDoc {
   /** Chat came later: read() fills these in for documents stored before it. */
   messages: MessageRow[];
   message_reactions: ReactionRow[];
+  /**
+   * Housekeeping came later still: read() fills these in for documents stored before it,
+   * and gives each household the starter task list once (like the migration's backfill).
+   */
+  housekeeping_notes: HousekeepingNoteRow[];
+  housekeeping_tasks: HousekeepingTaskRow[];
+  housekeeping_visits: HousekeepingVisitRow[];
+  housekeeping_visit_tasks: HousekeepingVisitTaskRow[];
 }
 
 export type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -271,6 +309,10 @@ function emptyDoc(): DemoDoc {
     push_subs: [],
     messages: [],
     message_reactions: [],
+    housekeeping_notes: [],
+    housekeeping_tasks: [],
+    housekeeping_visits: [],
+    housekeeping_visit_tasks: [],
   };
 }
 
@@ -367,6 +409,48 @@ function withinLimit(value: string, max: number, what: string): string {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+const isLeapYear = (y: number) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+
+/** A real calendar day written YYYY-MM-DD (what the SQL date parameter accepts). */
+function isISODate(value: unknown): value is ISODate {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const { y, m, d } = parseISODate(value);
+  if (y < 1 || m < 1 || m > 12 || d < 1) return false;
+  return d <= [31, isLeapYear(y) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
+}
+
+function requireDate(value: ISODate): ISODate {
+  if (!isISODate(value)) throw invalidInput('date');
+  return value;
+}
+
+/** A task title as the trigger stores it: trimmed, 1 to TEXT_LIMITS.housekeepingTask characters. */
+function taskTitle(value: string): string {
+  const title = typeof value === 'string' ? value.trim() : '';
+  if (!title) throw invalidInput('title');
+  return withinLimit(title, TEXT_LIMITS.housekeepingTask, 'title');
+}
+
+/** The task list in its order: position, then created_at, then id. */
+function byTaskOrder(a: HousekeepingTaskRow, b: HousekeepingTaskRow): number {
+  return a.position - b.position || compareText(a.created_at, b.created_at) || compareText(a.id, b.id);
+}
+
+/** A visit's tasks in their order: position, then title, then id. */
+function byVisitTaskOrder(a: HousekeepingVisitTaskRow, b: HousekeepingVisitTaskRow): number {
+  return a.position - b.position || compareText(a.title, b.title) || compareText(a.id, b.id);
+}
+
+/** The latest Thursday strictly before `today` (HousekeepingSeedVisit.weeksBack 0). */
+function lastThursdayBefore(today: ISODate): ISODate {
+  const { y, m, d } = parseISODate(today);
+  const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sunday
+  const back = (weekday - 4 + 7) % 7 || 7;
+  return addDays(today, -back);
+}
+
 // ── Row → API shapes (leave out columns the UI types don't have) ──
 
 const toHousehold = (h: HouseholdRow): Household => ({
@@ -381,6 +465,23 @@ const toArea = (a: AreaRow): Area => ({ id: a.id, household_id: a.household_id, 
 const toItem = ({ completed_at: _c, ...item }: ItemRow): Item => item;
 const toCompletion = ({ prev_due_date: _d, prev_status: _s, ...c }: CompletionRow): Completion => c;
 const toReaction = ({ household_id: _h, ...r }: ReactionRow): ChatReaction => r;
+const toHousekeepingTask = (t: HousekeepingTaskRow): HousekeepingTask => ({
+  id: t.id,
+  household_id: t.household_id,
+  title: t.title,
+  position: t.position,
+});
+const toVisitTask = (r: HousekeepingVisitTaskRow): HousekeepingVisitTask => ({
+  id: r.id,
+  visit_id: r.visit_id,
+  household_id: r.household_id,
+  task_id: r.task_id,
+  title: r.title,
+  position: r.position,
+  done: r.done,
+  done_by: r.done_by,
+  done_at: r.done_at,
+});
 
 const timeOf = (ts: ISOTimestamp) => new Date(ts).getTime();
 
@@ -449,6 +550,20 @@ export class DemoBackend implements Backend {
           if (!isKind(item.kind)) item.kind = 'task';
           if (typeof item.good !== 'string') item.good = '';
         }
+      }
+      if (!Array.isArray(doc.housekeeping_notes)) doc.housekeeping_notes = [];
+      if (!Array.isArray(doc.housekeeping_visits)) doc.housekeeping_visits = [];
+      if (!Array.isArray(doc.housekeeping_visit_tasks)) doc.housekeeping_visit_tasks = [];
+      if (!Array.isArray(parsed.housekeeping_tasks)) {
+        // Stored before housekeeping existed: each household without a task or a visit gets
+        // the starter task list once, like the migration's backfill. Written back at once,
+        // so the new tasks keep their ids from one read to the next.
+        doc.housekeeping_tasks = [];
+        for (const household of doc.households) {
+          if (doc.housekeeping_visits.some((v) => v.household_id === household.id)) continue;
+          this.addStarterTasks(doc, household.id, this.now());
+        }
+        this.write(doc);
       }
       return doc;
     } catch {
@@ -616,8 +731,7 @@ export class DemoBackend implements Backend {
         .filter((c) => c.household_id === householdId)
         .sort((a, b) => (a.completed_at < b.completed_at ? 1 : a.completed_at > b.completed_at ? -1 : 0))
         .map(toCompletion);
-      // CONTRACT STUB: housekeeping is not stored yet; every household reads as empty.
-      const housekeeping = emptyHousekeeping();
+      const housekeeping = this.housekeepingOf(doc, householdId);
       return { household: toHousehold(household), members, areas, items, completions, housekeeping };
     });
   }
@@ -740,7 +854,74 @@ export class DemoBackend implements Backend {
 
     this.addHistory(doc, household, people, now);
     this.addChat(doc, household, people, now);
+    this.addStarterTasks(doc, household.id, now);
+    this.addHousekeepingHistory(doc, household, people, now);
     return household.id;
+  }
+
+  /** The starter task list (create_household and the backfill), in order, last. */
+  private addStarterTasks(doc: DemoDoc, householdId: string, now: Date) {
+    for (const title of HOUSEKEEPING_STARTER_TASKS) {
+      this.insertTask(doc, householdId, title, new Date(now.getTime() + doc.housekeeping_tasks.length).toISOString());
+    }
+  }
+
+  /**
+   * The demo's message for the housekeeper (HOUSEKEEPING_DEMO_NOTE) and past visits
+   * (HOUSEKEEPING_DEMO_VISITS), on Thursdays before today in the household's time zone,
+   * each with the starter tasks. Nothing is in the future.
+   */
+  private addHousekeepingHistory(doc: DemoDoc, household: HouseholdRow, people: Record<DemoPerson, Member>, now: Date) {
+    const tz = household.timezone;
+    const today = todayIn(tz, now);
+    const note = HOUSEKEEPING_DEMO_NOTE;
+    const written = zonedInstant(addDays(today, -note.daysBack), note.hour, note.minute, tz);
+    doc.housekeeping_notes.push({
+      household_id: household.id,
+      body: note.body,
+      updated_at: new Date(Math.min(written.getTime(), now.getTime())).toISOString(),
+      updated_by: people[note.by].id,
+    });
+
+    const tasks = this.tasksOf(doc, household.id);
+    const thursday = lastThursdayBefore(today);
+    for (const seed of HOUSEKEEPING_DEMO_VISITS) {
+      const date = addDays(thursday, -7 * seed.weeksBack);
+      const by = people[seed.by].id;
+      const created = zonedInstant(date, seed.hour, seed.minute, tz).getTime();
+      const visit: HousekeepingVisitRow = {
+        id: uuid(),
+        household_id: household.id,
+        visit_date: date,
+        note: seed.note,
+        comments: seed.comments,
+        price_pence: seed.price_pence,
+        created_by: by,
+        created_at: new Date(created).toISOString(),
+        updated_by: by,
+        updated_at: new Date(created).toISOString(),
+      };
+      // Ticks one minute apart from the start, in list order; the last change a minute later.
+      let ticks = 0;
+      for (const task of tasks) {
+        const done = seed.done.includes(task.title);
+        const at = created + ticks * 60_000;
+        if (done) ticks += 1;
+        doc.housekeeping_visit_tasks.push({
+          id: uuid(),
+          visit_id: visit.id,
+          household_id: household.id,
+          task_id: task.id,
+          title: task.title,
+          position: task.position,
+          done,
+          done_by: done ? by : null,
+          done_at: done ? new Date(at).toISOString() : null,
+        });
+      }
+      if (ticks > 0) visit.updated_at = new Date(created + ticks * 60_000).toISOString();
+      doc.housekeeping_visits.push(visit);
+    }
   }
 
   /** SEED_CHAT with its reactions, every timestamp in the past. */
@@ -1339,47 +1520,285 @@ export class DemoBackend implements Backend {
   }
 
   // ── Housekeeping (docs/ARCHITECTURE.md "Housekeeping") ──
-  // CONTRACT STUBS: to be implemented (collections housekeeping_notes, housekeeping_tasks,
-  // housekeeping_visits and housekeeping_visit_tasks in the document, mirroring the SQL).
+  // Mirrors supabase/migrations/20261010000400_housekeeping.sql: the RPCs, the triggers that
+  // keep today's visit in step with the task list, and RLS (every member edits everything;
+  // anything in another household is not_found). A failed call stores nothing (run() only
+  // writes the document when fn succeeds), so a visit created by a failed write goes too.
+
+  /** The household's task list in order (position, created_at, id). */
+  private tasksOf(doc: DemoDoc, householdId: string): HousekeepingTaskRow[] {
+    return doc.housekeeping_tasks.filter((t) => t.household_id === householdId).sort(byTaskOrder);
+  }
+
+  /** The household's visit on `date`, if any. */
+  private visitOnDay(doc: DemoDoc, householdId: string, date: ISODate): HousekeepingVisitRow | undefined {
+    return doc.housekeeping_visits.find((v) => v.household_id === householdId && v.visit_date === date);
+  }
+
+  /** Today's visit in the household's time zone (what the task list triggers keep in step). */
+  private todaysVisit(doc: DemoDoc, householdId: string): HousekeepingVisitRow | undefined {
+    const household = this.householdIn(doc, householdId);
+    return this.visitOnDay(doc, householdId, todayIn(household.timezone, this.now()));
+  }
+
+  /** housekeeping_tasks insert (and its triggers): last on the list, and on today's visit. */
+  private insertTask(doc: DemoDoc, householdId: string, title: string, createdAt: ISOTimestamp): HousekeepingTaskRow {
+    const siblings = doc.housekeeping_tasks.filter((t) => t.household_id === householdId);
+    const task: HousekeepingTaskRow = {
+      id: uuid(),
+      household_id: householdId,
+      title,
+      position: siblings.length ? Math.max(...siblings.map((t) => t.position)) + 1 : 0,
+      created_at: createdAt,
+    };
+    doc.housekeeping_tasks.push(task);
+    const today = this.todaysVisit(doc, householdId);
+    if (today && !doc.housekeeping_visit_tasks.some((r) => r.visit_id === today.id && r.task_id === task.id)) {
+      doc.housekeeping_visit_tasks.push({
+        id: uuid(),
+        visit_id: today.id,
+        household_id: householdId,
+        task_id: task.id,
+        title: task.title,
+        position: task.position,
+        done: false,
+        done_by: null,
+        done_at: null,
+      });
+    }
+    return task;
+  }
+
+  /** The caller's task with this id; not_found when it is gone or in another household. */
+  private taskIn(doc: DemoDoc, me: Member, id: string): HousekeepingTaskRow {
+    const task = doc.housekeeping_tasks.find((t) => t.id === id && t.household_id === me.household_id);
+    if (!task) throw new BackendError('not_found', 'Task not found');
+    return task;
+  }
+
+  /** Today's visit's row for a task (the triggers' target), if any. */
+  private todaysRowFor(doc: DemoDoc, task: HousekeepingTaskRow): HousekeepingVisitTaskRow | undefined {
+    const today = this.todaysVisit(doc, task.household_id);
+    return today ? doc.housekeeping_visit_tasks.find((r) => r.visit_id === today.id && r.task_id === task.id) : undefined;
+  }
+
+  /**
+   * housekeeping_visit_for(): the household's visit on `date`, created with its copies if
+   * there is none (recorded by `me`). A day after today (household time zone) is
+   * invalid_input: date. A new visit copies the task list (none done) and the message as it
+   * stood that day: its text if it was last changed on or before `date`, else ''.
+   */
+  private visitFor(doc: DemoDoc, householdId: string, date: ISODate, me: Member): HousekeepingVisitRow {
+    const household = this.householdIn(doc, householdId);
+    if (date > todayIn(household.timezone, this.now())) throw invalidInput('date');
+    const existing = this.visitOnDay(doc, householdId, date);
+    if (existing) return existing;
+    const note = doc.housekeeping_notes.find((n) => n.household_id === householdId);
+    const standing = note && zonedParts(new Date(note.updated_at), household.timezone).date <= date;
+    const at = this.stamp();
+    const visit: HousekeepingVisitRow = {
+      id: uuid(),
+      household_id: householdId,
+      visit_date: date,
+      note: standing ? note.body : '',
+      comments: '',
+      price_pence: null,
+      created_by: me.id,
+      created_at: at,
+      updated_by: me.id,
+      updated_at: at,
+    };
+    doc.housekeeping_visits.push(visit);
+    for (const task of this.tasksOf(doc, householdId)) {
+      doc.housekeeping_visit_tasks.push({
+        id: uuid(),
+        visit_id: visit.id,
+        household_id: householdId,
+        task_id: task.id,
+        title: task.title,
+        position: task.position,
+        done: false,
+        done_by: null,
+        done_at: null,
+      });
+    }
+    return visit;
+  }
+
+  /** HouseholdData.housekeeping: the message, the task list and every visit with its rows. */
+  private housekeepingOf(doc: DemoDoc, householdId: string): HousekeepingData {
+    const note = doc.housekeeping_notes.find((n) => n.household_id === householdId);
+    const rows = new Map<string, HousekeepingVisitTaskRow[]>();
+    for (const r of doc.housekeeping_visit_tasks) {
+      if (r.household_id !== householdId) continue;
+      const list = rows.get(r.visit_id) ?? [];
+      list.push(r);
+      rows.set(r.visit_id, list);
+    }
+    const visits = doc.housekeeping_visits
+      .filter((v) => v.household_id === householdId)
+      .sort((a, b) => compareText(b.visit_date, a.visit_date))
+      .map((v) => ({
+        id: v.id,
+        household_id: v.household_id,
+        visit_date: v.visit_date,
+        note: v.note,
+        comments: v.comments,
+        price_pence: v.price_pence,
+        created_by: v.created_by,
+        created_at: v.created_at,
+        updated_by: v.updated_by,
+        updated_at: v.updated_at,
+        tasks: (rows.get(v.id) ?? []).sort(byVisitTaskOrder).map(toVisitTask),
+      }));
+    return {
+      note: note
+        ? { body: note.body, updated_at: note.updated_at, updated_by: note.updated_by }
+        : emptyHousekeeping().note,
+      tasks: this.tasksOf(doc, householdId).map(toHousekeepingTask),
+      visits,
+    };
+  }
 
   setHousekeepingNote(householdId: string, body: string): Promise<void> {
-    return notImplemented('setHousekeepingNote', householdId, body);
+    return this.mutate((doc) => {
+      const me = this.memberOf(doc, householdId);
+      const text = withinLimit((body ?? '').trim(), TEXT_LIMITS.housekeepingNote, 'note');
+      const note = doc.housekeeping_notes.find((n) => n.household_id === householdId);
+      // The same text again keeps the stamp; clearing a message never written stores nothing.
+      if (note ? note.body === text : text === '') return;
+      const row: HousekeepingNoteRow = { household_id: householdId, body: text, updated_at: this.stamp(), updated_by: me.id };
+      if (note) Object.assign(note, row);
+      else doc.housekeeping_notes.push(row);
+    });
   }
 
   createHousekeepingTask(householdId: string, title: string): Promise<HousekeepingTask> {
-    return notImplemented('createHousekeepingTask', householdId, title);
+    return this.mutate((doc) => {
+      const clean = taskTitle(title);
+      this.memberOf(doc, householdId);
+      return toHousekeepingTask(this.insertTask(doc, householdId, clean, this.stamp()));
+    });
   }
 
   renameHousekeepingTask(id: string, title: string): Promise<void> {
-    return notImplemented('renameHousekeepingTask', id, title);
+    return this.mutate((doc) => {
+      const clean = taskTitle(title);
+      const task = this.taskIn(doc, this.meIn(doc), id);
+      if (task.title === clean) return;
+      task.title = clean;
+      // Today's visit follows, ticked or not; earlier visits keep the title they had.
+      const row = this.todaysRowFor(doc, task);
+      if (row) row.title = clean;
+    });
   }
 
   deleteHousekeepingTask(id: string): Promise<void> {
-    return notImplemented('deleteHousekeepingTask', id);
+    return this.mutate((doc) => {
+      const task = this.taskIn(doc, this.meIn(doc), id);
+      // Today's visit loses it unless it is ticked there; every other row keeps it, with
+      // task_id null (on delete set null).
+      const today = this.todaysRowFor(doc, task);
+      doc.housekeeping_visit_tasks = doc.housekeeping_visit_tasks.filter((r) => !(r === today && !r.done));
+      for (const r of doc.housekeeping_visit_tasks) if (r.task_id === task.id) r.task_id = null;
+      doc.housekeeping_tasks = doc.housekeeping_tasks.filter((t) => t.id !== task.id);
+    });
   }
 
   reorderHousekeepingTasks(householdId: string, orderedIds: string[]): Promise<void> {
-    return notImplemented('reorderHousekeepingTasks', householdId, orderedIds);
+    return this.mutate((doc) => {
+      this.memberOf(doc, householdId);
+      (orderedIds ?? []).forEach((id, index) => {
+        const task = doc.housekeeping_tasks.find((t) => t.id === id && t.household_id === householdId);
+        if (!task || task.position === index) return;
+        task.position = index;
+        const row = this.todaysRowFor(doc, task);
+        if (row) row.position = index;
+      });
+    });
   }
 
   setHousekeepingTaskDone(householdId: string, date: ISODate, target: HousekeepingTickTarget, done: boolean): Promise<string> {
-    return notImplemented('setHousekeepingTaskDone', householdId, date, target, done);
+    return this.mutate((doc) => {
+      requireDate(date);
+      const t = (target ?? {}) as { taskId?: unknown; visitTaskId?: unknown };
+      const byTask = typeof t.taskId === 'string';
+      const byRow = typeof t.visitTaskId === 'string';
+      if (byTask === byRow) throw invalidInput('target');
+      const me = this.memberOf(doc, householdId);
+      if (typeof done !== 'boolean') throw invalidInput('done');
+
+      let row: HousekeepingVisitTaskRow | undefined;
+      if (byRow) {
+        // That row on any of the household's visits; the date is not used.
+        row = doc.housekeeping_visit_tasks.find((r) => r.id === t.visitTaskId && r.household_id === householdId);
+      } else {
+        const visit = this.visitFor(doc, householdId, date, me);
+        row = doc.housekeeping_visit_tasks.find((r) => r.visit_id === visit.id && r.task_id === t.taskId);
+      }
+      // Throwing stores nothing: a visit this call created goes with it.
+      if (!row) throw new BackendError('not_found', 'Task not found on that visit');
+      const visit = doc.housekeeping_visits.find((v) => v.id === row.visit_id)!;
+      if (row.done !== done) {
+        const at = this.stamp();
+        row.done = done;
+        row.done_by = done ? me.id : null;
+        row.done_at = done ? at : null;
+        visit.updated_at = at;
+        visit.updated_by = me.id;
+      }
+      return visit.id;
+    });
   }
 
   saveHousekeepingVisit(householdId: string, date: ISODate, patch: HousekeepingVisitPatch): Promise<string> {
-    return notImplemented('saveHousekeepingVisit', householdId, date, patch);
+    return this.mutate((doc) => {
+      requireDate(date);
+      const me = this.memberOf(doc, householdId);
+      if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) throw invalidInput('patch');
+      const hasComments = patch.comments !== undefined;
+      const hasPrice = patch.price_pence !== undefined;
+      let comments = '';
+      if (hasComments) {
+        if (typeof patch.comments !== 'string') throw invalidInput('comments');
+        comments = withinLimit(patch.comments.trim(), TEXT_LIMITS.housekeepingComments, 'comments');
+      }
+      const price = hasPrice ? patch.price_pence : null;
+      if (
+        price !== null &&
+        price !== undefined &&
+        (typeof price !== 'number' || !Number.isInteger(price) || price < 0 || price > HOUSEKEEPING_PRICE_MAX_PENCE)
+      ) {
+        throw invalidInput('price');
+      }
+      const visit = this.visitFor(doc, householdId, date, me);
+      const changed = (hasComments && visit.comments !== comments) || (hasPrice && visit.price_pence !== price);
+      if (changed) {
+        if (hasComments) visit.comments = comments;
+        if (hasPrice) visit.price_pence = price ?? null;
+        visit.updated_at = this.stamp();
+        visit.updated_by = me.id;
+      }
+      return visit.id;
+    });
   }
 
   addHousekeepingVisit(householdId: string, date: ISODate): Promise<string> {
-    return notImplemented('addHousekeepingVisit', householdId, date);
+    return this.mutate((doc) => {
+      requireDate(date);
+      const me = this.memberOf(doc, householdId);
+      return this.visitFor(doc, householdId, date, me).id;
+    });
   }
 
   deleteHousekeepingVisit(id: string): Promise<void> {
-    return notImplemented('deleteHousekeepingVisit', id);
+    return this.mutate((doc) => {
+      const me = this.meIn(doc);
+      const visit = doc.housekeeping_visits.find((v) => v.id === id && v.household_id === me.household_id);
+      if (!visit) throw new BackendError('not_found', 'Visit not found');
+      doc.housekeeping_visits = doc.housekeeping_visits.filter((v) => v.id !== visit.id);
+      // on delete cascade
+      doc.housekeeping_visit_tasks = doc.housekeeping_visit_tasks.filter((r) => r.visit_id !== visit.id);
+    });
   }
-}
-
-/** CONTRACT STUB helper: a clear failure for a housekeeping method not built yet. */
-function notImplemented(method: string, ..._args: unknown[]): Promise<never> {
-  return Promise.reject(new BackendError('unknown', `not_implemented: DemoBackend.${method}`));
 }

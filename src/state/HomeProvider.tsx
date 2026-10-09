@@ -2,6 +2,17 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { BackendError, type Backend, type HouseholdPatch, type ItemPatch, type MemberPatch } from '../lib/backend/types';
 import { STATE_FIELDS } from '../lib/constants';
 import { formatDay, todayIn } from '../lib/logic/dates';
+import {
+  applyTick,
+  applyVisitPatch,
+  canHaveVisit,
+  newVisit,
+  visitOn,
+  withTaskAdded,
+  withTaskDeleted,
+  withTaskRenamed,
+  withTasksReordered,
+} from '../lib/logic/housekeeping';
 import { disablePush } from '../lib/push';
 import { applyKindRules, nextDueDate } from '../lib/logic/items';
 import type {
@@ -9,10 +20,15 @@ import type {
   AuthUser,
   CreateHouseholdInput,
   HouseholdData,
+  HousekeepingData,
+  HousekeepingNote,
   HousekeepingTask,
   HousekeepingTickTarget,
+  HousekeepingVisit,
   HousekeepingVisitPatch,
+  HousekeepingVisitTask,
   ISODate,
+  ISOTimestamp,
   Item,
   ItemDraft,
   JoinHouseholdInput,
@@ -243,9 +259,186 @@ function restoreRows<T extends { id: string }>(rows: T[], removed: T[]): T[] {
 
 const byPosition = (a: Area, b: Area) => a.position - b.position;
 
-/** CONTRACT STUB helper: a clear failure for a housekeeping action not built yet. */
-function notImplemented(action: string, ..._args: unknown[]): Promise<never> {
-  return Promise.reject(new BackendError('unknown', `not_implemented: HomeProvider.${action}`));
+// ── Housekeeping changes (docs/ARCHITECTURE.md "Housekeeping") ──
+// The optimistic copies come from src/lib/logic/housekeeping.ts; each revert puts back only
+// what its write set, and only where the screen still shows what it set.
+
+const withHousekeeping = (cur: HouseholdData, housekeeping: HousekeepingData): HouseholdData => ({ ...cur, housekeeping });
+
+const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+/** Visits newest first, as loaded. */
+const byVisitDate = (a: HousekeepingVisit, b: HousekeepingVisit) => compareText(b.visit_date, a.visit_date);
+/** The task list by position (a stable sort keeps the loaded order otherwise). */
+const byTaskPosition = (a: HousekeepingTask, b: HousekeepingTask) => a.position - b.position;
+/** A visit's tasks by position, then title, then id, as loaded. */
+const byRowOrder = (a: HousekeepingVisitTask, b: HousekeepingVisitTask) =>
+  a.position - b.position || compareText(a.title, b.title) || compareText(a.id, b.id);
+
+let lastStamp = 0;
+/**
+ * Now, for an optimistic "who and when": always later than the one before, so a revert can
+ * tell its own stamp from a later edit's, even within one millisecond.
+ */
+function optimisticStamp(): ISOTimestamp {
+  lastStamp = Math.max(Date.now(), lastStamp + 1);
+  return new Date(lastStamp).toISOString();
+}
+
+/** The id of the pending visit shown for a day until the stored one arrives. */
+const pendingVisitId = (date: ISODate) => `pending:${date}`;
+
+const VISIT_FIELDS = ['comments', 'price_pence'] as const;
+
+/**
+ * `visits` with the write that turned `before` into `after` taken back: the comments, the
+ * price and each tick it changed return to their old values where they still hold the
+ * values it set, and so does the "updated" stamp (who and when, together).
+ */
+function revertVisit(visits: HousekeepingVisit[], before: HousekeepingVisit, after: HousekeepingVisit): HousekeepingVisit[] {
+  const was = new Map(before.tasks.map((r) => [r.id, r]));
+  const set = new Map(after.tasks.map((r) => [r.id, r]));
+  return visits.map((visit) => {
+    if (visit.id !== after.id) return visit;
+    const restored: Partial<HousekeepingVisit> = {};
+    for (const key of VISIT_FIELDS) {
+      if (after[key] !== before[key] && visit[key] === after[key]) Object.assign(restored, { [key]: before[key] });
+    }
+    const stamped = after.updated_at !== before.updated_at || after.updated_by !== before.updated_by;
+    if (stamped && visit.updated_at === after.updated_at && visit.updated_by === after.updated_by) {
+      restored.updated_at = before.updated_at;
+      restored.updated_by = before.updated_by;
+    }
+    let ticksBack = false;
+    const tasks = visit.tasks.map((row) => {
+      const old = was.get(row.id);
+      const mine = set.get(row.id);
+      if (!old || !mine || old === mine) return row;
+      if (row.done !== mine.done || row.done_by !== mine.done_by || row.done_at !== mine.done_at) return row;
+      ticksBack = true;
+      return { ...row, done: old.done, done_by: old.done_by, done_at: old.done_at };
+    });
+    if (!ticksBack && Object.keys(restored).length === 0) return visit;
+    return { ...visit, ...restored, tasks: ticksBack ? tasks : visit.tasks };
+  });
+}
+
+/**
+ * An optimistic write to the visit on `date`: `edit` applied to that day's visit, or to a
+ * pending one (newVisit(), id `pending:<date>`, rows `pending:<taskId>`) when there is none
+ * yet, as the backend creates it on the write. Nothing changes on screen when `edit` gives
+ * null (no such row) or the visit as it was. The revert removes a pending visit this write
+ * added, or else takes back the fields and ticks it set.
+ */
+function visitChange(
+  date: ISODate,
+  userId: string | undefined,
+  edit: (visit: HousekeepingVisit, meId: string, at: ISOTimestamp) => HousekeepingVisit | null,
+): Change {
+  return (cur) => {
+    const meId = cur.members.find((m) => m.user_id === userId)?.id;
+    if (!meId) return null;
+    const at = optimisticStamp();
+    const hk = cur.housekeeping;
+    const existing = visitOn(hk.visits, date);
+    const start =
+      existing ??
+      newVisit(hk, {
+        id: pendingVisitId(date),
+        householdId: cur.household.id,
+        date,
+        memberId: meId,
+        at,
+        timeZone: cur.household.timezone,
+        rowId: (taskId) => `pending:${taskId}`,
+      });
+    const next = edit(start, meId, at);
+    if (!next || next === existing) return null;
+    const visits = existing
+      ? hk.visits.map((v) => (v === existing ? next : v))
+      : [...hk.visits, next].sort(byVisitDate);
+    return {
+      next: withHousekeeping(cur, { ...hk, visits }),
+      revert: (c) => {
+        const shown = c.housekeeping.visits;
+        if (!existing) {
+          // The pending visit goes (a later write to that day may have changed it too).
+          if (!shown.some((v) => v.id === next.id)) return c;
+          return withHousekeeping(c, { ...c.housekeeping, visits: shown.filter((v) => v.id !== next.id) });
+        }
+        return withHousekeeping(c, { ...c.housekeeping, visits: revertVisit(shown, existing, next) });
+      },
+    };
+  };
+}
+
+/**
+ * Deleting a task (withTaskDeleted()): off the list, today's undone row gone, every other
+ * row unlinked. The revert puts back the task, the row it removed and the links it cleared.
+ */
+function deleteTaskChange(id: string, today: ISODate): Change {
+  return (cur) => {
+    const hk = cur.housekeeping;
+    const task = hk.tasks.find((t) => t.id === id);
+    if (!task) return null;
+    const next = withTaskDeleted(hk, id, today);
+    // What it touched: rows it removed (today's undone one), rows it unlinked (task_id null).
+    const kept = new Set(next.visits.flatMap((v) => v.tasks.map((r) => r.id)));
+    const removed: HousekeepingVisitTask[] = [];
+    const unlinked = new Set<string>();
+    for (const v of hk.visits) {
+      for (const r of v.tasks) {
+        if (r.task_id !== id) continue;
+        if (kept.has(r.id)) unlinked.add(r.id);
+        else removed.push(r);
+      }
+    }
+    return {
+      next: withHousekeeping(cur, next),
+      revert: (c) => {
+        const h = c.housekeeping;
+        const tasks = h.tasks.some((t) => t.id === id) ? h.tasks : [...h.tasks, task].sort(byTaskPosition);
+        const visits = h.visits.map((v) => {
+          const back = removed.filter((r) => r.visit_id === v.id && !v.tasks.some((x) => x.id === r.id));
+          const relink = v.tasks.some((r) => unlinked.has(r.id) && r.task_id === null);
+          if (!back.length && !relink) return v;
+          const rows = v.tasks.map((r) => (unlinked.has(r.id) && r.task_id === null ? { ...r, task_id: id } : r));
+          return { ...v, tasks: [...rows, ...back].sort(byRowOrder) };
+        });
+        return withHousekeeping(c, { ...h, tasks, visits });
+      },
+    };
+  };
+}
+
+/**
+ * Reordering the task list (withTasksReordered()), today's visit following. The revert puts
+ * back each position it set that still holds, on the list and on today's visit.
+ */
+function reorderTasksChange(orderedIds: string[], today: ISODate): Change {
+  return (cur) => {
+    const hk = cur.housekeeping;
+    const next = withTasksReordered(hk, orderedIds, today);
+    const wasTask = new Map(hk.tasks.map((t) => [t.id, t.position]));
+    const setTask = new Map(next.tasks.map((t) => [t.id, t.position]));
+    const wasRow = new Map((visitOn(hk.visits, today)?.tasks ?? []).map((r) => [r.id, r.position]));
+    const setRow = new Map((visitOn(next.visits, today)?.tasks ?? []).map((r) => [r.id, r.position]));
+    /** The old position where this reorder moved it and it still is there. */
+    const back = (id: string, position: number, was: Map<string, number>, set: Map<string, number>) =>
+      was.has(id) && set.get(id) === position && was.get(id) !== position ? was.get(id)! : position;
+    return {
+      next: withHousekeeping(cur, next),
+      revert: (c) => {
+        const h = c.housekeeping;
+        const tasks = h.tasks.map((t) => ({ ...t, position: back(t.id, t.position, wasTask, setTask) })).sort(byTaskPosition);
+        const visits = h.visits.map((v) =>
+          v.visit_date !== today
+            ? v
+            : { ...v, tasks: v.tasks.map((r) => ({ ...r, position: back(r.id, r.position, wasRow, setRow) })).sort(byRowOrder) },
+        );
+        return withHousekeeping(c, { ...h, tasks, visits });
+      },
+    };
+  };
 }
 
 export function HomeProvider({ backend, children }: { backend: Backend; children: ReactNode }) {
@@ -714,17 +907,101 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       completeItem,
       createInvite: () => backend.createInvite(),
 
-      // CONTRACT STUBS (docs/ARCHITECTURE.md "Housekeeping"): to be implemented with
-      // mutate() and the optimistic helpers in src/lib/logic/housekeeping.ts.
-      setHousekeepingNote: (body) => notImplemented('setHousekeepingNote', body),
-      createHousekeepingTask: (title) => notImplemented('createHousekeepingTask', title),
-      renameHousekeepingTask: (id, title) => notImplemented('renameHousekeepingTask', id, title),
-      deleteHousekeepingTask: (id) => notImplemented('deleteHousekeepingTask', id),
-      reorderHousekeepingTasks: (orderedIds) => notImplemented('reorderHousekeepingTasks', orderedIds),
-      setHousekeepingTaskDone: (date, target, done) => notImplemented('setHousekeepingTaskDone', date, target, done),
-      saveHousekeepingVisit: (date, patch) => notImplemented('saveHousekeepingVisit', date, patch),
-      addHousekeepingVisit: (date) => notImplemented('addHousekeepingVisit', date),
-      deleteHousekeepingVisit: (id) => notImplemented('deleteHousekeepingVisit', id),
+      setHousekeepingNote: (body) => {
+        const d = requireData();
+        const text = (body ?? '').trim();
+        // Unchanged (after trimming): nothing to send.
+        if (text === d.housekeeping.note.body) return Promise.resolve();
+        return mutate(
+          (cur) => {
+            const before = cur.housekeeping.note;
+            const meId = cur.members.find((m) => m.user_id === userRef.current?.id)?.id ?? null;
+            const after: HousekeepingNote = { body: text, updated_at: optimisticStamp(), updated_by: meId };
+            return {
+              next: withHousekeeping(cur, { ...cur.housekeeping, note: after }),
+              revert: (c) => (c.housekeeping.note === after ? withHousekeeping(c, { ...c.housekeeping, note: before }) : c),
+            };
+          },
+          () => backend.setHousekeepingNote(d.household.id, text),
+        );
+      },
+      createHousekeepingTask: async (title) => {
+        const d = requireData();
+        // Not optimistic (like createArea): it resolves to the stored task. It shows as soon as
+        // it is stored, on today's visit too; the reload that follows confirms it.
+        const task = await mutate(null, () => backend.createHousekeepingTask(d.household.id, title));
+        const cur = dataRef.current;
+        if (cur && cur.household.id === task.household_id) {
+          commitData(withHousekeeping(cur, withTaskAdded(cur.housekeeping, task, today)));
+        }
+        return task;
+      },
+      renameHousekeepingTask: (id, title) =>
+        mutate(
+          (cur) => {
+            const task = cur.housekeeping.tasks.find((t) => t.id === id);
+            const clean = (title ?? '').trim();
+            // A blank title is the backend's to refuse; the list keeps showing the old one.
+            if (!task || !clean || clean === task.title) return null;
+            return {
+              next: withHousekeeping(cur, withTaskRenamed(cur.housekeeping, id, clean, today)),
+              revert: (c) =>
+                c.housekeeping.tasks.find((t) => t.id === id)?.title === clean
+                  ? withHousekeeping(c, withTaskRenamed(c.housekeeping, id, task.title, today))
+                  : c,
+            };
+          },
+          () => backend.renameHousekeepingTask(id, title),
+        ),
+      deleteHousekeepingTask: (id) => mutate(deleteTaskChange(id, today), () => backend.deleteHousekeepingTask(id)),
+      reorderHousekeepingTasks: (orderedIds) => {
+        const d = requireData();
+        return mutate(reorderTasksChange(orderedIds, today), () =>
+          backend.reorderHousekeepingTasks(d.household.id, orderedIds),
+        );
+      },
+      setHousekeepingTaskDone: (date, target, done) => {
+        // Visits are never in the future: refused without a write (and without a toast).
+        if (!canHaveVisit(date, today)) return Promise.reject(new BackendError('unknown', 'invalid_input: date'));
+        const d = requireData();
+        return mutate(
+          visitChange(date, userRef.current?.id, (visit, meId, at) => applyTick(visit, target, done, meId, at)),
+          () => backend.setHousekeepingTaskDone(d.household.id, date, target, done),
+        ).then(() => undefined);
+      },
+      saveHousekeepingVisit: (date, patch) => {
+        if (!canHaveVisit(date, today)) return Promise.reject(new BackendError('unknown', 'invalid_input: date'));
+        const d = requireData();
+        return mutate(
+          visitChange(date, userRef.current?.id, (visit, meId, at) => applyVisitPatch(visit, patch, meId, at)),
+          () => backend.saveHousekeepingVisit(d.household.id, date, patch),
+        ).then(() => undefined);
+      },
+      addHousekeepingVisit: (date) => {
+        if (!canHaveVisit(date, today)) return Promise.reject(new BackendError('unknown', 'invalid_input: date'));
+        const d = requireData();
+        // A day without a visit shows the pending one (nothing ticked); one already there stays.
+        return mutate(
+          visitChange(date, userRef.current?.id, (visit) => visit),
+          () => backend.addHousekeepingVisit(d.household.id, date),
+        ).then(() => undefined);
+      },
+      deleteHousekeepingVisit: (id) =>
+        mutate(
+          (cur) => {
+            const visit = cur.housekeeping.visits.find((v) => v.id === id);
+            if (!visit) return null;
+            return {
+              next: withHousekeeping(cur, { ...cur.housekeeping, visits: cur.housekeeping.visits.filter((v) => v.id !== id) }),
+              // Back on the calendar, unless that day has a visit again by then.
+              revert: (c) =>
+                c.housekeeping.visits.some((v) => v.id === id || v.visit_date === visit.visit_date)
+                  ? c
+                  : withHousekeeping(c, { ...c.housekeeping, visits: [...c.housekeeping.visits, visit].sort(byVisitDate) }),
+            };
+          },
+          () => backend.deleteHousekeepingVisit(id),
+        ),
 
       toast,
       showToast,
@@ -745,6 +1022,7 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
     bootstrap,
     mutate,
     requireData,
+    commitData,
     toast,
     showToast,
     dismissToast,
