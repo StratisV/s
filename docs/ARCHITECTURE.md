@@ -45,7 +45,8 @@ src/
   lib/push.ts              Web Push subscribe/unsubscribe + iOS install detection
   lib/sw-register.ts       service worker registration
   ui/                      shared primitives: Screen (+ ScreenHeader), Hero, StatusSky, Sheet, ActionSheet, Toggle,
-                           Avatar, Toast, Confetti, HomeScene (Join), icons
+                           Avatar, Toast, Confetti, HomeScene (Join), icons, useReorder (drag and arrow-key
+                           reordering for the areas and the housekeeping task list)
   ui/animals.ts            the drawn green duck and brown hedgehog (SVG) for HomeScene and Confetti
   lib/preview.ts           `?frame` simulates the 54px status bar inset for screenshots
   screens/home/            Home screen (collapsible areas with status counts and an add button),
@@ -678,18 +679,21 @@ Files under `src/screens/housekeeping/` (each with a `.module.css` where it has 
 
 | file | what |
 | --- | --- |
-| `HousekeepingScreen.tsx` (+ `.test.tsx`) | the tab: `Screen` with the sections below, the live region, the sheet |
+| `HousekeepingScreen.tsx` (+ `.test.tsx`) | the tab: `Screen` with the sections below and the live region (`data-announcer`) |
 | `NoteSection.tsx` | "Message for the housekeeper" |
 | `VisitEditor.tsx` | one day's checklist, comments, price and byline (today, and the selected day) |
 | `Checklist.tsx` | the tasks as checkboxes |
 | `PriceField.tsx` | the £ field: parse, format, error |
 | `Calendar.tsx` | month header and summary, the month grid |
 | `DayDetail.tsx` | the selected day under the calendar |
-| `TaskListSheet.tsx` | the page sheet that edits the task list |
+| `TaskListSheet.tsx` | the page sheet that edits the task list; App mounts it beside the stage, like the Item sheet, so the screen behind is pushed back |
+| `useSavedText.ts` | the message and comments fields: save after a pause and on blur, keep a draft while editing |
+| `Housekeeping.module.css` | the shared sections, cards, captions, price row and empty states |
+| `testLogic.ts` | test only: stand-ins for the logic functions the screen uses, written from their specs (the screen tests mock `lib/logic/housekeeping.ts` with them) |
 
 Elsewhere: `screens/types.ts` (`Tab` already includes `'housekeeping'`), `screens/home/TabBar.tsx`
 and its CSS (four tabs), `App.tsx` (renders `HousekeepingScreen` for the tab), the comments in
-`ui/Screen.tsx` and `TabBar.tsx` that say "Home / Chat / Stats", `e2e/fixtures.ts`
+`ui/Screen.tsx` and `TabBar.tsx` (they now say "Home / Chat / Housekeeping / Stats"), `e2e/fixtures.ts`
 (`housekeepingScreen(page)`, `'Housekeeping'` in `tabButton` and `goToTab`), and the tests that
 pin three tabs (`src/App.test.tsx` "tab bar", `e2e/onboarding.spec.ts` and any other).
 
@@ -769,8 +773,8 @@ pops in when you come back from a tab without it.
 6. **Task list sheet** (`TaskListSheet`): a page `Sheet` labelled "Task list". Nav bar
    (`data-sheet-handle`): the title "Task list" centred (17/22/600) and **Done** on the right
    (17px/600 tint), which closes it. The body (`data-sheet-scroll`) is one card that looks and
-   behaves like the Household editor's areas (`screens/profile/AreaList.tsx`; extract its drag
-   and keyboard reorder into a shared hook if that keeps AreaList and its tests unchanged):
+   behaves like the Household editor's areas (`screens/profile/AreaList.tsx`, with the same styles;
+   both take their drag and keyboard reorder from `ui/useReorder.ts`):
    each row has a red minus (`aria-label="Delete <title>"`), the title edited in place
    (`InlineText`, `aria-label="Task name"`, `maxLength` 200; blank puts the old title back)
    and a grip (`aria-label="Reorder <title>"`, drag, or the up and down arrow keys;

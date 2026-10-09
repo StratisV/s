@@ -1,32 +1,49 @@
-/* The segmented control (as Stats' period switch), one segment per tab. */
+/*
+ * The segmented control (as Stats' period switch), one segment per tab. Segments size to
+ * their labels and share the space left over equally (Housekeeping is the longest), so all
+ * four fit on one line from 320px wide up.
+ */
 .bar {
   position: relative;
   padding: 3px;
   border-radius: 100px;
   background: var(--fill-tertiary);
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex;
   user-select: none;
   -webkit-user-select: none;
 }
 
-/* The open tab's white pill, sliding under the labels. */
+/*
+ * The open tab's white pill, sliding under the labels. TabBar sets its width and
+ * translateX from the open segment (offsetWidth, offsetLeft); hidden until measured.
+ */
 .thumb {
   position: absolute;
   top: 3px;
   bottom: 3px;
-  left: 3px;
-  width: calc((100% - 6px) / 3);
+  left: 0;
+  width: 0;
   border-radius: 100px;
   background: #fff;
   box-shadow: var(--shadow-segment);
-  transform: translateX(calc(100% * var(--index)));
-  transition: transform 0.34s var(--sheet-ease);
+  visibility: hidden;
+}
+
+.thumb[data-measured] {
+  visibility: visible;
+}
+
+.thumb[data-animate='true'] {
+  transition:
+    transform 0.34s var(--sheet-ease),
+    width 0.34s var(--sheet-ease);
 }
 
 .tab {
   position: relative;
+  flex: 1 1 auto;
   height: 38px;
+  padding: 0 10px;
   border-radius: 100px;
   display: flex;
   align-items: center;
@@ -35,6 +52,7 @@
   line-height: 20px;
   letter-spacing: -0.2px;
   font-weight: 500;
+  white-space: nowrap;
   color: var(--label);
 }
 
@@ -50,8 +68,23 @@
   opacity: 0.6;
 }
 
+/* As wide as the label in bold (the hidden copy below), so the open tab never shifts the others. */
 .label {
   position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.label::after {
+  content: attr(data-label);
+  content: attr(data-label) / '';
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 600;
+  pointer-events: none;
+  user-select: none;
 }
 
 /* Unread messages on Chat. */
@@ -63,6 +96,22 @@
   height: 8px;
   border-radius: 50%;
   background: var(--rag-red);
+}
+
+/* The narrowest phones (320px: 282px inside the switch). */
+@media (max-width: 339px) {
+  .tab {
+    padding: 0 6px;
+    font-size: 14px;
+    letter-spacing: -0.3px;
+  }
+
+  /* Kept inside Chat's segment. */
+  .dot {
+    right: -8px;
+    width: 7px;
+    height: 7px;
+  }
 }
 
 /* ── Add button ────────────────────────────────────────── */
@@ -83,7 +132,7 @@
   transition: transform 0.12s ease;
 }
 
-/* Back from Chat: the button pops in. */
+/* Back from Chat or Housekeeping: the button pops in. */
 .add[data-enter] {
   animation: add-in 0.3s var(--sheet-ease);
 }
@@ -100,7 +149,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .thumb,
+  .thumb[data-animate='true'],
   .add,
   .add[data-enter] {
     transition: none;

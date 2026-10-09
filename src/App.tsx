@@ -3,6 +3,8 @@ import { ChatScreen } from './screens/chat/ChatScreen';
 import { inCollapsedArea } from './screens/home/areaPanel';
 import { HomeScreen } from './screens/home/HomeScreen';
 import { AddButton, TabBar } from './screens/home/TabBar';
+import { HousekeepingScreen } from './screens/housekeeping/HousekeepingScreen';
+import { TaskListSheet } from './screens/housekeeping/TaskListSheet';
 import { ItemSheet } from './screens/item/ItemSheet';
 import { Onboarding } from './screens/onboarding/Onboarding';
 import { ProfileScreen } from './screens/profile/ProfileScreen';
@@ -103,6 +105,9 @@ function MainShell() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetKey, setSheetKey] = useState(0);
   const [profileOpen, setProfileOpen] = useState(false);
+  // Housekeeping's task list sheet (a page sheet, like the Item sheet).
+  const [taskListOpen, setTaskListOpen] = useState(false);
+  const pushed = sheetOpen || taskListOpen;
   // The area an item was just saved into, for Home to expand if it is collapsed.
   const [revealArea, setRevealArea] = useState<string | null>(null);
   const clearReveal = useCallback(() => setRevealArea(null), []);
@@ -120,15 +125,15 @@ function MainShell() {
     return () => ro.disconnect();
   }, []);
 
-  // Where keyboard focus was when the Item sheet opened. Taken before the stage
+  // Where keyboard focus was when a sheet opened. Taken before the stage
   // goes inert below (effects run in order), which would blur it.
   const sheetReturn = useRef<FocusReturn | null>(null);
   useEffect(() => {
-    if (sheetOpen) sheetReturn.current = takeFocusReturn(stageRef.current);
-  }, [sheetOpen]);
+    if (pushed) sheetReturn.current = takeFocusReturn(stageRef.current);
+  }, [pushed]);
 
   // While a sheet or the Profile cover is up, the screen behind can't be focused or tapped.
-  const covered = sheetOpen || profileOpen;
+  const covered = pushed || profileOpen;
   useEffect(() => {
     if (stageRef.current) stageRef.current.inert = covered;
   }, [covered]);
@@ -137,12 +142,12 @@ function MainShell() {
   useEffect(() => {
     const html = document.documentElement;
     html.toggleAttribute('data-cover', profileOpen);
-    html.toggleAttribute('data-sheet', sheetOpen);
+    html.toggleAttribute('data-sheet', pushed);
     return () => {
       html.removeAttribute('data-cover');
       html.removeAttribute('data-sheet');
     };
-  }, [profileOpen, sheetOpen]);
+  }, [profileOpen, pushed]);
 
   // Once the stage is interactive again, focus goes back to the row (or the + button).
   // The Profile cover returns focus itself (ProfileScreen).
@@ -163,7 +168,7 @@ function MainShell() {
   const tabs = <TabBar tab={tab} onTab={setTab} unread={unread} />;
 
   return (
-    <div className={styles.main} data-pushed={sheetOpen || undefined}>
+    <div className={styles.main} data-pushed={pushed || undefined}>
       <div ref={stageRef} className={styles.stage}>
         {tab === 'home' ? (
           <HomeScreen
@@ -176,6 +181,12 @@ function MainShell() {
           />
         ) : tab === 'chat' ? (
           <ChatScreen tabs={tabs} onOpenProfile={() => setProfileOpen(true)} />
+        ) : tab === 'housekeeping' ? (
+          <HousekeepingScreen
+            tabs={tabs}
+            onOpenProfile={() => setProfileOpen(true)}
+            onEditTasks={() => setTaskListOpen(true)}
+          />
         ) : (
           <StatsScreen tabs={tabs} onOpenProfile={() => setProfileOpen(true)} />
         )}
@@ -192,6 +203,7 @@ function MainShell() {
           onSaved={setRevealArea}
         />
       ) : null}
+      <TaskListSheet open={taskListOpen} onClose={() => setTaskListOpen(false)} />
       <ProfileScreen open={profileOpen} onClose={() => setProfileOpen(false)} />
     </div>
   );

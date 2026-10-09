@@ -1,0 +1,138 @@
+/* The day's tasks: a white card of round iOS checkboxes (docs/ARCHITECTURE.md "Housekeeping", UI). */
+
+.card {
+  min-width: 0;
+  margin: 0 16px;
+  padding: 0;
+  border: 0;
+  background: var(--card);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The whole row toggles: circle, then the title (and who ticked it). */
+.row {
+  position: relative;
+  min-height: 52px;
+  padding: 11px 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  scroll-margin: calc(var(--top-inset) + 72px) 0 40px;
+}
+
+/* Hairline between rows, inset to the text. */
+.item + .item .row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 56px;
+  right: 18px;
+  border-top: 0.5px solid var(--separator);
+  pointer-events: none;
+}
+
+.row:active {
+  background: var(--avatar-bg);
+}
+
+/* The real checkbox sits over the circle, invisible: it keeps focus, keys and the checked state. */
+.box {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 18px;
+  width: 24px;
+  height: 24px;
+  margin: -12px 0 0;
+  opacity: 0;
+  cursor: pointer;
+  /* Keyboard focus scrolls the row clear of the sticky tab switch. */
+  scroll-margin: calc(var(--top-inset) + 72px) 0 40px;
+}
+
+/* 24px circle: a 1.5px grey ring, or filled with the tint and a white check. */
+.circle {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  box-shadow: inset 0 0 0 1.5px #c7c7cc;
+  color: #fff;
+  pointer-events: none;
+  transition:
+    background-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s var(--sheet-ease);
+}
+
+.circle svg {
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s var(--sheet-ease);
+}
+
+.row[data-done] .circle {
+  background: var(--tint);
+  box-shadow: none;
+}
+
+.row[data-done] .circle svg {
+  opacity: 1;
+  transform: none;
+}
+
+.row:active .circle {
+  transform: scale(0.9);
+}
+
+.box:focus-visible + .circle {
+  outline: 2px solid var(--tint);
+  outline-offset: 2px;
+}
+
+.text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.title {
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label);
+  overflow-wrap: anywhere;
+}
+
+.byline {
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.1px;
+  color: var(--label-secondary);
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .circle,
+  .circle svg {
+    transition: none;
+  }
+
+  .row:active .circle {
+    transform: none;
+  }
+}

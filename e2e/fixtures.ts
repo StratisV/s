@@ -87,6 +87,12 @@ export function chatScreen(page: Page): Locator {
   return page.getByRole('region', { name: 'Chat', exact: true });
 }
 
+export function housekeepingScreen(page: Page): Locator {
+  return page.getByRole('region', { name: 'Housekeeping', exact: true });
+}
+
+export type TabName = 'Home' | 'Chat' | 'Housekeeping' | 'Stats';
+
 export function tabs(page: Page): Locator {
   return page.getByRole('navigation', { name: 'Tabs' });
 }
@@ -97,11 +103,11 @@ export function addButton(page: Page): Locator {
 }
 
 /** A tab button. Chat is named "Chat, unread messages" while it has its dot. */
-export function tabButton(page: Page, name: 'Home' | 'Chat' | 'Stats'): Locator {
+export function tabButton(page: Page, name: TabName): Locator {
   return tabs(page).getByRole('button', { name: name === 'Chat' ? /^Chat(, unread messages)?$/ : name, exact: true });
 }
 
-export async function goToTab(page: Page, name: 'Home' | 'Chat' | 'Stats'): Promise<void> {
+export async function goToTab(page: Page, name: TabName): Promise<void> {
   await tabButton(page, name).click();
   await expect(tabButton(page, name)).toHaveAttribute('aria-current', 'page');
 }

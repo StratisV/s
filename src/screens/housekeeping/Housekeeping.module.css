@@ -1,0 +1,358 @@
+/*
+ * The Housekeeping tab's sections, cards and captions (3a: 16px gutters, white cards with a
+ * 24px radius, section headers 20/25/600, rows 17/22, captions 13/18 secondary).
+ */
+
+/* ── Section headers ───────────────────────────────────── */
+
+/* The heading, and a small tint action on the right (Clear, Edit). */
+.headerRow {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 30px 20px 8px;
+}
+
+.header {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 20px;
+  line-height: 25px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  overflow-wrap: anywhere;
+}
+
+/* Today's heading takes focus from "Show": clear of the sticky tab switch when scrolled to. */
+.target {
+  scroll-margin-top: calc(var(--top-inset) + 64px);
+  border-radius: 8px;
+}
+
+.target:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.headerAction {
+  position: relative;
+  flex: none;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--tint);
+  border-radius: 6px;
+}
+
+/* 44px tap target around the 20px line. */
+.headerAction::before {
+  content: '';
+  position: absolute;
+  inset: -12px -10px;
+}
+
+.headerAction:active {
+  opacity: 0.5;
+}
+
+/* "Comments" inside a visit. */
+.subheader {
+  margin: 0;
+  padding: 24px 20px 8px;
+  font-size: 20px;
+  line-height: 25px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+}
+
+/* The chosen day's heading under the calendar. */
+.dayHeader {
+  margin: 0;
+  padding: 24px 20px 8px;
+  font-size: 20px;
+  line-height: 25px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  overflow-wrap: anywhere;
+}
+
+/* ── Cards ─────────────────────────────────────────────── */
+
+.card {
+  margin: 0 16px;
+  background: var(--card);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+/* Space between two cards of one visit. */
+.gap {
+  height: 20px;
+}
+
+/* A card that is itself a text field: two lines tall when empty, then it grows. */
+.textField {
+  display: block;
+  width: 100%;
+  min-height: 74px;
+  margin: 0;
+  padding: 15px 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  resize: none;
+  overflow: hidden;
+  outline: none;
+  caret-color: var(--tint);
+  appearance: none;
+  -webkit-appearance: none;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label);
+  /* Keyboard focus scrolls it clear of the sticky tab switch. */
+  scroll-margin: calc(var(--top-inset) + 72px) 0 24px;
+}
+
+.textField::placeholder {
+  color: rgba(60, 60, 67, 0.3);
+  opacity: 1;
+}
+
+/* Secondary text under a card: who wrote the message, who recorded the visit. */
+.caption {
+  margin: 0;
+  padding: 8px 20px 0;
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.1px;
+  color: var(--label-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* "Tap a day to see its visit." */
+.hint {
+  margin: 0;
+  padding: 14px 20px 0;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
+}
+
+/* ── Price for the day ─────────────────────────────────── */
+
+.priceRow {
+  min-height: 52px;
+  cursor: text;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+}
+
+/* Long enough for the label; on a narrow phone with a big amount the label wraps first. */
+.priceLabel {
+  min-width: 0;
+}
+
+.priceValue {
+  flex: none;
+  max-width: 60%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.pound {
+  flex: none;
+  color: var(--label);
+}
+
+.priceValue:has(.priceInput:placeholder-shown) .pound {
+  color: rgba(60, 60, 67, 0.3);
+}
+
+.priceInput {
+  min-width: 0;
+  max-width: 100%;
+  height: 52px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: right;
+  font-size: 17px;
+  letter-spacing: -0.4px;
+  font-variant-numeric: tabular-nums;
+  color: var(--label);
+  caret-color: var(--tint);
+  outline: none;
+  scroll-margin: calc(var(--top-inset) + 72px) 0 24px;
+}
+
+/* Where the engine can size a field to its text, it does (no estimate needed). */
+@supports (field-sizing: content) {
+  .priceInput {
+    field-sizing: content;
+    width: auto !important;
+    min-width: 1ch;
+    padding-right: 1px;
+  }
+}
+
+.priceInput::placeholder {
+  color: rgba(60, 60, 67, 0.3);
+}
+
+.priceInput[aria-invalid='true'] {
+  color: var(--rag-red-text);
+}
+
+.error {
+  margin: 0;
+  padding: 8px 20px 0;
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.1px;
+  color: var(--rag-red-text);
+}
+
+/* ── Empty states and actions in a card ────────────────── */
+
+.emptyText {
+  margin: 0;
+  padding: 15px 18px;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label-secondary);
+}
+
+/* A tint row under the text (Add tasks, Add a visit), with a hairline inset to the text. */
+.cardButton {
+  position: relative;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  text-align: left;
+  color: var(--tint);
+}
+
+.cardButton::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 18px;
+  right: 18px;
+  border-top: 0.5px solid var(--separator);
+  pointer-events: none;
+}
+
+.cardButton:active {
+  background: var(--avatar-bg);
+}
+
+.cardButton:focus-visible,
+.deleteButton:focus-visible {
+  outline: 2px solid var(--tint);
+  outline-offset: -2px;
+  border-radius: var(--r-card);
+}
+
+/* "Today's visit is above."  ·  Show */
+.cardRow {
+  min-height: 52px;
+  padding: 0 8px 0 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cardRowText {
+  flex: 1;
+  min-width: 0;
+  padding: 15px 0;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label-secondary);
+}
+
+.inlineAction {
+  flex: none;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 10px;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--tint);
+  border-radius: 12px;
+}
+
+.inlineAction:active {
+  opacity: 0.5;
+}
+
+.inlineAction:focus-visible {
+  outline-offset: -2px;
+}
+
+.deleteButton {
+  width: 100%;
+  min-height: 52px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--destructive);
+}
+
+.deleteButton:active {
+  background: var(--avatar-bg);
+}
+
+/* ── The message on a past visit (read-only) ───────────── */
+
+.message {
+  padding: 12px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.messageLabel {
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.1px;
+  color: var(--label-secondary);
+}
+
+.messageText {
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.messageEmpty {
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label-secondary);
+}
