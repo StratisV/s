@@ -35,14 +35,14 @@
   opacity: 0.7;
 }
 
-/* Scroll-edge fade: solid under the status bar, then fades out. */
+/* Scroll-edge fade under the status bar (58px with the 54px inset, solid to 55%). */
 .fade {
   position: absolute;
   left: 0;
   right: 0;
   top: 0;
-  height: calc(var(--top-inset) + 14px);
-  background: linear-gradient(var(--bg) calc(var(--top-inset) * 0.95), rgba(242, 242, 247, 0));
+  height: calc(var(--top-inset) + 4px);
+  background: linear-gradient(var(--bg) 55%, rgba(242, 242, 247, 0));
   z-index: 4;
   pointer-events: none;
 }
@@ -64,7 +64,7 @@
 
 .subtitle {
   font-size: 17px;
-  line-height: 22px;
+  line-height: 20px;
   letter-spacing: -0.4px;
   color: var(--label-secondary);
 }

@@ -996,30 +996,34 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     await B().deletePushSubscription(endpoint);
   });
 
-  it('subscribe() hears an edit made by another member', async () => {
+  it('subscribe() hears an edit made by another member, and outsiders hear nothing', { timeout: 45_000 }, async () => {
     const data = await loadA();
+    const joined = (p: Person) => p.client.getChannels().some((c) => c.state === 'joined');
     let changes = 0;
+    let outsiderChanges = 0;
     const stop = A().subscribe(hidA, () => changes++);
+    // C knows A's household id but is not a member: RLS must keep A's updates from C.
+    const stopOutsider = C().subscribe(hidA, () => outsiderChanges++);
     try {
-      const joined = await waitFor(() => people.a.client.getChannels().some((c) => c.state === 'joined'), 10_000);
-      if (!joined) {
-        console.warn('[supabase.integration] SKIPPED realtime check: the channel never joined (is Realtime running?)');
-        return;
+      expect(await waitFor(() => joined(people.a) && joined(people.c), 10_000), 'realtime channels joined').toBe(true);
+      // Postgres changes start flowing a moment after the join, so keep editing until one arrives.
+      const until = Date.now() + 20_000;
+      for (let n = 1; changes === 0 && Date.now() < until; n++) {
+        await B().renameArea(data.areas[0].id, `Renamed ${runId} ${n}`);
+        await waitFor(() => changes > 0, 1500);
       }
-      // Postgres changes start flowing a moment after the join.
+      expect(changes, 'postgres_changes events heard by a member').toBeGreaterThan(0);
+      // The outsider's channel was listening for the same edits.
+      await B().renameArea(data.areas[0].id, `Renamed ${runId} final`);
       await sleep(1500);
-      await B().renameArea(data.areas[0].id, `Renamed ${runId}`);
-      const heard = await waitFor(() => changes > 0, 10_000);
-      if (!heard) {
-        console.warn('[supabase.integration] SKIPPED realtime check: no postgres_changes event arrived within 10s');
-        return;
-      }
-      expect(changes).toBeGreaterThan(0);
+      expect(outsiderChanges, 'postgres_changes events heard by an outsider').toBe(0);
     } finally {
       stop();
+      stopOutsider();
     }
     // Unsubscribing removes the channel.
     expect(await waitFor(() => people.a.client.getChannels().length === 0, 5000)).toBe(true);
+    expect(await waitFor(() => people.c.client.getChannels().length === 0, 5000)).toBe(true);
   });
 
   it('signs out', async () => {

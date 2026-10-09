@@ -9,6 +9,14 @@ export const COMPLETE_FEEDBACK_MS = 250;
 /** A repeating item stays in the list: ignore taps a little longer so a slow double tap counts once. */
 const REPEAT_COOLDOWN_MS = 450;
 
+function isFocusVisible(el: Element): boolean {
+  try {
+    return el.matches(':focus-visible');
+  } catch {
+    return false; // engines without :focus-visible
+  }
+}
+
 interface ItemRowProps {
   item: Item;
   /** From itemMeta(): `🦆 Shea`, and `Tue 20 Oct` / `Missed · Tue 6 Oct` / null. */
@@ -46,9 +54,12 @@ export function ItemRow({ item, meta, onOpen, onComplete }: ItemRowProps) {
     navigator.vibrate?.(10);
     setCompleting(true);
 
+    // Only keyboard focus is worth keeping: a tap must not scroll the list to the next row.
+    const keyboard = isFocusVisible(ring);
+
     setTimeout(() => {
       // A one-off item leaves the list: move keyboard focus to the nearest remaining row.
-      if (item.repeat === 'none' && document.activeElement === ring && openRef.current) {
+      if (item.repeat === 'none' && keyboard && document.activeElement === ring && openRef.current) {
         const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-item-open]'));
         const i = rows.indexOf(openRef.current);
         (rows[i + 1] ?? rows[i - 1])?.focus();
