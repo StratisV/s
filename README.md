@@ -93,11 +93,21 @@ Set the same three variables in your host's dashboard for production builds.
    item's Notify setting, missed alerts the morning after a deadline, and the weekly email on
    Mondays at 08:00. `select cron.unschedule('home-os-scheduler');` stops it.
 
-### 5. Deploy the app
+### 5. Deploy the app (Vercel)
 
-Any static host works. Build command `npm run build`, output folder `dist`, plus the three
-`VITE_` variables. To serve from a sub-path (for example GitHub Pages), also set
-`VITE_BASE=/your-path/`.
+1. Open https://vercel.com/new, sign in with GitHub and import **StratisV/s**. The settings
+   come from `vercel.json` (Vite, `npm run build`, output `dist`), so just press **Deploy**.
+   Vercel deploys the repository's default branch to production and redeploys on every push.
+2. Without the variables below the site runs in **demo mode** (simulated sign-in, data in each
+   browser). For real Google sign-in add `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and
+   `VITE_VAPID_PUBLIC_KEY` under **Project → Settings → Environment Variables**, then
+   **Redeploy** (Vite reads them at build time).
+3. Put the Vercel URL (for example `https://homeos.vercel.app`) into Supabase **Authentication
+   → URL Configuration** (Site URL and Redirect URLs) and into `APP_URL` for the scheduler.
+
+Any other static host works the same way: build command `npm run build`, output folder
+`dist`, plus the three `VITE_` variables. To serve from a sub-path (for example GitHub Pages),
+also set `VITE_BASE=/your-path/`.
 
 ### 6. On each iPhone
 
