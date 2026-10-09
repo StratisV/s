@@ -1,5 +1,6 @@
 import { useId } from 'react';
 import type { ChecklistRow } from '../../lib/logic/housekeeping';
+import { EmojiText } from '../../ui/EmojiText';
 import { CheckIcon } from '../../ui/icons';
 import styles from './Checklist.module.css';
 
@@ -52,7 +53,7 @@ function Row({ row, byline, onTick }: { row: ChecklistRow; byline: string | null
           </span>
           {byline ? (
             <span id={bylineId} className={styles.byline}>
-              {byline}
+              <EmojiText text={byline} />
             </span>
           ) : null}
         </span>

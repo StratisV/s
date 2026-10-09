@@ -5,14 +5,6 @@ import { DemoBackend, type StorageLike } from './lib/backend/demo';
 import { HomeProvider } from './state/HomeProvider';
 import { ConfettiProvider } from './ui/Confetti';
 
-// The Housekeeping tab's calendar, price, checklist and byline functions are being built
-// alongside the screen; until they land, the screen runs on stand-ins written from their
-// specs (src/screens/housekeeping/testLogic.ts).
-vi.mock('./lib/logic/housekeeping', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./lib/logic/housekeeping')>()),
-  ...(await import('./screens/housekeeping/testLogic')),
-}));
-
 class MemoryStorage implements StorageLike {
   private map = new Map<string, string>();
   getItem(key: string) {

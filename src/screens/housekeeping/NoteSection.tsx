@@ -2,6 +2,7 @@ import { useId, useRef } from 'react';
 import { TEXT_LIMITS } from '../../lib/constants';
 import { noteByline } from '../../lib/logic/housekeeping';
 import { useHousehold } from '../../state/HomeProvider';
+import { EmojiText } from '../../ui/EmojiText';
 import { AutoGrowTextarea } from '../item/AutoGrowTextarea';
 import { useSavedText } from './useSavedText';
 import styles from './Housekeeping.module.css';
@@ -86,7 +87,7 @@ export function NoteSection({ announce }: NoteSectionProps) {
       </div>
       {byline ? (
         <p id={bylineId} className={styles.caption}>
-          {byline}
+          <EmojiText text={byline} />
         </p>
       ) : null}
     </section>

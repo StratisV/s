@@ -10,6 +10,7 @@ import {
 } from '../../lib/logic/housekeeping';
 import type { HousekeepingVisitTask, ISODate } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
+import { EmojiText } from '../../ui/EmojiText';
 import { AutoGrowTextarea } from '../item/AutoGrowTextarea';
 import { Checklist } from './Checklist';
 import { PriceField } from './PriceField';
@@ -118,7 +119,11 @@ export function VisitEditor({ date, legend, level, announce, onEditTasks }: Visi
         onSave={(price_pence) => saveHousekeepingVisit(date, { price_pence }).then(() => announce('Saved'))}
       />
 
-      {byline ? <p className={styles.caption}>{byline}</p> : null}
+      {byline ? (
+        <p className={styles.caption}>
+          <EmojiText text={byline} />
+        </p>
+      ) : null}
     </div>
   );
 }

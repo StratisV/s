@@ -19,8 +19,7 @@ import { TaskListSheet } from './TaskListSheet';
 import { NOT_STARTED } from './VisitEditor';
 
 // The provider is replaced by a small in-memory one below (the screen only talks to
-// useHousehold()), and the logic module's calendar, price, checklist and byline functions by
-// stand-ins written from its specs (./testLogic), as it is being built alongside.
+// useHousehold()); the logic module is the real one.
 vi.mock('../../state/HomeProvider', async () => {
   const { createContext, useContext } = await import('react');
   const FakeHomeContext = createContext<unknown>(null);
@@ -33,10 +32,6 @@ vi.mock('../../state/HomeProvider', async () => {
 const { FakeHomeContext } = provider as unknown as {
   FakeHomeContext: Context<unknown>;
 };
-vi.mock('../../lib/logic/housekeeping', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../lib/logic/housekeeping')>()),
-  ...(await import('./testLogic')),
-}));
 
 // ── Fixtures: Thu 8 Oct 2026, 10:00 in London (as in e2e) ──
 
