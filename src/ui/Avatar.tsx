@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import { EmojiText } from './EmojiText';
 
 interface AvatarProps {
   emoji: string;
@@ -47,7 +48,7 @@ export function Avatar({
         ...style,
       }}
     >
-      {emoji}
+      <EmojiText text={emoji} />
     </span>
   );
 }

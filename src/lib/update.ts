@@ -21,11 +21,18 @@ export function scriptIn(html: string): string | null {
   return SCRIPT.exec(html)?.[1] ?? null;
 }
 
-/** Someone is in the middle of something: a sheet or dialog is open, or a field has focus. */
+/**
+ * Someone is in the middle of something, which a reload would throw away: a sheet or
+ * dialog is open, a field has focus, a message is typed but not sent, a message failed
+ * to send, or a toast is up (an Undo, or an error being read).
+ */
 export function busy(doc: Document = document): boolean {
   if (doc.querySelector('[role="dialog"], [role="alertdialog"]')) return true;
   const el = doc.activeElement;
-  return !!el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && (el as HTMLInputElement).type !== 'checkbox'));
+  if (el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && (el as HTMLInputElement).type !== 'checkbox'))) return true;
+  for (const field of doc.querySelectorAll<HTMLTextAreaElement>('textarea')) if (field.value.trim()) return true;
+  if (doc.querySelector('[data-state="failed"], [data-state="pending"]')) return true;
+  return Array.from(doc.querySelectorAll('[role="status"]')).some((s) => (s.textContent ?? '').trim() !== '');
 }
 
 /**
@@ -50,12 +57,24 @@ export function watchForUpdates(): void {
   if (!import.meta.env.PROD || typeof document === 'undefined') return;
   let last = 0;
   let checking = false;
+  // A tap or key press while the check runs means someone has started doing something.
+  let touched = false;
+  const onInput = () => {
+    touched = true;
+  };
+  window.addEventListener('pointerdown', onInput, true);
+  window.addEventListener('keydown', onInput, true);
   const check = async () => {
     if (document.visibilityState !== 'visible' || checking || Date.now() - last < MIN_GAP_MS) return;
     checking = true;
+    touched = false;
     last = Date.now();
     try {
-      if ((await newVersionDeployed(import.meta.env.BASE_URL)) && !busy()) window.location.reload();
+      if ((await newVersionDeployed(import.meta.env.BASE_URL)) && !touched && !busy()) {
+        // To the app's own address: one-off switches in the URL (?demo-seed, ?invite)
+        // must not run again.
+        window.location.replace(import.meta.env.BASE_URL + window.location.hash);
+      }
     } finally {
       checking = false;
     }

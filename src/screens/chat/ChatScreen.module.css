@@ -22,6 +22,8 @@
   overflow-anchor: none;
   /* The hero reaches the top of the screen. */
   padding: 0 0 var(--chat-bottom-space);
+  /* Keyboard focus scrolls messages clear of the status bar and the docked tab switch. */
+  scroll-padding-top: calc(var(--top-inset) + 64px);
 }
 
 .log {

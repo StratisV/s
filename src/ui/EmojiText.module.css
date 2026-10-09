@@ -1,0 +1,21 @@
+/* One emoji wide, sitting on the text's baseline like the glyph it replaces. */
+.drawn {
+  position: relative;
+  display: inline-block;
+  width: 1.2em;
+  height: 1.2em;
+  vertical-align: -0.22em;
+  background-image: var(--drawn);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+/* The real character, kept for copying and screen readers but not drawn. */
+.glyph {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 0;
+  line-height: 1.2em;
+}

@@ -37,6 +37,24 @@
   color: var(--label);
 }
 
+.track[data-compact] {
+  padding: 2px;
+}
+
+.track[data-compact] .thumb {
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / var(--count));
+}
+
+.track[data-compact] .segment {
+  height: 28px;
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.08px;
+}
+
 .segment[aria-checked='true'] {
   font-weight: 600;
 }

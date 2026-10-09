@@ -255,6 +255,21 @@ messages above (`network` for fetch failures). The housekeeping methods are list
   focus goes to the nearest row that can be seen (`inCollapsedArea()` in
   `screens/home/areaPanel.ts`), else to the area's name.
 
+### Home: date and the person filter
+
+- The hero's top line shows today's date in full ("FRIDAY 9 OCTOBER", `longDay()` in
+  `lib/logic/dates.ts`, the household's day), level with the avatar.
+- Under the tab switch, `PersonFilter` (`screens/home/PersonFilter.tsx`, logic in
+  `personFilter.ts`): a radio group "Show tasks for" with Everyone, you, each other member and
+  Unassigned, each with its count of open items. Choosing a person shows only items assigned to
+  them, and only the areas where they have some; Collapse All acts on what is shown. Nothing
+  open reads "Nothing for Ela right now." The choice is kept per household on this device
+  (`homeos.who.<householdId>`); a member who left reads as Everyone. Saving an item into an
+  area the filter hides switches back to Everyone.
+- People's 🦆 and 🦔 are drawn (`ui/EmojiText.tsx`: the green duck and brown hedgehog of
+  `ui/animals.ts`) wherever a member's emoji shows, with the character kept in the text for
+  copying and screen readers.
+
 ### The hero and the tab switch
 
 Every tab (Home, Chat, Housekeeping, Stats) starts with `ScreenHeader` (`ui/Screen.tsx`): the

@@ -19,8 +19,8 @@
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
-  /* Keyboard focus scrolls rows clear of the top fade and the floating tab bar. */
-  scroll-margin: calc(var(--top-inset) + 16px) 0 112px;
+  /* Keyboard focus scrolls rows clear of the floating + (the scroll area's padding keeps them below the tab switch). */
+  scroll-margin: 8px 0 calc(104px + var(--bottom-inset));
 }
 
 .row:first-child .open {
@@ -51,34 +51,54 @@
   box-shadow: inset 0 0 0 2px var(--tint);
 }
 
-.title,
-.meta {
+.title {
   display: block;
-  /* One line each: the full title and note are in the Item sheet. */
+  /* One line: the full title is in the Item sheet. */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.title {
   font-size: 17px;
   line-height: 22px;
   letter-spacing: -0.4px;
   color: var(--label);
 }
 
+/*
+ * One line: who and when, then the note. A long name gives way first (cut short),
+ * the date always shows in full, and the note takes whatever room is left.
+ */
 .meta {
+  display: flex;
+  min-width: 0;
+  white-space: pre;
   font-size: 13px;
   line-height: 18px;
   letter-spacing: 0;
   color: var(--label-secondary);
 }
 
+.lead {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.who {
+  flex: 0 1 auto;
+  min-width: 2.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .note {
-  color: var(--label-secondary);
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .date {
+  flex: none;
   font-weight: 500;
 }
 

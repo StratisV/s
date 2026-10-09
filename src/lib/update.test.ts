@@ -44,6 +44,27 @@ describe('update check', () => {
     expect(await newVersionDeployed('/', page(null))).toBe(false);
   });
 
+  it('does not reload over unsent words, a failed send or a toast', () => {
+    const doc = page(null);
+    const draft = doc.createElement('textarea');
+    draft.value = 'Bin day tomorrow';
+    doc.body.append(draft);
+    expect(busy(doc)).toBe(true);
+    draft.value = '  ';
+    expect(busy(doc)).toBe(false);
+    const failed = doc.createElement('div');
+    failed.dataset.state = 'failed';
+    doc.body.append(failed);
+    expect(busy(doc)).toBe(true);
+    failed.remove();
+    const toast = doc.createElement('div');
+    toast.setAttribute('role', 'status');
+    doc.body.append(toast);
+    expect(busy(doc)).toBe(false);
+    toast.textContent = 'Marked as done';
+    expect(busy(doc)).toBe(true);
+  });
+
   it('does not reload over an open sheet or a focused field', () => {
     const doc = page(null);
     expect(busy(doc)).toBe(false);

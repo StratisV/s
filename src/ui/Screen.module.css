@@ -13,6 +13,8 @@
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
   padding: 0 0 calc(60px + var(--bottom-inset));
+  /* Keyboard focus scrolls things clear of the status bar and the docked tab switch. */
+  scroll-padding-top: calc(var(--top-inset) + 64px);
 }
 
 /* Room for the floating add button. */
@@ -24,10 +26,27 @@
 
 .heroNav {
   height: var(--nav-row);
-  padding: 0 16px;
+  padding: 0 16px 0 20px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  gap: 12px;
+}
+
+/* Today's date on Home, level with the avatar: like the date over Apple's large titles. */
+.eyebrow {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--hero-ink-secondary, rgba(255, 255, 255, 0.92));
+  text-shadow: var(--hero-text-shadow, none);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .avatarButton {
@@ -101,7 +120,7 @@
 }
 
 .dock[data-stuck] {
-  background: rgba(242, 242, 247, 0.94);
+  background: rgba(242, 242, 247, 0.97);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   box-shadow: 0 0.5px 0 var(--separator);
