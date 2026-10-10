@@ -4,11 +4,14 @@ import { STATE_FIELDS } from '../lib/constants';
 import { formatDay, todayIn } from '../lib/logic/dates';
 import { disablePush } from '../lib/push';
 import { applyKindRules, nextDueDate } from '../lib/logic/items';
+import { buildImportPayload, demoHomeSummary, markDemoImported, readDemoDoc } from '../lib/logic/importHome';
+import { normaliseEmail } from '../lib/logic/people';
 import type {
   Area,
   AuthUser,
   CreateHouseholdInput,
   DemoHomeSummary,
+  HomeEntry,
   HouseholdData,
   ISODate,
   Item,
@@ -89,7 +92,7 @@ export interface HomeContextValue {
    * Create home. On the Supabase backend it first asks enterHome() again: unless that is still
    * 'no_home' (someone set up the home meanwhile, or added this person), it moves to the
    * phase that gives and rejects with BackendError('home_exists') instead of creating a second
-   * home (TODO(one-home data builder)). The database does not stop create_household itself.
+   * home. The database does not stop create_household itself.
    */
   createHousehold(input: CreateHouseholdInput): Promise<void>;
   /**
@@ -178,6 +181,37 @@ const HomeContext = createContext<HomeContextValue | null>(null);
 const INVITE_KEY = 'homeos.invite';
 export const TOAST_MS = 4000;
 
+// Sync guarantees (docs/ARCHITECTURE.md): how a failed background reload is retried, when coming
+// back counts as a resume, and the safety net for a channel that silently stopped delivering.
+/** A failed background reload is tried again after these delays, then every RETRY_EVERY_MS. */
+export const RETRY_STEPS_MS = [1000, 2000, 4000, 8000] as const;
+export const RETRY_EVERY_MS = 15_000;
+/** Hidden at least this long: coming back reconnects and reloads at once. */
+export const RESUME_AFTER_MS = 10_000;
+/** No realtime event and no reload for this long while visible and ready: reload anyway. */
+export const SAFETY_MS = 60_000;
+
+const isVisible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden';
+
+/** The browser's storage, or null where it is unavailable (private mode, locked down). */
+function localStore(): Storage | null {
+  try {
+    return typeof window !== 'undefined' ? window.localStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+/** "Bring over the home from this phone": what this browser kept in demo mode (Supabase only). */
+function demoImportOffer(backend: Backend): DemoHomeSummary | null {
+  if (backend.kind !== 'supabase') return null;
+  try {
+    return demoHomeSummary(readDemoDoc(localStore()));
+  } catch {
+    return null;
+  }
+}
+
 function readInviteFromUrl(): string | null {
   try {
     const url = new URL(window.location.href);
@@ -243,11 +277,6 @@ export function notSavedMessage(err: unknown, verb: 'save' | 'undo' = 'save'): s
   return `${lead} Try again.`;
 }
 
-/** The one-home API's stubs until the builder implements it (docs/ARCHITECTURE.md "One home"). */
-function notImplemented(name: string): Promise<never> {
-  return Promise.reject(new Error(`not implemented: ${name}`));
-}
-
 // ── Optimistic changes ───────────────────────────────────
 
 type Revert = (cur: HouseholdData) => HouseholdData;
@@ -301,6 +330,49 @@ function restoreRows<T extends { id: string }>(rows: T[], removed: T[]): T[] {
 }
 
 const byPosition = (a: Area, b: Area) => a.position - b.position;
+const byJoin = (a: Member, b: Member) =>
+  a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+
+/**
+ * Removing a person who has not joined, as the database does: gone from the people, their
+ * items unassigned, their completions credited to nobody. The revert puts back only what is
+ * still as this left it.
+ */
+function removePersonChange(id: string): Change {
+  return (cur) => {
+    const person = cur.members.find((m) => m.id === id);
+    if (!person) return null;
+    const assigned = new Set(cur.items.filter((i) => i.assignee_id === id).map((i) => i.id));
+    const credited = new Set(cur.completions.filter((c) => c.credited_to === id).map((c) => c.id));
+    const completedBy = new Set(cur.completions.filter((c) => c.completed_by === id).map((c) => c.id));
+    return {
+      next: {
+        ...cur,
+        members: cur.members.filter((m) => m.id !== id),
+        items: cur.items.map((i) => (assigned.has(i.id) ? { ...i, assignee_id: null } : i)),
+        completions: cur.completions.map((c) =>
+          credited.has(c.id) || completedBy.has(c.id)
+            ? {
+                ...c,
+                credited_to: credited.has(c.id) ? null : c.credited_to,
+                completed_by: completedBy.has(c.id) ? null : c.completed_by,
+              }
+            : c,
+        ),
+      },
+      revert: (c) => ({
+        ...c,
+        members: restoreRows(c.members, [person]).sort(byJoin),
+        items: c.items.map((i) => (assigned.has(i.id) && i.assignee_id === null ? { ...i, assignee_id: id } : i)),
+        completions: c.completions.map((x) => ({
+          ...x,
+          credited_to: credited.has(x.id) && x.credited_to === null ? id : x.credited_to,
+          completed_by: completedBy.has(x.id) && x.completed_by === null ? id : x.completed_by,
+        })),
+      }),
+    };
+  };
+}
 
 export function HomeProvider({ backend, children }: { backend: Backend; children: ReactNode }) {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
@@ -308,6 +380,10 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
   const [data, setData] = useState<HouseholdData | null>(null);
   const [pendingInvite, setPendingInvite] = useState<string | null>(() => readInviteFromUrl());
   const [onboardingTail, setOnboardingTail] = useState(false);
+  const [claimed, setClaimed] = useState(false);
+  const [demoImport, setDemoImport] = useState<DemoHomeSummary | null>(null);
+  /** "Start Fresh": the import offer stays away for this session. */
+  const declinedImport = useRef(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [now, setNow] = useState(() => new Date());
   const householdIdRef = useRef<string | null>(null);
@@ -324,6 +400,16 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
   const pendingWrites = useRef(0);
   /** Bumped whenever the signed-in user is (re)decided; async work from before stops there. */
   const epoch = useRef(0);
+
+  // Sync guarantees 3 and 6 (docs/ARCHITECTURE.md).
+  /** Whether the phase is 'ready' (the retry runs only then). */
+  const readyRef = useRef(false);
+  const retryTimer = useRef<ReturnType<typeof setTimeout>>();
+  const retryAttempt = useRef(0);
+  /** When the last realtime event arrived or reload started (the 60 s safety net counts from it). */
+  const lastActivity = useRef(Date.now());
+  /** The newest refresh(), for the retry timer. */
+  const refreshRef = useRef<() => Promise<boolean>>(async () => false);
 
   const toastRef = useRef<ToastState | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -390,12 +476,36 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
     setData(next);
   }, []);
 
+  const stopRetry = useCallback(() => {
+    clearTimeout(retryTimer.current);
+    retryTimer.current = undefined;
+    retryAttempt.current = 0;
+  }, []);
+
+  /**
+   * A background reload failed: try again after 1, 2, 4 and 8 s, then every 15 s, until one is
+   * shown (loadHousehold stops it). A retry that comes due while the app is hidden or not ready
+   * is skipped; coming back reloads anyway, and a failure there starts the next step.
+   */
+  const scheduleRetry = useCallback(() => {
+    if (retryTimer.current !== undefined) return;
+    const delay = RETRY_STEPS_MS[retryAttempt.current] ?? RETRY_EVERY_MS;
+    retryAttempt.current += 1;
+    retryTimer.current = setTimeout(() => {
+      retryTimer.current = undefined;
+      if (readyRef.current && isVisible()) void refreshRef.current();
+    }, delay);
+  }, []);
+
+  useEffect(() => () => clearTimeout(retryTimer.current), []);
+
   /** Nothing loaded may land after this (signed out, or no household). */
   const clearHousehold = useCallback(() => {
     householdIdRef.current = null;
     shownSeq.current = ++loadSeq.current;
+    stopRetry();
     commitData(null);
-  }, [commitData]);
+  }, [commitData, stopRetry]);
 
   /**
    * Loads and shows the household. `force` (sign-in, create, join) always shows
@@ -407,6 +517,7 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
     async (hid: string, force: boolean): Promise<boolean> => {
       const seq = ++loadSeq.current;
       const session = epoch.current;
+      lastActivity.current = Date.now();
       const loaded = await backend.load(hid);
       if (session !== epoch.current) return false;
       if (!force && (seq <= shownSeq.current || pendingWrites.current > 0 || householdIdRef.current !== hid)) {
@@ -414,10 +525,47 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       }
       shownSeq.current = force ? ++loadSeq.current : seq;
       householdIdRef.current = hid;
+      stopRetry();
       commitData(loaded);
       return true;
     },
-    [backend, commitData],
+    [backend, commitData, stopRetry],
+  );
+
+  /**
+   * Moves to where enterHome() says this person belongs (docs/ARCHITECTURE.md "One home"):
+   * member or claimed → the home ('ready'; a claim also sets `claimed` and onboardingTail for
+   * the welcome step), no_home → 'onboarding' (with the import offer when this browser has a
+   * demo home), private → 'private'. Throws when the home cannot be loaded. Resolves to the
+   * phase it settled on, or null if overtaken.
+   */
+  const enter = useCallback(
+    async (u: AuthUser, entry: HomeEntry, session: number): Promise<Phase['kind'] | null> => {
+      if (session !== epoch.current) return null;
+      switch (entry.status) {
+        case 'member':
+        case 'claimed': {
+          if (!(await loadHousehold(entry.householdId, true))) return null;
+          if (session !== epoch.current) return null;
+          if (entry.status === 'claimed') {
+            setClaimed(true);
+            setOnboardingTail(true);
+          }
+          setPhase({ kind: 'ready', user: u });
+          return 'ready';
+        }
+        case 'no_home':
+          clearHousehold();
+          setDemoImport(declinedImport.current ? null : demoImportOffer(backend));
+          setPhase({ kind: 'onboarding', user: u });
+          return 'onboarding';
+        case 'private':
+          clearHousehold();
+          setPhase({ kind: 'private', user: u, email: entry.email, emailVerified: entry.emailVerified });
+          return 'private';
+      }
+    },
+    [backend, loadHousehold, clearHousehold],
   );
 
   /** Decide the phase for a (possibly null) user. Resolves to the phase it settled on, or null if overtaken. */
@@ -427,6 +575,11 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       const previous = userRef.current;
       userRef.current = u;
       setUser(u);
+      if (!u || (previous && previous.id !== u.id)) {
+        // A welcome or notifications step belongs to the person it was for.
+        setClaimed(false);
+        setOnboardingTail(false);
+      }
       if (!u) {
         clearHousehold();
         setPhase({ kind: 'signedOut' });
@@ -438,24 +591,28 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         setPhase({ kind: 'loading' });
       }
       try {
-        const hid = await backend.getMyHouseholdId();
-        if (session !== epoch.current) return null;
-        if (!hid) {
-          clearHousehold();
-          setPhase({ kind: 'onboarding', user: u });
-          return 'onboarding';
-        }
-        if (!(await loadHousehold(hid, true))) return null;
-        setPhase({ kind: 'ready', user: u });
-        return 'ready';
+        const entry = await backend.enterHome();
+        return await enter(u, entry, session);
       } catch (err) {
         if (session !== epoch.current) return null;
         setPhase({ kind: 'error', message: errorMessage(err) });
         return 'error';
       }
     },
-    [backend, loadHousehold, clearHousehold],
+    [backend, enter, clearHousehold],
   );
+
+  /**
+   * Asks enterHome() again and moves to the phase it gives, without the loading splash. A
+   * failure leaves the phase as it is and rejects.
+   */
+  const recheckHome = useCallback(async (): Promise<Phase['kind'] | null> => {
+    const u = userRef.current;
+    if (!u) throw new BackendError('not_signed_in');
+    const session = epoch.current;
+    const entry = await backend.enterHome();
+    return enter(u, entry, session);
+  }, [backend, enter]);
 
   // Auth bootstrap + listener.
   useEffect(() => {
@@ -479,19 +636,27 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
     };
   }, [backend, bootstrap]);
 
-  /** Reloads the household in the background. Resolves to whether fresh data was shown. */
+  /**
+   * Reloads the household in the background. Resolves to whether fresh data was shown. A
+   * failure keeps showing what we have and is retried (scheduleRetry).
+   */
   const refresh = useCallback(async (): Promise<boolean> => {
     const hid = householdIdRef.current;
     if (!hid) return false;
+    const session = epoch.current;
     try {
       return await loadHousehold(hid, false);
     } catch {
-      return false; // keep showing what we have; the next refresh will retry
+      if (session === epoch.current && householdIdRef.current === hid) scheduleRetry();
+      return false;
     }
-  }, [loadHousehold]);
+  }, [loadHousehold, scheduleRetry]);
+  refreshRef.current = refresh;
 
-  // Live updates from other members, and a refresh whenever the app comes back.
+  // Live updates from other members, and a reload whenever the app comes back
+  // (docs/ARCHITECTURE.md "Sync guarantees").
   const ready = phase.kind === 'ready';
+  readyRef.current = ready;
   useEffect(() => {
     const hid = householdIdRef.current;
     if (!ready || !hid) return;
@@ -500,20 +665,88 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       clearTimeout(timer);
       timer = setTimeout(() => void refresh(), 250);
     };
-    const unsub = backend.subscribe(hid, debounced);
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') {
+    const unsub = backend.subscribe(hid, () => {
+      lastActivity.current = Date.now();
+      debounced();
+    });
+
+    // Back after a while, from the back/forward cache, or back online: the socket may be dead
+    // (a phone that slept), so reconnect, and reload at once. A short hide reloads as before.
+    let hiddenAt = isVisible() ? null : Date.now();
+    const resume = () => {
+      setNow(new Date());
+      backend.reconnect();
+      clearTimeout(timer);
+      void refresh();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenAt ??= Date.now();
+        return;
+      }
+      const away = hiddenAt === null ? 0 : Date.now() - hiddenAt;
+      hiddenAt = null;
+      if (away >= RESUME_AFTER_MS) {
+        resume();
+      } else {
         setNow(new Date());
         debounced();
       }
     };
-    document.addEventListener('visibilitychange', onVisible);
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) resume();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pageshow', onPageShow);
+    window.addEventListener('online', resume);
+
+    // Safety net: a channel that joined but silently stopped delivering. 60 s without a
+    // realtime event or a reload, while in view: reload.
+    lastActivity.current = Date.now();
+    let safety: ReturnType<typeof setTimeout> | undefined;
+    const check = () => {
+      const wait = lastActivity.current + SAFETY_MS - Date.now();
+      if (wait > 0) {
+        safety = setTimeout(check, wait);
+        return;
+      }
+      lastActivity.current = Date.now();
+      if (isVisible()) void refresh();
+      safety = setTimeout(check, SAFETY_MS);
+    };
+    safety = setTimeout(check, SAFETY_MS);
+
     return () => {
       clearTimeout(timer);
+      clearTimeout(safety);
       unsub();
-      document.removeEventListener('visibilitychange', onVisible);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pageshow', onPageShow);
+      window.removeEventListener('online', resume);
     };
   }, [ready, backend, refresh]);
+
+  // "This home is private": ask again whenever the app comes back into view or online (someone
+  // at home may have added this person meanwhile).
+  const isPrivate = phase.kind === 'private';
+  useEffect(() => {
+    if (!isPrivate) return;
+    const check = () => void recheckHome().catch(() => {});
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') check();
+    };
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) check();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pageshow', onPageShow);
+    window.addEventListener('online', check);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pageshow', onPageShow);
+      window.removeEventListener('online', check);
+    };
+  }, [isPrivate, recheckHome]);
 
   // An invite link opened by someone who is already a member: nothing to join.
   useEffect(() => {
@@ -529,7 +762,13 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
    * to resync (when online), and rethrows.
    */
   const mutate = useCallback(
-    async <T,>(change: Change | null, op: () => Promise<T>, verb: 'save' | 'undo' = 'save'): Promise<T> => {
+    async <T,>(
+      change: Change | null,
+      op: () => Promise<T>,
+      verb: 'save' | 'undo' = 'save',
+      /** The screen says why itself (a form field): no toast. */
+      quiet = false,
+    ): Promise<T> => {
       const session = epoch.current;
       // Loads already in flight started before this change: never show them.
       shownSeq.current = ++loadSeq.current;
@@ -547,7 +786,7 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         if (session === epoch.current) {
           const now = dataRef.current;
           if (revert && now) commitData(revert(now));
-          showToast(notSavedMessage(err, verb));
+          if (!quiet) showToast(notSavedMessage(err, verb));
         }
         throw err;
       } finally {
@@ -625,10 +864,19 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       today,
       pendingInvite,
       onboardingTail,
-      // TODO(one-home data builder): set from bootstrap (enterHome 'claimed'); confirmClaimed and finishOnboarding clear it.
-      claimed: false,
-      confirmClaimed: () => notImplemented('confirmClaimed'),
-      finishOnboarding: () => setOnboardingTail(false),
+      claimed,
+      confirmClaimed: async (emoji) => {
+        const current = me;
+        if (current && emoji && emoji !== current.emoji) {
+          // A failed save keeps the welcome step (the usual toast) and rejects.
+          await mutate(patchChange('members', current.id, { emoji }), () => backend.updateMember(current.id, { emoji }));
+        }
+        setClaimed(false);
+      },
+      finishOnboarding: () => {
+        setOnboardingTail(false);
+        setClaimed(false);
+      },
       dismissInvite: () => {
         clearStoredInvite();
         setPendingInvite(null);
@@ -647,6 +895,25 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       createHousehold: async (input) => {
         if (!user) throw new BackendError('not_signed_in');
         const session = epoch.current;
+        if (backend.kind === 'supabase') {
+          // One home: ask once more just before creating. Someone may have set it up meanwhile,
+          // or added this person: go there instead of making a second home.
+          const entry = await backend.enterHome();
+          if (session !== epoch.current) return;
+          if (entry.status !== 'no_home') {
+            // Already a member: most likely an earlier tap created it and its reply was lost,
+            // so the steps after a create follow.
+            const tail = entry.status === 'member';
+            if (tail) setOnboardingTail(true);
+            let landed: Phase['kind'] | null = null;
+            try {
+              landed = await enter(user, entry, session);
+            } finally {
+              if (tail && landed !== 'ready') setOnboardingTail(false);
+            }
+            throw new BackendError('home_exists');
+          }
+        }
         let hid: string;
         try {
           hid = await backend.createHousehold(input);
@@ -687,14 +954,72 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         await refresh();
       },
 
-      // TODO(one-home data builder): implement (docs/ARCHITECTURE.md "One home").
-      demoImport: null,
-      importDemoHome: () => notImplemented('importDemoHome'),
-      declineDemoImport: () => {},
-      recheckHome: () => notImplemented('recheckHome'),
-      addPerson: () => notImplemented('addPerson'),
-      setPersonEmail: () => notImplemented('setPersonEmail'),
-      removePerson: () => notImplemented('removePerson'),
+      demoImport: phase.kind === 'onboarding' ? demoImport : null,
+      importDemoHome: async () => {
+        if (!user) throw new BackendError('not_signed_in');
+        const session = epoch.current;
+        // Read again: the document may have changed (or been brought over) since the offer.
+        const storage = localStore();
+        const doc = readDemoDoc(storage);
+        const payload = doc && !doc.imported ? buildImportPayload(doc) : null;
+        if (!payload) {
+          setDemoImport(null);
+          throw new BackendError('not_found', 'No home to bring over');
+        }
+        let hid: string;
+        try {
+          hid = await backend.importHousehold(payload);
+        } catch (err) {
+          const code = err instanceof BackendError ? err.code : null;
+          if (session === epoch.current && (code === 'home_exists' || code === 'already_member')) {
+            // Someone set up the home meanwhile (or an earlier tap brought it over and its
+            // reply was lost): go where this person belongs now, then say why.
+            const tail = code === 'already_member';
+            if (tail) setOnboardingTail(true);
+            const landed = await recheckHome().catch(() => null);
+            if (tail && landed !== 'ready') setOnboardingTail(false);
+          }
+          throw err;
+        }
+        markDemoImported(storage, { at: new Date().toISOString(), household_id: hid });
+        if (session !== epoch.current) return;
+        setDemoImport(null);
+        setOnboardingTail(true);
+        await enterHousehold(user, session, hid);
+      },
+      declineDemoImport: () => {
+        declinedImport.current = true;
+        setDemoImport(null);
+      },
+      recheckHome: async () => {
+        await recheckHome();
+      },
+      addPerson: (input) => {
+        const d = requireData();
+        const session = epoch.current;
+        return mutate(
+          null,
+          async () => {
+            const person = await backend.addPerson(d.household.id, input);
+            // On screen at once (the reload follows).
+            const cur = dataRef.current;
+            if (session === epoch.current && cur?.household.id === person.household_id && !cur.members.some((m) => m.id === person.id)) {
+              commitData({ ...cur, members: [...cur.members, person].sort(byJoin) });
+            }
+            return person;
+          },
+          'save',
+          true,
+        );
+      },
+      setPersonEmail: (id, email) =>
+        mutate(
+          patchChange('members', id, { email: normaliseEmail(email) }),
+          () => backend.setPersonEmail(id, email),
+          'save',
+          true,
+        ),
+      removePerson: (id) => mutate(removePersonChange(id), () => backend.removePerson(id)),
 
       updateHousehold: (patch) => {
         const d = requireData();
@@ -794,9 +1119,14 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
     today,
     pendingInvite,
     onboardingTail,
+    claimed,
+    demoImport,
     refresh,
     loadHousehold,
     bootstrap,
+    enter,
+    recheckHome,
+    commitData,
     mutate,
     requireData,
     toast,

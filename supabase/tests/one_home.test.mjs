@@ -789,3 +789,29 @@ describe('import_household', () => {
     });
   });
 });
+
+describe('the migration', () => {
+  test('re-running it over a home with people waiting to join changes nothing, and claims still work', async () => {
+    const sql = readFileSync(new URL('../migrations/20261010000500_one_home.sql', import.meta.url), 'utf8');
+    await rolledBack(async (tx) => {
+      // It locks members for the rest of this transaction: never wait long on another test file.
+      await tx.admin("set local lock_timeout = '10s'");
+      await tx.noHome();
+      const stratis = await tx.user({ email: 'rerun.stratis@gmail.com' });
+      const hid = await importAs(tx, stratis);
+      const sheaRow = await tx.adminOne(`select id from public.members where household_id = $1 and name = 'Shea'`, [hid]);
+      await tx.rpc(stratis, 'set_person_email', [sheaRow.id, ' Shea.Rerun@Gmail.com ']);
+      const people = async () =>
+        (await tx.admin('select * from public.members where household_id = $1 order by created_at, id', [hid])).rows;
+      const before = await people();
+      assert.equal(before.filter((m) => m.user_id === null).length, 2);
+
+      await tx.admin(sql);
+      assert.deepEqual(await people(), before);
+
+      const shea = await tx.user({ email: 'shea.rerun@gmail.com' });
+      assert.deepEqual(await tx.rpc(shea, 'enter_home'), { status: 'claimed', household_id: hid, member_id: sheaRow.id });
+      await rejects(tx.rpc(stratis, 'add_person', [hid, 'Shea again', '🦔', 'SHEA.RERUN@gmail.com']), 'email_taken');
+    });
+  });
+});
