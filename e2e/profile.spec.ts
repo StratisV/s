@@ -155,6 +155,9 @@ test.describe('Profile', () => {
   // that started before the second edit can finish after it. HomeProvider drops such stale
   // loads, so the screen always ends on the last value.
   test('quick successive edits end on the last value', async ({ page }) => {
+    // 60 rounds with a 300ms pause each take about 27s on their own, too close to the
+    // default 30s when other suites share the machine.
+    test.setTimeout(60_000);
     const dialog = await openProfile(page);
     const grid = dialog.getByRole('radiogroup', { name: 'Your emoji' });
     const pairs = [['🦊', '🐻'], ['🐼', '🐨'], ['🐸', '🐢'], ['🐙', '🦉'], ['🐝', '🦋']];

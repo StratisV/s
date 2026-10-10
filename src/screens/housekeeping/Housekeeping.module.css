@@ -13,6 +13,11 @@
   padding: 30px 20px 8px;
 }
 
+/* The first section sits 24px under the tab switch, as Stats' period control does. */
+.headerRowFirst {
+  padding-top: 14px;
+}
+
 .header {
   flex: 1 1 auto;
   min-width: 0;

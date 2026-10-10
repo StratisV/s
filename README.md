@@ -24,9 +24,10 @@ never gets done and stays on the list, and says **What good looks like** for it,
   to add yours), and a dot on the Chat tab shows unread messages.
 - **Housekeeping**: the weekly visit by the housekeeper (a household member like everyone
   else). A message for the housekeeper at the top, today's checklist from the household's task
-  list (edit it with Edit), comments and the price for the day, all saved as you go, and a
-  calendar of every visit: what was asked, what was done, the comments and the price, with
-  each month's total.
+  list (edit it with Edit: add, rename, reorder, delete), who ticked what, comments and the
+  price for the day in pounds, all saved as you go, and a calendar of every visit (Monday
+  first): what was asked, what was done, the comments and the price, with each month's total.
+  Any past day's visit can be opened, corrected or deleted, and a missed one added.
 - **Stats**: who has done what.
 - A **weekly email** with the full status, and **push notifications** before deadlines and when
   one is missed.
@@ -204,6 +205,12 @@ The household chat has its own rules:
 - Anyone can react to any message, with several different emoji, once each, and can take back
   only their own reactions.
 - Only the author can delete a message (for everyone); nobody can edit one.
+
+Housekeeping follows the household rule. The housekeeper joins with the invite link like
+anyone else, and everyone can change the message for the housekeeper, the task list, any
+visit's ticks, comments and price, and can delete a visit. Each visit keeps its own copy of
+the list and of that day's message, so renaming or deleting a task later never changes past
+visits, and two people ticking at the same time never undo each other's ticks.
 
 People outside the household can't see or change any of it. New people join only through an
 invite link (valid for 14 days).

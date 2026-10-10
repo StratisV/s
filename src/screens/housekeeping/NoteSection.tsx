@@ -55,7 +55,7 @@ export function NoteSection({ announce }: NoteSectionProps) {
 
   return (
     <section aria-labelledby={headingId}>
-      <div className={styles.headerRow}>
+      <div className={`${styles.headerRow} ${styles.headerRowFirst}`}>
         <h2 id={headingId} className={styles.header}>
           Message for the housekeeper
         </h2>

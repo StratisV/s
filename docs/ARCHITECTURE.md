@@ -717,7 +717,6 @@ Files under `src/screens/housekeeping/` (each with a `.module.css` where it has 
 | `TaskListSheet.tsx` | the page sheet that edits the task list; App mounts it beside the stage, like the Item sheet, so the screen behind is pushed back |
 | `useSavedText.ts` | the message and comments fields: save after a pause and on blur, keep a draft while editing |
 | `Housekeeping.module.css` | the shared sections, cards, captions, price row and empty states |
-| `testLogic.ts` | test only: stand-ins for the logic functions the screen uses, written from their specs (the screen tests mock `lib/logic/housekeeping.ts` with them) |
 
 Elsewhere: `screens/types.ts` (`Tab` already includes `'housekeeping'`), `screens/home/TabBar.tsx`
 and its CSS (four tabs), `App.tsx` (renders `HousekeepingScreen` for the tab), the comments in

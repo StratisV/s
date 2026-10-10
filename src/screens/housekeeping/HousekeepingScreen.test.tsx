@@ -300,6 +300,11 @@ const calendar = () => screen.getByRole('grid');
 const day = (name: string | RegExp) => within(calendar()).getByRole('button', { name });
 /** The polite live region that says what was saved. */
 const said = () => document.querySelector('[data-announcer]')!.textContent;
+/** Matches the element whose whole text is `text`, also when EmojiText has drawn its 🦆 or 🦔 in a span. */
+const wholeText = (text: string | RegExp) => {
+  const matches = (el: Element) => (typeof text === 'string' ? el.textContent === text : text.test(el.textContent ?? ''));
+  return (_: string, el: Element | null) => !!el && matches(el) && !Array.from(el.children).some(matches);
+};
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -327,7 +332,7 @@ describe('HousekeepingScreen', () => {
     }) as HTMLTextAreaElement;
     expect(message.value).toBe('Guests arrive Friday, please do the spare room first.');
     expect(message.maxLength).toBe(4000);
-    expect(screen.getByText('🦆 Shea · Yesterday 19:20')).toBeTruthy();
+    expect(screen.getByText(wholeText('🦆 Shea · Yesterday 19:20'))).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Clear message' })).toBeTruthy();
 
     const tasks = within(today()).getByRole('group', { name: 'Tasks today' });
@@ -370,7 +375,7 @@ describe('HousekeepingScreen', () => {
     const byline = document.getElementById(sheets.getAttribute('aria-describedby')!)!;
     expect(byline.textContent).toBe('🦔 Stratis · 10:00');
     await waitFor(() => expect(said()).toBe('Change the bed sheets done'));
-    expect(within(today()).getByText(/^Recorded by 🦔 Stratis · Today 10:00$/)).toBeTruthy();
+    expect(within(today()).getByText(wholeText(/^Recorded by 🦔 Stratis · Today 10:00$/))).toBeTruthy();
     expect(screen.getByText("Today's visit")).toBeTruthy();
 
     await act(async () => {
@@ -466,7 +471,7 @@ describe('HousekeepingScreen', () => {
     await act(async () => message.blur());
     expect(actions.setHousekeepingNote).toHaveBeenCalledWith('Please do the oven.');
     await waitFor(() => expect(said()).toBe('Saved'));
-    expect(screen.getByText('🦔 Stratis · Today 10:00')).toBeTruthy();
+    expect(screen.getByText(wholeText('🦔 Stratis · Today 10:00'))).toBeTruthy();
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Clear message' }));
