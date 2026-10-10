@@ -1641,6 +1641,36 @@ describe('housekeeping', () => {
       expect((await hkOf(bob, hid)).note).toEqual({ body: '', updated_at: clock.toISOString(), updated_by: bobMe.id });
     });
 
+    it('Undo after Clear puts it back as it was (text, who and when), only while it is still empty', async () => {
+      const { b, hid } = await setup();
+      const seeded = (await hkOf(b, hid)).note;
+      // Nothing cleared yet: nothing to put back.
+      await b.undoClearHousekeepingNote(hid);
+      expect((await hkOf(b, hid)).note).toEqual(seeded);
+
+      const { bob } = await joinBob(b, hid);
+      later(60_000);
+      await bob.setHousekeepingNote(hid, '');
+      expect((await hkOf(b, hid)).note.body).toBe('');
+      later(60_000);
+      await b.undoClearHousekeepingNote(hid);
+      expect((await hkOf(b, hid)).note).toEqual(seeded);
+      // Once only.
+      await b.setHousekeepingNote(hid, 'Oven too, please.');
+      await b.undoClearHousekeepingNote(hid);
+      expect((await hkOf(b, hid)).note.body).toBe('Oven too, please.');
+
+      // A message written after the Clear stays; Undo then has nothing to put back.
+      await b.setHousekeepingNote(hid, '');
+      await bob.setHousekeepingNote(hid, 'Newer.');
+      await bob.setHousekeepingNote(hid, '');
+      await b.undoClearHousekeepingNote(hid);
+      expect((await hkOf(b, hid)).note.body).toBe('Newer.');
+      await b.setHousekeepingNote(hid, 'Newest.');
+      await b.undoClearHousekeepingNote(hid);
+      expect((await hkOf(b, hid)).note.body).toBe('Newest.');
+    });
+
     it('clearing a message never written stores nothing; up to 4000 characters', async () => {
       const { b, hid } = await setup();
       const doc = storedDoc();
@@ -1926,16 +1956,22 @@ describe('housekeeping', () => {
       expect(visitOn(hk, LAST_THURSDAY)!.tasks).toHaveLength(7);
     });
 
-    it('rename and reorder: today follows (ticked or not), last week keeps its own', async () => {
+    it('rename and reorder: today follows (a ticked row keeps its title), last week keeps its own', async () => {
       const { b, hid } = await withToday();
       const tasks = (await hkOf(b, hid)).tasks;
       await b.setHousekeepingTaskDone(hid, TODAY, { taskId: tasks[0].id }, true);
       await b.renameHousekeepingTask(tasks[0].id, 'Bed sheets (all rooms)');
+      await b.renameHousekeepingTask(tasks[1].id, 'Hoover and mop everywhere');
       await b.reorderHousekeepingTasks(hid, [...tasks.slice(1).map((t) => t.id), tasks[0].id]);
       const hk = await hkOf(b, hid);
       const today = visitOn(hk, TODAY)!.tasks;
-      expect(today.at(-1)).toMatchObject({ title: 'Bed sheets (all rooms)', position: 6, done: true });
-      expect(today[0]).toMatchObject({ title: 'Hoover and mop the floors', position: 0 });
+      // Ticked under its old title: that is what was done, so it keeps it; its place follows.
+      expect(today.at(-1)).toMatchObject({ title: 'Change the bed sheets', task_id: tasks[0].id, position: 6, done: true });
+      expect(today[0]).toMatchObject({ title: 'Hoover and mop everywhere', position: 0 });
+      // Unticked, the next rename reaches it.
+      await b.setHousekeepingTaskDone(hid, TODAY, { taskId: tasks[0].id }, false);
+      await b.renameHousekeepingTask(tasks[0].id, 'Bed sheets');
+      expect(visitOn(await hkOf(b, hid), TODAY)!.tasks.at(-1)!.title).toBe('Bed sheets');
       const old = visitOn(hk, LAST_THURSDAY)!.tasks;
       expect(old[0]).toMatchObject({ title: 'Change the bed sheets', position: 0, task_id: tasks[0].id });
     });
@@ -1990,6 +2026,7 @@ describe('housekeeping', () => {
     await bob.createHousehold(input({ name: "Bob's" }));
 
     await rejectsWith(bob.setHousekeepingNote(hid, 'Hacked'), 'not_found');
+    await rejectsWith(bob.undoClearHousekeepingNote(hid), 'not_found');
     await rejectsWith(bob.createHousekeepingTask(hid, 'Hacked'), 'not_found');
     await rejectsWith(bob.renameHousekeepingTask(task.id, 'Hacked'), 'not_found');
     await rejectsWith(bob.deleteHousekeepingTask(task.id), 'not_found');
@@ -2005,6 +2042,7 @@ describe('housekeeping', () => {
 
     await bob.signOut();
     await rejectsWith(bob.setHousekeepingNote(hid, 'x'), 'not_signed_in');
+    await rejectsWith(bob.undoClearHousekeepingNote(hid), 'not_signed_in');
     await rejectsWith(bob.createHousekeepingTask(hid, 'x'), 'not_signed_in');
     await rejectsWith(bob.deleteHousekeepingVisit(visit.id), 'not_signed_in');
 

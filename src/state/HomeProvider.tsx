@@ -109,11 +109,18 @@ export interface HomeContextValue {
    */
   setHousekeepingNote(body: string): Promise<void>;
   /**
+   * Undo after Clear: shows `previous` (the message as it was before Clear, with who wrote
+   * it and when) again at once, and has the backend put it back as it was
+   * (Backend.undoClearHousekeepingNote), after any message write still in flight. Nothing
+   * happens when the message is no longer empty.
+   */
+  undoClearHousekeepingNote(previous: HousekeepingNote): Promise<void>;
+  /**
    * Adds a task at the end of the list (and to today's visit, if any). Like createArea it
    * is not optimistic: resolves to the stored task once written, so the sheet can focus it.
    */
   createHousekeepingTask(title: string): Promise<HousekeepingTask>;
-  /** Renames a task on the list and on today's visit (withTaskRenamed). */
+  /** Renames a task on the list and on today's visit unless ticked there (withTaskRenamed). */
   renameHousekeepingTask(id: string, title: string): Promise<void>;
   /** Deletes a task from the list; today's visit drops it unless ticked (withTaskDeleted). */
   deleteHousekeepingTask(id: string): Promise<void>;
@@ -132,7 +139,12 @@ export interface HomeContextValue {
   saveHousekeepingVisit(date: ISODate, patch: HousekeepingVisitPatch): Promise<void>;
   /** "Add a visit" on a past day (or today) without one: creates it, nothing ticked. */
   addHousekeepingVisit(date: ISODate): Promise<void>;
-  /** Deletes a visit (the UI confirms first). Taken off the calendar at once. */
+  /**
+   * Deletes a visit (the UI confirms first). Taken off the calendar at once. A pending visit
+   * (`pending:<date>`, shown before the write that creates it has come back, or before a
+   * reload has brought its id) is deleted once that day's writes have settled, by the id
+   * they returned; if none of them stored it, there is nothing to delete.
+   */
   deleteHousekeepingVisit(id: string): Promise<void>;
 
   toast: ToastState | null;
@@ -464,6 +476,12 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
   const pendingWrites = useRef(0);
   /** Bumped whenever the signed-in user is (re)decided; async work from before stops there. */
   const epoch = useRef(0);
+  // Housekeeping writes. Per day: the stored visit's id as the last write that day returned
+  // it, and the writes still in flight (so a pending visit can be deleted by its real id).
+  const visitIds = useRef(new Map<ISODate, string>());
+  const visitWrites = useRef(new Map<ISODate, Promise<unknown>>());
+  /** The message writes still in flight (Undo after Clear goes after them). */
+  const noteWrites = useRef<Promise<unknown>>(Promise.resolve());
 
   const toastRef = useRef<ToastState | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -534,6 +552,7 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
   const clearHousehold = useCallback(() => {
     householdIdRef.current = null;
     shownSeq.current = ++loadSeq.current;
+    visitIds.current.clear();
     commitData(null);
   }, [commitData]);
 
@@ -756,6 +775,34 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
 
     const isAlreadyMember = (err: unknown) => err instanceof BackendError && err.code === 'already_member';
 
+    /** A write to the visit on `date` (it resolves to the stored visit's id), tracked per day. */
+    const visitWrite =
+      (date: ISODate, op: () => Promise<string>) =>
+      (): Promise<string> => {
+        const run = op().then((id) => {
+          visitIds.current.set(date, id);
+          return id;
+        });
+        const settled: Promise<unknown> = Promise.all([visitWrites.current.get(date), run.catch(() => {})]);
+        visitWrites.current.set(date, settled);
+        void settled.then(() => {
+          if (visitWrites.current.get(date) === settled) visitWrites.current.delete(date);
+        });
+        return run;
+      };
+
+    /**
+     * A write to the message, tracked so Undo after Clear can go after it. `after`: wait for
+     * the message writes already in flight first (Undo, so it never overtakes its Clear).
+     */
+    const noteWrite =
+      (op: () => Promise<void>, after = false) =>
+      (): Promise<void> => {
+        const run = after ? noteWrites.current.then(op) : op();
+        noteWrites.current = Promise.all([noteWrites.current, run.catch(() => {})]);
+        return run;
+      };
+
     return {
       backend,
       phase,
@@ -924,7 +971,25 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
               revert: (c) => (c.housekeeping.note === after ? withHousekeeping(c, { ...c.housekeeping, note: before }) : c),
             };
           },
-          () => backend.setHousekeepingNote(d.household.id, text),
+          noteWrite(() => backend.setHousekeepingNote(d.household.id, text)),
+        );
+      },
+      undoClearHousekeepingNote: (previous) => {
+        const d = requireData();
+        return mutate(
+          (cur) => {
+            const cleared = cur.housekeeping.note;
+            // Only while it is still empty, and only a message there was.
+            if (cleared.body !== '' || !previous.body) return null;
+            const restored: HousekeepingNote = { ...previous };
+            return {
+              next: withHousekeeping(cur, { ...cur.housekeeping, note: restored }),
+              revert: (c) =>
+                c.housekeeping.note === restored ? withHousekeeping(c, { ...c.housekeeping, note: cleared }) : c,
+            };
+          },
+          noteWrite(() => backend.undoClearHousekeepingNote(d.household.id), true),
+          'undo',
         );
       },
       createHousekeepingTask: async (title) => {
@@ -968,7 +1033,7 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         const d = requireData();
         return mutate(
           visitChange(date, userRef.current?.id, (visit, meId, at) => applyTick(visit, target, done, meId, at)),
-          () => backend.setHousekeepingTaskDone(d.household.id, date, target, done),
+          visitWrite(date, () => backend.setHousekeepingTaskDone(d.household.id, date, target, done)),
         ).then(() => undefined);
       },
       saveHousekeepingVisit: (date, patch) => {
@@ -976,7 +1041,7 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         const d = requireData();
         return mutate(
           visitChange(date, userRef.current?.id, (visit, meId, at) => applyVisitPatch(visit, patch, meId, at)),
-          () => backend.saveHousekeepingVisit(d.household.id, date, patch),
+          visitWrite(date, () => backend.saveHousekeepingVisit(d.household.id, date, patch)),
         ).then(() => undefined);
       },
       addHousekeepingVisit: (date) => {
@@ -985,11 +1050,12 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         // A day without a visit shows the pending one (nothing ticked); one already there stays.
         return mutate(
           visitChange(date, userRef.current?.id, (visit) => visit),
-          () => backend.addHousekeepingVisit(d.household.id, date),
+          visitWrite(date, () => backend.addHousekeepingVisit(d.household.id, date)),
         ).then(() => undefined);
       },
-      deleteHousekeepingVisit: (id) =>
-        mutate(
+      deleteHousekeepingVisit: (id) => {
+        const date = dataRef.current?.housekeeping.visits.find((v) => v.id === id)?.visit_date;
+        return mutate(
           (cur) => {
             const visit = cur.housekeeping.visits.find((v) => v.id === id);
             if (!visit) return null;
@@ -1002,8 +1068,20 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
                   : withHousekeeping(c, { ...c.housekeeping, visits: [...c.housekeeping.visits, visit].sort(byVisitDate) }),
             };
           },
-          () => backend.deleteHousekeepingVisit(id),
-        ),
+          async () => {
+            if (!date || id !== pendingVisitId(date)) {
+              await backend.deleteHousekeepingVisit(id);
+            } else {
+              // Shown before its id was known: wait for that day's writes, then delete what they
+              // stored. None stored it (they failed, and took it back): nothing to delete.
+              await visitWrites.current.get(date);
+              const stored = visitIds.current.get(date);
+              if (stored) await backend.deleteHousekeepingVisit(stored);
+            }
+            if (date) visitIds.current.delete(date);
+          },
+        );
+      },
 
       toast,
       showToast,

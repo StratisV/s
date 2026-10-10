@@ -16,6 +16,7 @@ import {
   reopen,
   ring,
   statsScreen,
+  tabButton,
   test,
   titlesIn,
 } from './fixtures';
@@ -61,9 +62,11 @@ test.describe('Persistence', () => {
     await goToTab(page, 'Stats');
     await expect(statsScreen(page).getByRole('img', { name: /^9 tasks done this month/ })).toBeVisible();
 
-    // A second reload (not a reseed) keeps the same state.
+    // A second reload (not a reseed) keeps the same state, and the tab that was open.
     await page.reload();
     await expect(page.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🌻');
+    await expect(tabButton(page, 'Stats')).toHaveAttribute('aria-current', 'page');
+    await goToTab(page, 'Home');
     await expect(ring(page, 'Service the boiler')).toBeVisible();
   });
 

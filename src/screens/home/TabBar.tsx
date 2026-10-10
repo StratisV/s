@@ -18,6 +18,15 @@ interface TabBarProps {
   onTab(tab: Tab): void;
   /** Messages from others since the chat was last read: a dot on Chat. */
   unread?: boolean;
+  /** A message for the housekeeper from someone else since the tab was last open: a dot on Housekeeping. */
+  newNote?: boolean;
+}
+
+/** A tab's name for assistive tech when its dot says something (the dot itself is hidden). */
+function dotLabel(id: Tab, unread: boolean, newNote: boolean): string | undefined {
+  if (id === 'chat' && unread) return 'Chat, unread messages';
+  if (id === 'housekeeping' && newNote) return 'Housekeeping, new message';
+  return undefined;
 }
 
 /**
@@ -39,7 +48,7 @@ const reducedMotion = () => {
  * segmented control whose segments size to their labels and whose white thumb slides to
  * the tab that is open (docs/ARCHITECTURE.md "Housekeeping", "Tab switch").
  */
-export function TabBar({ tab, onTab, unread = false }: TabBarProps) {
+export function TabBar({ tab, onTab, unread = false, newNote = false }: TabBarProps) {
   const navRef = useRef<HTMLElement>(null);
   const thumbRef = useRef<HTMLSpanElement>(null);
   const tabRef = useRef(tab);
@@ -104,13 +113,13 @@ export function TabBar({ tab, onTab, unread = false }: TabBarProps) {
           className={styles.tab}
           data-tab={t.id}
           aria-current={tab === t.id ? 'page' : undefined}
-          aria-label={t.id === 'chat' && unread ? 'Chat, unread messages' : undefined}
+          aria-label={dotLabel(t.id, unread, newNote)}
           onClick={() => onTab(t.id)}
         >
           {/* data-label reserves the bold label's width, so choosing a tab never moves the others. */}
           <span className={styles.label} data-label={t.label}>
             {t.label}
-            {t.id === 'chat' && unread ? <span className={styles.dot} aria-hidden="true" /> : null}
+            {dotLabel(t.id, unread, newNote) ? <span className={styles.dot} aria-hidden="true" /> : null}
           </span>
         </button>
       ))}

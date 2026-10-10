@@ -49,6 +49,8 @@ async function openWith(el: HTMLElement, kind: 'Edit item' | 'New item' = 'Edit 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  // The tab last open is kept per device: each test starts on Home.
+  localStorage.removeItem('homeos.tab');
 });
 
 describe('focus after the Item sheet closes', () => {
@@ -160,7 +162,7 @@ describe('tab bar', () => {
     await screen.findByRole('heading', { name: 'Chat', level: 1 });
     expect(screen.getByRole('region', { name: 'Chat' }).contains(tabBar())).toBe(true);
     expect(screen.queryByRole('button', { name: 'New item' })).toBeNull();
-    fireEvent.click(within(tabBar()).getByRole('button', { name: 'Housekeeping' }));
+    fireEvent.click(within(tabBar()).getByRole('button', { name: /^Housekeeping/ }));
     await screen.findByRole('heading', { name: 'Housekeeping', level: 1 });
     expect(screen.getByRole('region', { name: 'Housekeeping' }).contains(tabBar())).toBe(true);
     expect(within(tabBar()).getByRole('button', { name: 'Housekeeping' }).getAttribute('aria-current')).toBe('page');
@@ -172,7 +174,7 @@ describe('tab bar', () => {
 
   it('opens the task list from Housekeeping as a page sheet over the tab', async () => {
     await setup();
-    fireEvent.click(within(tabBar()).getByRole('button', { name: 'Housekeeping' }));
+    fireEvent.click(within(tabBar()).getByRole('button', { name: /^Housekeeping/ }));
     const edit = await screen.findByRole('button', { name: 'Edit task list' });
     act(() => edit.focus());
     fireEvent.click(edit);
@@ -195,6 +197,54 @@ describe('tab bar', () => {
     await waitFor(() => expect(within(tabBar()).getByRole('button', { name: 'Chat' }).getAttribute('aria-current')).toBe('page'));
     fireEvent.click(within(tabBar()).getByRole('button', { name: 'Home' }));
     expect(within(tabBar()).getByRole('button', { name: 'Chat' })).toBeTruthy();
+  });
+
+  it('shows a dot on Housekeeping for a message from someone else until the tab has been open', async () => {
+    const backend = await setup();
+    const hk = await within(tabBar()).findByRole('button', { name: 'Housekeeping, new message' });
+    expect(hk.querySelector('[aria-hidden="true"]')).toBeTruthy();
+    fireEvent.click(hk);
+    await screen.findByRole('heading', { name: 'Housekeeping', level: 1 });
+    expect(within(tabBar()).getByRole('button', { name: 'Housekeeping' }).getAttribute('aria-current')).toBe('page');
+    fireEvent.click(within(tabBar()).getByRole('button', { name: 'Home' }));
+    await screen.findByRole('heading', { name: 'Home', level: 1 });
+    expect(within(tabBar()).getByRole('button', { name: 'Housekeeping' })).toBeTruthy();
+
+    // Your own message never gets a dot, nor does one you have seen.
+    const hid = (await backend.getMyHouseholdId())!;
+    await act(async () => {
+      await backend.setHousekeepingNote(hid, 'Oven too, please.');
+    });
+    expect(within(tabBar()).getByRole('button', { name: 'Housekeeping' })).toBeTruthy();
+  });
+
+  it('opens on the tab last open on this device', async () => {
+    await setup();
+    fireEvent.click(within(tabBar()).getByRole('button', { name: /^Housekeeping/ }));
+    await screen.findByRole('heading', { name: 'Housekeeping', level: 1 });
+    cleanup();
+    const backend = new DemoBackend({ storage: new MemoryStorage(), search: '?demo-seed=1', latency: 0 });
+    render(
+      <HomeProvider backend={backend}>
+        <ConfettiProvider>
+          <App />
+        </ConfettiProvider>
+      </HomeProvider>,
+    );
+    await screen.findByRole('heading', { name: 'Housekeeping', level: 1 });
+    expect(within(tabBar()).getByRole('button', { name: 'Housekeeping' }).getAttribute('aria-current')).toBe('page');
+  });
+
+  it('after the task list closes, focus goes back to Edit, however it was opened', async () => {
+    await setup();
+    fireEvent.click(within(tabBar()).getByRole('button', { name: /^Housekeeping/ }));
+    const edit = await screen.findByRole('button', { name: 'Edit task list' });
+    // A tap (no keyboard focus on the button), as a VoiceOver double tap is too.
+    fireEvent.click(edit);
+    const sheet = await screen.findByRole('dialog', { name: 'Task list' });
+    await waitFor(() => expect(sheet.hasAttribute('data-shown')).toBe(true));
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(document.activeElement).toBe(edit));
   });
 
   it('stays where it is while typing a message', async () => {

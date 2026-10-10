@@ -508,7 +508,10 @@ matches. Messages order by `created_at` to the microsecond (`instantOf` in
 
 - Tab switch under the hero: **Home, Chat, Housekeeping, Stats**. The round + (new item) floats
   at the bottom right on Home and Stats, not on Chat or Housekeeping. A small dot on Chat means unread messages from others (last-read time is kept per
-  member on this device).
+  member on this device); one on Housekeeping means a message for the housekeeper written or
+  changed by someone else since the member last had that tab open on this device. The app
+  reopens on the tab last open on this device (`homeos.tab` in localStorage, Home when there is
+  none), so the housekeeper lands on Housekeeping.
 - Chat screen: large title "Chat", message bubbles (own on the right in the tint colour, others
   on the left in white with the sender's emoji and name), reactions as small chips under a
   bubble (tap a chip to add or remove that reaction), long-press (or the context-menu key /
@@ -545,6 +548,8 @@ payments.
 - **Message for the housekeeper**: one household-wide note that any member writes to give
   direction. Multi-line, trimmed, up to 4000 characters (`TEXT_LIMITS.housekeepingNote`). It
   shows who last changed it and when, can be cleared, and stays until someone changes it.
+  Undo after Clear puts it back as it was, with who wrote it and when (not as a new edit by
+  whoever undid it), as long as nobody has written a new one since.
 - **Task list**: the household's housekeeping tasks (the template every visit copies). Anyone
   adds, renames, deletes and reorders them. Titles are trimmed, 1 to 200 characters
   (`TEXT_LIMITS.housekeepingTask`). New households start with `HOUSEKEEPING_STARTER_TASKS`:
@@ -560,18 +565,28 @@ payments.
     said that day is not known).
 
   It records who created it and when ("Recorded by") and who changed it last.
+- **A visit counts once something is recorded on it**: a task ticked, comments or a price
+  (`isRecorded()`). One with none of these (a tick taken back, "Add a visit" with nothing
+  filled in yet) is still stored and editable, but it is not a visit anywhere it would claim
+  one: no dot in the calendar, not in the month's total, not in the day's label, not "Today's
+  visit" or the last visit in the subtitle, never chosen by default. Under it: "Not started
+  yet." for today, "Nothing recorded yet." for another day.
 - **History stays true**: each visit keeps its own rows (title, done, who ticked it and when).
   Renaming or deleting a task never rewrites an earlier visit. A tick writes only its own row,
   atomically, so two people ticking at once never undo each other (no read-modify-write of a
   list).
 - **Today's visit follows the list**: when today's visit exists, adding a task adds it there
-  (not done), renaming or reordering does the same there, and deleting removes it there unless
-  it is ticked (a ticked row stays, as history). Visits on earlier days never change.
+  (not done), reordering moves it there, renaming renames it there unless it is ticked, and
+  deleting removes it there unless it is ticked. A ticked row is a record of what was done: it
+  keeps the title it was ticked under and stays when its task is deleted. Visits on earlier
+  days never change.
 - **Comments**: free text, trimmed, up to 4000 characters. **Price for the day**: GBP, typed on
   a decimal keypad, stored as whole pence from 0 to 1,000,000 (`HOUSEKEEPING_PRICE_MAX_PENCE`,
   £10,000.00), shown as £45.00; null means not entered.
 - A visit's copy of the message is read-only. Its ticks, comments and price stay editable on
-  any day (everyone edits everything), and anyone can delete a visit (confirmed), for everyone.
+  any day (everyone edits everything), and anyone can delete a visit (confirmed), for everyone:
+  today's from the Today section once something is recorded on it, another day's under the
+  calendar.
 - **Live**: changes by others show up as they happen, like items (`Backend.subscribe`, reload
   on any event).
 
@@ -579,7 +594,7 @@ payments.
 
 | table | columns |
 | --- | --- |
-| `housekeeping_notes` | household_id uuid **primary key** → households on delete cascade, body text not null default '' (trimmed, <= 4000), updated_at timestamptz not null default now(), updated_by → members on delete set null. No row = never written. |
+| `housekeeping_notes` | household_id uuid **primary key** → households on delete cascade, body text not null default '' (trimmed, <= 4000), updated_at timestamptz not null default now(), updated_by → members on delete set null; cleared_body text null, cleared_updated_at timestamptz null, cleared_updated_by → members on delete set null (what the last Clear took away, for Undo; null otherwise). No row = never written. |
 | `housekeeping_tasks` | id, household_id → households on delete cascade, title text not null (trimmed, 1 to 200), position int not null default 0, created_at |
 | `housekeeping_visits` | id, household_id → households on delete cascade, visit_date date not null, note text not null default '' (the copy of the message, <= 4000), comments text not null default '' (<= 4000), price_pence int null (0 to 1,000,000), created_by → members on delete set null, created_at, updated_by → members on delete set null, updated_at; **unique (household_id, visit_date)** |
 | `housekeeping_visit_tasks` | id, visit_id → housekeeping_visits on delete cascade, household_id → households on delete cascade (copied from the visit), task_id → housekeeping_tasks **on delete set null**, title text not null (1 to 200), position int not null default 0, done bool not null default false, done_by → members on delete set null, done_at timestamptz null; **unique (visit_id, task_id)** |
@@ -599,14 +614,17 @@ clients):
   the household's highest + 1, whatever the client sent); an update keeps household_id and
   created_at.
 - AFTER INSERT (`housekeeping_tasks_after_insert`): adds the task to today's visit, if any.
-- AFTER UPDATE (`housekeeping_tasks_after_update`): a new title or position is copied to today's
-  visit's row for the task (ticked or not).
+- AFTER UPDATE (`housekeeping_tasks_after_update`): a new position is copied to today's visit's
+  row for the task, and a new title too unless that row is ticked (it keeps the title it was
+  ticked under).
 - BEFORE DELETE (`housekeeping_tasks_before_delete`): removes today's visit's row for the task
   unless it is done (before the foreign key sets task_id to null on every visit's rows).
 
 Creating a visit, adding a task and the AFTER UPDATE trigger take a per-household
 transaction-level advisory lock (`housekeeping_lock()`), so a task added or renamed at the
-moment today's visit is created is never missed.
+moment today's visit is created is never missed. Creating a visit copies the task list with
+`FOR KEY SHARE`, so a task being deleted at that moment is waited for and then left out (the
+tick that created the visit stands) rather than failing the foreign key.
 
 Internal helpers (not callable by clients): `js_trim(text)`, `housekeeping_starter_tasks()`
 (the starter list; `src/lib/constants.test.ts` and `supabase/tests/housekeeping.test.mjs`
@@ -619,7 +637,7 @@ false when it was deleted meanwhile) and `housekeeping_visit_for(household, date
 ### RLS and grants
 
 - `housekeeping_notes`: SELECT where `is_household_member(household_id)`. Written only by
-  `set_housekeeping_note`.
+  `set_housekeeping_note` and `undo_clear_housekeeping_note`.
 - `housekeeping_tasks`: SELECT, INSERT, UPDATE, DELETE where member. Grants: select, delete,
   insert (household_id, title), update (title). Positions change only through
   `reorder_housekeeping_tasks` (and the insert trigger).
@@ -660,9 +678,21 @@ Each checks the caller first: no user is `not_signed_in`, and not a member of
    needed; stamps updated_at and updated_by only when something changed. A visit deleted at
    that very moment is `not_found` (the save is not lost quietly).
 
+6. `undo_clear_housekeeping_note(p_household_id uuid) returns void`. Undo after Clear: puts
+   back `cleared_body` with `cleared_updated_at` and `cleared_updated_by` as the message and
+   its stamp, and forgets them, only while the message is still '' (a message written since
+   stays). Nothing to put back changes nothing. `set_housekeeping_note` fills the `cleared_*`
+   columns when it clears a message and empties them when it writes one.
+
 `create_household` is redefined (same signature, copied from
 `20261010000300_item_good.sql`) to also insert the starter task list, in order. A visit is
 deleted with a plain DELETE on `housekeeping_visits` (RLS); its rows go with it.
+
+Existing households get the starter list once: on the file's first run (the one that creates
+`housekeeping_tasks`; the file records that in the session setting
+`homeos.housekeeping_backfill` at its top and clears it at the end), each household with no
+task and no visit gets it. Applying the file again changes no data, so a list someone emptied
+stays empty.
 
 Realtime: the four tables join `supabase_realtime` (guarded, so the file also runs on plain
 Postgres) with replica identity full; `Backend.subscribe` listens to each with
@@ -689,8 +719,9 @@ whose task has been deleted). `checklistFor()` picks it. `HousekeepingVisitPatch
 | method | Supabase | Demo |
 | --- | --- | --- |
 | `setHousekeepingNote(householdId, body)` | rpc `set_housekeeping_note` | same rules |
+| `undoClearHousekeepingNote(householdId)` | rpc `undo_clear_housekeeping_note` | same rules |
 | `createHousekeepingTask(householdId, title)` → `HousekeepingTask` | insert `{ household_id, title }`, select `id, household_id, title, position` | appends, adds to today's visit |
-| `renameHousekeepingTask(id, title)` | update `{ title }` (no row: `not_found`) | renames, today's visit too |
+| `renameHousekeepingTask(id, title)` | update `{ title }` (no row: `not_found`) | renames, today's visit too unless ticked there |
 | `deleteHousekeepingTask(id)` | delete (no row: `not_found`) | today's undone row goes, other rows keep it with task_id null |
 | `reorderHousekeepingTasks(householdId, orderedIds)` | rpc `reorder_housekeeping_tasks` | same rules |
 | `setHousekeepingTaskDone(householdId, date, target, done)` → visit id | rpc `tick_housekeeping_task` | same rules |
@@ -730,7 +761,9 @@ whose task has been deleted). `checklistFor()` picks it. `HousekeepingVisitPatch
 ### HomeProvider (`src/state/HomeProvider.tsx`)
 
 `HomeContextValue` actions (the names and signatures are fixed; the data is
-`data.housekeeping`): `setHousekeepingNote(body)`, `createHousekeepingTask(title)` →
+`data.housekeeping`): `setHousekeepingNote(body)`, `undoClearHousekeepingNote(previous)`
+(shows `previous`, the message as it was before Clear, at once, and sends the Undo after any
+message write still in flight, so it never overtakes its Clear), `createHousekeepingTask(title)` →
 `HousekeepingTask`, `renameHousekeepingTask(id, title)`, `deleteHousekeepingTask(id)`,
 `reorderHousekeepingTasks(orderedIds)`, `setHousekeepingTaskDone(date, target, done)`,
 `saveHousekeepingVisit(date, patch)`, `addHousekeepingVisit(date)`,
@@ -753,18 +786,25 @@ rejects). The optimistic copies come from `src/lib/logic/housekeeping.ts`:
   (a later edit to the same field, tick or message is left alone); optimistic stamps always
   move forward, even within one millisecond, so a revert can tell its own from a later one;
 - a date after `today` is refused without a write or a toast
-  (`BackendError('unknown', 'invalid_input: date')`).
+  (`BackendError('unknown', 'invalid_input: date')`);
+- each day's visit writes are tracked with the visit id they return, so deleting a pending
+  visit (`pending:<date>`, shown before its write came back or before a reload brought its id)
+  waits for that day's writes and deletes the stored visit by that id; if none of them stored
+  it, nothing is sent.
 
 ### Logic (`src/lib/logic/housekeeping.ts`)
 
 Pure functions; each doc comment is the spec and ends with the unit tests it needs ("Tests:",
 for `src/lib/logic/housekeeping.test.ts`). Calendar: `WEEKDAYS` (Monday first), `monthOf`,
 `shiftMonth`, `monthTitle` ("October 2026"), `monthGrid` (weeks of 7, Monday first, null
-padding), `canHaveVisit`, `longDay` ("Thursday 1 October"), `calendarDayLabel`,
-`defaultSelectedDay`. Visits: `visitOn`, `visitDays`, `monthTotals`, `monthSummary`
-("4 visits · £180.00", "2 visits", "No visits"), `doneCount`, `housekeepingSubtitle`. Prices:
+padding), `canHaveVisit`, `longDay` ("Thursday 1 October"), `calendarDayLabel` (", selected"
+for the chosen day), `defaultSelectedDay` (today's month, or any month),
+`daySelectedAnnouncement`. Visits: `isRecorded`, `visitOn`, `visitDays`, `monthTotals`,
+`monthSummary` ("4 visits · £180.00", "2 visits", "No visits"), `doneCount`,
+`housekeepingSubtitle`. Prices:
 `formatPrice` ("£1,234.50"), `priceInputValue` ("1234.50"), `parsePrice`. Checklist:
-`checklistFor`, `matchesTarget`. Bylines: `visitByline`, `noteByline`, `doneByline`.
+`checklistFor`, `matchesTarget`. Bylines: `visitByline`, `noteByline`, `doneByline`. The tab's
+dot: `hasNewNote`.
 Optimistic edits: `snapshotNote`, `newVisit`, `applyTick`, `applyVisitPatch`,
 `withTaskAdded`, `withTaskRenamed`, `withTaskDeleted`, `withTasksReordered`.
 `emptyHousekeeping()` is the empty state.
@@ -778,12 +818,15 @@ Files under `src/screens/housekeeping/` (each with a `.module.css` where it has 
 | `HousekeepingScreen.tsx` (+ `.test.tsx`) | the tab: `Screen` with the sections below and the live region (`data-announcer`) |
 | `NoteSection.tsx` | "Message for the housekeeper" |
 | `VisitEditor.tsx` | one day's checklist, comments, price and byline (today, and the selected day) |
+| `DeleteVisit.tsx` | the Delete Visit card and its confirmation (today's, and the selected day's) |
+| `SaveStatus.tsx` | "✓ Saved" for a moment, and "Not saved. Try again" after a failed save |
+| `useNewNote.ts` | the Housekeeping tab's dot (a new message from someone else) |
 | `Checklist.tsx` | the tasks as checkboxes |
 | `PriceField.tsx` | the £ field: parse, format, error |
 | `Calendar.tsx` | month header and summary, the month grid |
 | `DayDetail.tsx` | the selected day under the calendar |
 | `TaskListSheet.tsx` | the page sheet that edits the task list; App mounts it beside the stage, like the Item sheet, so the screen behind is pushed back |
-| `useSavedText.ts` | the message and comments fields: save after a pause and on blur, keep a draft while editing |
+| `useSavedText.ts` | the message and comments fields: save after a pause and on blur, keep a draft while editing or after a failed save |
 | `Housekeeping.module.css` | the shared sections, cards, captions, price row and empty states |
 
 Elsewhere: `screens/types.ts` (`Tab` already includes `'housekeeping'`), `screens/home/TabBar.tsx`
@@ -793,7 +836,10 @@ and its CSS (four tabs), `App.tsx` (renders `HousekeepingScreen` for the tab), t
 pin three tabs (`src/App.test.tsx` "tab bar", `e2e/onboarding.spec.ts` and any other).
 
 **Tab switch.** Home, Chat, Housekeeping, Stats, in that order, in the same `nav` named "Tabs"
-with `aria-current="page"` on the open one (keep that contract and Chat's unread dot). Segments
+with `aria-current="page"` on the open one (keep that contract and Chat's unread dot).
+Housekeeping has a dot too (named "Housekeeping, new message") while `useNewNote()` says the
+message is new to this member (`hasNewNote()`, last seen kept per member on this device). The
+app reopens on the tab last open on this device. Segments
 size to their labels (Housekeeping is the longest): flex items with equal extra space, labels
 on one line, never truncated. The white thumb follows the open segment: its left and width come
 from that button's `offsetLeft` and `offsetWidth`, measured in a layout effect and again on
@@ -811,14 +857,18 @@ pops in when you come back from a tab without it.
    `housekeepingSubtitle()` ("Today's visit", "Last visit Thu 1 Oct" or "Weekly") and the
    avatar; then the tab switch. `Screen` with `label="Housekeeping"` and `withAdd={false}`.
 2. **Message for the housekeeper** (`NoteSection`): the `h2`, with **Clear** on the right
-   (15px tint text button, `aria-label="Clear message"`, only while there is a message). A card
+   (15px tint text button, `aria-label="Clear message"`; with nothing to clear it stays in place,
+   dimmed and `aria-disabled`, so focus and VoiceOver keep their place after a Clear). A card
    that is an auto-growing textarea (`AutoGrowTextarea` from `screens/item`, two lines when
    empty, `maxLength` 4000, labelled by the `h2`), placeholder "Anything to do first, or
    differently? e.g. please do the spare room first". Under the card, 13/18 secondary:
    `noteByline()` ("🦆 Shea · Yesterday 19:20"), nothing when empty. It saves
    `HOUSEKEEPING_SAVE_DELAY_MS` (1s) after the last keystroke and on blur, when the trimmed
    text differs from the stored one. Clear empties it at once and shows the toast "Message
-   cleared" with **Undo** (puts the old text back).
+   cleared" with **Undo** (`undoClearHousekeepingNote`: the old text back under its writer's
+   name and time). After a save, the byline starts with "✓ Saved ·" for 2s (`SAVED_FLASH_MS`);
+   a failed save keeps the text in the field (unsaved typing, sent again on the next pause or
+   blur) and shows "Not saved." with **Try again** in place of the byline.
 3. **Today** (`h2`, with **Edit** on the right: 15px tint text, `aria-label="Edit task list"`,
    opens `TaskListSheet`), then `VisitEditor` for `today`:
    - the checklist card (`Checklist`, rows from `checklistFor()`): each row a `label` with a
@@ -839,29 +889,46 @@ pops in when you come back from a tab without it.
      under the card (13/18, `--rag-red-text`, `role="alert"`): "Enter an amount like 45.00, up
      to £10,000.00."
    - Under the cards, 13/18 secondary: `visitByline()` ("Recorded by 🦊 Ela · Today 10:42"),
-     or with no visit yet "Not started yet. Ticking a task starts today's visit."
+     or while nothing is recorded "Not started yet. Ticking a task starts today's visit." ("Not
+     started yet. Comments or a price start today's visit." when the list is empty).
+   - Saving: "✓ Saved" (13px tint, hidden from assistive tech, which hears the live region)
+     shows for 2s on the right of the Comments heading after comments save, and before the
+     byline after the price saves. A failed save keeps what was typed (comments as unsaved
+     typing, the price in its field) and shows "Not saved." with **Try again** (named "Try again
+     to save the comments" / "the price") under that card until it saves; Escape in the price
+     field goes back to the stored price.
+   - Once something is recorded today, a card with **Delete Visit** under it, as on other days
+     (title "Delete today's visit?"); afterwards focus goes to the Today heading.
 4. **Calendar** (`h2`, `Calendar`): one card. Its top row: a previous-month button (chevron,
    `aria-label="Previous month"`), the month title centred (17/22/600, `monthTitle()`), a
    next-month button (`aria-label="Next month"`, disabled on today's month: no visits can be
    ahead). Under the title, 15/20 secondary: `monthSummary(monthTotals())` ("4 visits ·
    £180.00"). Then the grid: weekday letters (13/18/600 secondary, `WEEKDAYS`), then the weeks
-   of `monthGrid()`. Each day is a round button (40px; 36px below 360px wide) with its number:
+   of `monthGrid()`. Each day's button fills its cell (46px tall, square, so a tap anywhere in
+   the cell counts) and draws a round 40px circle (36px below 360px wide) with its number:
    today has a tint number and a 1.5px tint ring, the selected day is filled with the tint and
    has a white number, a day with a visit has a 5px dot under its number (tint; white when
    selected), and future days are dimmed (`--label-tertiary`) and disabled. The month and the
    selected day are remembered while the app runs (like Stats' period). On first opening: the
-   month of today and `defaultSelectedDay()` (the latest visit this month before today, else
-   nothing).
+   month of today and `defaultSelectedDay()` (the latest recorded visit this month before
+   today, else nothing). Changing month chooses that month's latest recorded visit, or nothing,
+   never a day from another month. Choosing a day says what is there through the live region
+   (`daySelectedAnnouncement()`: "Thursday 1 October: 6 of 7 done, £60.00. Details below the
+   calendar.") and, when its heading is low on the screen, scrolls it up (`scrollIntoView`,
+   `block: 'nearest'`, the heading's `scroll-margin-bottom` 45vh; no smooth scroll with Reduce
+   Motion); focus stays on the day.
 5. **The selected day** (`DayDetail`, under the calendar card):
    - nothing selected: 15/20 secondary "Tap a day to see its visit."
    - a heading (`h3`, 20/25/600): `longDay()` ("Thursday 1 October");
-   - today: "Today's visit is above." and a tint **Show** button that scrolls the Today
-     section into view and focuses its heading (`tabIndex={-1}`);
+   - today: "Today's visit is above." and a tint **Show** button (`aria-label="Show today's
+     visit"`) that scrolls the Today section into view and focuses its heading (`tabIndex={-1}`);
    - a past day without a visit: "No visit recorded." and a tint **Add a visit** button
      (`addHousekeepingVisit(date)`; focus then moves to the first checkbox);
    - a past day with a visit: a card **Message that day** (13/18 secondary label above 17/22
      text, read-only; "No message that day." when empty), then `VisitEditor` for that date
-     (editable, same as today), then a card with a centred **Delete Visit** button (17px, `--destructive`). It
+     (editable, same as today; its fields are named with the day, "Comments, Thursday 1
+     October" and "Price for the day, Thursday 1 October", so they can't be mistaken for
+     today's), then a card with a centred **Delete Visit** button (17px, `--destructive`). It
      asks first (`ActionSheet`): title "Delete the visit on Thu 1 Oct?", message "Its ticks,
      comments and price will be deleted for everyone.", action **Delete Visit** (destructive).
      After deleting, the day shows "No visit recorded." and focus moves to **Add a visit**.
@@ -878,11 +945,15 @@ pops in when you come back from a tab without it.
    selected (with the same stand-in input trick so iOS raises the keyboard). Under the card,
    13/18 secondary: "Changes show in today's visit too. Earlier visits keep their own list."
    Delete asks first: title "Delete <title>?", message "Earlier visits keep it.", action
-   **Delete Task**. The list may be empty.
+   **Delete Task**. The list may be empty. When it closes, focus goes back to the button that
+   opened it (Edit, or Add tasks; Edit if that has gone), however it was opened: a VoiceOver
+   double tap is a tap, and focus moved by script after a tap shows no ring.
 
 **States.** Everything is in `data.housekeeping`, so the tab never shows a spinner. Ticks,
 comments, the price and the message show at once (optimistic) and come back as stored after the
-reload; a failed write shows the provider's "Couldn't save." toast and puts the old value back.
+reload; a failed write shows the provider's "Couldn't save." toast and puts the old value back,
+except in the field being typed in: what was typed stays there, marked "Not saved.", until it
+saves.
 Changes by others arrive live; a field being edited (focused, with unsaved typing) keeps its
 draft and follows the stored value again once saved or blurred.
 
@@ -895,14 +966,17 @@ draft and follows the stored value again once saved or blurred.
   `aria-live="polite"`, so changing month is announced); column headers are `th scope="col"`
   with the full weekday as `abbr`; each day cell is `role="gridcell"` with `aria-selected` and
   holds the day's button, named by `calendarDayLabel()` ("Thursday 1 October, visit, 6 of 7
-  done, £60.00"). One day button is in the tab order (the selected day, else today, else the
+  done, £60.00", then ", selected" for the chosen day, since focus is on the button, not its
+  cell). One day button is in the tab order (the selected day, else today, else the
   1st); arrow keys move a day or a week, Home and End go to the start and end of the week,
   Page Up and Page Down change month, moving past the month's edge changes month, and focus
   never lands on a future day.
 - One polite, visually hidden live region on the screen announces what was saved: "Saved"
   (message, comments, price), "<title> done" or "<title> not done" (ticks), "Message cleared",
-  "Visit added", "Visit deleted". Failures are the provider's toast (`role="status"`).
-- Targets are at least 44px except the day buttons below 360px wide (36px, the cell width).
+  "Visit added", "Visit deleted", and what a chosen day holds. Failures are the provider's
+  toast (`role="status"`) and "Not saved." with Try again by the field.
+- Targets are at least 44px except the day buttons below 360px wide (the whole cell, about
+  40px wide by 46px tall).
   Text sizes follow the iOS 3a scale; nothing relies on colour alone (ticks have a check,
   visit days a dot, today a ring).
 
@@ -921,21 +995,34 @@ subtitle reads "Last visit Thu 1 Oct", October "1 visit · £60.00", September "
   idempotent ticks, errors, another member's view of the same document), the seed above, and
   the starter list for an older document.
 - `src/state/HomeProvider.test.tsx`: a tick on a day without a visit shows a pending visit and
-  then the stored one; a failed write takes back only its change; a future date is refused.
+  then the stored one; a failed write takes back only its change; a future date is refused;
+  deleting a pending visit (straight after Add a visit, after a failed reload, after a failed
+  write); Undo after Clear (shown at once, after the Clear in flight, a failure taken back).
 - `src/screens/housekeeping/HousekeepingScreen.test.tsx`: the sections and copy, saving
-  comments and the price, the price error, the calendar labels and keyboard, Add a visit,
-  Delete Visit, and the task list sheet.
+  comments and the price ("Saved", and a failed save keeping what was typed), the price error,
+  the calendar labels, keyboard and month change, choosing a day (scroll and announcement),
+  Add a visit, Delete Visit (today's too), visits with nothing recorded, Clear and Undo, and
+  the task list sheet.
+- `src/screens/housekeeping/HousekeepingProvider.test.tsx`: the screen with the real provider
+  and demo backend: typing kept through failed saves and saved once back; Delete straight after
+  Add a visit; a tick taken back counts no visit.
+- `src/App.test.tsx`: the tab switch, the Housekeeping dot, the tab remembered on this device,
+  focus back on Edit after the task list closes.
 - `supabase/tests/housekeeping.test.mjs` (written with the migration): schema, RLS, RPCs,
-  concurrent ticks, today's visit following the list, the starter list and its backfill.
+  concurrent ticks, today's visit following the list (a ticked row keeps its title), Undo after
+  Clear, a task deleted while today's visit is created, the starter list and its first-run-only
+  backfill.
 - `src/lib/backend/supabase.integration.test.ts` (live suite): load shape, the RPC mappings and
   realtime on the four tables.
 - `e2e/housekeeping.spec.ts`: the tab order and `aria-current`; no + on Housekeeping; the switch
   fits at 320, 375 and 402px (no horizontal scroll, every label's `scrollWidth` within its
   `clientWidth`); the seed as above; ticking starts today's visit (subtitle "Today's visit",
   today marked); comments and price save and survive a reload; September's summary; a past
-  visit's details; Delete Visit; Add a visit; future days disabled; the task list sheet's add,
-  rename, reorder and delete reach today's checklist while last week's visit keeps the old
-  title. Existing e2e tests keep passing.
+  visit's details; Delete Visit (today's too); Add a visit; future days disabled; the task list
+  sheet's add, rename, reorder and delete reach today's checklist while last week's visit keeps
+  the old title; Undo after Clear keeps the writer; "Saved"; a day low on the screen scrolls
+  into view; a tap in a cell's corner chooses it at 320px; the Housekeeping dot and reopening
+  on the last tab; focus back on Edit after the task list. Existing e2e tests keep passing.
 
 ## Edge Function `scheduler` (runs every 15 minutes via pg_cron + pg_net)
 

@@ -492,6 +492,9 @@ describe('housekeeping', () => {
   const dayVisit = (home: () => HomeContextValue, date: string) => visitOn(hk(home).visits, date);
   /** The seed's latest visit (a Thursday before today). */
   const lastVisit = (home: () => HomeContextValue): HousekeepingVisit => hk(home).visits[0];
+  /** A day this week before today without a visit (the seed's visits are on Thursdays). */
+  const dayWithoutVisit = (home: () => HomeContextValue) =>
+    [1, 2, 3, 4, 5, 6].map((n) => addDays(home().today, -n)).find((d) => !dayVisit(home, d))!;
 
   async function rejected(p: Promise<unknown>): Promise<unknown> {
     return p.then(
@@ -649,7 +652,7 @@ describe('housekeeping', () => {
 
   it('"Add a visit" shows the day at once, nothing ticked; a day that has one keeps it', async () => {
     const { home } = await seeded();
-    const day = addDays(home().today, -2);
+    const day = dayWithoutVisit(home);
     let result: Promise<void> | undefined;
     act(() => {
       result = home().addHousekeepingVisit(day);
@@ -690,6 +693,85 @@ describe('housekeeping', () => {
     await waitFor(() => expect(dayVisit(home, visit.visit_date)).toBeUndefined());
   });
 
+  describe('deleting a visit still shown as pending', () => {
+    it('straight after "Add a visit": waits for the add, then deletes the stored visit', async () => {
+      const { backend, home, hid } = await seeded();
+      const day = dayWithoutVisit(home);
+      const write = deferred();
+      const realAdd = backend.addHousekeepingVisit.bind(backend);
+      vi.spyOn(backend, 'addHousekeepingVisit').mockImplementation(async (...args) => {
+        await write.promise;
+        return realAdd(...args);
+      });
+      const del = vi.spyOn(backend, 'deleteHousekeepingVisit');
+      let added: Promise<void> | undefined;
+      let deleted: Promise<void> | undefined;
+      act(() => {
+        added = home().addHousekeepingVisit(day);
+      });
+      expect(dayVisit(home, day)!.id).toBe(`pending:${day}`);
+      act(() => {
+        deleted = home().deleteHousekeepingVisit(`pending:${day}`);
+      });
+      expect(dayVisit(home, day)).toBeUndefined();
+      expect(del).not.toHaveBeenCalled();
+
+      await act(async () => {
+        write.resolve();
+        await added;
+        await deleted;
+      });
+      expect(del).toHaveBeenCalledTimes(1);
+      expect(del.mock.calls[0][0]).toMatch(/^[0-9a-f-]{36}$/);
+      await flush();
+      expect(dayVisit(home, day)).toBeUndefined();
+      expect((await backend.load(hid)).housekeeping.visits.some((v) => v.visit_date === day)).toBe(false);
+      expect(home().toast).toBeNull();
+    });
+
+    it('left on screen by a reload that failed: deleted by the id the write returned', async () => {
+      const { backend, home, hid } = await seeded();
+      const day = dayWithoutVisit(home);
+      const realLoad = backend.load.bind(backend);
+      const load = vi.spyOn(backend, 'load').mockRejectedValue(offline());
+      await act(() => home().saveHousekeepingVisit(day, { price_pence: 6000 }));
+      await flush();
+      expect(dayVisit(home, day)).toMatchObject({ id: `pending:${day}`, price_pence: 6000 });
+
+      const del = vi.spyOn(backend, 'deleteHousekeepingVisit');
+      await act(() => home().deleteHousekeepingVisit(`pending:${day}`));
+      expect(del).toHaveBeenCalledTimes(1);
+      expect(del.mock.calls[0][0]).not.toMatch(/^pending:/);
+      load.mockImplementation(realLoad);
+      expect((await backend.load(hid)).housekeeping.visits.some((v) => v.visit_date === day)).toBe(false);
+      expect(home().toast).toBeNull();
+    });
+
+    it('whose write failed: nothing was stored, so nothing is sent', async () => {
+      const { backend, home } = await seeded();
+      const day = dayWithoutVisit(home);
+      vi.spyOn(backend, 'load').mockRejectedValue(offline());
+      const write = deferred<string>();
+      vi.spyOn(backend, 'addHousekeepingVisit').mockImplementation(() => write.promise);
+      const del = vi.spyOn(backend, 'deleteHousekeepingVisit');
+      let added: Promise<void> | undefined;
+      let deleted: Promise<void> | undefined;
+      act(() => {
+        added = home().addHousekeepingVisit(day);
+      });
+      act(() => {
+        deleted = home().deleteHousekeepingVisit(`pending:${day}`);
+      });
+      await act(async () => {
+        write.reject(offline());
+        await expect(added).rejects.toThrow();
+        await deleted;
+      });
+      expect(del).not.toHaveBeenCalled();
+      expect(dayVisit(home, day)).toBeUndefined();
+    });
+  });
+
   describe('the message', () => {
     it('shows at once with me and now; unchanged text sends nothing', async () => {
       const { backend, home } = await seeded();
@@ -713,6 +795,60 @@ describe('housekeeping', () => {
       // Clearing it.
       await act(() => home().setHousekeepingNote(''));
       await waitFor(() => expect(hk(home).note).toMatchObject({ body: '', updated_by: home().me!.id }));
+    });
+
+    it('Undo after Clear shows the message as it was at once, and the backend keeps who wrote it', async () => {
+      const { backend, home } = await seeded();
+      const before = hk(home).note;
+      expect(before.body).not.toBe('');
+      expect(before.updated_by).not.toBe(home().me!.id);
+      // The Clear is still on its way when Undo is tapped: Undo goes after it.
+      const clearing = deferred();
+      const realSet = backend.setHousekeepingNote.bind(backend);
+      vi.spyOn(backend, 'setHousekeepingNote').mockImplementationOnce(async (...args) => {
+        await clearing.promise;
+        return realSet(...args);
+      });
+      const undo = vi.spyOn(backend, 'undoClearHousekeepingNote');
+      let cleared: Promise<void> | undefined;
+      let undone: Promise<void> | undefined;
+      act(() => {
+        cleared = home().setHousekeepingNote('');
+      });
+      expect(hk(home).note.body).toBe('');
+      act(() => {
+        undone = home().undoClearHousekeepingNote(before);
+      });
+      expect(hk(home).note).toEqual(before);
+      await flush();
+      expect(undo).not.toHaveBeenCalled();
+      await act(async () => {
+        clearing.resolve();
+        await cleared;
+        await undone;
+      });
+      expect(undo).toHaveBeenCalledTimes(1);
+      await flush();
+      await waitFor(() => expect(hk(home).note).toEqual(before));
+      expect(home().toast).toBeNull();
+
+      // With a message there again, Undo shows no change (the backend leaves it alone too).
+      await act(() => home().undoClearHousekeepingNote({ ...before, body: 'Older' }));
+      expect(hk(home).note).toEqual(before);
+    });
+
+    it('a failed Undo after Clear takes the message away again and says so', async () => {
+      const { backend, home } = await seeded();
+      const before = hk(home).note;
+      await act(() => home().setHousekeepingNote(''));
+      await waitFor(() => expect(hk(home).note.body).toBe(''));
+      vi.spyOn(backend, 'load').mockRejectedValue(offline());
+      vi.spyOn(backend, 'undoClearHousekeepingNote').mockRejectedValueOnce(offline());
+      await act(async () => {
+        await expect(home().undoClearHousekeepingNote(before)).rejects.toThrow();
+      });
+      expect(hk(home).note.body).toBe('');
+      expect(home().toast?.message).toBe('Couldn’t undo. No connection.');
     });
 
     it('a failure puts the old message back, unless it was changed again meanwhile', async () => {

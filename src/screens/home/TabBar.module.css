@@ -87,7 +87,7 @@
   user-select: none;
 }
 
-/* Unread messages on Chat. */
+/* Unread messages on Chat; a new message for the housekeeper on Housekeeping. */
 .dot {
   position: absolute;
   top: -1px;
@@ -106,7 +106,7 @@
     letter-spacing: -0.3px;
   }
 
-  /* Kept inside Chat's segment. */
+  /* Kept inside the segment. */
   .dot {
     right: -8px;
     width: 7px;

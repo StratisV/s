@@ -1,19 +1,12 @@
-import { useId, useRef } from 'react';
+import { useId } from 'react';
 import { TEXT_LIMITS } from '../../lib/constants';
 import { noteByline } from '../../lib/logic/housekeeping';
 import { useHousehold } from '../../state/HomeProvider';
 import { EmojiText } from '../../ui/EmojiText';
 import { AutoGrowTextarea } from '../item/AutoGrowTextarea';
+import { NotSaved, SavedFlag } from './SaveStatus';
 import { useSavedText } from './useSavedText';
 import styles from './Housekeeping.module.css';
-
-function isFocusVisible(el: Element): boolean {
-  try {
-    return el.matches(':focus-visible');
-  } catch {
-    return false; // engines without :focus-visible
-  }
-}
 
 interface NoteSectionProps {
   /** Says what was saved, politely (the screen's live region). */
@@ -23,14 +16,16 @@ interface NoteSectionProps {
 /**
  * "Message for the housekeeper": one household-wide note any member writes to give
  * direction. It saves itself (a pause in typing, or leaving the field), shows who changed
- * it last, and Clear empties it with an Undo.
+ * it last ("✓ Saved" for a moment after a save), and Clear empties it with an Undo that
+ * puts it back as it was, under the name of whoever wrote it. Clear stays in place (dimmed)
+ * while there is nothing to clear, so focus and VoiceOver don't lose their place when it
+ * is used. A failed save keeps the text with "Not saved. Try again".
  */
 export function NoteSection({ announce }: NoteSectionProps) {
-  const { data, setHousekeepingNote, showToast, dismissToast } = useHousehold();
+  const { data, setHousekeepingNote, undoClearHousekeepingNote, showToast, dismissToast } = useHousehold();
   const { note } = data.housekeeping;
   const headingId = useId();
   const bylineId = useId();
-  const fieldRef = useRef<HTMLTextAreaElement>(null);
   const field = useSavedText(note.body, (body) =>
     setHousekeepingNote(body).then(() => announce(body ? 'Saved' : 'Message cleared')),
   );
@@ -38,17 +33,16 @@ export function NoteSection({ announce }: NoteSectionProps) {
   const byline = noteByline(note, data.members, data.household.timezone, new Date());
   const hasMessage = !!note.body || !!field.value.trim();
 
-  const clear = (button: HTMLButtonElement) => {
-    const before = note.body;
-    // The button goes with the message: from the keyboard, carry on in the field.
-    if (isFocusVisible(button)) fieldRef.current?.focus({ preventScroll: true });
+  const clear = () => {
+    if (!hasMessage) return;
+    const before = note;
     field.replace('');
-    if (!before) return;
+    if (!before.body) return;
     showToast('Message cleared', {
       label: 'Undo',
       run: () => {
         dismissToast();
-        void setHousekeepingNote(before).catch(() => {});
+        void undoClearHousekeepingNote(before).catch(() => {});
       },
     });
   };
@@ -59,34 +53,40 @@ export function NoteSection({ announce }: NoteSectionProps) {
         <h2 id={headingId} className={styles.header}>
           Message for the housekeeper
         </h2>
-        {hasMessage ? (
-          <button
-            type="button"
-            className={styles.headerAction}
-            aria-label="Clear message"
-            onClick={(e) => clear(e.currentTarget)}
-          >
-            Clear
-          </button>
-        ) : null}
+        <button
+          type="button"
+          className={styles.headerAction}
+          aria-label="Clear message"
+          aria-disabled={hasMessage ? undefined : true}
+          onClick={clear}
+        >
+          Clear
+        </button>
       </div>
       <div className={styles.card}>
         <AutoGrowTextarea
-          ref={fieldRef}
           className={styles.textField}
           value={field.value}
           onChange={(e) => field.onChange(e.target.value)}
           onFocus={field.onFocus}
           onBlur={field.onBlur}
           aria-labelledby={headingId}
-          aria-describedby={byline ? bylineId : undefined}
+          aria-describedby={byline && field.state !== 'failed' ? bylineId : undefined}
           placeholder="Anything to do first, or differently? e.g. please do the spare room first"
           maxLength={TEXT_LIMITS.housekeepingNote}
           autoCapitalize="sentences"
         />
       </div>
-      {byline ? (
+      {field.state === 'failed' ? (
+        <NotSaved what="the message" onRetry={field.retry} />
+      ) : byline ? (
         <p id={bylineId} className={styles.caption}>
+          {field.state === 'saved' ? (
+            <span className={styles.savedLead} aria-hidden="true">
+              <SavedFlag />
+              {' ·'}
+            </span>
+          ) : null}
           <EmojiText text={byline} />
         </p>
       ) : null}

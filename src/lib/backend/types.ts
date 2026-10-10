@@ -166,9 +166,16 @@ export interface Backend {
    * Replaces the "Message for the housekeeper" with `body`, trimmed ('' clears it), and
    * stamps who and when (HousekeepingNote.updated_by/updated_at). Writing the text it
    * already has changes nothing (the stamp stays). Up to TEXT_LIMITS.housekeepingNote
-   * characters. Visits already recorded keep their own copy.
+   * characters. Visits already recorded keep their own copy. Clearing keeps the message it
+   * took away for undoClearHousekeepingNote(); writing a new one forgets it.
    */
   setHousekeepingNote(householdId: string, body: string): Promise<void>;
+  /**
+   * Undo after Clear: puts back the message the last Clear took away, as it was (its text,
+   * and who changed it and when; not a new edit by the caller). Changes nothing when the
+   * message is no longer empty (someone wrote one since) or there is nothing to put back.
+   */
+  undoClearHousekeepingNote(householdId: string): Promise<void>;
 
   /**
    * Adds a task, trimmed, at the end of the list, and to today's visit (household time
@@ -177,7 +184,8 @@ export interface Backend {
   createHousekeepingTask(householdId: string, title: string): Promise<HousekeepingTask>;
   /**
    * Renames a task (trimmed, not blank). Today's visit, if there is one, shows the new
-   * title too; earlier visits keep the title they had.
+   * title too unless the task is already ticked there (a ticked row keeps the title it was
+   * ticked under); earlier visits keep the title they had.
    */
   renameHousekeepingTask(id: string, title: string): Promise<void>;
   /**

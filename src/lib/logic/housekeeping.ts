@@ -154,41 +154,96 @@ export function longDay(date: ISODate, today: ISODate): string {
 
 /**
  * The accessible name of a day in the month grid: longDay(), then `', today'` when it is
- * today, then for a day with a visit `', visit, 6 of 7 done'` plus `', £60.00'` when it
- * has a price. Examples: `'Thursday 1 October, visit, 6 of 7 done, £60.00'`,
- * `'Thursday 8 October, today'`, `'Thursday 8 October, today, visit, 0 of 7 done'`,
- * `'Friday 9 October'` (a future day; the button is disabled).
- * Tests: each example above; a visit without a price; a visit with no tasks (`0 of 0 done`).
+ * today, then for a day with a recorded visit (isRecorded()) `', visit, 6 of 7 done'` plus
+ * `', £60.00'` when it has a price, then `', selected'` for the day shown under the
+ * calendar. Examples: `'Thursday 1 October, visit, 6 of 7 done, £60.00'`,
+ * `'Thursday 8 October, today'`, `'Thursday 8 October, today, visit, 1 of 7 done'`,
+ * `'Friday 9 October'` (a future day; the button is disabled),
+ * `'Thursday 1 October, visit, 6 of 7 done, £60.00, selected'`.
+ * Tests: each example above; a visit without a price; a visit with no tasks but a price
+ * (`0 of 0 done, £0.00`); a visit with nothing recorded reads like a day without one.
  */
-export function calendarDayLabel(date: ISODate, today: ISODate, visit: HousekeepingVisit | undefined): string {
+export function calendarDayLabel(
+  date: ISODate,
+  today: ISODate,
+  visit: HousekeepingVisit | undefined,
+  selected = false,
+): string {
   let label = longDay(date, today);
   if (date === today) label += ', today';
-  if (visit) {
+  if (visit && isRecorded(visit)) {
     const { done, total } = doneCount(visit);
     label += `, visit, ${done} of ${total} done`;
     if (visit.price_pence !== null) label += `, ${formatPrice(visit.price_pence)}`;
   }
+  if (selected) label += ', selected';
   return label;
 }
 
 /**
- * The day the calendar selects when the tab opens: the latest visit in today's month that
- * is before today; null when there is none (nothing selected, the hint shows).
+ * The day the calendar shows under it for `month`: the latest recorded visit (isRecorded())
+ * in that month before today (today's visit has its own section above); null when there is
+ * none (nothing selected, the hint shows). `month` defaults to today's: the day chosen
+ * when the tab opens; changing month picks that month's.
  * Tests: the e2e seed (today Thu 8 Oct, visits 1 Oct and earlier) gives 2026-10-01; only a
- * visit today gives null; only visits last month give null; no visits gives null.
+ * visit today gives null; only visits last month give null; no visits gives null; a visit
+ * with nothing recorded is passed over; September of the seed gives 2026-09-24; a month
+ * without visits gives null.
  */
-export function defaultSelectedDay(visits: HousekeepingVisit[], today: ISODate): ISODate | null {
-  const month = monthOf(today);
+export function defaultSelectedDay(
+  visits: HousekeepingVisit[],
+  today: ISODate,
+  month: YearMonth = monthOf(today),
+): ISODate | null {
   let best: ISODate | null = null;
   for (const v of visits) {
-    if (v.visit_date < today && monthOf(v.visit_date) === month && (best === null || v.visit_date > best)) {
+    if (
+      v.visit_date < today &&
+      monthOf(v.visit_date) === month &&
+      isRecorded(v) &&
+      (best === null || v.visit_date > best)
+    ) {
       best = v.visit_date;
     }
   }
   return best;
 }
 
+/**
+ * What the screen says (politely) when a day is chosen in the calendar, since its details
+ * show under the calendar, out of sight on a small screen: `'Thursday 1 October: 6 of 7
+ * done, £60.00. Details below the calendar.'`, `'Tuesday 6 October: no visit recorded.
+ * Details below the calendar.'`, `'Tuesday 6 October: nothing recorded yet. Details below
+ * the calendar.'` (a visit with nothing recorded), and for today `'Thursday 8 October:
+ * today's visit is above the calendar.'`.
+ * Tests: each example; a visit without a price.
+ */
+export function daySelectedAnnouncement(date: ISODate, today: ISODate, visit: HousekeepingVisit | undefined): string {
+  const day = longDay(date, today);
+  if (date === today) return `${day}: today's visit is above the calendar.`;
+  let what: string;
+  if (!visit) what = 'no visit recorded';
+  else if (!isRecorded(visit)) what = 'nothing recorded yet';
+  else {
+    const { done, total } = doneCount(visit);
+    what = `${done} of ${total} done`;
+    if (visit.price_pence !== null) what += `, ${formatPrice(visit.price_pence)}`;
+  }
+  return `${day}: ${what}. Details below the calendar.`;
+}
+
 // ── Visits ────────────────────────────────────────────────
+
+/**
+ * Whether a visit has anything recorded: a task ticked, comments or a price. One with none
+ * of these (a stray tick taken back, "Add a visit" with nothing filled in yet) is still
+ * stored and editable, but it is not counted as a visit: no dot in the calendar, not in the
+ * month's total, not "Today's visit" or the last visit in the subtitle.
+ * Tests: a tick; comments only; a price only (0 counts); none of them.
+ */
+export function isRecorded(visit: HousekeepingVisit): boolean {
+  return visit.price_pence !== null || visit.comments !== '' || visit.tasks.some((t) => t.done);
+}
 
 /**
  * The visit on `date`, if any (there is at most one per day).
@@ -199,11 +254,12 @@ export function visitOn(visits: HousekeepingVisit[], date: ISODate): Housekeepin
 }
 
 /**
- * The days in `month` that have a visit (to mark them in the grid).
- * Tests: visits in the month, the month before and after (only the month's count); none.
+ * The days in `month` that have a recorded visit (isRecorded(); to mark them in the grid).
+ * Tests: visits in the month, the month before and after (only the month's count); none; a
+ * visit with nothing recorded is left out.
  */
 export function visitDays(visits: HousekeepingVisit[], month: YearMonth): Set<ISODate> {
-  return new Set(visits.filter((v) => monthOf(v.visit_date) === month).map((v) => v.visit_date));
+  return new Set(visits.filter((v) => monthOf(v.visit_date) === month && isRecorded(v)).map((v) => v.visit_date));
 }
 
 export interface MonthTotals {
@@ -216,14 +272,15 @@ export interface MonthTotals {
 }
 
 /**
- * Totals for `month`. Tests: the e2e seed (October: 1 visit, 6000p; September: 4 visits,
- * 24000p); a visit without a price counts as a visit but adds no pence; a price of 0 counts
- * as priced; visits in neighbouring months are left out; no visits.
+ * Totals for `month`, over its recorded visits (isRecorded()). Tests: the e2e seed
+ * (October: 1 visit, 6000p; September: 4 visits, 24000p); a visit without a price counts as
+ * a visit but adds no pence; a price of 0 counts as priced; visits in neighbouring months
+ * are left out; no visits; a visit with nothing recorded is left out.
  */
 export function monthTotals(visits: HousekeepingVisit[], month: YearMonth): MonthTotals {
   const totals: MonthTotals = { visits: 0, pence: 0, priced: 0 };
   for (const v of visits) {
-    if (monthOf(v.visit_date) !== month) continue;
+    if (monthOf(v.visit_date) !== month || !isRecorded(v)) continue;
     totals.visits += 1;
     if (v.price_pence !== null) {
       totals.pence += v.price_pence;
@@ -254,16 +311,18 @@ export function doneCount(visit: HousekeepingVisit): { done: number; total: numb
 }
 
 /**
- * The secondary line under the Housekeeping title: `"Today's visit"` when there is a visit
- * today; otherwise `'Last visit Thu 1 Oct'` for the latest visit (formatDay(): the year is
- * added when it differs from today's); `'Weekly'` when there are no visits at all.
+ * The secondary line under the Housekeeping title: `"Today's visit"` when there is a
+ * recorded visit (isRecorded()) today; otherwise `'Last visit Thu 1 Oct'` for the latest
+ * recorded visit (formatDay(): the year is added when it differs from today's); `'Weekly'`
+ * when there are none at all.
  * Tests: each case; the latest is picked whatever the array order; a visit dated in the
- * future (bad data) is ignored.
+ * future (bad data) is ignored; a visit with nothing recorded (today or earlier) is passed
+ * over.
  */
 export function housekeepingSubtitle(visits: HousekeepingVisit[], today: ISODate): string {
   let latest: ISODate | null = null;
   for (const v of visits) {
-    if (v.visit_date > today) continue;
+    if (v.visit_date > today || !isRecorded(v)) continue;
     if (latest === null || v.visit_date > latest) latest = v.visit_date;
   }
   if (latest === null) return 'Weekly';
@@ -454,6 +513,18 @@ export function noteByline(note: HousekeepingNote, members: Member[], timeZone: 
 }
 
 /**
+ * Whether the message is new to this member, for the dot on the Housekeeping tab: there is
+ * a message, someone else wrote it (or changed it last), and it was changed after `seen`
+ * (when this member last had the tab open on this device; null: never).
+ * Tests: someone else's message never seen (true); seen since (false); changed after it was
+ * seen (true); your own (false); an empty or never written message (false).
+ */
+export function hasNewNote(note: HousekeepingNote, meId: string, seen: ISOTimestamp | null): boolean {
+  if (note.body === '' || note.updated_at === null || note.updated_by === meId) return false;
+  return seen === null || timeOf(note.updated_at) > timeOf(seen);
+}
+
+/**
  * Under a ticked row: `'🦊 Ela · 10:42'` when it was ticked on the visit's day (household
  * time), else `'🦊 Ela · Fri 2 Oct 09:00'`; null when not done.
  * Tests: same day; a later day; not done (null); a former member.
@@ -612,20 +683,22 @@ export function withTaskAdded(housekeeping: HousekeepingData, task: Housekeeping
 }
 
 /**
- * The task renamed on the list and on today's visit (if it has the task); earlier visits
- * keep their titles. The title is trimmed.
- * Tests: list and today renamed; last week's visit keeps the old title; unknown id leaves
- * everything as it was.
+ * The task renamed on the list and on today's visit (if it has the task and it is not
+ * ticked there: a ticked row keeps the title it was ticked under, as history); earlier
+ * visits keep their titles. The title is trimmed.
+ * Tests: list and today renamed; last week's visit keeps the old title; a row ticked today
+ * keeps its title; unknown id leaves everything as it was.
  */
 export function withTaskRenamed(housekeeping: HousekeepingData, id: string, title: string, today: ISODate): HousekeepingData {
   if (!housekeeping.tasks.some((t) => t.id === id)) return housekeeping;
   const clean = title.trim();
+  const follows = (row: HousekeepingVisitTask) => row.task_id === id && !row.done;
   return {
     ...housekeeping,
     tasks: housekeeping.tasks.map((t) => (t.id === id ? { ...t, title: clean } : t)),
     visits: withTodaysVisit(housekeeping, today, (visit) =>
-      visit.tasks.some((row) => row.task_id === id)
-        ? { ...visit, tasks: visit.tasks.map((row) => (row.task_id === id ? { ...row, title: clean } : row)) }
+      visit.tasks.some(follows)
+        ? { ...visit, tasks: visit.tasks.map((row) => (follows(row) ? { ...row, title: clean } : row)) }
         : visit,
     ),
   };

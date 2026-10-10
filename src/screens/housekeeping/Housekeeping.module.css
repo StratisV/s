@@ -60,17 +60,26 @@
   opacity: 0.5;
 }
 
-/* "Comments" inside a visit. */
-.subheader {
-  margin: 0;
+/* "Comments" inside a visit, with "✓ Saved" on the right for a moment. */
+.subheaderRow {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
   padding: 24px 20px 8px;
+}
+
+.subheader {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
   font-size: 20px;
   line-height: 25px;
   font-weight: 600;
   letter-spacing: -0.3px;
 }
 
-/* The chosen day's heading under the calendar. */
+/* The chosen day's heading under the calendar. Choosing a day low on the screen scrolls it
+   up until this much of the screen is left under it for the day's details. */
 .dayHeader {
   margin: 0;
   padding: 24px 20px 8px;
@@ -79,6 +88,7 @@
   font-weight: 600;
   letter-spacing: -0.3px;
   overflow-wrap: anywhere;
+  scroll-margin-bottom: 45vh;
 }
 
 /* ── Cards ─────────────────────────────────────────────── */
@@ -360,4 +370,82 @@
   line-height: 22px;
   letter-spacing: -0.4px;
   color: var(--label-secondary);
+}
+
+/* ── Saving: "✓ Saved" for a moment, "Not saved. Try again" after a failure ── */
+
+.savedFlag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.1px;
+  font-weight: 600;
+  color: var(--tint);
+  white-space: nowrap;
+  animation: savedIn 0.2s ease-out;
+}
+
+@keyframes savedIn {
+  from {
+    opacity: 0;
+  }
+}
+
+/* In a caption, before the byline: "✓ Saved · Recorded by …". */
+.savedLead {
+  margin-right: 0.25em;
+}
+
+/* On the right of a section's heading (Comments). */
+.headerStatus {
+  flex: none;
+  align-self: baseline;
+}
+
+.unsaved {
+  margin: 0;
+  padding: 8px 20px 0;
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.1px;
+  color: var(--rag-red-text);
+}
+
+.retry {
+  position: relative;
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.1px;
+  font-weight: 600;
+  color: var(--tint);
+  border-radius: 4px;
+}
+
+/* 44px tap target around the 18px line. */
+.retry::before {
+  content: '';
+  position: absolute;
+  inset: -13px -10px;
+}
+
+.retry:active {
+  opacity: 0.5;
+}
+
+/* Clear with no message to clear: kept in place (so focus and VoiceOver stay), dimmed. */
+.headerAction[aria-disabled='true'] {
+  color: rgba(60, 60, 67, 0.3);
+  cursor: default;
+}
+
+.headerAction[aria-disabled='true']:active {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .savedFlag {
+    animation: none;
+  }
 }

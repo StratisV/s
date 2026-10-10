@@ -1,12 +1,18 @@
 import { useEffect, useId, useReducer, useRef, useState } from 'react';
 import { parsePrice, priceInputValue } from '../../lib/logic/housekeeping';
+import { NotSaved } from './SaveStatus';
 import styles from './Housekeeping.module.css';
 
 interface PriceFieldProps {
   /** The stored price in pence; null = not entered. */
   stored: number | null;
-  /** Saves a new price (null clears it). The field ignores failures (the provider reports them). */
+  /**
+   * Saves a new price (null clears it). The provider reports a failure; the field keeps
+   * what was typed, says it wasn't saved and offers to try again.
+   */
   onSave(pence: number | null): Promise<unknown>;
+  /** The field's name: "Price for the day", or with the day for a day other than today. */
+  label?: string;
 }
 
 /** About as wide as `text` (digits are 1ch; a point or comma is narrower), plus room for the caret. */
@@ -21,29 +27,53 @@ export const PRICE_ERROR = 'Enter an amount like 45.00, up to £10,000.00.';
  * "Price for the day": a card with one row, the label on the left and "£" and the amount
  * on the right, typed on the decimal keypad. Leaving the field reads it (parsePrice):
  * a valid, changed amount is saved (blank clears it) and shown as "45.00"; anything else
- * keeps the text, marks the field invalid and says why under the card.
+ * keeps the text, marks the field invalid and says why under the card. A save that fails
+ * keeps the amount in the field, says "Not saved." under the card with Try again, and is
+ * sent again by that or by leaving the field again; Escape goes back to the stored price.
  */
-export function PriceField({ stored, onSave }: PriceFieldProps) {
+export function PriceField({ stored, onSave, label = 'Price for the day' }: PriceFieldProps) {
   const id = useId();
   const errorId = useId();
   const [draft, setDraft] = useState(() => priceInputValue(stored));
   const [editing, setEditing] = useState(false);
   const [invalid, setInvalid] = useState(false);
+  /** The amount shown didn't save (it stays until it does, or Escape). */
+  const [failed, setFailed] = useState(false);
   const [settled, bump] = useReducer((n: number) => n + 1, 0);
   const pending = useRef(0);
+  /** Numbers each save, so only the latest one says how saving stands. */
+  const saves = useRef(0);
   const reverting = useRef(false);
 
-  // Shows the stored price unless it is being typed, is wrong, or ours is still landing.
+  // Shows the stored price unless it is being typed, is wrong, didn't save, or ours is still landing.
   useEffect(() => {
-    if (editing || invalid || pending.current) return;
+    if (editing || invalid || failed || pending.current) return;
     setDraft(priceInputValue(stored));
-  }, [stored, editing, invalid, settled]);
+  }, [stored, editing, invalid, failed, settled]);
+
+  const send = (pence: number | null) => {
+    const n = ++saves.current;
+    pending.current += 1;
+    setFailed(false);
+    void onSave(pence)
+      .then(
+        () => {},
+        () => {
+          if (n === saves.current) setFailed(true);
+        },
+      )
+      .finally(() => {
+        pending.current -= 1;
+        bump();
+      });
+  };
 
   const finish = () => {
     setEditing(false);
     if (reverting.current) {
       reverting.current = false;
       setInvalid(false);
+      setFailed(false);
       setDraft(priceInputValue(stored));
       return;
     }
@@ -54,14 +84,17 @@ export function PriceField({ stored, onSave }: PriceFieldProps) {
     }
     setInvalid(false);
     setDraft(priceInputValue(read.pence));
-    if (read.pence === stored) return;
-    pending.current += 1;
-    void onSave(read.pence)
-      .catch(() => {})
-      .finally(() => {
-        pending.current -= 1;
-        bump();
-      });
+    if (read.pence === stored) {
+      setFailed(false);
+      return;
+    }
+    send(read.pence);
+  };
+
+  const retry = () => {
+    const read = parsePrice(draft);
+    if (read.ok && read.pence !== stored) send(read.pence);
+    else setFailed(false);
   };
 
   return (
@@ -84,7 +117,7 @@ export function PriceField({ stored, onSave }: PriceFieldProps) {
               autoCorrect="off"
               spellCheck={false}
               placeholder="0.00"
-              aria-label="Price for the day"
+              aria-label={label}
               aria-invalid={invalid || undefined}
               aria-describedby={invalid ? errorId : undefined}
               value={draft}
@@ -117,6 +150,8 @@ export function PriceField({ stored, onSave }: PriceFieldProps) {
         <p id={errorId} className={styles.error} role="alert">
           {PRICE_ERROR}
         </p>
+      ) : failed ? (
+        <NotSaved what="the price" onRetry={retry} />
       ) : null}
     </>
   );

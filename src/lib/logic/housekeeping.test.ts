@@ -7,12 +7,15 @@ import {
   calendarDayLabel,
   canHaveVisit,
   checklistFor,
+  daySelectedAnnouncement,
   defaultSelectedDay,
   doneByline,
   doneCount,
   emptyHousekeeping,
   formatPrice,
+  hasNewNote,
   housekeepingSubtitle,
+  isRecorded,
   longDay,
   matchesTarget,
   monthGrid,
@@ -245,8 +248,15 @@ describe('calendar', () => {
   it('calendarDayLabel: each example, a visit without a price and one with no tasks', () => {
     expect(calendarDayLabel('2026-10-01', TODAY, SEED_VISITS[0])).toBe('Thursday 1 October, visit, 6 of 7 done, £60.00');
     expect(calendarDayLabel(TODAY, TODAY, undefined)).toBe('Thursday 8 October, today');
-    expect(calendarDayLabel(TODAY, TODAY, visit(TODAY))).toBe('Thursday 8 October, today, visit, 0 of 7 done');
+    expect(calendarDayLabel(TODAY, TODAY, ticked(visit(TODAY), [0]))).toBe('Thursday 8 October, today, visit, 1 of 7 done');
     expect(calendarDayLabel('2026-10-09', TODAY, undefined)).toBe('Friday 9 October');
+    expect(calendarDayLabel('2026-10-01', TODAY, SEED_VISITS[0], true)).toBe(
+      'Thursday 1 October, visit, 6 of 7 done, £60.00, selected',
+    );
+    expect(calendarDayLabel('2026-10-06', TODAY, undefined, true)).toBe('Tuesday 6 October, selected');
+    // Nothing recorded (a tick taken back): read like a day without a visit.
+    expect(calendarDayLabel(TODAY, TODAY, visit(TODAY))).toBe('Thursday 8 October, today');
+    expect(calendarDayLabel('2026-10-06', TODAY, visit('2026-10-06'))).toBe('Tuesday 6 October');
     expect(calendarDayLabel('2026-10-05', TODAY, ticked(visit('2026-10-05'), [0, 1]))).toBe(
       'Monday 5 October, visit, 2 of 7 done',
     );
@@ -258,12 +268,37 @@ describe('calendar', () => {
   it('defaultSelectedDay: the latest visit this month before today', () => {
     expect(defaultSelectedDay(SEED_VISITS, TODAY)).toBe('2026-10-01');
     // Order does not matter.
-    expect(defaultSelectedDay([...SEED_VISITS, visit('2026-10-05')].reverse(), TODAY)).toBe('2026-10-05');
-    expect(defaultSelectedDay([visit(TODAY)], TODAY)).toBeNull();
+    expect(defaultSelectedDay([...SEED_VISITS, visit('2026-10-05', { price_pence: 0 })].reverse(), TODAY)).toBe(
+      '2026-10-05',
+    );
+    // A visit with nothing recorded is passed over.
+    expect(defaultSelectedDay([...SEED_VISITS, visit('2026-10-05')], TODAY)).toBe('2026-10-01');
+    expect(defaultSelectedDay([ticked(visit(TODAY), [0])], TODAY)).toBeNull();
     expect(defaultSelectedDay(SEED_VISITS.slice(1), TODAY)).toBeNull();
     expect(defaultSelectedDay([], TODAY)).toBeNull();
     // A future visit (bad data) is never chosen.
-    expect(defaultSelectedDay([visit('2026-10-20')], TODAY)).toBeNull();
+    expect(defaultSelectedDay([ticked(visit('2026-10-20'), [0])], TODAY)).toBeNull();
+    // Another month: its latest visit.
+    expect(defaultSelectedDay(SEED_VISITS, TODAY, '2026-09')).toBe('2026-09-24');
+    expect(defaultSelectedDay(SEED_VISITS, TODAY, '2026-05')).toBeNull();
+  });
+
+  it('daySelectedAnnouncement: a visit, no visit, nothing recorded, today', () => {
+    expect(daySelectedAnnouncement('2026-10-01', TODAY, SEED_VISITS[0])).toBe(
+      'Thursday 1 October: 6 of 7 done, £60.00. Details below the calendar.',
+    );
+    expect(daySelectedAnnouncement('2026-10-05', TODAY, ticked(visit('2026-10-05'), [0, 1]))).toBe(
+      'Monday 5 October: 2 of 7 done. Details below the calendar.',
+    );
+    expect(daySelectedAnnouncement('2026-10-06', TODAY, undefined)).toBe(
+      'Tuesday 6 October: no visit recorded. Details below the calendar.',
+    );
+    expect(daySelectedAnnouncement('2026-10-06', TODAY, visit('2026-10-06'))).toBe(
+      'Tuesday 6 October: nothing recorded yet. Details below the calendar.',
+    );
+    expect(daySelectedAnnouncement(TODAY, TODAY, ticked(visit(TODAY), [0]))).toBe(
+      "Thursday 8 October: today's visit is above the calendar.",
+    );
   });
 });
 
@@ -276,8 +311,22 @@ describe('visits', () => {
     expect(visitOn([], TODAY)).toBeUndefined();
   });
 
-  it('visitDays: only the month’s days', () => {
-    const visits = [visit('2026-08-31'), visit('2026-09-03'), visit('2026-09-30'), visit('2026-10-01')];
+  it('isRecorded: a tick, comments or a price (0 too); none of them is not a visit yet', () => {
+    expect(isRecorded(ticked(visit(TODAY), [3]))).toBe(true);
+    expect(isRecorded(visit(TODAY, { comments: 'Out of bin bags.' }))).toBe(true);
+    expect(isRecorded(visit(TODAY, { price_pence: 0 }))).toBe(true);
+    expect(isRecorded(visit(TODAY))).toBe(false);
+    expect(isRecorded(visit(TODAY, { tasks: [] }))).toBe(false);
+  });
+
+  it('visitDays: only the month’s days, and only visits with something recorded', () => {
+    const visits = [
+      ticked(visit('2026-08-31'), [0]),
+      ticked(visit('2026-09-03'), [0]),
+      visit('2026-09-10'),
+      visit('2026-09-30', { comments: 'Done.' }),
+      ticked(visit('2026-10-01'), [0]),
+    ];
     expect([...visitDays(visits, '2026-09')].sort()).toEqual(['2026-09-03', '2026-09-30']);
     expect(visitDays(visits, '2026-11').size).toBe(0);
     expect(visitDays([], '2026-09').size).toBe(0);
@@ -288,9 +337,11 @@ describe('visits', () => {
     expect(monthTotals(SEED_VISITS, '2026-09')).toEqual({ visits: 4, pence: 24000, priced: 4 });
     const mixed = [
       visit('2026-07-31', { price_pence: 9999 }),
-      visit('2026-08-06', { price_pence: null }),
+      ticked(visit('2026-08-06', { price_pence: null }), [0]),
       visit('2026-08-13', { price_pence: 0 }),
       visit('2026-08-20', { price_pence: 4550 }),
+      // Nothing recorded: not counted.
+      visit('2026-08-27'),
       visit('2026-09-01', { price_pence: 9999 }),
     ];
     expect(monthTotals(mixed, '2026-08')).toEqual({ visits: 3, pence: 4550, priced: 2 });
@@ -315,13 +366,16 @@ describe('visits', () => {
   });
 
   it('housekeepingSubtitle: today, the last visit, none; any order; future ignored', () => {
-    expect(housekeepingSubtitle([visit(TODAY), ...SEED_VISITS], TODAY)).toBe("Today's visit");
+    expect(housekeepingSubtitle([ticked(visit(TODAY), [0]), ...SEED_VISITS], TODAY)).toBe("Today's visit");
+    // Nothing recorded today (a tick taken back), or on a later empty visit: passed over.
+    expect(housekeepingSubtitle([visit(TODAY), visit('2026-10-05'), ...SEED_VISITS], TODAY)).toBe('Last visit Thu 1 Oct');
+    expect(housekeepingSubtitle([visit(TODAY)], TODAY)).toBe('Weekly');
     expect(housekeepingSubtitle(SEED_VISITS, TODAY)).toBe('Last visit Thu 1 Oct');
     expect(housekeepingSubtitle([...SEED_VISITS].reverse(), TODAY)).toBe('Last visit Thu 1 Oct');
     expect(housekeepingSubtitle([], TODAY)).toBe('Weekly');
-    expect(housekeepingSubtitle([visit('2025-12-18')], TODAY)).toBe('Last visit Thu 18 Dec 2025');
-    expect(housekeepingSubtitle([visit('2026-10-15'), ...SEED_VISITS], TODAY)).toBe('Last visit Thu 1 Oct');
-    expect(housekeepingSubtitle([visit('2026-10-15')], TODAY)).toBe('Weekly');
+    expect(housekeepingSubtitle([visit('2025-12-18', { price_pence: 5000 })], TODAY)).toBe('Last visit Thu 18 Dec 2025');
+    expect(housekeepingSubtitle([ticked(visit('2026-10-15'), [0]), ...SEED_VISITS], TODAY)).toBe('Last visit Thu 1 Oct');
+    expect(housekeepingSubtitle([ticked(visit('2026-10-15'), [0])], TODAY)).toBe('Weekly');
   });
 });
 
@@ -531,6 +585,19 @@ describe('bylines', () => {
     expect(visitByline(v, MEMBERS, 'America/New_York', NOW)).toBe('Recorded by 🦊 Ela · Yesterday 19:30');
   });
 
+  it('hasNewNote: someone else’s message, unseen or changed since; never your own or an empty one', () => {
+    const note = { body: 'Spare room first.', updated_at: '2026-10-07T18:20:00Z', updated_by: 'shea' };
+    expect(hasNewNote(note, 'me', null)).toBe(true);
+    expect(hasNewNote(note, 'me', '2026-10-07T18:20:00Z')).toBe(false);
+    expect(hasNewNote(note, 'me', '2026-10-08T09:00:00.000Z')).toBe(false);
+    expect(hasNewNote(note, 'me', '2026-10-07T18:19:59Z')).toBe(true);
+    // The same moment written two ways is the same moment.
+    expect(hasNewNote(note, 'me', '2026-10-07T19:20:00+01:00')).toBe(false);
+    expect(hasNewNote(note, 'shea', null)).toBe(false);
+    expect(hasNewNote({ ...note, body: '' }, 'me', null)).toBe(false);
+    expect(hasNewNote({ body: '', updated_at: null, updated_by: null }, 'me', null)).toBe(false);
+  });
+
   it('noteByline: a message; empty; never written; a former member', () => {
     const note = { body: 'Spare room first.', updated_at: at('2026-10-07', '19:20'), updated_by: 'shea' };
     expect(noteByline(note, MEMBERS, TZ, NOW)).toBe('🦆 Shea · Yesterday 19:20');
@@ -717,6 +784,15 @@ describe('optimistic edits', () => {
       expect(next.visits[1].tasks[0].title).toBe('Change the bed sheets');
       expect(base).toEqual(before);
       expect(withTaskRenamed(base, 'nope', 'X', TODAY)).toBe(base);
+    });
+
+    it('withTaskRenamed: a row already ticked today keeps the title it was ticked under', () => {
+      const base = data({ visits: [ticked(visit(TODAY), [6])] });
+      const next = withTaskRenamed(base, 't6', 'Clean the windows', TODAY);
+      expect(next.tasks[6].title).toBe('Clean the windows');
+      expect(next.visits[0].tasks[6]).toMatchObject({ title: 'Ironing', task_id: 't6', done: true });
+      // Nothing on today's visit follows: it stays the same object.
+      expect(next.visits[0]).toBe(base.visits[0]);
     });
 
     it('withTaskDeleted: today drops an undone row, keeps a done one; earlier visits keep theirs', () => {

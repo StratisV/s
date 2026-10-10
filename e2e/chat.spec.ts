@@ -63,12 +63,15 @@ async function messageFromShea(page: Page, body: string) {
   );
 }
 
-/** A second tab on the same device (same storage), at the same moment. */
+/**
+ * A second tab on the same device (same storage), at the same moment. It opens on the tab
+ * last open on this device (the first tab's), whichever that is.
+ */
 async function secondTab(page: Page): Promise<Page> {
   const other = await page.context().newPage();
   await other.clock.install({ time: NOW });
   await other.goto('/');
-  await expect(other.getByRole('heading', { name: 'Home', level: 1 })).toBeVisible();
+  await expect(other.getByRole('navigation', { name: 'Tabs' })).toBeVisible();
   return other;
 }
 

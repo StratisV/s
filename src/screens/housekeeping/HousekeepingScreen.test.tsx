@@ -16,7 +16,8 @@ import type {
 import { HousekeepingScreen } from './HousekeepingScreen';
 import { PRICE_ERROR } from './PriceField';
 import { TaskListSheet } from './TaskListSheet';
-import { NOT_STARTED } from './VisitEditor';
+import { SAVED_FLASH_MS } from './useSavedText';
+import { NOT_STARTED, NOT_STARTED_NO_TASKS, NOTHING_RECORDED } from './VisitEditor';
 
 // The provider is replaced by a small in-memory one below (the screen only talks to
 // useHousehold()); the logic module is the real one.
@@ -198,6 +199,9 @@ function makeActions(set: () => Dispatch<SetStateAction<HouseholdData>>) {
         },
       }));
     }),
+    undoClearHousekeepingNote: vi.fn(async (previous: HousekeepingData['note']) => {
+      edit((hk) => (hk.note.body === '' ? { ...hk, note: previous } : hk));
+    }),
     setHousekeepingTaskDone: vi.fn(async (date: ISODate, target: HousekeepingTickTarget, done: boolean) => {
       edit((hk) =>
         withVisit(hk, date, (v) => ({
@@ -273,12 +277,15 @@ function FakeHome({
   const [data, setData] = useState(initial);
   bind(setData);
   latest = data;
+  latestSet = setData;
   return (
     <FakeHomeContext.Provider value={{ data, me: ME, today: TODAY, ...actions }}>{children}</FakeHomeContext.Provider>
   );
 }
 
 let latest: HouseholdData;
+/** Sets the fake provider's data (a reload bringing what is stored). */
+let latestSet: Dispatch<SetStateAction<HouseholdData>>;
 
 function setup(housekeeping: HousekeepingData = seed(), { sheet = false } = {}) {
   let setData!: Dispatch<SetStateAction<HouseholdData>>;
@@ -471,29 +478,208 @@ describe('HousekeepingScreen', () => {
     await act(async () => message.blur());
     expect(actions.setHousekeepingNote).toHaveBeenCalledWith('Please do the oven.');
     await waitFor(() => expect(said()).toBe('Saved'));
-    expect(screen.getByText(wholeText('🦔 Stratis · Today 10:00'))).toBeTruthy();
+    // Under the message: "✓ Saved" for a moment, then who changed it and when.
+    const byline = screen.getByText(wholeText(/^Saved ·🦔 Stratis · Today 10:00$/));
+    expect(byline.querySelector('[data-saved]')).toBeTruthy();
 
+    const clear = screen.getByRole('button', { name: 'Clear message' });
+    act(() => clear.focus());
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Clear message' }));
+      fireEvent.click(clear);
     });
     expect(actions.setHousekeepingNote).toHaveBeenLastCalledWith('');
     expect(message.value).toBe('');
-    expect(screen.queryByRole('button', { name: 'Clear message' })).toBeNull();
+    // Clear stays where it was, dimmed, and keeps focus (VoiceOver keeps its place).
+    expect(screen.getByRole('button', { name: 'Clear message' })).toBe(clear);
+    expect(clear.getAttribute('aria-disabled')).toBe('true');
+    expect(document.activeElement).toBe(clear);
     expect(actions.showToast).toHaveBeenCalledWith('Message cleared', expect.objectContaining({ label: 'Undo' }));
     await waitFor(() => expect(said()).toBe('Message cleared'));
+    // Nothing to clear: a tap does nothing.
+    fireEvent.click(clear);
+    expect(actions.setHousekeepingNote).toHaveBeenCalledTimes(2);
 
+    // Undo puts back the message as it was, with who wrote it and when (not as a new edit).
     act(() => actions.showToast.mock.calls[0][1].run());
-    expect(actions.setHousekeepingNote).toHaveBeenLastCalledWith('Please do the oven.');
+    expect(actions.undoClearHousekeepingNote).toHaveBeenCalledWith({
+      body: 'Please do the oven.',
+      updated_at: NOW.toISOString(),
+      updated_by: ME.id,
+    });
+    expect(actions.setHousekeepingNote).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(message.value).toBe('Please do the oven.'));
+    expect(clear.hasAttribute('aria-disabled')).toBe(false);
+  });
+
+  it('Undo after Clear brings back someone else’s message under their name', async () => {
+    const { actions } = setup();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Clear message' }));
+    });
+    act(() => actions.showToast.mock.calls[0][1].run());
+    expect(actions.undoClearHousekeepingNote).toHaveBeenCalledWith(seed().note);
+    await waitFor(() => expect(screen.getByText(wholeText('🦆 Shea · Yesterday 19:20'))).toBeTruthy());
   });
 
   it('offers the task list when there are no tasks yet', () => {
     const { onEditTasks } = setup({ ...seed(), tasks: [] });
     expect(within(today()).getByText('No tasks yet.')).toBeTruthy();
-    fireEvent.click(within(today()).getByRole('button', { name: 'Add tasks' }));
-    expect(onEditTasks).toHaveBeenCalledTimes(1);
-    fireEvent.click(within(today()).getByRole('button', { name: 'Edit task list' }));
-    expect(onEditTasks).toHaveBeenCalledTimes(2);
+    // Nothing to tick: comments or a price start the visit.
+    expect(within(today()).getByText(NOT_STARTED_NO_TASKS)).toBeTruthy();
+    expect(within(today()).queryByText(NOT_STARTED)).toBeNull();
+    const add = within(today()).getByRole('button', { name: 'Add tasks' });
+    fireEvent.click(add);
+    // With the button pressed, for focus to come back to when the sheet closes.
+    expect(onEditTasks).toHaveBeenLastCalledWith(add);
+    const edit = within(today()).getByRole('button', { name: 'Edit task list' });
+    fireEvent.click(edit);
+    expect(onEditTasks).toHaveBeenLastCalledWith(edit);
+  });
+});
+
+describe('Saving', () => {
+  const offline = () => new Error('offline');
+
+  it('says "Saved" next to Comments for a moment, and before the byline for the price', async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(NOW);
+    setup();
+    const comments = within(today()).getByRole('textbox', { name: 'Comments' });
+    const commentsRow = within(today()).getByRole('heading', { level: 3, name: 'Comments' }).parentElement!;
+    act(() => comments.focus());
+    fireEvent.change(comments, { target: { value: 'Out of bin bags.' } });
+    await act(async () => comments.blur());
+    expect(within(commentsRow).getByText('Saved')).toBeTruthy();
+    // Shown, not said twice: the live region says it.
+    expect(commentsRow.querySelector('[data-saved]')!.getAttribute('aria-hidden')).toBe('true');
+    expect(said()).toBe('Saved');
+    act(() => vi.advanceTimersByTime(SAVED_FLASH_MS));
+    expect(within(commentsRow).queryByText('Saved')).toBeNull();
+
+    const price = within(today()).getByRole('textbox', { name: 'Price for the day' });
+    act(() => price.focus());
+    fireEvent.change(price, { target: { value: '45' } });
+    await act(async () => price.blur());
+    const caption = today().querySelector('[data-visit-caption]')!;
+    expect(caption.textContent).toBe('Saved ·Recorded by 🦔 Stratis · Today 10:00');
+    act(() => vi.advanceTimersByTime(SAVED_FLASH_MS));
+    expect(caption.textContent).toBe('Recorded by 🦔 Stratis · Today 10:00');
+  });
+
+  it('a failed save keeps the comments typed, says so, and Try again sends them', async () => {
+    const { actions } = setup();
+    actions.saveHousekeepingVisit.mockRejectedValueOnce(offline());
+    const comments = within(today()).getByRole('textbox', { name: 'Comments' }) as HTMLTextAreaElement;
+    const text = 'Out of bin bags, the hoover bag is full and the boiler is making a noise again.';
+    act(() => comments.focus());
+    fireEvent.change(comments, { target: { value: text } });
+    await act(async () => comments.blur());
+    expect(actions.saveHousekeepingVisit).toHaveBeenCalledTimes(1);
+    expect(comments.value).toBe(text);
+    expect(within(today()).getByText('Not saved.')).toBeTruthy();
+
+    // Still there after a reload of the same (old) data.
+    act(() => latestSet((d) => ({ ...d })));
+    expect(comments.value).toBe(text);
+
+    await act(async () => {
+      fireEvent.click(within(today()).getByRole('button', { name: 'Try again to save the comments' }));
+    });
+    expect(actions.saveHousekeepingVisit).toHaveBeenLastCalledWith(TODAY, { comments: text });
+    expect(comments.value).toBe(text);
+    expect(within(today()).queryByText('Not saved.')).toBeNull();
+    await waitFor(() => expect(said()).toBe('Saved'));
+  });
+
+  it('a failed save keeps a new message, and leaving the field again sends it', async () => {
+    const { actions } = setup();
+    actions.setHousekeepingNote.mockRejectedValueOnce(offline());
+    const message = screen.getByRole('textbox', { name: 'Message for the housekeeper' }) as HTMLTextAreaElement;
+    const text = 'Guests arrive Friday. Please do the spare room first, then change all the beds.';
+    act(() => message.focus());
+    fireEvent.change(message, { target: { value: text } });
+    await act(async () => message.blur());
+    expect(message.value).toBe(text);
+    const section = screen.getByRole('region', { name: 'Message for the housekeeper' });
+    expect(within(section).getByText('Not saved.')).toBeTruthy();
+    expect(within(section).getByRole('button', { name: 'Try again to save the message' })).toBeTruthy();
+
+    act(() => message.focus());
+    await act(async () => message.blur());
+    expect(actions.setHousekeepingNote).toHaveBeenCalledTimes(2);
+    expect(actions.setHousekeepingNote).toHaveBeenLastCalledWith(text);
+    expect(message.value).toBe(text);
+    expect(within(section).queryByText('Not saved.')).toBeNull();
+  });
+
+  it('a failed save keeps the price typed; Try again sends it, Escape goes back', async () => {
+    const { actions } = setup();
+    actions.saveHousekeepingVisit.mockRejectedValueOnce(offline()).mockRejectedValueOnce(offline());
+    const price = within(today()).getByRole('textbox', { name: 'Price for the day' }) as HTMLInputElement;
+    act(() => price.focus());
+    fireEvent.change(price, { target: { value: '62.5' } });
+    await act(async () => price.blur());
+    expect(price.value).toBe('62.50');
+    expect(within(today()).getByText('Not saved.')).toBeTruthy();
+    act(() => latestSet((d) => ({ ...d })));
+    expect(price.value).toBe('62.50');
+
+    // Fails again, then Escape puts back the stored price (none).
+    await act(async () => {
+      fireEvent.click(within(today()).getByRole('button', { name: 'Try again to save the price' }));
+    });
+    expect(actions.saveHousekeepingVisit).toHaveBeenCalledTimes(2);
+    expect(price.value).toBe('62.50');
+    act(() => price.focus());
+    fireEvent.keyDown(price, { key: 'Escape' });
+    expect(price.value).toBe('');
+    expect(within(today()).queryByText('Not saved.')).toBeNull();
+
+    act(() => price.focus());
+    fireEvent.change(price, { target: { value: '62.5' } });
+    await act(async () => price.blur());
+    expect(actions.saveHousekeepingVisit).toHaveBeenLastCalledWith(TODAY, { price_pence: 6250 });
+    expect(within(today()).queryByText('Not saved.')).toBeNull();
+  });
+});
+
+describe("Today's visit", () => {
+  const todayVisit = (done: number, extra: Partial<HousekeepingVisit> = {}) => visit('v0', TODAY, ME, done, null, extra);
+
+  it('can be deleted, after asking, once something is recorded', async () => {
+    const { actions } = setup({ ...seed(), visits: [todayVisit(2), OCT_1, SEP_24] });
+    expect(screen.getByText("Today's visit")).toBeTruthy();
+    fireEvent.click(within(today()).getByRole('button', { name: 'Delete Visit' }));
+    const confirm = await screen.findByRole('alertdialog', { name: "Delete today's visit?" });
+    expect(within(confirm).getByText('Its ticks, comments and price will be deleted for everyone.')).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(within(confirm).getByRole('button', { name: 'Delete Visit' }));
+    });
+    expect(actions.deleteHousekeepingVisit).toHaveBeenCalledWith('v0');
+    expect(within(today()).queryByRole('button', { name: 'Delete Visit' })).toBeNull();
+    expect(within(today()).getByText(NOT_STARTED)).toBeTruthy();
+    expect(document.activeElement).toBe(within(today()).getByRole('heading', { level: 2, name: 'Today' }));
+    await waitFor(() => expect(said()).toBe('Visit deleted'));
+    expect(screen.getByText('Last visit Thu 1 Oct')).toBeTruthy();
+  });
+
+  it('with nothing recorded (a tick taken back) is not counted anywhere', () => {
+    setup({ ...seed(), visits: [todayVisit(0), OCT_1, SEP_24] });
+    expect(screen.getByText('Last visit Thu 1 Oct')).toBeTruthy();
+    expect(within(today()).getByText(NOT_STARTED)).toBeTruthy();
+    expect(within(today()).queryByText(/^Recorded by/)).toBeNull();
+    expect(within(today()).queryByRole('button', { name: 'Delete Visit' })).toBeNull();
+    expect(within(section('Calendar')).getByText('1 visit · £60.00')).toBeTruthy();
+    const todayButton = day('Thursday 8 October, today');
+    expect(todayButton.hasAttribute('data-visit')).toBe(false);
+  });
+
+  it('comments alone count as a visit', () => {
+    setup({ ...seed(), visits: [todayVisit(0, { comments: 'Out of bin bags.' }), OCT_1] });
+    expect(screen.getByText("Today's visit")).toBeTruthy();
+    expect(day('Thursday 8 October, today, visit, 0 of 7 done').hasAttribute('data-visit')).toBe(true);
+    expect(within(today()).getByRole('button', { name: 'Delete Visit' })).toBeTruthy();
   });
 });
 
@@ -508,7 +694,8 @@ describe('Calendar', () => {
         .getAllByRole('columnheader')
         .map((th) => th.getAttribute('abbr')),
     ).toEqual(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']);
-    const oct1 = day('Thursday 1 October, visit, 6 of 7 done, £60.00');
+    // The chosen day says so on its button, where focus goes (not just on its cell).
+    const oct1 = day('Thursday 1 October, visit, 6 of 7 done, £60.00, selected');
     expect(oct1.hasAttribute('data-visit')).toBe(true);
     expect(oct1.closest('[role="gridcell"]')!.getAttribute('aria-selected')).toBe('true');
     expect(oct1.tabIndex).toBe(0);
@@ -521,11 +708,22 @@ describe('Calendar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Previous month' }));
     expect(within(section('Calendar')).getByText('September 2026')).toBeTruthy();
     expect(within(section('Calendar')).getByText('1 visit · £65.00')).toBeTruthy();
-    expect(day('Thursday 24 September, visit, 7 of 7 done, £65.00')).toBeTruthy();
-    // Nothing chosen this month: the 1st is the way in.
-    expect(day('Tuesday 1 September').tabIndex).toBe(0);
+    // Another month shows its own latest visit under it, never October's day.
+    const sep24 = day('Thursday 24 September, visit, 7 of 7 done, £65.00, selected');
+    expect(sep24.tabIndex).toBe(0);
+    expect(screen.getByRole('heading', { level: 3, name: 'Thursday 24 September' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
     expect(within(section('Calendar')).getByText('October 2026')).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 3, name: 'Thursday 1 October' })).toBeTruthy();
+
+    // A month without visits: nothing chosen, the hint, and the 1st is the way in.
+    fireEvent.click(screen.getByRole('button', { name: 'Previous month' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Previous month' }));
+    expect(within(section('Calendar')).getByText('August 2026')).toBeTruthy();
+    expect(within(section('Calendar')).getByText('No visits')).toBeTruthy();
+    expect(screen.getByText('Tap a day to see its visit.')).toBeTruthy();
+    expect(document.querySelector('[data-day-detail] h3')).toBeNull();
+    expect(day('Saturday 1 August').tabIndex).toBe(0);
   });
 
   it('moves with the arrow keys, Home and End, and Page Up and Down, never into the future', () => {
@@ -577,20 +775,23 @@ describe('The chosen day', () => {
         .filter((b) => (b as HTMLInputElement).checked),
     ).toHaveLength(6);
     expect(within(detail).getByRole('heading', { level: 4, name: 'Comments' })).toBeTruthy();
+    // Named with their day, so they can't be mistaken for today's.
     expect(
       (
         within(detail).getByRole('textbox', {
-          name: 'Comments',
+          name: 'Comments, Thursday 1 October',
         }) as HTMLTextAreaElement
       ).value,
     ).toBe('Ironing left for next week as asked.');
     expect(
       (
         within(detail).getByRole('textbox', {
-          name: 'Price for the day',
+          name: 'Price for the day, Thursday 1 October',
         }) as HTMLInputElement
       ).value,
     ).toBe('60.00');
+    expect(screen.getAllByRole('textbox', { name: 'Comments' })).toHaveLength(1);
+    expect(screen.getAllByRole('textbox', { name: 'Price for the day' })).toHaveLength(1);
     expect(
       within(detail).getByText(/^Recorded by 🦊 Ela · Thu 1 Oct 10:05 · Updated by 🦊 Ela · Thu 1 Oct 10:12$/),
     ).toBeTruthy();
@@ -615,7 +816,15 @@ describe('The chosen day', () => {
     });
     await waitFor(() => expect(document.activeElement).toBe(within(tasks).getAllByRole('checkbox')[0]));
     await waitFor(() => expect(said()).toBe('Visit added'));
-    expect(day('Tuesday 6 October, visit, 0 of 7 done').hasAttribute('data-visit')).toBe(true);
+    // Nothing recorded on it yet: not counted as a visit until something is.
+    expect(within(screen.getByRole('heading', { level: 3, name: 'Tuesday 6 October' }).parentElement!).getByText(NOTHING_RECORDED)).toBeTruthy();
+    expect(day('Tuesday 6 October, selected').hasAttribute('data-visit')).toBe(false);
+    expect(within(section('Calendar')).getByText('1 visit · £60.00')).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(within(tasks).getByRole('checkbox', { name: 'Ironing' }));
+    });
+    expect(day('Tuesday 6 October, visit, 1 of 7 done, selected').hasAttribute('data-visit')).toBe(true);
+    expect(within(section('Calendar')).getByText('2 visits · £60.00')).toBeTruthy();
   });
 
   it('deletes a visit after asking', async () => {
@@ -644,9 +853,37 @@ describe('The chosen day', () => {
       name: 'Today',
     });
     heading.scrollIntoView = vi.fn();
-    fireEvent.click(screen.getByRole('button', { name: 'Show' }));
+    fireEvent.click(screen.getByRole('button', { name: "Show today's visit" }));
     expect(document.activeElement).toBe(heading);
     expect(heading.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it('choosing a day brings its details into view and says what is there; focus stays on the day', () => {
+    setup();
+    const scrolled: { el: Element; opts: unknown }[] = [];
+    const proto = Element.prototype as { scrollIntoView?: unknown };
+    const before = proto.scrollIntoView;
+    proto.scrollIntoView = function (this: Element, opts: unknown) {
+      scrolled.push({ el: this, opts });
+    };
+    try {
+      const sep = day('Tuesday 6 October');
+      act(() => sep.focus());
+      fireEvent.click(sep);
+      const heading = screen.getByRole('heading', { level: 3, name: 'Tuesday 6 October' });
+      expect(scrolled.map((s) => s.el)).toEqual([heading]);
+      expect(scrolled[0].opts).toMatchObject({ block: 'nearest' });
+      expect(said()).toBe('Tuesday 6 October: no visit recorded. Details below the calendar.');
+      expect(document.activeElement).toBe(day('Tuesday 6 October, selected'));
+
+      fireEvent.click(day(/^Thursday 1 October/));
+      expect(said()).toBe('Thursday 1 October: 6 of 7 done, £60.00. Details below the calendar.');
+      fireEvent.click(day(/^Thursday 8 October/));
+      expect(said()).toBe("Thursday 8 October: today's visit is above the calendar.");
+      expect(scrolled).toHaveLength(3);
+    } finally {
+      proto.scrollIntoView = before;
+    }
   });
 
   it('says how to see a visit when nothing is chosen', () => {

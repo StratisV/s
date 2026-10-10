@@ -3,7 +3,7 @@ import { formatDay } from '../../lib/logic/dates';
 import { longDay, visitOn } from '../../lib/logic/housekeeping';
 import type { ISODate } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
-import { ActionSheet } from '../../ui/ActionSheet';
+import { DeleteVisitButton, DeleteVisitSheet } from './DeleteVisit';
 import { VisitEditor } from './VisitEditor';
 import styles from './Housekeeping.module.css';
 
@@ -84,7 +84,7 @@ export function DayDetail({ date, announce, onShowToday }: DayDetailProps) {
         <div className={styles.card}>
           <div className={styles.cardRow}>
             <span className={styles.cardRowText}>Today's visit is above.</span>
-            <button type="button" className={styles.inlineAction} onClick={onShowToday}>
+            <button type="button" className={styles.inlineAction} aria-label="Show today's visit" onClick={onShowToday}>
               Show
             </button>
           </div>
@@ -102,18 +102,16 @@ export function DayDetail({ date, announce, onShowToday }: DayDetailProps) {
             </div>
           </div>
           <div className={styles.gap} />
-          <VisitEditor key={date} date={date} legend={`Tasks on ${heading}`} level={4} announce={announce} />
+          <VisitEditor
+            key={date}
+            date={date}
+            legend={`Tasks on ${heading}`}
+            dayName={heading}
+            level={4}
+            announce={announce}
+          />
           <div className={styles.gap} />
-          <div className={styles.card}>
-            <button
-              type="button"
-              className={styles.deleteButton}
-              aria-haspopup="dialog"
-              onClick={() => setConfirmOpen(true)}
-            >
-              Delete Visit
-            </button>
-          </div>
+          <DeleteVisitButton onPress={() => setConfirmOpen(true)} />
         </>
       ) : (
         <div className={styles.card}>
@@ -123,11 +121,10 @@ export function DayDetail({ date, announce, onShowToday }: DayDetailProps) {
           </button>
         </div>
       )}
-      <ActionSheet
+      <DeleteVisitSheet
         open={confirmOpen && !!visit}
         title={`Delete the visit on ${formatDay(date, today)}?`}
-        message="Its ticks, comments and price will be deleted for everyone."
-        actions={[{ label: 'Delete Visit', destructive: true, onSelect: confirmDelete }]}
+        onConfirm={confirmDelete}
         onCancel={() => setConfirmOpen(false)}
       />
     </div>

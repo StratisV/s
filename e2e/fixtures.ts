@@ -102,9 +102,13 @@ export function addButton(page: Page): Locator {
   return page.getByRole('button', { name: 'New item', exact: true });
 }
 
-/** A tab button. Chat is named "Chat, unread messages" while it has its dot. */
+/**
+ * A tab button. Chat is named "Chat, unread messages" while it has its dot, Housekeeping
+ * "Housekeeping, new message" while it has its.
+ */
 export function tabButton(page: Page, name: TabName): Locator {
-  return tabs(page).getByRole('button', { name: name === 'Chat' ? /^Chat(, unread messages)?$/ : name, exact: true });
+  const dotted = { Chat: /^Chat(, unread messages)?$/, Housekeeping: /^Housekeeping(, new message)?$/ } as const;
+  return tabs(page).getByRole('button', { name: name === 'Chat' || name === 'Housekeeping' ? dotted[name] : name, exact: true });
 }
 
 export async function goToTab(page: Page, name: TabName): Promise<void> {

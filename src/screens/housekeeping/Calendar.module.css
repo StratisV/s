@@ -81,49 +81,72 @@
   vertical-align: middle;
 }
 
-/* A day: a 40px circle with its number (36px on the narrowest phones, the cell's width). */
+/* A day: the whole cell is the button (a tap anywhere in it counts); the 40px circle with
+   its number is drawn inside (36px on the narrowest phones). */
 .day {
-  position: relative;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  display: inline-grid;
+  width: 100%;
+  height: 46px;
+  display: grid;
   place-items: center;
+  /* Square: rounded corners would not take taps. */
+  border-radius: 0;
   font-size: 17px;
   line-height: 22px;
   letter-spacing: -0.4px;
   font-variant-numeric: tabular-nums;
   color: var(--label);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The focus ring goes round the circle, not the cell. */
+.day:focus-visible {
+  outline: none;
+}
+
+.day:focus-visible .circle {
+  outline: 2px solid var(--tint);
+  outline-offset: 1px;
+}
+
+.circle {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
   transition:
     background-color 0.15s ease,
     color 0.15s ease;
 }
 
-.day:active:not(:disabled):not([data-selected]) {
+.day:active:not(:disabled):not([data-selected]) .circle {
   background: var(--fill-tertiary);
-}
-
-.day:focus-visible {
-  outline-offset: 1px;
 }
 
 /* Today: a tint number in a tint ring. */
 .day[data-today] {
   color: var(--tint);
   font-weight: 600;
+}
+
+.day[data-today] .circle {
   box-shadow: inset 0 0 0 1.5px var(--tint);
 }
 
 /* The day shown below the calendar: filled. */
 .day[data-selected] {
-  background: var(--tint);
   color: #fff;
   font-weight: 600;
+}
+
+.day[data-selected] .circle {
+  background: var(--tint);
   box-shadow: none;
 }
 
 /* A day with a visit: a dot under its number. */
-.day[data-visit]::after {
+.day[data-visit] .circle::after {
   content: '';
   position: absolute;
   left: 50%;
@@ -135,7 +158,7 @@
   background: var(--tint);
 }
 
-.day[data-selected][data-visit]::after {
+.day[data-selected][data-visit] .circle::after {
   background: #fff;
 }
 
@@ -148,22 +171,22 @@
 
 @media (max-width: 359px) {
   .card {
-    padding-left: 6px;
-    padding-right: 6px;
+    padding-left: 4px;
+    padding-right: 4px;
   }
 
-  .day {
+  .circle {
     width: 36px;
     height: 36px;
   }
 
-  .day[data-visit]::after {
+  .day[data-visit] .circle::after {
     bottom: 3px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .day {
+  .circle {
     transition: none;
   }
 }

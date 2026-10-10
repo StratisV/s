@@ -24,7 +24,17 @@
 -- limit raises check_violation (SQLSTATE 23514) naming the constraint.
 --
 -- Like the earlier migrations, everything here can be applied again without errors
--- (if not exists, create or replace, drop/create for triggers and policies).
+-- (if not exists, create or replace, drop/create for triggers and policies), and applying
+-- it again changes no data: the one-off backfill at the end runs only on the file's first
+-- run.
+
+-- The first run is the one that creates housekeeping_tasks: remember that for the backfill
+-- of existing households at the end (a setting of this session, cleared there).
+select pg_catalog.set_config(
+  'homeos.housekeeping_backfill',
+  (pg_catalog.to_regclass('public.housekeeping_tasks') is null)::text,
+  false
+);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Tables
@@ -37,8 +47,18 @@ create table if not exists public.housekeeping_notes (
   body text not null default '',
   updated_at timestamptz not null default now(),
   updated_by uuid null references public.members (id) on delete set null,
+  -- What Clear took away, for Undo (undo_clear_housekeeping_note()): the text and who
+  -- changed it last, when. Null unless the message was cleared and nothing written since.
+  cleared_body text null,
+  cleared_updated_at timestamptz null,
+  cleared_updated_by uuid null references public.members (id) on delete set null,
   constraint housekeeping_notes_body_length check (length(body) <= 4000)
 );
+-- For a database that ran an earlier draft of this file without them.
+alter table public.housekeeping_notes add column if not exists cleared_body text null;
+alter table public.housekeeping_notes add column if not exists cleared_updated_at timestamptz null;
+alter table public.housekeeping_notes
+  add column if not exists cleared_updated_by uuid null references public.members (id) on delete set null;
 
 -- The task list. position orders it (0 first); a new task always goes last (trigger).
 create table if not exists public.housekeeping_tasks (
@@ -100,6 +120,7 @@ create table if not exists public.housekeeping_visit_tasks (
 -- ─────────────────────────────────────────────────────────────────────────────
 
 create index if not exists housekeeping_notes_updated_by_idx on public.housekeeping_notes (updated_by);
+create index if not exists housekeeping_notes_cleared_updated_by_idx on public.housekeeping_notes (cleared_updated_by);
 create index if not exists housekeeping_tasks_household_idx on public.housekeeping_tasks (household_id, position);
 create index if not exists housekeeping_visits_created_by_idx on public.housekeeping_visits (created_by);
 create index if not exists housekeeping_visits_updated_by_idx on public.housekeeping_visits (updated_by);
@@ -245,11 +266,15 @@ begin
   values (p_household_id, p_visit_date, coalesce(v_note, ''), p_member_id, p_member_id)
   returning id into v_visit_id;
 
+  -- FOR KEY SHARE: a task being deleted at this moment is waited for and then skipped (not
+  -- copied and left to fail the foreign key); a copied task can't be deleted until this
+  -- transaction ends. Renames and moves don't wait on it.
   insert into public.housekeeping_visit_tasks (visit_id, household_id, task_id, title, position)
   select v_visit_id, p_household_id, t.id, t.title, t.position
   from public.housekeeping_tasks t
   where t.household_id = p_household_id
-  order by t.position, t.created_at, t.id;
+  order by t.position, t.created_at, t.id
+  for key share of t;
 
   return v_visit_id;
 end;
@@ -312,8 +337,9 @@ create trigger housekeeping_tasks_after_insert
   after insert on public.housekeeping_tasks
   for each row execute function public.housekeeping_tasks_after_insert();
 
--- AFTER UPDATE: a renamed or moved task is renamed or moved on today's visit too (ticked
--- or not: it is the same task on the same day).
+-- AFTER UPDATE: a moved task moves on today's visit too, and a renamed one is renamed there
+-- unless it is ticked: a ticked row is a record of what was done, so it keeps the title it
+-- was ticked under (as a ticked row stays when its task is deleted).
 create or replace function public.housekeeping_tasks_after_update()
 returns trigger
 language plpgsql
@@ -324,7 +350,8 @@ begin
   if new.title is distinct from old.title or new.position is distinct from old.position then
     perform public.housekeeping_lock(new.household_id);
     update public.housekeeping_visit_tasks vt
-    set title = new.title, position = new.position
+    set title = case when vt.done then vt.title else new.title end,
+        position = new.position
     from public.housekeeping_visits v
     where vt.visit_id = v.id
       and vt.task_id = new.id
@@ -344,7 +371,8 @@ create trigger housekeeping_tasks_after_update
 -- row stays, as history, with task_id null from the foreign key). It runs before the row
 -- goes because the foreign key clears task_id first otherwise. No housekeeping_lock here:
 -- the row being deleted is already locked, and a visit being created at the same moment
--- waits on that row lock instead (it then fails cleanly if the task is gone).
+-- waits on that row lock instead (its copy of the list locks each task FOR KEY SHARE),
+-- then leaves the task out if it is gone.
 create or replace function public.housekeeping_tasks_before_delete()
 returns trigger
 language plpgsql
@@ -376,6 +404,8 @@ create trigger housekeeping_tasks_before_delete
 -- set_housekeeping_note: replace the message with p_body, trimmed ('' clears it), stamping
 -- who and when. The same text again changes nothing (the stamp stays), and clearing a
 -- message that was never written stores nothing. Too long: housekeeping_notes_body_length.
+-- Clearing keeps the message it took away (text, who and when) for Undo; writing a new one
+-- forgets it.
 create or replace function public.set_housekeeping_note(p_household_id uuid, p_body text)
 returns void
 language plpgsql
@@ -406,8 +436,50 @@ begin
   insert into public.housekeeping_notes as n (household_id, body, updated_at, updated_by)
   values (p_household_id, v_body, now(), v_member_id)
   on conflict (household_id) do update
-    set body = excluded.body, updated_at = excluded.updated_at, updated_by = excluded.updated_by
+    set body = excluded.body,
+        updated_at = excluded.updated_at,
+        updated_by = excluded.updated_by,
+        cleared_body = case when excluded.body = '' then n.body end,
+        cleared_updated_at = case when excluded.body = '' then n.updated_at end,
+        cleared_updated_by = case when excluded.body = '' then n.updated_by end
     where n.body is distinct from excluded.body;
+end;
+$$;
+
+-- undo_clear_housekeeping_note: Undo after Clear. Puts back the message Clear took away as
+-- it was, with who wrote it and when (not as a new edit by the caller). Only while the
+-- message is still empty: if anyone has written one since, that one stays and nothing
+-- changes; nothing to put back changes nothing either.
+create or replace function public.undo_clear_housekeeping_note(p_household_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null then
+    raise exception 'not_signed_in';
+  end if;
+  if not exists (
+    select 1 from public.members m
+    where m.user_id = v_uid and m.household_id = p_household_id
+  ) then
+    raise exception 'not_found';
+  end if;
+
+  update public.housekeeping_notes n
+  set body = n.cleared_body,
+      updated_at = n.cleared_updated_at,
+      updated_by = n.cleared_updated_by,
+      cleared_body = null,
+      cleared_updated_at = null,
+      cleared_updated_by = null
+  where n.household_id = p_household_id
+    and n.body = ''
+    and n.cleared_body is not null
+    and n.cleared_updated_at is not null;
 end;
 $$;
 
@@ -784,16 +856,21 @@ end;
 $$;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Existing households: the starter task list, once. Only households with no task and no
--- visit get it, so applying this file again never refills a list that was emptied after
--- visits were recorded.
+-- Existing households: the starter task list, once, on this file's first run (see the
+-- setting at the top), and only for households with no task and no visit. Applying the
+-- file again never refills a list someone emptied.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 do $$
 declare
+  v_first_run boolean := coalesce(current_setting('homeos.housekeeping_backfill', true), '') = 'true';
   v_household_id uuid;
   v_task_title text;
 begin
+  perform pg_catalog.set_config('homeos.housekeeping_backfill', '', false);
+  if not v_first_run then
+    return;
+  end if;
   for v_household_id in
     select h.id
     from public.households h
@@ -816,7 +893,8 @@ $$;
 -- Table privileges decide WHAT a signed-in user may do, policies decide WHERE (only their
 -- own household). Supabase grants anon and authenticated everything on new tables and
 -- functions in public by default, so all of it is revoked first and granted back.
---   housekeeping_notes        read; written by set_housekeeping_note()
+--   housekeeping_notes        read; written by set_housekeeping_note() and
+--                             undo_clear_housekeeping_note()
 --   housekeeping_tasks        read, add (household_id, title), rename (title), delete;
 --                             positions by reorder_housekeeping_tasks()
 --   housekeeping_visits       read, delete; written by the RPCs
@@ -892,11 +970,13 @@ create policy housekeeping_visit_tasks_select on public.housekeeping_visit_tasks
 -- Functions: the RPCs for signed-in users; the helpers and triggers for nobody but the
 -- owner (and the service role, for the plain helpers).
 revoke all on function public.set_housekeeping_note(uuid, text) from public, anon;
+revoke all on function public.undo_clear_housekeeping_note(uuid) from public, anon;
 revoke all on function public.reorder_housekeeping_tasks(uuid, uuid[]) from public, anon;
 revoke all on function public.add_housekeeping_visit(uuid, date) from public, anon;
 revoke all on function public.tick_housekeeping_task(uuid, date, uuid, uuid, boolean) from public, anon;
 revoke all on function public.save_housekeeping_visit(uuid, date, jsonb) from public, anon;
 grant execute on function public.set_housekeeping_note(uuid, text) to authenticated, service_role;
+grant execute on function public.undo_clear_housekeeping_note(uuid) to authenticated, service_role;
 grant execute on function public.reorder_housekeeping_tasks(uuid, uuid[]) to authenticated, service_role;
 grant execute on function public.add_housekeeping_visit(uuid, date) to authenticated, service_role;
 grant execute on function public.tick_housekeeping_task(uuid, date, uuid, uuid, boolean) to authenticated, service_role;

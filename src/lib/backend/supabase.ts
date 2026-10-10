@@ -943,6 +943,11 @@ export class SupabaseBackend implements Backend {
     await run<null>(this.client.rpc('set_housekeeping_note', { p_household_id: householdId, p_body: body ?? '' }));
   }
 
+  async undoClearHousekeepingNote(householdId: string): Promise<void> {
+    requireUuid(householdId);
+    await run<null>(this.client.rpc('undo_clear_housekeeping_note', { p_household_id: householdId }));
+  }
+
   async createHousekeepingTask(householdId: string, title: string): Promise<HousekeepingTask> {
     const clean = requireText(title, 'title');
     requireUuid(householdId);

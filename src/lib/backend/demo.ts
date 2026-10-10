@@ -232,6 +232,10 @@ interface HousekeepingNoteRow {
   body: string;
   updated_at: ISOTimestamp;
   updated_by: string | null;
+  /** What the last Clear took away, for Undo; null (or absent, in older documents) otherwise. */
+  cleared_body?: string | null;
+  cleared_updated_at?: ISOTimestamp | null;
+  cleared_updated_by?: string | null;
 }
 interface HousekeepingTaskRow extends HousekeepingTask {
   created_at: ISOTimestamp;
@@ -1678,9 +1682,35 @@ export class DemoBackend implements Backend {
       const note = doc.housekeeping_notes.find((n) => n.household_id === householdId);
       // The same text again keeps the stamp; clearing a message never written stores nothing.
       if (note ? note.body === text : text === '') return;
-      const row: HousekeepingNoteRow = { household_id: householdId, body: text, updated_at: this.stamp(), updated_by: me.id };
+      // Clearing keeps what it took away, for Undo; writing a new message forgets it.
+      const row: HousekeepingNoteRow = {
+        household_id: householdId,
+        body: text,
+        updated_at: this.stamp(),
+        updated_by: me.id,
+        cleared_body: text === '' && note ? note.body : null,
+        cleared_updated_at: text === '' && note ? note.updated_at : null,
+        cleared_updated_by: text === '' && note ? note.updated_by : null,
+      };
       if (note) Object.assign(note, row);
       else doc.housekeeping_notes.push(row);
+    });
+  }
+
+  undoClearHousekeepingNote(householdId: string): Promise<void> {
+    return this.mutate((doc) => {
+      this.memberOf(doc, householdId);
+      const note = doc.housekeeping_notes.find((n) => n.household_id === householdId);
+      // Only while it is still empty, and only what Clear took away.
+      if (!note || note.body !== '' || note.cleared_body == null || note.cleared_updated_at == null) return;
+      Object.assign(note, {
+        body: note.cleared_body,
+        updated_at: note.cleared_updated_at,
+        updated_by: note.cleared_updated_by ?? null,
+        cleared_body: null,
+        cleared_updated_at: null,
+        cleared_updated_by: null,
+      });
     });
   }
 
@@ -1698,9 +1728,10 @@ export class DemoBackend implements Backend {
       const task = this.taskIn(doc, this.meIn(doc), id);
       if (task.title === clean) return;
       task.title = clean;
-      // Today's visit follows, ticked or not; earlier visits keep the title they had.
+      // Today's visit follows unless the task is ticked there (a ticked row keeps the title it
+      // was ticked under, as history); earlier visits keep the title they had.
       const row = this.todaysRowFor(doc, task);
-      if (row) row.title = clean;
+      if (row && !row.done) row.title = clean;
     });
   }
 

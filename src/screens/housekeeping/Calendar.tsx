@@ -37,11 +37,13 @@ function weekdayIndex(date: ISODate): number {
  * The month of visits: a card with the month's title between previous and next, the
  * month's total ("4 visits · £180.00"), then the days as a grid, Monday first. Visit days
  * have a dot, today a ring, the selected day is filled; days after today are dimmed and
- * can't be chosen (and next month is off once it would be all future).
+ * can't be chosen (and next month is off once it would be all future). Each day's button
+ * fills its cell, so a tap anywhere in the cell chooses it; the circle is drawn inside.
  *
  * Assistive tech gets a grid labelled by the month: column headers name the weekdays, each
  * day button reads its full date and visit ("Thursday 1 October, visit, 6 of 7 done,
- * £60.00"), and one day is in the tab order; the arrow keys move a day or a week, Home and
+ * £60.00", then ", selected" for the chosen day, as focus is on the button rather than its
+ * cell), and one day is in the tab order; the arrow keys move a day or a week, Home and
  * End go to the start and end of the week, Page Up and Page Down change month.
  */
 export function Calendar({ month, onMonth, selected, onSelect, today, visits }: CalendarProps) {
@@ -171,7 +173,7 @@ export function Calendar({ month, onMonth, selected, onSelect, today, visits }: 
                       data-today={date === today || undefined}
                       data-selected={date === selected || undefined}
                       data-visit={marked.has(date) || undefined}
-                      aria-label={calendarDayLabel(date, today, visitOn(visits, date))}
+                      aria-label={calendarDayLabel(date, today, visitOn(visits, date), date === selected)}
                       tabIndex={date === tabStop ? 0 : -1}
                       disabled={!canHaveVisit(date, today)}
                       onClick={() => {
@@ -180,7 +182,7 @@ export function Calendar({ month, onMonth, selected, onSelect, today, visits }: 
                       }}
                       onKeyDown={(e) => onKeyDown(e, date)}
                     >
-                      {parseISODate(date).d}
+                      <span className={styles.circle}>{parseISODate(date).d}</span>
                     </button>
                   </td>
                 ) : (

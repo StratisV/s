@@ -5,6 +5,7 @@ import { HomeScreen } from './screens/home/HomeScreen';
 import { AddButton, TabBar } from './screens/home/TabBar';
 import { HousekeepingScreen } from './screens/housekeeping/HousekeepingScreen';
 import { TaskListSheet } from './screens/housekeeping/TaskListSheet';
+import { useNewNote } from './screens/housekeeping/useNewNote';
 import { ItemSheet } from './screens/item/ItemSheet';
 import { Onboarding } from './screens/onboarding/Onboarding';
 import { ProfileScreen } from './screens/profile/ProfileScreen';
@@ -75,6 +76,42 @@ function takeFocusReturn(stage: HTMLElement | null): FocusReturn | null {
   return { target: el, nearby, section: el.closest('section') };
 }
 
+/**
+ * After the task list sheet closes when it was opened by a tap (VoiceOver's double tap is
+ * one too): back to the button that opened it, or Edit task list if that has gone (Add
+ * tasks goes once there are tasks). Programmatic focus after a tap shows no ring.
+ */
+function returnToOpener(opener: HTMLElement, stage: HTMLElement) {
+  const active = document.activeElement;
+  if (active && active !== document.body && !active.closest('[role="dialog"]')) return;
+  const target =
+    opener.isConnected && stage.contains(opener)
+      ? opener
+      : stage.querySelector<HTMLElement>('button[aria-label="Edit task list"]');
+  target?.focus({ preventScroll: true });
+}
+
+const TAB_IDS: readonly Tab[] = ['home', 'chat', 'housekeeping', 'stats'];
+/** Where this device keeps the tab last open, so the app reopens on it. */
+const TAB_KEY = 'homeos.tab';
+
+function loadTab(): Tab {
+  try {
+    const stored = localStorage.getItem(TAB_KEY);
+    return TAB_IDS.find((t) => t === stored) ?? 'home';
+  } catch {
+    return 'home';
+  }
+}
+
+function storeTab(tab: Tab) {
+  try {
+    localStorage.setItem(TAB_KEY, tab);
+  } catch {
+    /* storage unavailable: the app opens on Home */
+  }
+}
+
 function restoreFocus({ target, nearby, section }: FocusReturn, stage: HTMLElement) {
   // Only when focus was left behind (on the page, or in the closing sheet).
   const active = document.activeElement;
@@ -101,13 +138,21 @@ function MainApp() {
 
 function MainShell() {
   const { unread } = useChat();
-  const [tab, setTab] = useState<Tab>('home');
+  // The tab last open on this device (the housekeeper reopens on Housekeeping).
+  const [tab, setTab] = useState<Tab>(loadTab);
+  useEffect(() => storeTab(tab), [tab]);
+  const newNote = useNewNote(tab === 'housekeeping');
   const [sheetTarget, setSheetTarget] = useState<ItemSheetTarget | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetKey, setSheetKey] = useState(0);
   const [profileOpen, setProfileOpen] = useState(false);
-  // Housekeeping's task list sheet (a page sheet, like the Item sheet).
+  // Housekeeping's task list sheet (a page sheet, like the Item sheet), and the button that opened it.
   const [taskListOpen, setTaskListOpen] = useState(false);
+  const taskListOpener = useRef<HTMLElement | null>(null);
+  const openTaskList = useCallback((opener: HTMLElement) => {
+    taskListOpener.current = opener;
+    setTaskListOpen(true);
+  }, []);
   const pushed = sheetOpen || taskListOpen;
   // The area an item was just saved into, for Home to expand if it is collapsed.
   const [revealArea, setRevealArea] = useState<string | null>(null);
@@ -153,13 +198,19 @@ function MainShell() {
     };
   }, [profileOpen, pushed]);
 
-  // Once the stage is interactive again, focus goes back to the row (or the + button).
+  // Once the stage is interactive again, focus goes back to the row (or the + button); from
+  // the task list, to the button that opened it, however it was opened.
   // The Profile cover returns focus itself (ProfileScreen).
   useEffect(() => {
     if (covered) return;
     const ret = sheetReturn.current;
     sheetReturn.current = null;
-    if (ret && stageRef.current) restoreFocus(ret, stageRef.current);
+    const opener = taskListOpener.current;
+    taskListOpener.current = null;
+    const stage = stageRef.current;
+    if (!stage) return;
+    if (ret) restoreFocus(ret, stage);
+    else if (opener) returnToOpener(opener, stage);
   }, [covered]);
 
   const openSheet = useCallback((target: ItemSheetTarget) => {
@@ -184,7 +235,7 @@ function MainShell() {
   }, []);
 
   // The tab switch sits under the hero on every tab.
-  const tabs = <TabBar tab={tab} onTab={switchTab} unread={unread} />;
+  const tabs = <TabBar tab={tab} onTab={switchTab} unread={unread} newNote={newNote} />;
 
   return (
     <div className={styles.main} data-pushed={pushed || undefined}>
@@ -206,7 +257,7 @@ function MainShell() {
           <HousekeepingScreen
             tabs={tabs}
             onOpenProfile={() => setProfileOpen(true)}
-            onEditTasks={() => setTaskListOpen(true)}
+            onEditTasks={openTaskList}
           />
         ) : (
           <StatsScreen tabs={tabs} onOpenProfile={() => setProfileOpen(true)} />

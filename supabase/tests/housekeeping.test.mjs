@@ -102,7 +102,14 @@ describe('structure', () => {
        where n.nspname = 'public'`,
     );
     const byName = Object.fromEntries(rows.map((r) => [r.proname, r]));
-    for (const name of ['set_housekeeping_note', 'reorder_housekeeping_tasks', 'add_housekeeping_visit', 'tick_housekeeping_task', 'save_housekeeping_visit']) {
+    for (const name of [
+      'set_housekeeping_note',
+      'undo_clear_housekeeping_note',
+      'reorder_housekeeping_tasks',
+      'add_housekeeping_visit',
+      'tick_housekeeping_task',
+      'save_housekeeping_visit',
+    ]) {
       assert.ok(byName[name], `missing ${name}`);
       assert.equal(byName[name].prosecdef, true, `${name} security definer`);
       assert.equal(byName[name].auth_exec, true, `authenticated cannot execute ${name}`);
@@ -234,6 +241,52 @@ describe('the message for the housekeeper', () => {
     const cleared = await one('select * from public.housekeeping_notes where household_id = $1', [h.id]);
     assert.equal(cleared.body, '');
     assert.equal(cleared.updated_by, h.member.id);
+  });
+
+  test('Undo after Clear puts the message back as it was: text, who and when', async () => {
+    const g = await createHousehold({ name: 'Undo home' });
+    const ela = await joinHousehold(g, { name: 'Ela', emoji: '🦊' });
+    const note = () => one('select * from public.housekeeping_notes where household_id = $1', [g.id]);
+    // Nothing cleared yet: nothing to put back.
+    await rpc(g.owner, 'undo_clear_housekeeping_note', [g.id]);
+    assert.equal(await note(), undefined);
+    await rpc(ela.user, 'set_housekeeping_note', [g.id, 'Spare room first.']);
+    const written = await note();
+    assert.deepEqual([written.cleared_body, written.cleared_updated_at, written.cleared_updated_by], [null, null, null]);
+
+    // The owner clears it, then undoes: Ela's message, under Ela's name and time.
+    await rpc(g.owner, 'set_housekeeping_note', [g.id, '']);
+    const cleared = await note();
+    assert.deepEqual([cleared.body, cleared.updated_by], ['', g.member.id]);
+    assert.equal(cleared.cleared_body, 'Spare room first.');
+    await rpc(g.owner, 'undo_clear_housekeeping_note', [g.id]);
+    const back = await note();
+    assert.equal(back.body, 'Spare room first.');
+    assert.equal(back.updated_by, ela.member.id);
+    assert.equal(back.updated_at.getTime(), written.updated_at.getTime());
+    assert.deepEqual([back.cleared_body, back.cleared_updated_at, back.cleared_updated_by], [null, null, null]);
+    // Once is enough: a second Undo changes nothing.
+    await rpc(g.owner, 'undo_clear_housekeeping_note', [g.id]);
+    assert.deepEqual(await note(), back);
+
+    // Clearing an empty message again keeps what the first Clear took away.
+    await rpc(g.owner, 'set_housekeeping_note', [g.id, '']);
+    await rpc(ela.user, 'set_housekeeping_note', [g.id, '  ']);
+    assert.equal((await note()).cleared_body, 'Spare room first.');
+
+    // Someone writes a new message after the Clear: Undo leaves theirs alone.
+    await rpc(ela.user, 'set_housekeeping_note', [g.id, 'Oven too, please.']);
+    assert.equal((await note()).cleared_body, null);
+    await rpc(g.owner, 'undo_clear_housekeeping_note', [g.id]);
+    assert.deepEqual([(await note()).body, (await note()).updated_by], ['Oven too, please.', ela.member.id]);
+
+    // Outsiders, anon and the signed out are refused.
+    await rpc(g.owner, 'set_housekeeping_note', [g.id, '']);
+    const outsider = await createHousehold({ name: 'Elsewhere' });
+    await rejects(rpc(outsider.owner, 'undo_clear_housekeeping_note', [g.id]), 'not_found');
+    await rejects(rpc(null, 'undo_clear_housekeeping_note', [g.id]), /permission denied/);
+    await rejects(rpc({ claims: { role: 'authenticated' } }, 'undo_clear_housekeeping_note', [g.id]), 'not_signed_in');
+    assert.equal((await note()).body, '');
   });
 
   test('up to 4000 characters; outsiders, anon and the signed out are refused', async () => {
@@ -439,6 +492,31 @@ describe("task list edits reach today's visit, never earlier ones", () => {
     assert.equal(old[0].title, 'Change the bed sheets');
   });
 
+  test("rename: a row already ticked today keeps the title it was ticked under; its place follows", async () => {
+    const g = await createHousehold({ name: 'Ticked rename home' });
+    const housekeeper = await joinHousehold(g, { name: 'Housekeeper', emoji: '🦊' });
+    const day = await todayIn('Europe/London');
+    const tasks = await tasksOf(g.id);
+    const ironing = tasks.find((t) => t.title === 'Ironing');
+    const bins = tasks.find((t) => t.title === 'Empty the bins');
+    await tick(housekeeper.user, g.id, day, { taskId: ironing.id }, true);
+    // Repurposed for next week, and moved to the top.
+    await q(g.owner, "update public.housekeeping_tasks set title = 'Clean the windows' where id = $1", [ironing.id]);
+    await q(g.owner, "update public.housekeeping_tasks set title = 'Bins and recycling' where id = $1", [bins.id]);
+    await rpc(g.owner, 'reorder_housekeeping_tasks', [g.id, [ironing.id, ...tasks.filter((t) => t !== ironing).map((t) => t.id)]]);
+    const rows = await rowsOf((await visitOn(g.id, day)).id);
+    assert.deepEqual(
+      [rows[0].title, rows[0].task_id, rows[0].done, rows[0].done_by],
+      ['Ironing', ironing.id, true, housekeeper.member.id],
+    );
+    // A row not ticked is the same task still to do: it takes the new title.
+    assert.equal(rows.find((r) => r.task_id === bins.id).title, 'Bins and recycling');
+    // Unticked later, it stays as it was ticked; the next rename reaches it.
+    await tick(housekeeper.user, g.id, day, { taskId: ironing.id }, false);
+    await q(g.owner, "update public.housekeeping_tasks set title = 'Windows, inside' where id = $1", [ironing.id]);
+    assert.equal((await rowsOf((await visitOn(g.id, day)).id))[0].title, 'Windows, inside');
+  });
+
   test('delete: today drops it unless ticked; earlier visits keep it with task_id null', async () => {
     const tasks = await tasksOf(h.id);
     const ticked = tasks.find((t) => t.title === 'Ironing');
@@ -462,14 +540,28 @@ describe("task list edits reach today's visit, never earlier ones", () => {
 });
 
 describe('existing households get the starter list once', () => {
-  test('applying the migration again refills an empty list only when there are no visits', async () => {
-    const empty = await createHousehold({ name: 'Emptied' });
+  const FIRST_RUN = "(pg_catalog.to_regclass('public.housekeeping_tasks') is null)::text";
+
+  test('the first run gives it to households with no task and no visit', async () => {
+    const empty = await createHousehold({ name: 'Before housekeeping' });
     const withVisits = await createHousehold({ name: 'Emptied after a visit' });
     await rpc(withVisits.owner, 'add_housekeeping_visit', [withVisits.id, await todayIn('Europe/London')]);
     await db('delete from public.housekeeping_tasks where household_id = any($1)', [[empty.id, withVisits.id]]);
-    await db(fs.readFileSync(MIGRATION, 'utf8'));
+    // As on a database where housekeeping_tasks did not exist yet.
+    const sql = fs.readFileSync(MIGRATION, 'utf8');
+    assert.ok(sql.includes(FIRST_RUN));
+    await db(sql.replace(FIRST_RUN, "'true'"));
     assert.deepEqual((await tasksOf(empty.id)).map((t) => t.title), STARTER);
     assert.equal((await tasksOf(withVisits.id)).length, 0);
+    // The run cleared its setting behind it.
+    assert.equal((await one("select coalesce(current_setting('homeos.housekeeping_backfill', true), '') as v")).v, '');
+  });
+
+  test('applying the migration again never refills a list someone emptied', async () => {
+    const emptied = await createHousehold({ name: 'Emptied on purpose' });
+    await db('delete from public.housekeeping_tasks where household_id = $1', [emptied.id]);
+    await db(fs.readFileSync(MIGRATION, 'utf8'));
+    assert.equal((await tasksOf(emptied.id)).length, 0);
   });
 });
 
@@ -846,6 +938,51 @@ describe('concurrency', () => {
     rows = await rowsOf((await visitOn(g.id, day)).id);
     assert.ok(rows.some((r) => r.title === 'Fridge'));
     assert.ok(yesterday);
+  });
+
+  test("a task deleted while today's visit is being created is left out; the tick on another task stays", async () => {
+    const g = await createHousehold({ name: 'Delete race home' });
+    const day = await todayIn('Europe/London');
+    const tasks = await tasksOf(g.id);
+    const [gone, kept] = [tasks[0], tasks[1]];
+    const deleter = await session(g.owner);
+    const ticker = await session(g.owner);
+    let visitId;
+    try {
+      await deleter.query('delete from public.housekeeping_tasks where id = $1', [gone.id]);
+      const ticking = ticker.query(TICK, [g.id, day, kept.id, null, true]);
+      assert.equal(await stillWaiting(ticking), true, 'the copy waits for the delete');
+      await deleter.commit();
+      visitId = (await ticking).rows[0].id;
+      await ticker.commit();
+    } finally {
+      await deleter.rollback();
+      await ticker.rollback();
+    }
+    assert.equal(await visitCount(g.id), 1);
+    const rows = await rowsOf(visitId);
+    assert.deepEqual(rows.map((r) => r.task_id), tasks.slice(1).map((t) => t.id));
+    assert.deepEqual(rows.filter((r) => r.done).map((r) => r.task_id), [kept.id]);
+
+    // The other way round: the visit's copy first, then the delete waits for it and
+    // runs its trigger on the new visit (the untouched row goes from today's visit).
+    const h2 = await createHousehold({ name: 'Delete race home 2' });
+    const tasks2 = await tasksOf(h2.id);
+    const ticker2 = await session(h2.owner);
+    const deleter2 = await session(h2.owner);
+    try {
+      await ticker2.query(TICK, [h2.id, day, tasks2[1].id, null, true]);
+      const deleting = deleter2.query('delete from public.housekeeping_tasks where id = $1', [tasks2[0].id]);
+      assert.equal(await stillWaiting(deleting), true, 'the delete waits for the visit');
+      await ticker2.commit();
+      assert.equal((await deleting).rowCount, 1);
+      await deleter2.commit();
+    } finally {
+      await ticker2.rollback();
+      await deleter2.rollback();
+    }
+    const rows2 = await rowsOf((await visitOn(h2.id, day)).id);
+    assert.deepEqual(rows2.map((r) => r.task_id), tasks2.slice(1).map((t) => t.id));
   });
 
   test("a task renamed while today's visit is being created shows its new title there", async () => {

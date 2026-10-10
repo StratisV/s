@@ -1850,6 +1850,16 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     await B().setHousekeepingNote(hidA, '🦔'.repeat(4000));
     expect((await loadA()).housekeeping.note).toMatchObject({ body: '🦔'.repeat(4000), updated_by: memberB });
     await B().setHousekeepingNote(hidA, note.body);
+    const written = (await loadA()).housekeeping.note;
+
+    // Undo after Clear puts it back as it was, under B's name and time, not as A's edit.
+    await A().setHousekeepingNote(hidA, '');
+    expect((await loadA()).housekeeping.note).toMatchObject({ body: '', updated_by: memberA });
+    await A().undoClearHousekeepingNote(hidA);
+    expect((await B().load(hidA)).housekeeping.note).toEqual(written);
+    // Nothing more to put back: the same again changes nothing.
+    await A().undoClearHousekeepingNote(hidA);
+    expect((await loadA()).housekeeping.note).toEqual(written);
   });
 
   it("housekeeping: the first tick creates today's visit; ticks, comments and the price save on their own", async () => {
@@ -1988,6 +1998,17 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     await rejectsWith(A().createHousekeepingTask(hidA, 'x'.repeat(201)), 'unknown', /invalid_input: housekeeping_tasks_title_length/);
     await rejectsWith(A().renameHousekeepingTask(added.id, '  '), 'unknown', /invalid_input: title/);
     await rejectsWith(A().deleteHousekeepingTask(bins.id), 'not_found');
+
+    // A row ticked today (Dust the surfaces, by the tick test) keeps the title it was ticked under.
+    const dust = tasks[4];
+    await B().renameHousekeepingTask(dust.id, 'Dust and polish');
+    const renamed = await loadA();
+    expect(renamed.housekeeping.tasks.find((t) => t.id === dust.id)!.title).toBe('Dust and polish');
+    expect(visitOnDay(renamed, today)!.tasks.find((r) => r.task_id === dust.id)).toMatchObject({
+      title: 'Dust the surfaces',
+      done: true,
+    });
+    await B().renameHousekeepingTask(dust.id, 'Dust the surfaces');
   });
 
   it('housekeeping: outsiders see and change nothing', async () => {

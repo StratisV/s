@@ -401,8 +401,9 @@ test.describe('People', () => {
     await expect(legend).toHaveText(['🦔Stratis4', '🐧Shay2', '🦊Ela1']);
     await expect(statsScreen(page).getByRole('img', { name: /Stratis 4, Shay 2, Ela 1\.$/ })).toBeVisible();
 
-    // Stored, not just on screen.
+    // Stored, not just on screen (the app reopens on Stats, the tab last open).
     await reopen(page);
+    await goToTab(page, 'Home');
     await expect(meta(page, 'Heaters not working')).toHaveText('🐧 Shay · Missed · Tue 6 Oct');
   });
 });
