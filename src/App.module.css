@@ -21,24 +21,6 @@
   background: var(--bg);
 }
 
-.error {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  padding: 24px;
-  text-align: center;
-  color: var(--label-secondary);
-}
-
-.error button {
-  color: var(--tint);
-  font-weight: 600;
-}
-
 .main {
   position: absolute;
   inset: 0;

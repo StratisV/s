@@ -85,6 +85,13 @@
   opacity: 1;
 }
 
+/* A pinned title gives way on narrow phones (320 px), where it would run into the back button. */
+@media (max-width: 359px) {
+  .title[data-pinned] {
+    visibility: hidden;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .bar,
   .title {

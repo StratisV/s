@@ -10,6 +10,9 @@
 //   two more days to catch up if a run was missed). To the assignee and the owner(s).
 // - Weekly email: on weekly_email_day at or after weekly_email_time, to every member with
 //   weekly_email on and an email address.
+// - Someone who has not joined yet (user_id null) gets nothing: no reminder, no missed alert,
+//   no weekly email (they have no browser to push to, and their email is only for signing in).
+//   An item assigned to them still sends its missed alert to the owner(s).
 // - A state (To maintain) never gets a reminder or a missed alert (it has no due date
 //   anyway); the weekly email lists it under its area, marked "To maintain".
 
@@ -140,7 +143,7 @@ export function planNotifications(input: PlanInput): Plan {
         const seen = new Set<string>();
         for (const id of ids) {
           const m = memberById.get(id);
-          if (m && m.push_enabled && !seen.has(id)) {
+          if (m && m.push_enabled && m.user_id !== null && !seen.has(id)) {
             seen.add(id);
             out.push(m);
           }
@@ -201,7 +204,7 @@ export function planNotifications(input: PlanInput): Plan {
     // ── Weekly email ──
     const nowMinutes = local.hour * 60 + local.minute;
     if (local.weekday === household.weekly_email_day && nowMinutes >= minutesOfDay(household.weekly_email_time)) {
-      const recipients = members.filter((m) => m.weekly_email && m.email.trim() !== '');
+      const recipients = members.filter((m) => m.user_id !== null && m.weekly_email && m.email.trim() !== '');
       if (recipients.length) {
         const rendered = renderWeeklyEmail({
           household,

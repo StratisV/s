@@ -1,5 +1,6 @@
 import { useId, type FormEvent } from 'react';
 import { Avatar } from '../../ui/Avatar';
+import { ChevronLeftIcon } from '../../ui/icons';
 import { EmojiGrid } from './EmojiGrid';
 import shared from './Onboarding.module.css';
 import styles from './ProfileStep.module.css';
@@ -17,12 +18,14 @@ interface ProfileStepProps {
   value: ProfileDraft;
   onChange(next: ProfileDraft): void;
   onContinue(): void;
+  /** Back to the previous step (the offer of the phone's home, after Start Fresh); none when this is the first. */
+  onBack?(): void;
   onSignOut(): void;
   signingOut: boolean;
 }
 
 /** Step 2: name (prefilled from Google) and emoji, from the same grid as Profile. */
-export function ProfileStep({ enter, email, value, onChange, onContinue, onSignOut, signingOut }: ProfileStepProps) {
+export function ProfileStep({ enter, email, value, onChange, onContinue, onBack, onSignOut, signingOut }: ProfileStepProps) {
   const nameId = useId();
   const emojiHeadingId = useId();
   const ready = value.name.trim().length > 0;
@@ -37,9 +40,22 @@ export function ProfileStep({ enter, email, value, onChange, onContinue, onSignO
       label="Your profile"
       enter={enter}
       nav={
-        <button type="button" className={shared.navButton} onClick={onSignOut} disabled={signingOut}>
-          Sign Out
-        </button>
+        <>
+          {onBack ? (
+            <button type="button" className={shared.navButton} onClick={onBack} disabled={signingOut}>
+              <ChevronLeftIcon size={20} />
+              Back
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className={`${shared.navButton} ${onBack ? shared.navEnd : ''}`}
+            onClick={onSignOut}
+            disabled={signingOut}
+          >
+            Sign Out
+          </button>
+        </>
       }
     >
       <form className={shared.form} onSubmit={submit} noValidate>

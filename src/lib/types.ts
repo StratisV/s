@@ -36,8 +36,21 @@ export interface Household {
 export interface Member {
   id: string;
   household_id: string;
-  user_id: string;
+  /**
+   * The person's account (Supabase auth user id), or null while they have not joined yet
+   * ("Not joined yet"): someone at home added them (Household > People > Add Person, or the
+   * import from a phone) and they become this person the first time they sign in with
+   * `email`. Until then they can be assigned items and show in the person filter, Stats and
+   * the Item sheet like anyone else; they get no pushes or weekly email. Use hasJoined() from
+   * lib/logic/people.ts rather than comparing with null.
+   */
+  user_id: string | null;
   name: string;
+  /**
+   * Lower-case, trimmed Google email ('' when unknown). For someone who has joined, their
+   * account's email. For someone who has not, the email they will sign in with ('' until
+   * someone adds it). Unique within the home (case-insensitive; blank ones aside).
+   */
   email: string;
   emoji: string;
   /** Hex colour, assigned in join order from MEMBER_COLORS. */
@@ -137,6 +150,21 @@ export interface HouseholdData {
 export interface InvitePreview {
   household_name: string;
   address: string;
+  /**
+   * The people in the home who have not joined yet and have no email, in join order: the Join
+   * screen asks "Are you one of these people?", so nobody ends up there twice
+   * (JoinHouseholdInput.personId).
+   */
+  people: InvitePerson[];
+  /** Every emoji in use in the home, so a newcomer starts on one nobody has. */
+  emojis: string[];
+}
+
+/** Someone the home is waiting for, as an invite shows them. */
+export interface InvitePerson {
+  id: string;
+  name: string;
+  emoji: string;
 }
 
 /** An item from the client's notes list, seeded on household creation when asked. */
@@ -168,10 +196,151 @@ export interface CreateHouseholdInput {
   items: SeedItem[];
 }
 
+/**
+ * Where the signed-in person belongs (Backend.enterHome, RPC enter_home), asked right after
+ * sign-in. `canImport` (member, claimed): the home is untouched (set up and not used since), so
+ * the home this phone kept in demo mode may still replace what is in it (importHousehold).
+ * The statuses:
+ * - member: already in a home. Open it.
+ * - claimed: someone at home had added a person with this account's verified email who had
+ *   not joined yet. The account is now that person (their name, emoji, colour, items and Stats
+ *   are kept). Open the home after a short welcome step (confirm or change the emoji).
+ * - no_home: not in a home, and no home exists yet. Create one, or bring over the home this
+ *   phone kept in demo mode.
+ * - private: a home exists and nobody there has this account's email ("This home is
+ *   private"). `email` is the account's email, lower case ('' if it has none), for someone at
+ *   home to add in Profile > Household > People. `emailVerified` false means adding it would
+ *   not help (never the case for a Google account). Nothing about the home is revealed.
+ */
+export type HomeEntry =
+  | { status: 'member'; householdId: string; memberId: string; canImport: boolean }
+  | { status: 'claimed'; householdId: string; memberId: string; canImport: boolean }
+  | { status: 'no_home' }
+  | { status: 'private'; email: string; emailVerified: boolean };
+
+/** Household > People > Add Person: someone who has not joined yet. */
+export interface NewPersonInput {
+  /** Required; trimmed; at most TEXT_LIMITS.memberName characters. */
+  name: string;
+  /** From the emoji grid; blank becomes 🦔. */
+  emoji: string;
+  /**
+   * The Google email they will sign in with, or '' to add it later. Trimmed and lower-cased
+   * (normaliseEmail); must pass isValidEmail() (lib/logic/people.ts); unique in the home,
+   * else BackendError('email_taken').
+   */
+  email: string;
+}
+
+/**
+ * import_household's payload, version 1: the home this phone kept in demo mode
+ * (localStorage homeos.demo.v1), built by buildImportPayload() in lib/logic/importHome.ts and
+ * checked again by the database (docs/ARCHITECTURE.md "Bring over the home from this phone").
+ * Keys name people, areas and items inside the payload only (1 to 64 characters, unique per
+ * list); the database gives every row a fresh id.
+ */
+export interface ImportPayload {
+  version: 1;
+  /** Name 1 to 60 characters, address up to 120 (both trimmed); an unknown zone becomes Europe/London. */
+  household: { name: string; address: string; timezone: string };
+  /** 1 to 50, in join order. Exactly one has `me: true`: the person signing in with Google now. */
+  people: ImportPerson[];
+  /** Up to 100, in the home's order. */
+  areas: ImportArea[];
+  /** Up to 2000, open and done. */
+  items: ImportItem[];
+  /** Up to 20000: the Stats history. */
+  completions: ImportCompletion[];
+}
+
+/**
+ * A person in the imported home. `me` becomes the signed-in account (role owner, the account's
+ * email); everyone else is added as not joined yet, with no email (the demo's emails are made
+ * up), for someone to add theirs in People.
+ */
+export interface ImportPerson {
+  key: string;
+  /** 1 to 40 characters. */
+  name: string;
+  /** Up to 16 characters; blank becomes 🦔. */
+  emoji: string;
+  /** `#RRGGBB`; missing or not a colour: MEMBER_COLORS by position. */
+  color?: string;
+  me?: boolean;
+}
+
+export interface ImportArea {
+  key: string;
+  /** 1 to 60 characters. */
+  name: string;
+}
+
+export interface ImportItem {
+  key: string;
+  /** An area key. */
+  area: string;
+  kind: ItemKind;
+  /** 1 to 200 characters (trimmed). */
+  title: string;
+  /** Up to 4000 characters, kept as it is. */
+  note: string;
+  /** Up to 4000 characters, kept as it is. */
+  good: string;
+  rag: Rag;
+  /** Null for a state (the kind rules apply). */
+  due_date: ISODate | null;
+  repeat: Repeat;
+  notify: Notify;
+  /** A state is never 'done'. */
+  status: ItemStatus;
+  /** Person keys or null. created_by and updated_by default to `me`. */
+  assignee: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  /** ISO 8601 with a zone. Missing: now; later than now: now. */
+  created_at: ISOTimestamp | null;
+  updated_at: ISOTimestamp | null;
+  /** Done items only (missing: now); ignored for open ones. */
+  completed_at: ISOTimestamp | null;
+}
+
+export interface ImportCompletion {
+  /** An item key, or null when the item is gone. */
+  item: string | null;
+  /** 1 to 200 characters (trimmed). */
+  item_title: string;
+  /** Person keys or null. */
+  credited_to: string | null;
+  completed_by: string | null;
+  completed_at: ISOTimestamp;
+  prev_due_date: ISODate | null;
+  prev_status: ItemStatus;
+}
+
+/** What "Bring over the home from this phone" shows about the demo home this browser holds. */
+export interface DemoHomeSummary {
+  householdName: string;
+  address: string;
+  /** Areas that come along. */
+  areas: number;
+  /** Open items that come along (To do and To maintain). */
+  items: number;
+  /** Things done that come along (Stats history; the demo's made-up history stays behind). */
+  done: number;
+  /** In join order; `me` is the person who becomes the signed-in account. */
+  people: { name: string; emoji: string; me: boolean }[];
+}
+
 export interface JoinHouseholdInput {
   token: string;
   memberName: string;
   memberEmoji: string;
+  /**
+   * "Are you one of these people?": join as this person the home is waiting for
+   * (InvitePreview.people), keeping their name, emoji and items; memberName and memberEmoji
+   * are then not applied. Omitted or null: join as someone new.
+   */
+  personId?: string | null;
 }
 
 /** Web Push subscription as produced by PushSubscription.toJSON(). */

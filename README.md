@@ -72,7 +72,7 @@ Without a database the app runs in demo mode and each browser keeps its own data
 2. Redeploy. The build reads those settings (`vite.config.ts`), and `scripts/migrate.mjs` brings
    the database up to date before building (production builds only; it records what it applied
    in `supabase_migrations.schema_migrations`, like the Supabase CLI).
-3. Turn on Google sign-in (step 2 below) and, in Supabase **Authentication > URL Configuration**,
+3. Turn on Google sign-in (step 2 below, including its step 5) and, in Supabase **Authentication > URL Configuration**,
    set the Site URL to the app's address and add `<app address>/**` as a redirect URL.
 
 The numbered steps below do the same by hand, plus push notifications and the weekly email.
@@ -100,6 +100,15 @@ The numbered steps below do the same by hand, plus push notifications and the we
 4. In Supabase: **Authentication → URL Configuration**: set **Site URL** to your app's URL
    (for example `https://homeos.vercel.app`) and add it, plus `http://localhost:5173` for
    local development, to **Redirect URLs**.
+5. In Supabase: **Authentication → Sign In / Providers → Email**: turn it off (home.os only
+   uses Google), or at least keep **Confirm email** on (the default). Someone signing in with
+   Google becomes the person a housemate added with that email. The database only accepts an
+   email Google vouches for (the account needs a Google identity with that email, verified by
+   Google), so an email and password account can never become anyone; turning the Email
+   provider off also keeps such accounts from being made at all.
+6. Nothing to set for **one home**: the database refuses a second home from the app itself.
+   (`public.app_settings.many_homes` lets a development or test database hold many homes; never
+   turn it on for a real deployment.)
 
 ### 3. App settings
 
@@ -156,11 +165,27 @@ also set `VITE_BASE=/your-path/`.
 
 ### 6. On each iPhone
 
+There is one home per deployment, and nobody can set up a second one.
+
 1. Open the app's URL in **Safari** and tap **Continue with Google**.
-2. Create your profile (name and emoji). The first person creates the home; everyone else
-   joins with the **Invite someone** link from Profile.
-3. Tap **Share → Add to Home Screen**, then open home.os from the Home Screen.
-4. In **Profile**, turn on **Push notifications**.
+2. The first person sets up the home. **Do this on the phone that kept the home in demo mode**
+   and tap **Bring It Over**: the areas, every item, what was done (Stats) and everyone in it
+   come across, and you keep your name and emoji (the demo's made-up history stays behind).
+   Then add the others' Google emails right there. Otherwise create your profile (name and
+   emoji), then the home. If someone set up an empty home first on another phone, ask them to
+   add your email: once you are in, and while that home still has nothing in it, your phone
+   offers to bring its home over in its place.
+3. Add everyone else in **Profile → Household → People → Add Person**: their name, emoji and
+   the Google email they sign in with (people brought over from the phone are there already:
+   tap one to add their email). You can give them items straight away. When they tap
+   **Continue with Google** they go straight into the home as that person, with their items.
+   Someone whose email nobody has added sees "This home is private", with the email to ask for.
+   The **Invite someone** link from Profile still works too: whoever opens it is asked "Are you
+   one of these people?" first, so nobody brought over from the phone ends up there twice.
+   If the wrong person got in with an email, they tap **Not Shea? Sign Out** on the welcome
+   step, and Shea waits for the right email again.
+4. Tap **Share → Add to Home Screen**, then open home.os from the Home Screen.
+5. In **Profile**, turn on **Push notifications**.
 
 ### 7. Updating
 
@@ -185,15 +210,52 @@ defaults), so the app that is live keeps working on the new schema. In order:
 | `npm test` | Unit tests (logic, demo backend, push client, scheduler modules) |
 | `npm run test:db` | Database tests: schema, row level security and RPCs on a throwaway Postgres 16 |
 | `npm run test:e2e` | Playwright end-to-end tests against a demo-mode build |
+| `npm run test:e2e:live` | Two phones on a real (local) Supabase: bringing the home over, joining by email, "This home is private", and every kind of change syncing live |
 | `npm run icons` | Re-render the app icons from `public/icons/icon.svg` |
 
 With Docker running, `npx supabase start` gives you a full local Supabase stack;
-`npx supabase db reset` applies the migrations to it, and
+`npx supabase db reset` applies the migrations to it. A deployment holds one home, and the
+database refuses a second one from the app; the tests make many, so a **development** database
+they run against must allow that once:
+`insert into public.app_settings (id, many_homes) values (true, true) on conflict (id) do update set many_homes = true;`
+(`npm run test:db` does it for its own throwaway database, whose `one_home_deployment` tests
+also make a fresh database without it, as a deployment has it). Then
 `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres npm run test:db` runs the
 database tests against it. The live backend suite runs with
 `SUPABASE_TEST_URL=http://127.0.0.1:54321 SUPABASE_TEST_ANON_KEY=<anon key> SUPABASE_TEST_SERVICE_KEY=<service role key> npx vitest run src/lib/backend/supabase.integration.test.ts`
-(keys from `npx supabase status`), and
+(keys from `npx supabase status`; the database at `SUPABASE_TEST_DB_URL`, by default the local
+stack's), and
 `npx supabase functions serve scheduler --no-verify-jwt --env-file <file>` serves the scheduler.
+
+**Live two-phone tests** (`npm run test:e2e:live`, `playwright.live.config.ts`, `e2e-live/`):
+
+1. Start the local stack and apply the migrations: `npx supabase start`, then
+   `npx supabase db reset` (or, on a database other runs share,
+   `MIGRATE_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres node scripts/migrate.mjs --no-record`
+   and `docker restart supabase_rest_home-os` so the API sees the new functions).
+2. Run `npm run test:e2e:live`. It reads the URL and keys from `npx supabase status` (or from
+   `SUPABASE_TEST_URL`, `SUPABASE_TEST_ANON_KEY` and `SUPABASE_TEST_SERVICE_KEY`, as the live
+   backend suite does) and never prints them. It only runs against a local stack, unless
+   `LIVE_E2E_ALLOW_REMOTE=1`.
+3. It builds the app against that stack into `dist-live/` and serves it on port 4214
+   (`E2E_LIVE_PORT` to change it). Google sign-in can't run in a test, so each phone is a
+   browser context whose storage already holds a session: accounts are made with the Auth admin
+   API (email confirmed) and given the Google identity a Google sign-in leaves (with SQL, on the
+   database `npx supabase status` names or `SUPABASE_TEST_DB_URL`), then signed in with a password.
+4. Bringing the home over needs a database with no home in it. The tests wait up to 90 seconds
+   for other test runs to finish with theirs, then say so. Afterwards they remove their own
+   accounts and home (accounts named `homeos-live-e2e-…@example.com`), and nothing else.
+
+What they prove, with Stratis's phone holding the household's demo home: when Shea set up an
+empty home first, his phone says its home can't come over yet, and once she adds him it takes
+the place of the empty one (Shea matched by name), and Ela joins through an invite link as the
+Ela who came along. Then, from no home: he brings it over (every area, item, assignment and the
+real Stats history), adds Shea's Google email, and Shea signs in and is Shea with her items;
+someone else sees "This home is private" until they are added;
+then every change one phone makes (items, What good looks like, kind, done and undo, delete,
+areas, household name and address, people, chat messages and reactions) shows on the other
+within 5 seconds, without a reload, and a phone that was offline catches up as soon as it is
+back online.
 
 ## Permissions
 
@@ -201,6 +263,21 @@ Everyone who belongs to a household can edit everything in it: the household's n
 address and time zone, its areas, every item (To do or To maintain, and switching between
 them), completions (undo) and each other's profiles
 (name and emoji, under **Profile → Household → People**).
+
+People can be in the home before they join (**Not joined yet**):
+
+- Anyone at home can add a person under **Profile → Household → People → Add Person** (name,
+  emoji and the Google email they will sign in with), give them items, and set, change or
+  clear their email. Each email belongs to one person in the home.
+- Until they sign in, such a person has no account: they give nobody access, get no
+  notifications or weekly email, and can't post in the chat. Their items show on Home, in the
+  person filter and in Stats like anyone else's.
+- When they sign in with Google using that email (Google must have verified it), they become
+  that person, keeping the name, emoji, items and Stats set up for them. Within a day they can
+  say it isn't them (**Not Shea?**): the person waits to join again, without that email.
+- Anyone can remove a person who has not joined yet; their items become unassigned, and what
+  they did leaves Stats (the confirmation says how many). Someone who has joined can't be
+  removed from the app.
 
 The household chat has its own rules:
 
@@ -211,13 +288,14 @@ The household chat has its own rules:
   only their own reactions.
 - Only the author can delete a message (for everyone); nobody can edit one.
 
-Housekeeping follows the household rule. The housekeeper joins with the invite link like
-anyone else, and everyone can change the message for the housekeeper, the task list, any
-visit's ticks, comments and price, and can delete a visit. Each visit keeps its own copy of
-the list and of that day's message, so renaming or deleting a task later never changes past
-visits, and two people ticking at the same time never undo each other's ticks.
+Housekeeping follows the household rule. The housekeeper joins like anyone else, and everyone
+can change the message for the housekeeper, the task list, any visit's ticks, comments and
+price, and can delete a visit. Each visit keeps its own copy of the list and of that day's
+message, so renaming or deleting a task later never changes past visits, and two people
+ticking at the same time never undo each other's ticks.
 
-People outside the household can't see or change any of it. New people join only through an
-invite link (valid for 14 days). A shared item or area link opens the item or area only for
-people in the household; anyone else just sees their own home. The text of a shared message
-can be read by whoever it was sent to.
+People outside the household can't see or change any of it. Someone new joins by signing in
+with Google using the email someone at home added for them, or with an invite link (valid for
+14 days). Anyone else who signs in sees "This home is private" and nothing of the home. A shared
+item or area link opens the item or area only for people in the household. The text of a shared
+message can be read by whoever it was sent to.

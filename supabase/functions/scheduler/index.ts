@@ -78,7 +78,7 @@ function supabaseStore(url: string, serviceRoleKey: string): SchedulerStore {
         readAll<MemberRow>((a, b) =>
           db
             .from('members')
-            .select('id,household_id,name,email,emoji,role,weekly_email,push_enabled,created_at')
+            .select('id,household_id,user_id,name,email,emoji,role,weekly_email,push_enabled,created_at')
             .order('id')
             .range(a, b),
         ),

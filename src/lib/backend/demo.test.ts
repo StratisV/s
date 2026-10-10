@@ -712,7 +712,9 @@ describe('invites', () => {
     const { b, hid } = await setup();
     const token = await b.createInvite();
     expect(token).toMatch(/^[0-9a-f]{32}$/);
-    expect(await b.getInvitePreview(token)).toEqual({ household_name: 'Flat 2', address: '1 Test Street' });
+    const emojis = (await b.load(hid)).members.map((m) => m.emoji);
+    // Nobody is waiting to join; every emoji in use, so a newcomer can start on another one.
+    expect(await b.getInvitePreview(token)).toEqual({ household_name: 'Flat 2', address: '1 Test Street', people: [], emojis });
     expect(await b.getInvitePreview('0'.repeat(32))).toBeNull();
     expect(await b.getInvitePreview('')).toBeNull();
 
@@ -2088,5 +2090,246 @@ describe('housekeeping', () => {
       expect(hk.tasks).toEqual([]);
       expect(hk.visits).toHaveLength(5);
     });
+  });
+});
+
+describe('one home: enterHome and people who have not joined yet', () => {
+  /** Stratis's home, then `who` signed in on the same document (the demo has one session). */
+  async function homeThen(who: AuthUser) {
+    const { b, hid, me, data } = await setup();
+    const other = make({ user: who });
+    return { b, hid, me, data, other };
+  }
+
+  it('enterHome: not_signed_in, member, and no_home for anyone else (never private)', async () => {
+    const { b, hid, me, other } = await homeThen(BOB);
+    await b.signOut();
+    await rejectsWith(b.enterHome(), 'not_signed_in');
+    await b.signInWithGoogle();
+    expect(await b.enterHome()).toEqual({ status: 'member', householdId: hid, memberId: me.id, canImport: false });
+    await other.signInWithGoogle();
+    // A home exists, but a demo sign-in always gets one: it may create its own.
+    expect(await other.enterHome()).toEqual({ status: 'no_home' });
+    expect(await other.getMyHouseholdId()).toBeNull();
+  });
+
+  it('adds a person: not joined, member role, next colour, push off, email in stored form', async () => {
+    const { b, hid } = await setup();
+    clock = new Date('2026-10-08T09:00:00Z'); // earlier than the household: still joins last
+    const person = await b.addPerson(hid, { name: '  Noor ', emoji: '🦉', email: '  NOOR@Example.com ' });
+    expect(person).toMatchObject({
+      household_id: hid,
+      user_id: null,
+      name: 'Noor',
+      emoji: '🦉',
+      email: 'noor@example.com',
+      color: MEMBER_COLORS[3],
+      role: 'member',
+      weekly_email: true,
+      push_enabled: false,
+    });
+    const data = await b.load(hid);
+    expect(data.members.at(-1)).toEqual(person);
+    // Without an email, and with a blank emoji.
+    const quiet = await b.addPerson(hid, { name: 'Ela’s friend', emoji: ' ', email: '' });
+    expect(quiet).toMatchObject({ email: '', emoji: '🦔', color: MEMBER_COLORS[4], user_id: null });
+    // Assignable like anyone else.
+    const item = await b.createItem(hid, draft(data, { assignee_id: person.id }));
+    expect(item.assignee_id).toBe(person.id);
+  });
+
+  it('addPerson: invalid_input, email_taken in any case, limits, not_found and not_signed_in', async () => {
+    const { b, hid } = await setup();
+    await rejectsWithMessage(b.addPerson(hid, { name: '  ', emoji: '🦔', email: '' }), /invalid_input/);
+    await rejectsWithMessage(b.addPerson(hid, { name: 'Noor', emoji: '🦔', email: 'noor' }), /invalid_input/);
+    await rejectsWithMessage(b.addPerson(hid, { name: 'Noor', emoji: '🦔', email: 'no or@x.com' }), /invalid_input/);
+    await rejectsWithMessage(b.addPerson(hid, { name: 'N'.repeat(41), emoji: '🦔', email: '' }), /invalid_input/);
+    await rejectsWithMessage(b.addPerson(hid, { name: 'Noor', emoji: '🦔'.repeat(17), email: '' }), /invalid_input/);
+    // The owner's own email, and a waiting person's, in another case.
+    await rejectsWith(b.addPerson(hid, { name: 'Me again', emoji: '🦔', email: 'Stratis@Example.COM' }), 'email_taken');
+    await b.addPerson(hid, { name: 'Noor', emoji: '🦔', email: 'noor@example.com' });
+    await rejectsWith(b.addPerson(hid, { name: 'Noor 2', emoji: '🦔', email: ' NOOR@example.com' }), 'email_taken');
+    // Blank emails never clash.
+    await b.addPerson(hid, { name: 'A', emoji: '🦔', email: '' });
+    await b.addPerson(hid, { name: 'B', emoji: '🦔', email: '' });
+
+    const bob = make({ user: BOB });
+    await bob.signInWithGoogle();
+    await rejectsWith(bob.addPerson(hid, { name: 'X', emoji: '🦔', email: '' }), 'not_found');
+    const bobHid = await bob.createHousehold(input({ name: 'Bob’s' }));
+    await rejectsWith(bob.addPerson(hid, { name: 'X', emoji: '🦔', email: '' }), 'not_found');
+    // The same email in another home is fine.
+    await bob.addPerson(bobHid, { name: 'Noor', emoji: '🦔', email: 'noor@example.com' });
+    await bob.signOut();
+    await rejectsWith(bob.addPerson(bobHid, { name: 'X', emoji: '🦔', email: '' }), 'not_signed_in');
+  });
+
+  it('setPersonEmail sets, changes and clears; email_taken; invalid for someone who joined or a non-email', async () => {
+    const { b, hid, me } = await setup();
+    const noor = await b.addPerson(hid, { name: 'Noor', emoji: '🦔', email: '' });
+    const emailOf = async (id: string) => (await b.load(hid)).members.find((m) => m.id === id)!.email;
+
+    await b.setPersonEmail(noor.id, ' Noor@Example.com ');
+    expect(await emailOf(noor.id)).toBe('noor@example.com');
+    await b.setPersonEmail(noor.id, 'noor@example.com'); // the same value: nothing to do
+    await b.setPersonEmail(noor.id, 'noor.k@example.com');
+    expect(await emailOf(noor.id)).toBe('noor.k@example.com');
+    await b.setPersonEmail(noor.id, '');
+    expect(await emailOf(noor.id)).toBe('');
+
+    await rejectsWith(b.setPersonEmail(noor.id, 'SHEA@example.com'), 'email_taken');
+    await rejectsWithMessage(b.setPersonEmail(noor.id, 'not an email'), /invalid_input/);
+    await rejectsWithMessage(b.setPersonEmail(me.id, 'other@example.com'), /invalid_input/);
+    await rejectsWith(b.setPersonEmail('nobody', 'x@example.com'), 'not_found');
+    expect(await emailOf(noor.id)).toBe('');
+
+    const bob = make({ user: BOB });
+    await bob.signInWithGoogle();
+    await bob.createHousehold(input({ name: 'Bob’s' }));
+    await rejectsWith(bob.setPersonEmail(noor.id, 'x@example.com'), 'not_found');
+  });
+
+  it('removePerson removes someone who has not joined: items unassigned, credits to nobody', async () => {
+    const { b, hid, me, data } = await setup();
+    const noor = await b.addPerson(hid, { name: 'Noor', emoji: '🦔', email: 'noor@example.com' });
+    const item = await b.createItem(hid, draft(data, { assignee_id: noor.id }));
+    const cid = await b.completeItem(item.id);
+    expect((await b.load(hid)).completions.find((c) => c.id === cid)!.credited_to).toBe(noor.id);
+
+    await rejectsWithMessage(b.removePerson(me.id), /invalid_input/);
+    await rejectsWith(b.removePerson('nobody'), 'not_found');
+    await b.removePerson(noor.id);
+    const after = await b.load(hid);
+    expect(after.members.some((m) => m.id === noor.id)).toBe(false);
+    expect(after.completions.find((c) => c.id === cid)).toMatchObject({ credited_to: null, completed_by: me.id });
+    await b.undoCompletion(cid);
+    expect((await b.load(hid)).items.find((i) => i.id === item.id)!.assignee_id).toBeNull();
+    await rejectsWith(b.removePerson(noor.id), 'not_found');
+  });
+
+  it('someone who has not joined never has push on', async () => {
+    const { b, hid } = await setup();
+    const noor = await b.addPerson(hid, { name: 'Noor', emoji: '🦔', email: '' });
+    await b.updateMember(noor.id, { push_enabled: true, name: 'Noor K', emoji: '🦉' });
+    expect((await b.load(hid)).members.find((m) => m.id === noor.id)).toMatchObject({
+      push_enabled: false,
+      name: 'Noor K',
+      emoji: '🦉',
+    });
+  });
+
+  it('a sign-in with a waiting person’s email becomes that person, keeping everything', async () => {
+    const { b, hid, data, other: bob } = await homeThen(BOB);
+    const person = await b.addPerson(hid, { name: 'Bobby', emoji: '🐻', email: ' Bob@Example.com' });
+    const item = await b.createItem(hid, draft(data, { assignee_id: person.id }));
+
+    await bob.signInWithGoogle();
+    expect(await bob.enterHome()).toEqual({ status: 'claimed', householdId: hid, memberId: person.id, canImport: false });
+    expect(await bob.getMyHouseholdId()).toBe(hid);
+    const after = await bob.load(hid);
+    expect(after.members.find((m) => m.id === person.id)).toEqual({ ...person, user_id: BOB.id });
+    expect(after.items.find((i) => i.id === item.id)!.assignee_id).toBe(person.id);
+    // Once claimed, they are a member, and their email can no longer be changed in People.
+    expect(await bob.enterHome()).toEqual({ status: 'member', householdId: hid, memberId: person.id, canImport: false });
+    await rejectsWithMessage(bob.setPersonEmail(person.id, 'other@example.com'), /invalid_input/);
+    await rejectsWithMessage(bob.removePerson(person.id), /invalid_input/);
+  });
+
+  it('claims the earliest waiting person when several homes have that email', async () => {
+    const { b, hid } = await setup();
+    const first = await b.addPerson(hid, { name: 'Bob', emoji: '🐻', email: 'bob@example.com' });
+    const carol = make({ user: CAROL });
+    await carol.signInWithGoogle();
+    const carolHid = await carol.createHousehold(input({ name: 'Carol’s' }));
+    clock = new Date(clock.getTime() + 60_000);
+    await carol.addPerson(carolHid, { name: 'Bob', emoji: '🐻', email: 'bob@example.com' });
+    const bob = make({ user: BOB });
+    await bob.signInWithGoogle();
+    expect(await bob.enterHome()).toEqual({ status: 'claimed', householdId: hid, memberId: first.id, canImport: false });
+  });
+
+  it('"Are you one of these people?": the preview lists who is waiting without an email, and joining as one keeps them', async () => {
+    const { b, hid } = await setup();
+    const token = await b.createInvite();
+    const ela = await b.addPerson(hid, { name: 'Ela K', emoji: '🐝', email: '' });
+    const kept = await b.addPerson(hid, { name: 'Shea K', emoji: '🐙', email: 'shea.k@example.com' });
+    const bob = make({ user: BOB });
+    await bob.signInWithGoogle();
+    const preview = (await bob.getInvitePreview(token))!;
+    expect(preview.people).toEqual([{ id: ela.id, name: 'Ela K', emoji: '🐝' }]);
+    expect(preview.emojis).toContain('🐝');
+    // Someone kept for another email can't be taken.
+    await rejectsWith(bob.joinHousehold({ token, memberName: 'Bob', memberEmoji: '🦁', personId: kept.id }), 'not_found');
+    expect(await bob.joinHousehold({ token, memberName: 'Bob', memberEmoji: '🦁', personId: ela.id })).toBe(hid);
+    const data = await bob.load(hid);
+    expect(data.members.find((m) => m.id === ela.id)).toMatchObject({ user_id: BOB.id, name: 'Ela K', emoji: '🐝', email: 'bob@example.com' });
+    expect(data.members.filter((m) => m.user_id === BOB.id)).toHaveLength(1);
+    // Joined: nobody else can take her.
+    const carol = make({ user: CAROL });
+    await carol.signInWithGoogle();
+    await rejectsWith(carol.joinHousehold({ token, memberName: 'C', memberEmoji: '🦁', personId: ela.id }), 'not_found');
+  });
+
+  it('"Not Bobby?": within a day of a claim the person goes back to waiting, without the email', async () => {
+    const { b, hid } = await setup();
+    const person = await b.addPerson(hid, { name: 'Bobby', emoji: '🐻', email: 'bob@example.com' });
+    const bob = make({ user: BOB });
+    await bob.signInWithGoogle();
+    expect((await bob.enterHome()).status).toBe('claimed');
+    await bob.releaseClaim();
+    // Nothing to release now, and the demo answers no_home rather than private.
+    await rejectsWith(bob.releaseClaim(), 'not_found');
+    expect(await bob.enterHome()).toEqual({ status: 'no_home' });
+    // (The demo keeps one session for every tab: Stratis signs back in to look.)
+    await b.signInWithGoogle();
+    expect((await b.load(hid)).members.find((m) => m.id === person.id)).toMatchObject({ user_id: null, email: '' });
+    await b.setPersonEmail(person.id, 'bob@example.com');
+    await bob.signInWithGoogle();
+    expect((await bob.enterHome()).status).toBe('claimed');
+    // A claim from more than a day ago can't be undone this way.
+    clock = new Date(clock.getTime() + 25 * 3_600_000);
+    await rejectsWith(bob.releaseClaim(), 'not_found');
+  });
+
+  it('joining by invite claims the waiting person instead of adding a second one', async () => {
+    const { b, hid } = await setup();
+    const token = await b.createInvite();
+    const person = await b.addPerson(hid, { name: 'Bobby', emoji: '🐻', email: 'BOB@example.com' });
+    const bob = make({ user: BOB });
+    await bob.signInWithGoogle();
+    expect(await bob.joinHousehold({ token, memberName: 'Robert', memberEmoji: '🦁' })).toBe(hid);
+    const data = await bob.load(hid);
+    expect(data.members).toHaveLength(4);
+    expect(data.members.find((m) => m.user_id === BOB.id)).toMatchObject({ id: person.id, name: 'Bobby', emoji: '🐻' });
+  });
+
+  it('joining with an email someone who joined already has: joins without it', async () => {
+    const { b, hid } = await setup();
+    const token = await b.createInvite();
+    const twin = make({ user: { id: 'user-twin', email: 'Stratis@example.com', name: 'Twin' } });
+    await twin.signInWithGoogle();
+    expect(await twin.joinHousehold({ token, memberName: 'Twin', memberEmoji: '🦁' })).toBe(hid);
+    const data = await twin.load(hid);
+    expect(data.members.find((m) => m.user_id === 'user-twin')).toMatchObject({ name: 'Twin', email: '' });
+  });
+
+  it('stores the creator’s email in its stored form', async () => {
+    const b = make({ user: { id: 'u-caps', email: ' Caps@Example.COM ', name: 'Caps' } });
+    await b.signInWithGoogle();
+    const hid = await b.createHousehold(input());
+    expect((await b.load(hid)).members[0].email).toBe('caps@example.com');
+  });
+
+  it('never imports (the demo is where an import comes from)', async () => {
+    const { b } = await setup();
+    await rejectsWithMessage(
+      b.importHousehold({ version: 1, household: { name: 'x', address: '', timezone: TZ }, people: [], areas: [], items: [], completions: [] }),
+      /not supported in demo mode/,
+    );
+  });
+
+  it('reconnect is a no-op that never throws', async () => {
+    const { b } = await setup();
+    expect(() => b.reconnect()).not.toThrow();
   });
 });

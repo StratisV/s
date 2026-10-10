@@ -23,6 +23,12 @@ export interface HouseholdRow {
 export interface MemberRow {
   id: string;
   household_id: string;
+  /**
+   * The person's account, or null while they have not joined yet (added by name and email in
+   * People, or brought over from a phone). Such a person gets no pushes and no weekly email;
+   * the email still names them as an assignee.
+   */
+  user_id: string | null;
   name: string;
   email: string;
   emoji: string;

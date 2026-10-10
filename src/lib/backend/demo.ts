@@ -23,6 +23,7 @@ import {
 import { addDays, addMonths, daysBetween, deviceTimeZone, parseISODate, todayIn, zonedParts } from '../logic/dates';
 import { emptyHousekeeping } from '../logic/housekeeping';
 import { applyKindRules, nextDueDate } from '../logic/items';
+import { hasJoined, isValidEmail, normaliseEmail } from '../logic/people';
 import type {
   Area,
   AuthUser,
@@ -32,6 +33,7 @@ import type {
   ChatReaction,
   Completion,
   CreateHouseholdInput,
+  HomeEntry,
   Household,
   HouseholdData,
   HousekeepingData,
@@ -40,6 +42,7 @@ import type {
   HousekeepingVisit,
   HousekeepingVisitPatch,
   HousekeepingVisitTask,
+  ImportPayload,
   InvitePreview,
   ISODate,
   ISOTimestamp,
@@ -49,8 +52,10 @@ import type {
   ItemStatus,
   JoinHouseholdInput,
   Member,
+  NewPersonInput,
   PushSubscriptionInput,
 } from '../types';
+import type { DemoImportMark } from '../logic/importHome';
 import {
   BackendError,
   type Backend,
@@ -245,13 +250,22 @@ type HousekeepingVisitRow = Omit<HousekeepingVisit, 'tasks'>;
 /** housekeeping_visit_tasks (unique visit_id + task_id); household_id is copied from the visit. */
 type HousekeepingVisitTaskRow = HousekeepingVisitTask;
 
+/** A member as stored: claimed_at (members.claimed_at) is kept for release_claim only. */
+interface MemberRow extends Member {
+  /** When an account became this person by a claim (null or missing otherwise). */
+  claimed_at?: ISOTimestamp | null;
+}
+
+/** How long after a claim "Not Shea?" (releaseClaim) may undo it, as release_claim. */
+const RELEASE_MS = 86_400_000;
+
 interface DemoDoc {
   version: 1;
   /** Signed-in user id, or null. */
   session: string | null;
   users: AuthUser[];
   households: HouseholdRow[];
-  members: Member[];
+  members: MemberRow[];
   areas: AreaRow[];
   items: ItemRow[];
   completions: CompletionRow[];
@@ -268,6 +282,11 @@ interface DemoDoc {
   housekeeping_tasks: HousekeepingTaskRow[];
   housekeeping_visits: HousekeepingVisitRow[];
   housekeeping_visit_tasks: HousekeepingVisitTaskRow[];
+  /**
+   * Set (by markDemoImported in lib/logic/importHome.ts, on the Supabase build) once this
+   * document's home was brought over to the shared database. Kept as it is by read/write.
+   */
+  imported?: DemoImportMark;
 }
 
 export type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -466,6 +485,7 @@ const toHousehold = (h: HouseholdRow): Household => ({
   weekly_email_time: h.weekly_email_time,
 });
 const toArea = (a: AreaRow): Area => ({ id: a.id, household_id: a.household_id, name: a.name, position: a.position });
+const toMember = ({ claimed_at: _c, ...member }: MemberRow): Member => member;
 const toItem = ({ completed_at: _c, ...item }: ItemRow): Item => item;
 const toCompletion = ({ prev_due_date: _d, prev_status: _s, ...c }: CompletionRow): Completion => c;
 const toReaction = ({ household_id: _h, ...r }: ReactionRow): ChatReaction => r;
@@ -723,6 +743,159 @@ export class DemoBackend implements Backend {
 
   // ── Household membership ───────────────────────────────
 
+  /**
+   * enter_home's rules on the demo document: member; else claim the earliest person with
+   * user_id null whose email equals this account's (normaliseEmail; demo emails count as
+   * verified); else 'no_home' (never 'private': a demo sign-in always gets a home).
+   */
+  enterHome(): Promise<HomeEntry> {
+    // Storing an unchanged document fires no storage event, so only a claim reaches other tabs.
+    // canImport is always false: the demo never brings a home over (it is where one comes from).
+    return this.mutate((doc): HomeEntry => {
+      const user = this.userIn(doc);
+      const mine = doc.members.find((m) => m.user_id === user.id);
+      if (mine) return { status: 'member', householdId: mine.household_id, memberId: mine.id, canImport: false };
+      const person = this.waitingWith(doc, normaliseEmail(user.email));
+      if (!person) return { status: 'no_home' };
+      person.user_id = user.id;
+      person.claimed_at = this.stamp();
+      return { status: 'claimed', householdId: person.household_id, memberId: person.id, canImport: false };
+    });
+  }
+
+  /**
+   * release_claim on the demo document: within a day of a claim, the signed-in account stops
+   * being that person (back to not joined, without the email, its push subscriptions gone).
+   * not_found without a claim from the last day.
+   */
+  releaseClaim(): Promise<void> {
+    return this.mutate((doc) => {
+      const user = this.userIn(doc);
+      const mine = doc.members.find((m) => m.user_id === user.id);
+      const at = mine?.claimed_at ? new Date(mine.claimed_at).getTime() : NaN;
+      if (!mine || Number.isNaN(at) || this.now().getTime() - at > RELEASE_MS) throw new BackendError('not_found');
+      doc.push_subs = doc.push_subs.filter((sub) => sub.member_id !== mine.id);
+      mine.user_id = null;
+      mine.email = '';
+      mine.claimed_at = null;
+      mine.push_enabled = false;
+    });
+  }
+
+  /**
+   * The earliest person (join order, then id) who has not joined yet and has `email`, in
+   * `householdId` when given: the one a sign-in with that email becomes.
+   */
+  private waitingWith(doc: DemoDoc, email: string, householdId?: string): MemberRow | undefined {
+    if (!email) return undefined;
+    return doc.members
+      .filter(
+        (m) =>
+          !hasJoined(m) &&
+          (householdId === undefined || m.household_id === householdId) &&
+          normaliseEmail(m.email) === email,
+      )
+      .sort((a, b) => compareText(a.created_at, b.created_at) || compareText(a.id, b.id))[0];
+  }
+
+  /** The demo is where an import comes from: always BackendError('unknown', 'not supported in demo mode'). */
+  importHousehold(_payload: ImportPayload): Promise<string> {
+    return Promise.reject(new BackendError('unknown', 'not supported in demo mode'));
+  }
+
+  /**
+   * add_person on the demo document, with its checks and errors: not_found outside the home;
+   * invalid_input for a blank name or an email that fails isValidEmail(); email_taken when
+   * someone in the home has it (normaliseEmail); then the name and emoji limits.
+   */
+  addPerson(householdId: string, input: NewPersonInput): Promise<Member> {
+    return this.mutate((doc) => {
+      this.memberOf(doc, householdId);
+      const name = (input?.name ?? '').trim();
+      const email = normaliseEmail(input?.email ?? '');
+      if (!name) throw invalidInput('name');
+      if (email && !isValidEmail(email)) throw invalidInput('email');
+      const housemates = doc.members.filter((m) => m.household_id === householdId);
+      if (email && housemates.some((m) => normaliseEmail(m.email) === email)) throw new BackendError('email_taken');
+      const person: Member = {
+        id: uuid(),
+        household_id: householdId,
+        user_id: null,
+        name: withinLimit(name, TEXT_LIMITS.memberName, 'name'),
+        email,
+        emoji: withinLimit((input?.emoji ?? '').trim() || '🦔', TEXT_LIMITS.memberEmoji, 'emoji'),
+        color: MEMBER_COLORS[housemates.length % MEMBER_COLORS.length],
+        role: 'member',
+        weekly_email: true,
+        push_enabled: false,
+        created_at: this.joinTime(housemates),
+      };
+      doc.members.push(person);
+      return { ...person };
+    });
+  }
+
+  /**
+   * set_person_email on the demo document: not_found outside the caller's home; invalid_input
+   * for someone who has joined or a value that is not an email; email_taken when another
+   * person in the home has it. '' clears; the same value again changes nothing.
+   */
+  setPersonEmail(memberId: string, email: string): Promise<void> {
+    return this.mutate((doc) => {
+      const person = this.personIn(doc, memberId);
+      const value = normaliseEmail(email ?? '');
+      if (hasJoined(person) || (value && !isValidEmail(value))) throw invalidInput('email');
+      const taken = doc.members.some(
+        (m) => m.household_id === person.household_id && m.id !== person.id && normaliseEmail(m.email) === value,
+      );
+      if (value && taken) throw new BackendError('email_taken');
+      person.email = value;
+    });
+  }
+
+  /**
+   * remove_person on the demo document: only someone who has not joined (invalid_input
+   * otherwise; not_found outside the caller's home). What the foreign keys do when a member
+   * row goes: items unassigned (and their author forgotten), completions credited to nobody,
+   * messages kept without a sender, reactions, push subscriptions and invites' author gone.
+   */
+  removePerson(memberId: string): Promise<void> {
+    return this.mutate((doc) => {
+      const person = this.personIn(doc, memberId);
+      if (hasJoined(person)) throw invalidInput('joined');
+      const id = person.id;
+      doc.members = doc.members.filter((m) => m.id !== id);
+      for (const i of doc.items) {
+        if (i.assignee_id === id) i.assignee_id = null;
+        if (i.created_by === id) i.created_by = null;
+        if (i.updated_by === id) i.updated_by = null;
+      }
+      for (const c of doc.completions) {
+        if (c.credited_to === id) c.credited_to = null;
+        if (c.completed_by === id) c.completed_by = null;
+      }
+      for (const m of doc.messages) if (m.member_id === id) m.member_id = null;
+      for (const i of doc.invites) if (i.created_by === id) i.created_by = null;
+      for (const h of doc.households) if (h.updated_by === id) h.updated_by = null;
+      doc.message_reactions = doc.message_reactions.filter((r) => r.member_id !== id);
+      doc.push_subs = doc.push_subs.filter((s) => s.member_id !== id);
+    });
+  }
+
+  /** A member of the caller's home by id (joined or not); not_found otherwise. */
+  private personIn(doc: DemoDoc, memberId: string): Member {
+    const me = this.meIn(doc);
+    const person = doc.members.find((m) => m.id === memberId && m.household_id === me.household_id);
+    if (!person) throw new BackendError('not_found');
+    return person;
+  }
+
+  /** Join order is created_at order, so never stamp before the latest person (fixed test clocks). */
+  private joinTime(housemates: Member[]): ISOTimestamp {
+    const latest = Math.max(-Infinity, ...housemates.map((m) => new Date(m.created_at).getTime()));
+    return new Date(Math.max(this.now().getTime(), latest + 1)).toISOString();
+  }
+
   getMyHouseholdId(): Promise<string | null> {
     return this.query((doc) => {
       const user = this.userIn(doc);
@@ -736,7 +909,8 @@ export class DemoBackend implements Backend {
       const household = this.householdIn(doc, householdId);
       const members = doc.members
         .filter((m) => m.household_id === householdId)
-        .sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
+        .sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0))
+        .map(toMember);
       const areas = doc.areas
         .filter((a) => a.household_id === householdId)
         .sort((a, b) => a.position - b.position || (a.created_at < b.created_at ? -1 : 1))
@@ -759,6 +933,9 @@ export class DemoBackend implements Backend {
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }
+
+  /** Tabs share one storage: nothing can drop. */
+  reconnect(): void {}
 
   createHousehold(input: CreateHouseholdInput): Promise<string> {
     return this.mutate((doc) => this.createHouseholdIn(doc, input));
@@ -796,7 +973,7 @@ export class DemoBackend implements Backend {
         TEXT_LIMITS.memberName,
         'name',
       ),
-      email: user.email,
+      email: normaliseEmail(user.email),
       emoji: withinLimit(input.memberEmoji || '🦔', TEXT_LIMITS.memberEmoji, 'emoji'),
       color: MEMBER_COLORS[0],
       role: 'owner',
@@ -1041,11 +1218,36 @@ export class DemoBackend implements Backend {
         if (existing.household_id === invite.household_id) return existing.household_id;
         throw new BackendError('already_member');
       }
+      const email = normaliseEmail(user.email);
+      // "Are you one of these people?" (join_as_person): someone the home is waiting for, with
+      // no email or this account's; their email becomes the caller's unless someone has it.
+      if (input.personId) {
+        const person = doc.members.find(
+          (m) =>
+            m.id === input.personId &&
+            m.household_id === invite.household_id &&
+            !hasJoined(m) &&
+            (normaliseEmail(m.email) === '' || normaliseEmail(m.email) === email),
+        );
+        if (!person) throw new BackendError('not_found');
+        const taken = doc.members.some(
+          (m) => m.household_id === invite.household_id && m.id !== person.id && normaliseEmail(m.email) === email,
+        );
+        person.user_id = user.id;
+        person.email = taken ? '' : email;
+        person.claimed_at = this.stamp();
+        return invite.household_id;
+      }
+      // Someone at home added this person with the caller's email (demo emails count as
+      // verified): the caller becomes them, keeping their name, emoji and colour.
+      const waiting = this.waitingWith(doc, email, invite.household_id);
+      if (waiting) {
+        waiting.user_id = user.id;
+        waiting.claimed_at = this.stamp();
+        return invite.household_id;
+      }
       const housemates = doc.members.filter((m) => m.household_id === invite.household_id);
       const count = housemates.length;
-      // Join order is created_at order, so never stamp before the latest member (fixed test clocks).
-      const latest = Math.max(...housemates.map((m) => new Date(m.created_at).getTime()));
-      const joinedAt = new Date(Math.max(this.now().getTime(), latest + 1)).toISOString();
       doc.members.push({
         id: uuid(),
         household_id: invite.household_id,
@@ -1055,13 +1257,14 @@ export class DemoBackend implements Backend {
           TEXT_LIMITS.memberName,
           'name',
         ),
-        email: user.email,
+        // One person per email in a home: if someone (who has joined) has it, join without it.
+        email: housemates.some((m) => normaliseEmail(m.email) === email) ? '' : email,
         emoji: withinLimit(input.memberEmoji || '🦔', TEXT_LIMITS.memberEmoji, 'emoji'),
         color: MEMBER_COLORS[count % MEMBER_COLORS.length],
         role: 'member',
         weekly_email: true,
         push_enabled: false,
-        created_at: joinedAt,
+        created_at: this.joinTime(housemates),
       });
       return invite.household_id;
     });
@@ -1081,7 +1284,17 @@ export class DemoBackend implements Backend {
       const invite = this.validInvite(doc, token);
       if (!invite) return null;
       const h = this.householdIn(doc, invite.household_id);
-      return { household_name: h.name, address: h.address };
+      const people = doc.members
+        .filter((m) => m.household_id === h.id)
+        .sort((a, b) => compareText(a.created_at, b.created_at) || compareText(a.id, b.id));
+      return {
+        household_name: h.name,
+        address: h.address,
+        people: people
+          .filter((m) => !hasJoined(m) && normaliseEmail(m.email) === '')
+          .map((m) => ({ id: m.id, name: m.name, emoji: m.emoji })),
+        emojis: people.map((m) => m.emoji),
+      };
     });
   }
 
@@ -1133,6 +1346,8 @@ export class DemoBackend implements Backend {
       if (patch.emoji !== undefined) member.emoji = withinLimit(requireText(patch.emoji, 'emoji'), TEXT_LIMITS.memberEmoji, 'emoji');
       if (patch.weekly_email !== undefined) member.weekly_email = patch.weekly_email;
       if (patch.push_enabled !== undefined) member.push_enabled = patch.push_enabled;
+      // members_before_write: someone who has not joined has nowhere to be pushed to.
+      if (!hasJoined(member)) member.push_enabled = false;
     });
   }
 

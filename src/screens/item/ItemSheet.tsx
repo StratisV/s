@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { KIND_OPTIONS, NOTIFY_OPTIONS, REPEAT_OPTIONS, TEXT_LIMITS } from '../../lib/constants';
 import { draftOf, dueDetail, memberLabel, newItemDraft, withKind } from '../../lib/logic/items';
+import { hasJoined } from '../../lib/logic/people';
 import { itemShareMessage } from '../../lib/logic/share';
 import { appBaseUrl } from '../../lib/sharedLink';
 import type { ItemDraft, ItemKind, Notify, Repeat } from '../../lib/types';
@@ -251,7 +252,11 @@ export function ItemSheet({ target, open, onClose, onExited, onSaved }: ItemShee
   const due = dueDetail(draft.due_date, today);
   const assignee = data.members.find((m) => m.id === draft.assignee_id);
   const memberOptions = [
-    ...data.members.map((m) => ({ value: m.id, label: memberLabel(m) })),
+    // Someone added in People who hasn't signed in yet can be given items too.
+    ...data.members.map((m) => ({
+      value: m.id,
+      label: hasJoined(m) ? memberLabel(m) : `${memberLabel(m)} · Not joined yet`,
+    })),
     { value: UNASSIGNED, label: 'Unassigned' },
   ];
   const areaOptions = areas.map((a) => ({ value: a.id, label: a.name }));

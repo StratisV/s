@@ -9,6 +9,9 @@
 // DATABASE_URL=postgresql://... runs the same tests against an existing database that
 // already has the migrations, e.g. the local Supabase stack after `npx supabase db reset`:
 //   DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres npm run test:db
+// The tests make a home per case, so the test database allows many homes
+// (app_settings.many_homes, which the throwaway database gets and DATABASE_URL must have).
+// one_home_deployment.test.mjs makes a fresh database of its own, as a deployment has it.
 //
 // Optional: PG_BIN (directory with initdb/pg_ctl), TEST_DB_PORT, and file name filters as
 // arguments (`npm run test:db -- items` runs only the matching test files).
@@ -76,6 +79,29 @@ async function applySql(client, file) {
   }
 }
 
+/** Lets a test database hold many homes (app_settings.many_homes, 20261010000500_one_home.sql). */
+const MANY_HOMES_SQL = `insert into public.app_settings (id, many_homes) values (true, true)
+  on conflict (id) do update set many_homes = true`;
+
+/** DATABASE_URL: the tests make many homes, so that database must allow them. */
+async function checkManyHomes(url) {
+  const client = new pg.Client({ connectionString: url });
+  await client.connect();
+  try {
+    const { rows } = await client.query(
+      `select to_regclass('public.app_settings') is not null and coalesce((select many_homes from public.app_settings), false) as ok`,
+    );
+    if (!rows[0].ok) {
+      throw new Error(
+        'The database tests make many homes, and this database allows one (a deployment holds one home). ' +
+          `For a local development database only, run:\n  ${MANY_HOMES_SQL.replace(/\s+/g, ' ')};`,
+      );
+    }
+  } finally {
+    await client.end();
+  }
+}
+
 function runTests(env) {
   const res = spawnSync(process.execPath, ['--test', '--test-reporter=spec', ...testFiles], {
     cwd: root,
@@ -138,6 +164,9 @@ async function withThrowawayPostgres() {
         for (const f of migrations) await applySql(client, path.join(migrationsDir, f));
         console.log(`Applied ${migrations.length} migrations (pass ${pass})`);
       }
+      // The tests make a home per case: a test database allows many homes (a deployment holds
+      // one). The tests of the one-home rule itself run in a fresh database of their own.
+      await client.query(MANY_HOMES_SQL);
     } finally {
       await client.end();
     }
@@ -156,6 +185,7 @@ let code;
 try {
   if (process.env.DATABASE_URL) {
     console.log('Running against DATABASE_URL (migrations must already be applied)');
+    await checkManyHomes(process.env.DATABASE_URL);
     code = runTests({ DATABASE_URL: process.env.DATABASE_URL });
   } else {
     code = await withThrowawayPostgres();

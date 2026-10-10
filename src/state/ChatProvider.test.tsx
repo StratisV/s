@@ -4,7 +4,7 @@ import { DEMO_STORAGE_KEY, DemoBackend, type StorageLike } from '../lib/backend/
 import { BackendError } from '../lib/backend/types';
 import type { ChatChange, ChatMessage } from '../lib/types';
 import { ChatProvider, readKey, useChat, type ChatContextValue } from './ChatProvider';
-import { HomeProvider, useHome, type HomeContextValue } from './HomeProvider';
+import { HomeProvider, RESUME_AFTER_MS, SAFETY_MS, useHome, type HomeContextValue } from './HomeProvider';
 
 class MemoryStorage implements StorageLike {
   map = new Map<string, string>();
@@ -493,5 +493,97 @@ describe('ChatProvider', () => {
     await setup();
     chat.draft.set('half a thought');
     expect(chat.draft.get()).toBe('half a thought');
+  });
+});
+
+describe('ChatProvider: sync guarantees', () => {
+  function setVisibility(state: 'visible' | 'hidden') {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }
+  function pageShow(persisted: boolean) {
+    const e = new Event('pageshow');
+    Object.defineProperty(e, 'persisted', { value: persisted });
+    window.dispatchEvent(e);
+  }
+  /** Another device posts: stored, but this tab hears nothing (realtime missed it). */
+  function postedElsewhere(storage: MemoryStorage, body: string) {
+    const doc = JSON.parse(storage.getItem(DEMO_STORAGE_KEY)!);
+    const member = doc.members.find((m: { name: string }) => m.name === 'Shea');
+    doc.messages.push({
+      id: `elsewhere-${body.length}-${Date.now()}`,
+      household_id: member.household_id,
+      member_id: member.id,
+      body,
+      created_at: new Date(Date.now() - 1000).toISOString(),
+    });
+    storage.setItem(DEMO_STORAGE_KEY, JSON.stringify(doc));
+  }
+  const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
+
+  afterEach(() => {
+    vi.useRealTimers();
+    Reflect.deleteProperty(document, 'visibilityState');
+  });
+
+  it('resyncs when back after 10 s, from the back/forward cache and online; a short hide loads the newest page', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    const { backend, storage } = await setup();
+    const list = vi.spyOn(backend, 'listMessages');
+
+    postedElsewhere(storage, 'Back from the shops.');
+    act(() => setVisibility('hidden'));
+    await advance(RESUME_AFTER_MS);
+    act(() => setVisibility('visible'));
+    await waitFor(() => expect(bodies()).toContain('Back from the shops.'));
+    expect(list).toHaveBeenCalledTimes(1);
+
+    act(() => setVisibility('hidden'));
+    await advance(1000);
+    act(() => setVisibility('visible'));
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+
+    postedElsewhere(storage, 'The bins go out tonight.');
+    act(() => pageShow(false));
+    await advance(100);
+    expect(list).toHaveBeenCalledTimes(2);
+    act(() => pageShow(true));
+    await waitFor(() => expect(bodies()).toContain('The bins go out tonight.'));
+    expect(list).toHaveBeenCalledTimes(3);
+
+    postedElsewhere(storage, 'Online again.');
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    await waitFor(() => expect(bodies()).toContain('Online again.'));
+    expect(list).toHaveBeenCalledTimes(4);
+  });
+
+  it('safety net: 60 s without a chat event or a load, while in view, loads the newest page', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    const { backend, storage } = await setup();
+    const list = vi.spyOn(backend, 'listMessages');
+    postedElsewhere(storage, 'Missed by realtime.');
+    await advance(SAFETY_MS - 100);
+    expect(list).toHaveBeenCalledTimes(0);
+    await advance(100);
+    await waitFor(() => expect(bodies()).toContain('Missed by realtime.'));
+    expect(list).toHaveBeenCalledTimes(1);
+
+    // A chat event pushes it back.
+    await advance(30_000);
+    await act(async () => {
+      await backend.sendMessage(home.data!.household.id, 'Hello');
+    });
+    const after = list.mock.calls.length;
+    await advance(SAFETY_MS - 100);
+    expect(list).toHaveBeenCalledTimes(after);
+    await advance(100);
+    expect(list).toHaveBeenCalledTimes(after + 1);
+
+    // Hidden: nothing.
+    act(() => setVisibility('hidden'));
+    await advance(SAFETY_MS * 2);
+    expect(list).toHaveBeenCalledTimes(after + 1);
   });
 });

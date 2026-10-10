@@ -354,7 +354,7 @@ test.describe('People', () => {
   test('lists everyone in the household; your own row says You', async ({ page }) => {
     const dialog = await openHouseholdEditor(page);
     const people = dialog.getByRole('region', { name: 'People' });
-    await expect(people.getByRole('button')).toHaveText(['🦔Stratis, You', '🦆Shea', '🦊Ela']);
+    await expect(people.getByRole('button')).toHaveText(['🦔Stratis, You', '🦆Shea', '🦊Ela', 'Add Person']);
 
     await people.getByRole('button', { name: /Stratis/ }).click();
     await expect(dialog.getByRole('heading', { name: 'Stratis', level: 1 })).toBeVisible();

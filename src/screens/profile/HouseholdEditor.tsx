@@ -1,25 +1,30 @@
 import { useId, useMemo, useRef, useState, type Ref } from 'react';
 import { TEXT_LIMITS } from '../../lib/constants';
+import { hasJoined } from '../../lib/logic/people';
 import type { Member } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
 import { Avatar } from '../../ui/Avatar';
-import { ChevronRightIcon } from '../../ui/icons';
+import { ChevronRightIcon, PlusIcon } from '../../ui/icons';
 import { LargeTitle } from '../../ui/Screen';
 import { AreaList } from './AreaList';
+import { NOT_JOINED } from './GoogleEmailField';
 import { InlineText } from './InlineText';
 import { BackButton, NavPage } from './NavPage';
 import list from './List.module.css';
+import people from './People.module.css';
 import styles from './HouseholdEditor.module.css';
 
 interface HouseholdEditorProps {
   onBack(): void;
-  /** Pushes a member's page (name and emoji). */
+  /** Pushes a member's page (name and emoji; the email and Remove for someone who has not joined). */
   onOpenPerson(memberId: string): void;
+  /** Pushes the Add Person page. */
+  onAddPerson(): void;
   backRef?: Ref<HTMLButtonElement>;
 }
 
 /** Household details, people and areas, pushed inside Profile. Every member can edit all of it. */
-export function HouseholdEditor({ onBack, onOpenPerson, backRef }: HouseholdEditorProps) {
+export function HouseholdEditor({ onBack, onOpenPerson, onAddPerson, backRef }: HouseholdEditorProps) {
   const { data, me, updateHousehold } = useHousehold();
   const scrollRef = useRef<HTMLDivElement>(null);
   const peopleHeadingId = useId();
@@ -69,6 +74,12 @@ export function HouseholdEditor({ onBack, onOpenPerson, backRef }: HouseholdEdit
           {data.members.map((member) => (
             <PersonRow key={member.id} member={member} isMe={member.id === me.id} onOpen={onOpenPerson} />
           ))}
+          <button type="button" className={`${list.row} ${people.addRow}`} data-add-person="" onClick={onAddPerson}>
+            <span className={people.addIcon} aria-hidden="true">
+              <PlusIcon size={20} strokeWidth={2.4} />
+            </span>
+            <span className={people.personText}>Add Person</span>
+          </button>
         </div>
       </section>
 
@@ -82,12 +93,36 @@ export function HouseholdEditor({ onBack, onOpenPerson, backRef }: HouseholdEdit
   );
 }
 
-/** A member, as in the Stats legend, opening their name and emoji. */
+/**
+ * A member, as in the Stats legend, opening their page. Someone who has not joined yet has a
+ * quiet second line: "Not joined yet · shea@gmail.com" (or "· No email yet").
+ */
 function PersonRow({ member, isMe, onOpen }: { member: Member; isMe: boolean; onOpen(memberId: string): void }) {
+  const joined = hasJoined(member);
   return (
     <button type="button" className={list.row} data-member-row={member.id} onClick={() => onOpen(member.id)}>
       <Avatar emoji={member.emoji} size={36} emojiSize={20} background="var(--bg)" ring={member.color} />
-      <span className={styles.personName}>{member.name}</span>
+      {joined ? (
+        <span className={styles.personName}>{member.name}</span>
+      ) : (
+        <span className={people.personText}>
+          <span className={people.personName}>{member.name}</span>
+          <span className={people.personDetail}>
+            <span className={people.status}>
+              <span className="visually-hidden">, </span>
+              {NOT_JOINED}
+            </span>
+            {/* On its own line when it doesn't fit beside "Not joined yet" (the dot then hides). */}
+            <span className={people.address}>
+              <span className={people.dot} aria-hidden="true">
+                {' · '}
+              </span>
+              <span className="visually-hidden">, </span>
+              <span className={people.addressText}>{member.email || 'No email yet'}</span>
+            </span>
+          </span>
+        </span>
+      )}
       {isMe ? (
         <span className={styles.you}>
           <span className="visually-hidden">, </span>You

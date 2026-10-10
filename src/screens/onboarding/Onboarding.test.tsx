@@ -347,13 +347,21 @@ describe('Onboarding', () => {
     expect(preview).toHaveBeenCalledTimes(2);
   });
 
-  it('explains an invalid invite and offers to set up a new home instead', async () => {
+  it('explains an invalid invite first, offers Check Again, and setting up a new home only as the quiet way out', async () => {
     window.history.replaceState(null, '', '/?invite=bogus');
     renderApp(demo());
-    await signInToProfile();
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
+    // Before the profile: nothing typed would be thrown away.
     await screen.findByRole('heading', { name: 'Invite link not valid' });
+    expect(screen.queryByRole('heading', { name: 'Your profile' })).toBeNull();
+    expect(screen.getByText(/Ask whoever sent it to sign in to home.os first/)).toBeTruthy();
+    // The main action checks again; nothing changed, and it says so.
+    fireEvent.click(screen.getByRole('button', { name: 'Check Again' }));
+    // Read out: it is a status line.
+    expect((await screen.findByText('No home here yet. Checked just now.')).getAttribute('role')).toBe('status');
     fireEvent.click(screen.getByRole('button', { name: 'Set up a new home instead' }));
+    expect(await screen.findByRole('heading', { name: 'Your profile' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(await screen.findByRole('heading', { name: 'Your home' })).toBeTruthy();
     // Going back and forward again stays on the create form.
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));

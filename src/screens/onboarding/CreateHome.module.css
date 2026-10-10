@@ -5,3 +5,13 @@
 .seedCard {
   margin-top: 28px;
 }
+
+/* Under Create Home: a home on another phone should come over first. */
+.hint {
+  margin: 10px 0 0;
+  padding: 0 12px;
+  font-size: 13px;
+  line-height: 16px;
+  text-align: center;
+  color: var(--label-secondary);
+}

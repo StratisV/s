@@ -7,6 +7,7 @@ import { HousekeepingScreen } from './screens/housekeeping/HousekeepingScreen';
 import { TaskListSheet } from './screens/housekeeping/TaskListSheet';
 import { useNewNote } from './screens/housekeeping/useNewNote';
 import { ItemSheet } from './screens/item/ItemSheet';
+import { ErrorScreen } from './screens/onboarding/ErrorScreen';
 import { Onboarding } from './screens/onboarding/Onboarding';
 import { ProfileScreen } from './screens/profile/ProfileScreen';
 import { useSharedLink } from './screens/share/useSharedLink';
@@ -23,7 +24,7 @@ export default function App() {
 
   let content;
   if (phase.kind === 'loading') content = <div className={styles.splash} aria-busy="true" />;
-  else if (phase.kind === 'error') content = <ErrorScreen message={phase.message} />;
+  else if (phase.kind === 'error') content = <ErrorScreen message={phase.message} offline={phase.offline} />;
   else if (phase.kind === 'ready' && !onboardingTail) content = <MainApp />;
   else content = <Onboarding />;
 
@@ -32,17 +33,6 @@ export default function App() {
       <div className={styles.column}>{content}</div>
       <StatusSky />
       <Toast />
-    </div>
-  );
-}
-
-function ErrorScreen({ message }: { message: string }) {
-  return (
-    <div className={styles.error} role="alert">
-      <p>{message}</p>
-      <button type="button" onClick={() => window.location.reload()}>
-        Try again
-      </button>
     </div>
   );
 }

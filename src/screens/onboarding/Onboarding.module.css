@@ -104,6 +104,11 @@
   opacity: 0.4;
 }
 
+/* A second nav button, on the right (Back on the left). */
+.navEnd {
+  margin-left: auto;
+}
+
 .navButton:disabled {
   opacity: 0.35;
   cursor: default;

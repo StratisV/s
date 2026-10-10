@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "test:db": "node scripts/test-db.mjs",
     "test:e2e": "playwright test",
+    "test:e2e:live": "playwright test -c playwright.live.config.ts",
     "icons": "node scripts/make-icons.mjs"
   },
   "dependencies": {

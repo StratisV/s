@@ -1,0 +1,155 @@
+/* Household > People: people who have not joined yet, Add Person, and their email. */
+
+/* Name over a quiet second line ("Not joined yet · shea@gmail.com"). */
+.personText {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.personName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.personDetail {
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  /* Clips the dot of an address that went to its own line (it sits just left of the line). */
+  overflow: hidden;
+}
+
+/* "Not joined yet", then the gap the dot sits in (as wide as " · "). */
+.status {
+  margin-right: 13px;
+  white-space: nowrap;
+}
+
+/* The email (or "No email yet"): beside the status when it fits, else on the next line,
+   cut with an ellipsis only when it is wider than the whole row. */
+.address {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+}
+
+.dot {
+  flex: none;
+  width: 13px;
+  margin-left: -13px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.addressText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Add Person: a tinted plus where the avatars are, then the label in the tint. */
+.addRow {
+  justify-content: flex-start;
+  color: var(--tint);
+}
+
+.addIcon {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--tint);
+}
+
+/* "Add" in the navigation bar: the 600 weight of a confirming action, 44px tap target. */
+.navAction {
+  height: 44px;
+  margin-right: -10px;
+  padding: 0 10px;
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  color: var(--tint);
+  border-radius: 12px;
+}
+
+.navAction:active:not(:disabled) {
+  opacity: 0.5;
+}
+
+.navAction:disabled {
+  color: rgba(60, 60, 67, 0.3);
+  cursor: default;
+}
+
+.navAction[aria-busy='true'] {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+/* Under the name on a page: "Not joined yet". */
+.account {
+  font-size: 15px;
+  line-height: 18px;
+  letter-spacing: normal;
+  color: var(--label-secondary);
+}
+
+/* The email fills its row, left-aligned like text you type. */
+.email {
+  flex: 1;
+  min-width: 0;
+  height: 52px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  outline: none;
+  font-size: 17px;
+  letter-spacing: -0.4px;
+  color: var(--label);
+  caret-color: var(--tint);
+  text-overflow: ellipsis;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.email::placeholder {
+  color: rgba(60, 60, 67, 0.3);
+  opacity: 1;
+}
+
+.email[aria-invalid='true'] {
+  color: var(--destructive);
+}
+
+.email:focus[aria-invalid='true'] {
+  color: var(--label);
+}
+
+.error {
+  margin: 0;
+  padding: 10px 20px 0;
+  font-size: 13px;
+  line-height: 16px;
+  letter-spacing: normal;
+  color: var(--destructive);
+}
+
+/* The Remove button stands apart at the bottom of a person's page. */
+.remove {
+  margin-top: 36px;
+}

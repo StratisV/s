@@ -145,6 +145,8 @@ export const TEXT_LIMITS = {
   housekeepingNote: 4000,
   /** A visit's comments. */
   housekeepingComments: 4000,
+  /** A person's Google email (members_email_length; isValidEmail() in lib/logic/people.ts). */
+  email: 254,
 } as const;
 
 /** Messages per chat page (the newest page first, older ones as you scroll up). */

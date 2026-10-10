@@ -1,0 +1,165 @@
+/* The one-home steps: This home is private, Bring over the home from this phone, Welcome home. */
+
+/* An email in running text: never pushes the screen wider, breaks anywhere if it must. */
+.email {
+  font-weight: 600;
+  color: var(--label);
+  overflow-wrap: anywhere;
+}
+
+/* What a check found (Check Again), under its button; takes no room while empty. */
+.status {
+  margin: 8px 0 0;
+  padding: 0 16px;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  text-align: center;
+  color: var(--label-secondary);
+}
+
+.status:empty {
+  margin: 0;
+}
+
+/* The phone's own home, under the ask on "This home is private". */
+.phoneHome {
+  margin-top: 16px;
+}
+
+/* Why a tap didn't work, under the button it belongs to. */
+.error {
+  margin: 8px 0 4px;
+  padding: 0 16px;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  text-align: center;
+  color: var(--destructive);
+  animation: error-in 0.3s ease both;
+}
+
+@keyframes error-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* ── Bring over the home from this phone ───────────────── */
+
+.summary {
+  /* A card clips its corners (overflow: hidden), so in the step's flex column it would shrink
+     to fit a short screen and cut people off; it keeps its height and the step scrolls. */
+  flex: none;
+  margin-top: 24px;
+  padding: 0;
+}
+
+.home {
+  padding: 16px 18px 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.homeName {
+  margin: 0;
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  overflow-wrap: anywhere;
+}
+
+.detail {
+  margin: 0;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.people {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Emoji and name, with the hairline starting at the name and ending at the right padding, as
+   in every other grouped list (People, Areas, Household details). */
+.person {
+  min-height: 52px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+}
+
+.personName {
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  padding: 15px 0;
+  border-top: 0.5px solid var(--separator);
+  overflow-wrap: anywhere;
+}
+
+.you {
+  color: var(--label-secondary);
+}
+
+/* ── The people who came along ─────────────────────────── */
+
+/* The subtitle wraps here (two lines or more), unlike a one-line address. */
+.lead {
+  line-height: 20px;
+}
+
+.emailCard {
+  flex: none;
+  margin-top: 16px;
+}
+
+/* The email reads from the left, under the name. */
+.emailInput {
+  text-align: left;
+}
+
+.fieldError {
+  margin: 0;
+  padding: 8px 20px 0;
+  font-size: 13px;
+  line-height: 16px;
+  color: var(--destructive);
+}
+
+/* ── Welcome home ──────────────────────────────────────── */
+
+.avatar {
+  display: flex;
+  justify-content: center;
+  padding: 24px 20px 24px;
+}
+
+/* A small bounce when the emoji changes (as on Your profile). */
+.pop {
+  animation: pop 0.34s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes pop {
+  from {
+    transform: scale(0.88);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pop,
+  .error {
+    animation: none;
+  }
+}
