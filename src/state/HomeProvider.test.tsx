@@ -1,9 +1,20 @@
 import { act, cleanup, render, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DemoBackend, DEMO_USER, type StorageLike } from '../lib/backend/demo';
-import { BackendError } from '../lib/backend/types';
-import type { CreateHouseholdInput, HouseholdData } from '../lib/types';
-import { HomeProvider, notSavedMessage, useHome, type HomeContextValue } from './HomeProvider';
+import { BackendError, type Backend } from '../lib/backend/types';
+import { buildImportPayload, DEMO_DOC_KEY, readDemoDoc } from '../lib/logic/importHome';
+import { USER_DEMO_DOC } from '../lib/logic/importHome.fixture';
+import type { AuthUser, CreateHouseholdInput, HomeEntry, HouseholdData, ImportPayload } from '../lib/types';
+import {
+  HomeProvider,
+  notSavedMessage,
+  RESUME_AFTER_MS,
+  RETRY_EVERY_MS,
+  RETRY_STEPS_MS,
+  SAFETY_MS,
+  useHome,
+  type HomeContextValue,
+} from './HomeProvider';
 
 class MemoryStorage implements StorageLike {
   private map = new Map<string, string>();
@@ -23,7 +34,7 @@ function Expose({ onHome }: { onHome(home: HomeContextValue): void }) {
   return null;
 }
 
-function mount(backend: DemoBackend) {
+function mount(backend: Backend) {
   let home!: HomeContextValue;
   render(
     <HomeProvider backend={backend}>
@@ -482,5 +493,538 @@ describe('kinds: To do and To maintain', () => {
     });
     expect(create.mock.calls[0][1]).toMatchObject({ kind: 'state', due_date: null, repeat: 'none', notify: 'none' });
     await waitFor(() => expect(itemNamed(home, 'Pizza oven')).toMatchObject({ kind: 'state', due_date: null }));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// One home (docs/ARCHITECTURE.md "One home", "People before they join", "Sync guarantees")
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BOB: AuthUser = { id: 'user-bob', email: 'bob@example.com', name: 'Bob' };
+
+/** The demo backend presented as the Supabase one (the import offer and the guarded create are Supabase-only). */
+function asSupabase(demo: DemoBackend): Backend {
+  return new Proxy(demo, {
+    get(target, prop) {
+      if (prop === 'kind') return 'supabase';
+      const value = Reflect.get(target, prop, target) as unknown;
+      return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    },
+  }) as unknown as Backend;
+}
+
+/** A "server" with Stratis's home in it, where Stratis added Bob (not joined yet) by email. */
+async function homeWithBobWaiting() {
+  const server = new MemoryStorage();
+  const stratis = new DemoBackend({ storage: server, search: '?demo-seed=1', latency: 0 });
+  const hid = (await stratis.getMyHouseholdId())!;
+  const bobby = await stratis.addPerson(hid, { name: 'Bobby', emoji: '🐻', email: 'BOB@example.com' });
+  await stratis.signOut();
+  const bob = new DemoBackend({ storage: server, search: '', latency: 0, user: BOB });
+  await bob.signInWithGoogle();
+  return { server, hid, bobby, bob };
+}
+
+/** Signed in on a server with no home yet. */
+async function noHomeYet(opts: { supabase?: boolean } = {}) {
+  const demo = new DemoBackend({ storage: new MemoryStorage(), search: '', latency: 0 });
+  await demo.signInWithGoogle();
+  const backend = opts.supabase ? asSupabase(demo) : demo;
+  const home = mount(backend);
+  await waitFor(() => expect(home().phase.kind).toBe('onboarding'));
+  return { demo, backend, home };
+}
+
+const privateEntry: HomeEntry = { status: 'private', email: 'stratis@example.com', emailVerified: true };
+
+function setVisibility(state: 'visible' | 'hidden') {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+  document.dispatchEvent(new Event('visibilitychange'));
+}
+
+function pageShow(persisted: boolean) {
+  const e = new Event('pageshow');
+  Object.defineProperty(e, 'persisted', { value: persisted });
+  window.dispatchEvent(e);
+}
+
+describe('one home: where a person belongs', () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => {
+    localStorage.clear();
+    Reflect.deleteProperty(document, 'visibilityState');
+  });
+
+  it('a sign-in that claims a waiting person opens the home as them, with the welcome step', async () => {
+    const { hid, bobby, bob } = await homeWithBobWaiting();
+    const home = mount(bob);
+    await waitFor(() => expect(home().phase.kind).toBe('ready'));
+    expect(home().data!.household.id).toBe(hid);
+    expect(home().me).toMatchObject({ id: bobby.id, name: 'Bobby', emoji: '🐻', user_id: BOB.id });
+    expect(home().claimed).toBe(true);
+    expect(home().onboardingTail).toBe(true);
+
+    // Continue with another emoji: saved, then the notifications step (tail stays).
+    await act(() => home().confirmClaimed('🦁'));
+    expect(home().me!.emoji).toBe('🦁');
+    expect(home().claimed).toBe(false);
+    expect(home().onboardingTail).toBe(true);
+    expect((await bob.load(hid)).members.find((m) => m.id === bobby.id)!.emoji).toBe('🦁');
+    act(() => home().finishOnboarding());
+    expect(home().onboardingTail).toBe(false);
+  });
+
+  it('confirmClaimed keeps the step when the emoji cannot be saved, and saves nothing when it is unchanged', async () => {
+    const { bob } = await homeWithBobWaiting();
+    const home = mount(bob);
+    await waitFor(() => expect(home().claimed).toBe(true));
+    const update = vi.spyOn(bob, 'updateMember').mockRejectedValueOnce(offline());
+    await act(async () => {
+      await expect(home().confirmClaimed('🦁')).rejects.toThrow();
+    });
+    expect(home().claimed).toBe(true);
+    expect(home().me!.emoji).toBe('🐻');
+    expect(home().toast?.message).toBe('Couldn’t save. No connection.');
+    update.mockClear();
+    await act(() => home().confirmClaimed('🐻'));
+    expect(update).not.toHaveBeenCalled();
+    expect(home().claimed).toBe(false);
+  });
+
+  it('a member opens the home with no welcome; signing out clears the steps', async () => {
+    const { home, backend } = await seeded();
+    expect(home().claimed).toBe(false);
+    expect(home().onboardingTail).toBe(false);
+    await act(() => backend.signOut());
+    await waitFor(() => expect(home().phase.kind).toBe('signedOut'));
+    expect(home().claimed).toBe(false);
+  });
+
+  it('"This home is private": the email to add, Check Again, and no home data', async () => {
+    const { backend } = await seeded();
+    cleanup();
+    const enter = vi.spyOn(backend, 'enterHome').mockResolvedValue({ ...privateEntry, emailVerified: false });
+    const again = mount(backend);
+    await waitFor(() => expect(again().phase.kind).toBe('private'));
+    expect(again().phase).toEqual({ kind: 'private', user: DEMO_USER, email: 'stratis@example.com', emailVerified: false });
+    expect(again().data).toBeNull();
+
+    // Check Again that fails leaves the screen as it is and rejects.
+    enter.mockRejectedValueOnce(offline());
+    await act(async () => {
+      await expect(again().recheckHome()).rejects.toThrow();
+    });
+    expect(again().phase.kind).toBe('private');
+
+    // Someone added this person meanwhile: Check Again opens the home.
+    enter.mockRestore();
+    await act(() => again().recheckHome());
+    expect(again().phase.kind).toBe('ready');
+    expect(again().data).not.toBeNull();
+  });
+
+  it('rechecks by itself whenever the app comes back into view, from the cache or online', async () => {
+    const { backend } = await seeded();
+    cleanup();
+    const enter = vi.spyOn(backend, 'enterHome').mockResolvedValue(privateEntry);
+    const home = mount(backend);
+    await waitFor(() => expect(home().phase.kind).toBe('private'));
+    expect(enter).toHaveBeenCalledTimes(1);
+
+    act(() => setVisibility('hidden'));
+    act(() => setVisibility('visible'));
+    await waitFor(() => expect(enter).toHaveBeenCalledTimes(2));
+    act(() => pageShow(false));
+    act(() => pageShow(true));
+    await waitFor(() => expect(enter).toHaveBeenCalledTimes(3));
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    await waitFor(() => expect(enter).toHaveBeenCalledTimes(4));
+    expect(home().phase.kind).toBe('private');
+
+    enter.mockRestore();
+    act(() => setVisibility('visible'));
+    await waitFor(() => expect(home().phase.kind).toBe('ready'));
+  });
+
+  it('no home in demo mode: Create home, and never the import offer', async () => {
+    localStorage.setItem(DEMO_DOC_KEY, JSON.stringify(USER_DEMO_DOC));
+    const { home } = await noHomeYet();
+    expect(home().demoImport).toBeNull();
+  });
+});
+
+describe('one home: bring over the home from this phone', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem(DEMO_DOC_KEY, JSON.stringify(USER_DEMO_DOC));
+  });
+  afterEach(() => localStorage.clear());
+
+  /** The demo document's home, created on the "server" by a stand-in for import_household. */
+  function importInto(demo: DemoBackend) {
+    return vi.spyOn(demo, 'importHousehold').mockImplementation(async (payload: ImportPayload) =>
+      demo.createHousehold({
+        name: payload.household.name,
+        address: payload.household.address,
+        timezone: payload.household.timezone,
+        memberName: payload.people.find((p) => p.me)!.name,
+        memberEmoji: payload.people.find((p) => p.me)!.emoji,
+        areas: payload.areas.map((a) => a.name),
+        items: [],
+      }),
+    );
+  }
+
+  it('offers the home this browser kept, with what comes along', async () => {
+    const { home } = await noHomeYet({ supabase: true });
+    expect(home().demoImport).toEqual({
+      householdName: 'Our home',
+      address: '21 Alderbrook Road',
+      areas: 6,
+      items: 19,
+      people: [
+        { name: 'Stratis', emoji: '🦆', me: true },
+        { name: 'Shea', emoji: '🦔', me: false },
+        { name: 'Ela', emoji: '🦊', me: false },
+      ],
+    });
+  });
+
+  it('Bring It Over: imports the payload, marks the phone’s copy, and opens the home with the steps after a create', async () => {
+    const { demo, home } = await noHomeYet({ supabase: true });
+    const before = localStorage.getItem(DEMO_DOC_KEY)!;
+    const imported = importInto(demo);
+    await act(() => home().importDemoHome());
+    expect(imported).toHaveBeenCalledWith(buildImportPayload(readDemoDoc(localStorage)!));
+    expect(home().phase.kind).toBe('ready');
+    expect(home().onboardingTail).toBe(true);
+    expect(home().claimed).toBe(false);
+    expect(home().data!.household.name).toBe('Our home');
+    expect(home().data!.areas.map((a) => a.name)).toEqual(['Kitchen', 'Living Room', 'Bathroom Small', 'Garden', 'Garden Lounge', 'Jacuzzi']);
+    // The phone's copy is kept as it was, marked, so the offer never comes back.
+    const stored = JSON.parse(localStorage.getItem(DEMO_DOC_KEY)!);
+    expect(stored.imported).toMatchObject({ household_id: home().data!.household.id });
+    expect({ ...stored, imported: undefined }).toEqual({ ...JSON.parse(before), imported: undefined });
+    expect(home().demoImport).toBeNull();
+  });
+
+  it('Start Fresh hides the offer for the session', async () => {
+    const { home } = await noHomeYet({ supabase: true });
+    act(() => home().declineDemoImport());
+    expect(home().demoImport).toBeNull();
+    await act(() => home().recheckHome());
+    expect(home().phase.kind).toBe('onboarding');
+    expect(home().demoImport).toBeNull();
+  });
+
+  it('a home set up meanwhile: moves to where this person belongs and says why', async () => {
+    const { demo, home } = await noHomeYet({ supabase: true });
+    vi.spyOn(demo, 'importHousehold').mockRejectedValue(new BackendError('home_exists'));
+    vi.spyOn(demo, 'enterHome').mockResolvedValue(privateEntry);
+    await act(async () => {
+      await expect(home().importDemoHome()).rejects.toMatchObject({ code: 'home_exists' });
+    });
+    expect(home().phase.kind).toBe('private');
+    expect(JSON.parse(localStorage.getItem(DEMO_DOC_KEY)!).imported).toBeUndefined();
+  });
+
+  it('an earlier tap brought it over (already_member): opens that home with the steps after a create', async () => {
+    const { demo, home } = await noHomeYet({ supabase: true });
+    importInto(demo);
+    await demo.importHousehold(buildImportPayload(readDemoDoc(localStorage)!)!);
+    vi.spyOn(demo, 'importHousehold').mockRejectedValue(new BackendError('already_member'));
+    await act(async () => {
+      await expect(home().importDemoHome()).rejects.toMatchObject({ code: 'already_member' });
+    });
+    expect(home().phase.kind).toBe('ready');
+    expect(home().onboardingTail).toBe(true);
+  });
+
+  it('any other failure keeps the offer', async () => {
+    const { demo, home } = await noHomeYet({ supabase: true });
+    vi.spyOn(demo, 'importHousehold').mockRejectedValue(offline());
+    await act(async () => {
+      await expect(home().importDemoHome()).rejects.toMatchObject({ code: 'network' });
+    });
+    expect(home().phase.kind).toBe('onboarding');
+    expect(home().demoImport).not.toBeNull();
+  });
+
+  it('no offer once the phone’s copy was brought over, or without one', async () => {
+    const doc = { ...USER_DEMO_DOC, imported: { at: '2026-10-10T08:00:00.000Z', household_id: 'h' } };
+    localStorage.setItem(DEMO_DOC_KEY, JSON.stringify(doc));
+    const first = await noHomeYet({ supabase: true });
+    expect(first.home().demoImport).toBeNull();
+    await act(async () => {
+      await expect(first.home().importDemoHome()).rejects.toThrow();
+    });
+    cleanup();
+    localStorage.removeItem(DEMO_DOC_KEY);
+    const second = await noHomeYet({ supabase: true });
+    expect(second.home().demoImport).toBeNull();
+  });
+});
+
+describe('one home: Create home never makes a second home', () => {
+  const create: CreateHouseholdInput = {
+    name: 'Second',
+    address: '',
+    timezone: 'Europe/London',
+    memberName: 'Stratis',
+    memberEmoji: '🦔',
+    areas: ['Kitchen'],
+    items: [],
+  };
+  beforeEach(() => localStorage.clear());
+
+  it('asks once more first: a home set up meanwhile moves to "private" and rejects with home_exists', async () => {
+    const { demo, home } = await noHomeYet({ supabase: true });
+    const made = vi.spyOn(demo, 'createHousehold');
+    vi.spyOn(demo, 'enterHome').mockResolvedValue(privateEntry);
+    await act(async () => {
+      await expect(home().createHousehold(create)).rejects.toMatchObject({ code: 'home_exists' });
+    });
+    expect(made).not.toHaveBeenCalled();
+    expect(home().phase.kind).toBe('private');
+  });
+
+  it('someone added this person meanwhile: the claim opens the home with the welcome step', async () => {
+    const { hid, bob } = await homeWithBobWaiting();
+    const enter = vi.spyOn(bob, 'enterHome').mockResolvedValueOnce({ status: 'no_home' });
+    const home = mount(asSupabase(bob));
+    await waitFor(() => expect(home().phase.kind).toBe('onboarding'));
+    enter.mockRestore();
+    const made = vi.spyOn(bob, 'createHousehold');
+    await act(async () => {
+      await expect(home().createHousehold(create)).rejects.toMatchObject({ code: 'home_exists' });
+    });
+    expect(made).not.toHaveBeenCalled();
+    expect(home().phase.kind).toBe('ready');
+    expect(home().data!.household.id).toBe(hid);
+    expect(home().claimed).toBe(true);
+  });
+
+  it('still no home: creates it', async () => {
+    const { home } = await noHomeYet({ supabase: true });
+    await act(() => home().createHousehold(create));
+    expect(home().phase.kind).toBe('ready');
+    expect(home().data!.household.name).toBe('Second');
+    expect(home().onboardingTail).toBe(true);
+  });
+});
+
+describe('one home: people who have not joined yet', () => {
+  it('Add Person: on screen as soon as the backend answers; a refused one changes nothing and shows no toast', async () => {
+    const { backend, home, hid } = await seeded();
+    vi.spyOn(backend, 'load').mockRejectedValue(offline());
+    let person: Awaited<ReturnType<HomeContextValue['addPerson']>> | undefined;
+    await act(async () => {
+      person = await home().addPerson({ name: 'Noor', emoji: '🦉', email: 'Noor@Example.com' });
+    });
+    expect(person).toMatchObject({ name: 'Noor', user_id: null, email: 'noor@example.com', household_id: hid });
+    expect(home().data!.members.at(-1)).toEqual(person);
+
+    const count = home().data!.members.length;
+    await act(async () => {
+      await expect(home().addPerson({ name: 'Noor 2', emoji: '🦉', email: 'noor@example.com' })).rejects.toMatchObject({
+        code: 'email_taken',
+      });
+    });
+    expect(home().data!.members).toHaveLength(count);
+    expect(home().toast).toBeNull();
+  });
+
+  it('a person’s email shows at once in its stored form, and comes back if it cannot be saved', async () => {
+    const { backend, home, hid } = await seeded();
+    const noor = await backend.addPerson(hid, { name: 'Noor', emoji: '🦉', email: '' });
+    await act(() => home().refresh());
+    const gate = deferred();
+    const write = vi.spyOn(backend, 'setPersonEmail').mockImplementationOnce(() => gate.promise);
+    let saving: Promise<void> | undefined;
+    act(() => {
+      saving = home().setPersonEmail(noor.id, '  Noor@Example.com ');
+    });
+    expect(write).toHaveBeenCalledWith(noor.id, '  Noor@Example.com ');
+    expect(home().data!.members.find((m) => m.id === noor.id)!.email).toBe('noor@example.com');
+    vi.spyOn(backend, 'load').mockRejectedValue(offline());
+    await act(async () => {
+      gate.reject(new BackendError('email_taken'));
+      await expect(saving).rejects.toMatchObject({ code: 'email_taken' });
+    });
+    expect(home().data!.members.find((m) => m.id === noor.id)!.email).toBe('');
+    expect(home().toast).toBeNull();
+  });
+
+  it('Remove: gone at once with their items unassigned and their credits cleared; all back if it fails', async () => {
+    const { backend, home, hid } = await seeded();
+    const noor = await backend.addPerson(hid, { name: 'Noor', emoji: '🦉', email: '' });
+    const data = await backend.load(hid);
+    const item = await backend.createItem(hid, { ...data.items[0], title: 'Noor’s job', assignee_id: noor.id });
+    const done = await backend.createItem(hid, { ...data.items[0], title: 'Done by Noor', assignee_id: noor.id, repeat: 'none', kind: 'task' });
+    const cid = await backend.completeItem(done.id);
+    await act(() => home().refresh());
+    const before = home().data!;
+
+    vi.spyOn(backend, 'load').mockRejectedValue(offline());
+    const gate = deferred();
+    vi.spyOn(backend, 'removePerson').mockImplementationOnce(() => gate.promise);
+    let removing: Promise<void> | undefined;
+    act(() => {
+      removing = home().removePerson(noor.id);
+    });
+    expect(home().data!.members.some((m) => m.id === noor.id)).toBe(false);
+    expect(home().data!.items.find((i) => i.id === item.id)!.assignee_id).toBeNull();
+    expect(home().data!.completions.find((c) => c.id === cid)!.credited_to).toBeNull();
+    await act(async () => {
+      gate.reject(offline());
+      await expect(removing).rejects.toThrow();
+    });
+    expect(home().data).toEqual(before);
+    expect(home().toast?.message).toBe('Couldn’t save. No connection.');
+  });
+
+  it('Remove goes through to the backend', async () => {
+    const { backend, home, hid } = await seeded();
+    const noor = await backend.addPerson(hid, { name: 'Noor', emoji: '🦉', email: '' });
+    await act(() => home().refresh());
+    await act(() => home().removePerson(noor.id));
+    await flush();
+    expect(home().data!.members.some((m) => m.id === noor.id)).toBe(false);
+    expect((await backend.load(hid)).members.some((m) => m.id === noor.id)).toBe(false);
+  });
+});
+
+describe('sync guarantees', () => {
+  /** Signed in and ready, on fake timers that still move with real time (so promises settle). */
+  async function readyOnFakeTimers() {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    const ctx = await seeded();
+    const load = vi.spyOn(ctx.backend, 'load');
+    const reconnect = vi.spyOn(ctx.backend, 'reconnect');
+    load.mockClear();
+    return { ...ctx, load, reconnect };
+  }
+  const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
+
+  afterEach(() => {
+    vi.useRealTimers();
+    Reflect.deleteProperty(document, 'visibilityState');
+  });
+
+  it('retries a failed background reload after 1, 2, 4 and 8 s, then every 15 s, until one is shown', async () => {
+    const { home, load, backend, hid } = await readyOnFakeTimers();
+    const real = await backend.load(hid);
+    load.mockClear();
+    load.mockRejectedValue(offline());
+    await act(() => home().refresh());
+    expect(load).toHaveBeenCalledTimes(1);
+    const steps = [...RETRY_STEPS_MS, RETRY_EVERY_MS, RETRY_EVERY_MS];
+    for (const [i, step] of steps.entries()) {
+      await advance(step - 50);
+      expect(load, `before step ${i + 1}`).toHaveBeenCalledTimes(i + 1);
+      await advance(50);
+      expect(load, `after step ${i + 1}`).toHaveBeenCalledTimes(i + 2);
+    }
+    // Then one is shown: no more retries.
+    load.mockResolvedValue({ ...real, household: { ...real.household, name: 'Back online' } });
+    await advance(RETRY_EVERY_MS);
+    expect(home().data!.household.name).toBe('Back online');
+    const calls = load.mock.calls.length;
+    await advance(RETRY_EVERY_MS * 2);
+    expect(load).toHaveBeenCalledTimes(calls);
+  });
+
+  it('skips retries while hidden; coming back reloads', async () => {
+    const { home, load } = await readyOnFakeTimers();
+    load.mockRejectedValue(offline());
+    await act(() => home().refresh());
+    act(() => setVisibility('hidden'));
+    await advance(RETRY_STEPS_MS[0] + RETRY_STEPS_MS[1] + 100);
+    expect(load).toHaveBeenCalledTimes(1);
+    load.mockRestore();
+    const loadAgain = vi.spyOn(home().backend, 'load');
+    act(() => setVisibility('visible'));
+    await advance(300);
+    expect(loadAgain).toHaveBeenCalledTimes(1);
+  });
+
+  it('back after 10 s or more: one reconnect and one reload at once; a short hide reloads as before', async () => {
+    const { load, reconnect } = await readyOnFakeTimers();
+    act(() => setVisibility('hidden'));
+    await advance(RESUME_AFTER_MS);
+    act(() => setVisibility('visible'));
+    await advance(0);
+    expect(reconnect).toHaveBeenCalledTimes(1);
+    expect(load).toHaveBeenCalledTimes(1);
+    await advance(1000);
+    expect(load).toHaveBeenCalledTimes(1);
+
+    act(() => setVisibility('hidden'));
+    await advance(RESUME_AFTER_MS - 1000);
+    act(() => setVisibility('visible'));
+    await advance(0);
+    expect(load).toHaveBeenCalledTimes(1);
+    await advance(250);
+    expect(reconnect).toHaveBeenCalledTimes(1);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it('pageshow from the back/forward cache and online: reconnect and reload', async () => {
+    const { load, reconnect } = await readyOnFakeTimers();
+    act(() => pageShow(false));
+    await advance(300);
+    expect([reconnect.mock.calls.length, load.mock.calls.length]).toEqual([0, 0]);
+    act(() => pageShow(true));
+    await advance(0);
+    expect([reconnect.mock.calls.length, load.mock.calls.length]).toEqual([1, 1]);
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    await advance(0);
+    expect([reconnect.mock.calls.length, load.mock.calls.length]).toEqual([2, 2]);
+  });
+
+  it('safety net: 60 s without a realtime event or a reload, while in view, reloads', async () => {
+    const { load, home } = await readyOnFakeTimers();
+    await advance(SAFETY_MS - 100);
+    expect(load).toHaveBeenCalledTimes(0);
+    await advance(100);
+    expect(load).toHaveBeenCalledTimes(1);
+    // A reload in between pushes it back.
+    await advance(30_000);
+    await act(() => home().refresh());
+    expect(load).toHaveBeenCalledTimes(2);
+    await advance(SAFETY_MS - 100);
+    expect(load).toHaveBeenCalledTimes(2);
+    await advance(100);
+    expect(load).toHaveBeenCalledTimes(3);
+    // Hidden: nothing.
+    act(() => setVisibility('hidden'));
+    await advance(SAFETY_MS * 2);
+    expect(load).toHaveBeenCalledTimes(3);
+  });
+
+  it('a realtime event pushes the safety net back', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    const storage = new MemoryStorage();
+    const backend = new DemoBackend({ storage, search: '?demo-seed=1', latency: 0 });
+    let onChange: () => void = () => {};
+    vi.spyOn(backend, 'subscribe').mockImplementation((_hid, cb) => {
+      onChange = cb;
+      return () => {};
+    });
+    const home = mount(backend);
+    await waitFor(() => expect(home().phase.kind).toBe('ready'));
+    const load = vi.spyOn(backend, 'load');
+    await advance(40_000);
+    act(() => onChange());
+    await advance(250);
+    expect(load).toHaveBeenCalledTimes(1); // the event's own debounced reload
+    await advance(SAFETY_MS - 500);
+    expect(load).toHaveBeenCalledTimes(1);
+    await advance(500);
+    expect(load).toHaveBeenCalledTimes(2);
   });
 });

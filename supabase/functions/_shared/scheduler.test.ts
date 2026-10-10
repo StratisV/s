@@ -263,6 +263,38 @@ describe('runScheduler: pushes', () => {
   });
 });
 
+describe('runScheduler: people who have not joined yet', () => {
+  it('sends them nothing (no push, no email, no claim), while the owner still hears of their missed item', async () => {
+    const w = world();
+    // Added in People with an email, not signed in yet. Push and weekly email forced on, and a
+    // stray device row, to be sure the account check alone keeps them out.
+    const noor = member(w.h, {
+      name: 'Noor',
+      user_id: null,
+      email: 'noor@example.com',
+      push_enabled: true,
+      weekly_email: true,
+      created_at: '2026-01-04T00:00:00Z',
+    });
+    w.data.members = [...w.data.members, noor];
+    const late = item(w.kitchen, { title: 'Leaves', due_date: '2026-10-10', assignee_id: noor.id, notify: 'none' });
+    const soon = item(w.kitchen, { title: 'Weeds', due_date: '2026-10-13', assignee_id: noor.id, notify: 'day_before' });
+    w.data.items = [late, soon];
+    const stray = device(noor.id, 'noor');
+    const store = new MemoryStore(w.data, [w.devices.stratisA.sub, stray.sub]);
+    const net = network();
+    await runScheduler(store, config({ fetch: net.impl }), { now: NOW });
+
+    expect(net.pushCalls().map((c) => c.url)).toEqual(['https://push.example.com/stratis-a']);
+    expect(decrypt(w.devices.stratisA, net.pushCalls()[0].init.body)).toMatchObject({ title: 'Missed: Leaves' });
+    const emails = net.calls.filter((c) => c.url === RESEND_URL).map((c) => JSON.parse(c.init.body as string));
+    expect(emails.map((e) => e.to[0]).sort()).toEqual([w.shea.email, w.stratis.email].sort());
+    // The weekly email still names them as the one looking after their items.
+    expect(emails[0].text).toContain('Noor');
+    expect(store.log.some((r) => r.member_id === noor.id)).toBe(false);
+  });
+});
+
 describe('runScheduler: weekly email', () => {
   it('sends one email per member with weekly_email on, once', async () => {
     const w = world();

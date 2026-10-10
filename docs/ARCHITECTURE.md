@@ -441,7 +441,8 @@ coming back into view or back online.
 | chat message sent or deleted | messages | `subscribeChat` → message |
 | reaction added or removed | message_reactions | `subscribeChat` → reaction |
 
-What makes it hold (the first two exist; the rest is required of the one-home data work):
+What makes it hold (timings are constants in `src/state/HomeProvider.tsx`: `RETRY_STEPS_MS`,
+`RETRY_EVERY_MS`, `RESUME_AFTER_MS`, `SAFETY_MS`):
 
 1. **Realtime**: `subscribe` (one channel, five tables, filtered by household) and
    `subscribeChat`; every table is in the `supabase_realtime` publication with replica identity
@@ -458,9 +459,12 @@ What makes it hold (the first two exist; the rest is required of the one-home da
    and reloads at once; ChatProvider resyncs on the same three events. A shorter hide keeps the
    debounced reload it has today. In phase `private` the same events run `recheckHome()`.
 5. **Reconnect** (`Backend.reconnect`): the Supabase backend drops the socket and opens a fresh
-   one, at most once per 5 s, because a phone that slept can hold a socket that says it is open
-   but is dead, and the 25 s heartbeat takes up to a minute to notice. Channels rejoin when it
-   opens, and each join asks for a reload.
+   one, at most once per 5 s (`RECONNECT_MIN_MS`), because a phone that slept can hold a socket
+   that says it is open but is dead, and the 25 s heartbeat takes up to a minute to notice. Each
+   subscription (`subscribe`, `subscribeChat`) then gets a fresh channel with the same listeners
+   on the new socket, and the old one is removed: a channel whose socket died without a close
+   event still believes it is joined and would never rejoin by itself. Each fresh join asks for
+   a reload; events from a replaced channel are ignored.
 6. **Safety net**: while visible and `ready`, when 60 s pass with no realtime event and no
    reload, HomeProvider reloads and ChatProvider loads the newest page. This covers a channel
    that joined but silently stopped delivering.
@@ -473,7 +477,8 @@ Tests that pin it (required with the data work):
   added. After `reconnect()`, A's channel rejoins and asks for a reload within 5 s.
 - Unit (`src/state/HomeProvider.test.tsx`, `ChatProvider.test.tsx`, fake timers): the retry
   steps, the resume events (one `reconnect()`, one reload), the 60 s safety net, and the
-  recheck in phase `private`.
+  recheck in phase `private`. Offline (`supabase.integration.test.ts`, a fake client): the
+  fresh channels after `reconnect()`, in order, at most once per 5 s, never throwing.
 - e2e (demo, two pages in one browser context, which share localStorage): a change on one page
   shows on the other without a reload, for an item, an area, a person and a chat message.
 

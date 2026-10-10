@@ -24,7 +24,9 @@ import type {
   PushSubscriptionInput,
 } from '../types';
 import { instantOf } from '../logic/chat';
-import { SupabaseBackend, toAuthUser, toBackendError, toHHMM } from './supabase';
+import { buildImportPayload, readDemoDoc } from '../logic/importHome';
+import { USER_DEMO_DOC } from '../logic/importHome.fixture';
+import { RECONNECT_MIN_MS, SupabaseBackend, toAuthUser, toBackendError, toHHMM, toHomeEntry } from './supabase';
 import { BackendError, type BackendErrorCode } from './types';
 
 async function rejectsWith(p: Promise<unknown>, code: BackendErrorCode, message?: RegExp) {
@@ -544,6 +546,129 @@ describe('SupabaseBackend offline: requests', () => {
   });
 });
 
+describe('SupabaseBackend offline: one home', () => {
+  const H = '22222222-2222-4222-8222-222222222222';
+  const P = '44444444-4444-4444-8444-444444444444';
+  const PERSON = {
+    id: P,
+    household_id: H,
+    user_id: null,
+    name: 'Shea',
+    email: 'shea@example.com',
+    emoji: '🦔',
+    color: '#AF52DE',
+    role: 'member',
+    weekly_email: true,
+    push_enabled: false,
+    created_at: '2026-10-10T08:00:00+00:00',
+  };
+
+  it('maps enter_home replies to HomeEntry', () => {
+    expect(toHomeEntry({ status: 'member', household_id: 'h', member_id: 'm' })).toEqual({
+      status: 'member',
+      householdId: 'h',
+      memberId: 'm',
+    });
+    expect(toHomeEntry({ status: 'claimed', household_id: 'h', member_id: 'm' })).toEqual({
+      status: 'claimed',
+      householdId: 'h',
+      memberId: 'm',
+    });
+    expect(toHomeEntry({ status: 'no_home' })).toEqual({ status: 'no_home' });
+    expect(toHomeEntry({ status: 'private', email: 'ada@example.com', email_verified: true })).toEqual({
+      status: 'private',
+      email: 'ada@example.com',
+      emailVerified: true,
+    });
+    expect(toHomeEntry({ status: 'private', email: null, email_verified: 'yes' })).toEqual({
+      status: 'private',
+      email: '',
+      emailVerified: false,
+    });
+    for (const odd of [null, 'member', {}, { status: 'member' }, { status: 'claimed', household_id: 'h' }, { status: 'owner' }]) {
+      expect(() => toHomeEntry(odd)).toThrow(BackendError);
+    }
+  });
+
+  it('calls enter_home, import_household and the people RPCs with the documented parameter names', async () => {
+    const { backend, client, calls, rest } = fakeServer(
+      withAuth((call) => {
+        const fn = call.url.pathname.replace('/rest/v1/rpc/', '');
+        if (fn === 'enter_home') return { body: { status: 'claimed', household_id: H, member_id: P } };
+        if (fn === 'import_household') return { body: H };
+        if (fn === 'add_person') return { body: P };
+        if (fn === 'set_person_email' || fn === 'remove_person') return { status: 204 };
+        if (call.url.pathname === '/rest/v1/members') return { body: [PERSON] };
+        return { status: 404, body: { message: 'unexpected' } };
+      }),
+    );
+    // Signed out: nothing is sent.
+    await rejectsWith(backend.enterHome(), 'not_signed_in');
+    await rejectsWith(backend.importHousehold({} as never), 'not_signed_in');
+    expect(calls.filter((c) => c.url.pathname.startsWith('/rest/'))).toEqual([]);
+
+    await signInFake(client);
+    expect(await backend.enterHome()).toEqual({ status: 'claimed', householdId: H, memberId: P });
+    const payload = {
+      version: 1 as const,
+      household: { name: 'Our home', address: '', timezone: 'Europe/London' },
+      people: [{ key: 'p1', name: 'Stratis', emoji: '🦆', me: true }],
+      areas: [],
+      items: [],
+      completions: [],
+    };
+    expect(await backend.importHousehold(payload)).toBe(H);
+    expect(await backend.addPerson(H, { name: '  Shea ', emoji: ' 🦔 ', email: ' Shea@Example.com ' })).toEqual(PERSON);
+    await backend.setPersonEmail(P, ' NEW@Example.com');
+    await backend.setPersonEmail(P, '');
+    await backend.removePerson(P);
+
+    const rpc = (fn: string) => calls.filter((c) => c.url.pathname === `/rest/v1/rpc/${fn}`);
+    expect(rpc('enter_home')[0]).toMatchObject({ method: 'POST', body: {} });
+    expect(rpc('import_household')[0].body).toEqual({ p_payload: payload });
+    expect(rpc('add_person')[0].body).toEqual({ p_household_id: H, p_name: 'Shea', p_emoji: '🦔', p_email: 'shea@example.com' });
+    expect(rpc('set_person_email').map((c) => c.body)).toEqual([
+      { p_member_id: P, p_email: 'new@example.com' },
+      { p_member_id: P, p_email: '' },
+    ]);
+    expect(rpc('remove_person')[0].body).toEqual({ p_member_id: P });
+    // addPerson reads the new row back, with the member columns.
+    const read = rest('members')[0];
+    expect(read.url.searchParams.get('id')).toBe(`eq.${P}`);
+    expect(read.url.searchParams.get('select')).toContain('user_id');
+  });
+
+  it('refuses what cannot be a person before asking, and maps the RPC errors', async () => {
+    const pgError = (message: string) => ({ status: 400, body: { message, code: 'P0001', details: null, hint: null } });
+    let next: Reply = pgError('email_taken');
+    const { backend, client, calls } = fakeServer(withAuth(() => next));
+    await signInFake(client);
+    const before = calls.length;
+    await rejectsWith(backend.addPerson(H, { name: '  ', emoji: '🦔', email: '' }), 'unknown', /invalid_input/);
+    await rejectsWith(backend.addPerson(H, { name: 'Shea', emoji: '🦔', email: 'shea' }), 'unknown', /invalid_input/);
+    await rejectsWith(backend.addPerson('nope', { name: 'Shea', emoji: '🦔', email: '' }), 'not_found');
+    await rejectsWith(backend.setPersonEmail('nope', 'x@example.com'), 'not_found');
+    await rejectsWith(backend.removePerson('nope'), 'not_found');
+    expect(calls.length).toBe(before);
+
+    await rejectsWith(backend.addPerson(H, { name: 'Shea', emoji: '🦔', email: 'shea@example.com' }), 'email_taken');
+    await rejectsWith(backend.setPersonEmail(P, 'shea@example.com'), 'email_taken');
+    next = pgError('invalid_input');
+    await rejectsWith(backend.setPersonEmail(P, 'x@example.com'), 'unknown', /invalid_input/);
+    await rejectsWith(backend.removePerson(P), 'unknown', /invalid_input/);
+    next = pgError('not_found');
+    await rejectsWith(backend.removePerson(P), 'not_found');
+    next = pgError('home_exists');
+    await rejectsWith(backend.importHousehold({} as never), 'home_exists');
+    next = pgError('already_member');
+    await rejectsWith(backend.importHousehold({} as never), 'already_member');
+    next = { status: 200, body: { status: 'somewhere' } };
+    await rejectsWith(backend.enterHome(), 'unknown', /enter_home/);
+    next = new TypeError('fetch failed');
+    await rejectsWith(backend.enterHome(), 'network');
+  });
+});
+
 describe('SupabaseBackend offline: auth and realtime wiring', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -731,6 +856,182 @@ describe('SupabaseBackend offline: auth and realtime wiring', () => {
     } finally {
       errors.mockRestore();
     }
+  });
+});
+
+describe('SupabaseBackend offline: reconnect', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A client whose every channel() is a new fake channel, with a realtime socket to drop. */
+  function fakeSocketClient() {
+    type Handler = { table: string; cb: (payload?: unknown) => void };
+    const channels: {
+      topic: string;
+      handlers: Handler[];
+      status: (s: string) => void;
+      removed: boolean;
+    }[] = [];
+    const log: string[] = [];
+    let release: () => void = () => {};
+    let holdDisconnect = false;
+    const realtime = {
+      disconnect: vi.fn(async () => {
+        log.push('disconnect');
+        if (holdDisconnect) await new Promise<void>((r) => (release = r));
+        return 'ok';
+      }),
+      connect: vi.fn(() => log.push('connect')),
+    };
+    const client = {
+      realtime,
+      channel: vi.fn((topic: string) => {
+        const entry = { topic, handlers: [] as Handler[], status: (_s: string) => {}, removed: false };
+        channels.push(entry);
+        log.push(`open ${topic}`);
+        const channel = {
+          on: (_type: string, filter: { table: string }, cb: (payload?: unknown) => void) => {
+            entry.handlers.push({ table: filter.table, cb });
+            return channel;
+          },
+          subscribe: (cb: (s: string) => void) => {
+            entry.status = cb;
+            return channel;
+          },
+          entry,
+        };
+        return channel;
+      }),
+      removeChannel: vi.fn(async (channel: { entry: (typeof channels)[number] }) => {
+        channel.entry.removed = true;
+        log.push(`remove ${channel.entry.topic}`);
+        return 'ok';
+      }),
+    };
+    return {
+      client: client as unknown as SupabaseClient,
+      realtime,
+      channels,
+      log,
+      hold: () => (holdDisconnect = true),
+      release: () => release(),
+    };
+  }
+
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  it('drops the socket, opens a fresh one and gives every subscription a fresh channel that asks for a reload', async () => {
+    const fake = fakeSocketClient();
+    const backend = new SupabaseBackend(FAKE_URL, FAKE_KEY, { client: fake.client });
+    const reloads = vi.fn();
+    const chat: ChatChange[] = [];
+    backend.subscribe('h1', reloads);
+    backend.subscribeChat('h1', (c) => chat.push(c));
+    const [home, talk] = fake.channels;
+    home.status('SUBSCRIBED');
+    talk.status('SUBSCRIBED');
+    expect(reloads).toHaveBeenCalledTimes(1);
+    expect(chat).toEqual([{ type: 'resync' }]);
+    fake.log.length = 0;
+
+    backend.reconnect();
+    await settle();
+    expect(fake.realtime.disconnect).toHaveBeenCalledTimes(1);
+    expect(fake.realtime.connect).toHaveBeenCalledTimes(1);
+    // Disconnect, connect, then each fresh channel before its old one goes.
+    expect(fake.log).toEqual([
+      'disconnect',
+      'connect',
+      `open ${fake.channels[2].topic}`,
+      `remove ${home.topic}`,
+      `open ${fake.channels[3].topic}`,
+      `remove ${talk.topic}`,
+    ]);
+    const [, , home2, talk2] = fake.channels;
+    expect(home2.topic).toMatch(/^household:h1:/);
+    expect(talk2.topic).toMatch(/^chat:h1:/);
+    expect(home2.topic).not.toBe(home.topic);
+    expect(home2.handlers.map((h) => h.table)).toEqual(home.handlers.map((h) => h.table));
+    expect(talk2.handlers.map((h) => h.table)).toEqual(['messages', 'message_reactions']);
+
+    // The fresh channels' joins ask for a reload; the old ones are silent from now on.
+    home2.status('SUBSCRIBED');
+    talk2.status('SUBSCRIBED');
+    expect(reloads).toHaveBeenCalledTimes(2);
+    expect(chat).toEqual([{ type: 'resync' }, { type: 'resync' }]);
+    home.handlers[3].cb();
+    home.status('SUBSCRIBED');
+    talk.handlers[0].cb({ eventType: 'INSERT', new: { id: 'm1' }, old: {} });
+    expect(reloads).toHaveBeenCalledTimes(2);
+    expect(chat).toHaveLength(2);
+    home2.handlers[3].cb();
+    talk2.handlers[0].cb({ eventType: 'INSERT', new: { id: 'm1' }, old: {} });
+    expect(reloads).toHaveBeenCalledTimes(3);
+    expect(chat.at(-1)).toEqual({ type: 'message', messageId: 'm1', deleted: false });
+  });
+
+  it('runs at most once per 5 s, returns at once and never throws', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-10T08:00:00Z'));
+    const fake = fakeSocketClient();
+    const backend = new SupabaseBackend(FAKE_URL, FAKE_KEY, { client: fake.client });
+    backend.subscribe('h1', () => {});
+    fake.hold();
+    expect(backend.reconnect()).toBeUndefined();
+    backend.reconnect();
+    vi.setSystemTime(new Date(Date.now() + RECONNECT_MIN_MS - 1));
+    backend.reconnect();
+    expect(fake.realtime.disconnect).toHaveBeenCalledTimes(1);
+    // Still disconnecting: nothing reopened yet.
+    expect(fake.realtime.connect).not.toHaveBeenCalled();
+    fake.release();
+    await settle();
+    expect(fake.realtime.connect).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(new Date(Date.now() + 1));
+    backend.reconnect();
+    expect(fake.realtime.disconnect).toHaveBeenCalledTimes(2);
+
+    // A client that fails is reported, not thrown.
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const broken = new SupabaseBackend(FAKE_URL, FAKE_KEY, { client: {} as unknown as SupabaseClient });
+      expect(() => broken.reconnect()).not.toThrow();
+      await settle();
+      expect(errors).toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it('does not reopen a subscription that ended, and opens no socket for none', async () => {
+    const fake = fakeSocketClient();
+    const backend = new SupabaseBackend(FAKE_URL, FAKE_KEY, { client: fake.client });
+    const stop = backend.subscribe('h1', () => {});
+    stop();
+    backend.reconnect();
+    await settle();
+    expect(fake.realtime.disconnect).toHaveBeenCalledTimes(1);
+    expect(fake.realtime.connect).not.toHaveBeenCalled();
+    expect(fake.channels).toHaveLength(1);
+  });
+
+  it('a subscription ended while the socket was being dropped stays ended', async () => {
+    const fake = fakeSocketClient();
+    const backend = new SupabaseBackend(FAKE_URL, FAKE_KEY, { client: fake.client });
+    const reloads = vi.fn();
+    const stop = backend.subscribe('h1', reloads);
+    const keep = backend.subscribeChat('h1', () => {});
+    fake.hold();
+    backend.reconnect();
+    stop();
+    fake.release();
+    await settle();
+    // Only the chat got a fresh channel.
+    expect(fake.channels.map((c) => c.topic.split(':')[0])).toEqual(['household', 'chat', 'chat']);
+    expect(fake.channels[0].removed).toBe(true);
+    keep();
+    expect(fake.channels[2].removed).toBe(true);
   });
 });
 
@@ -962,7 +1263,7 @@ async function waitFor(check: () => boolean, ms: number): Promise<boolean> {
 }
 
 interface Person {
-  key: 'a' | 'b' | 'c';
+  key: 'a' | 'b' | 'c' | 'd' | 'e' | 'f';
   email: string;
   password: string;
   fullName: string;
@@ -976,7 +1277,7 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
   const TZ = 'Europe/London';
   const AREAS = ['Kitchen', '  ', 'Garden', 'Jacuzzi'];
   let admin: SupabaseClient;
-  const people = {} as Record<'a' | 'b' | 'c', Person>;
+  const people = {} as Record<Person['key'], Person>;
   const households: string[] = [];
 
   let hidA = '';
@@ -1910,6 +2211,216 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     await A().sendMessage(hidA, 'After unsubscribing');
     await sleep(1000);
     expect(heardB).toHaveLength(heard);
+  });
+
+  // ── One home (docs/ARCHITECTURE.md "One home", "People before they join") ──
+
+  it('one home: where each account belongs, people added by email, and a claim', { timeout: 60_000 }, async () => {
+    people.d = await createPerson('d', 'Dee Tester');
+    people.e = await createPerson('e', 'Eve Tester');
+    const D = () => people.d.backend;
+    const E = () => people.e.backend;
+    const payload = buildImportPayload(readDemoDoc({ getItem: () => JSON.stringify(USER_DEMO_DOC) })!)!;
+
+    expect(await A().enterHome()).toEqual({ status: 'member', householdId: hidA, memberId: memberA });
+    expect(await C().enterHome()).toEqual({ status: 'member', householdId: hidC, memberId: memberC });
+    // Homes exist and nobody has Eve's email: "This home is private", and no import.
+    expect(await E().enterHome()).toEqual({ status: 'private', email: people.e.email, emailVerified: true });
+    await rejectsWith(E().importHousehold(payload), 'home_exists');
+    await rejectsWith(A().importHousehold(payload), 'already_member');
+    expect(await E().getMyHouseholdId()).toBeNull();
+
+    // Bea adds Dee by her Google email, in another case.
+    const dee = await B().addPerson(hidA, { name: ' Dee ', emoji: '🦉', email: ` ${people.d.email.toUpperCase()} ` });
+    expect(dee).toMatchObject({
+      household_id: hidA,
+      user_id: null,
+      name: 'Dee',
+      emoji: '🦉',
+      email: people.d.email,
+      role: 'member',
+      weekly_email: true,
+      push_enabled: false,
+    });
+    await rejectsWith(B().addPerson(hidA, { name: 'Dee 2', emoji: '🦉', email: people.d.email }), 'email_taken');
+    await rejectsWith(B().addPerson(hidA, { name: 'Bea 2', emoji: '🦉', email: people.b.email.toUpperCase() }), 'email_taken');
+    await rejectsWith(B().addPerson(hidA, { name: 'X'.repeat(41), emoji: '🦉', email: '' }), 'unknown', /invalid_input/);
+    await rejectsWith(C().addPerson(hidA, { name: 'Intruder', emoji: '🦉', email: '' }), 'not_found');
+    await rejectsWith(E().addPerson(hidA, { name: 'Intruder', emoji: '🦉', email: '' }), 'not_found');
+
+    // A person who has not joined grants nothing: Dee's account still sees nothing.
+    await rejectsWith(D().load(hidA), 'not_found');
+    expect(await D().getMyHouseholdId()).toBeNull();
+    // Everyone edits them like anyone else; push stays off until they join.
+    await A().updateMember(dee.id, { name: 'Dee D', push_enabled: true });
+    expect((await loadA()).members.find((m) => m.id === dee.id)).toMatchObject({ name: 'Dee D', push_enabled: false });
+    const kitchen = area(await loadA(), 'Kitchen');
+    const theirs = await A().createItem(hidA, draft({ area_id: kitchen.id, title: `Dee's job ${runId}`, assignee_id: dee.id }));
+
+    // The email changed in People: Dee's sign-in claims nothing; set back, it does.
+    await A().setPersonEmail(dee.id, '');
+    expect(await D().enterHome()).toEqual({ status: 'private', email: people.d.email, emailVerified: true });
+    await A().setPersonEmail(dee.id, people.d.email);
+    await rejectsWith(C().setPersonEmail(dee.id, people.c.email), 'not_found');
+    expect(await D().enterHome()).toEqual({ status: 'claimed', householdId: hidA, memberId: dee.id });
+    expect(await D().enterHome()).toEqual({ status: 'member', householdId: hidA, memberId: dee.id });
+    const claimed = (await D().load(hidA)).members.find((m) => m.id === dee.id)!;
+    expect(claimed).toMatchObject({ user_id: people.d.userId, name: 'Dee D', emoji: '🦉', color: dee.color });
+    expect((await D().load(hidA)).items.find((i) => i.id === theirs.id)!.assignee_id).toBe(dee.id);
+    // Joined: their email is their account's, and they cannot be removed in People.
+    await rejectsWith(A().setPersonEmail(dee.id, 'other@example.com'), 'unknown', /invalid_input/);
+    await rejectsWith(A().removePerson(dee.id), 'unknown', /invalid_input/);
+
+    // Removing someone who has not joined: their items become unassigned.
+    const temp = await A().addPerson(hidA, { name: 'Temp', emoji: '', email: '' });
+    expect(temp.emoji).toBe('🦔');
+    const tempItem = await A().createItem(hidA, draft({ area_id: kitchen.id, title: `Temp's job ${runId}`, assignee_id: temp.id }));
+    await rejectsWith(C().removePerson(temp.id), 'not_found');
+    await A().removePerson(temp.id);
+    const after = await loadA();
+    expect(after.members.some((m) => m.id === temp.id)).toBe(false);
+    expect(after.items.find((i) => i.id === tempItem.id)!.assignee_id).toBeNull();
+    await rejectsWith(A().removePerson(temp.id), 'not_found');
+    await A().deleteItem(tempItem.id);
+    await A().deleteItem(theirs.id);
+  });
+
+  it('sync: every kind of change one member makes is heard by another within 2 s', { timeout: 180_000 }, async () => {
+    people.f = await createPerson('f', 'Fen Tester');
+    const F = () => people.f.backend;
+    const E = () => people.e.backend;
+    let changes = 0;
+    const chat: ChatChange[] = [];
+    const stop = A().subscribe(hidA, () => changes++);
+    const stopChat = A().subscribeChat(hidA, (c) => chat.push(c));
+    const joined = () => {
+      const channels = people.a.client.getChannels();
+      return channels.length === 2 && channels.every((c) => c.state === 'joined');
+    };
+    const resyncs = () => chat.filter((c) => c.type === 'resync').length;
+
+    /** B (or `by`) makes the change; A must hear it within 2 s. */
+    const heard = async (what: string, edit: () => Promise<unknown>) => {
+      const before = changes;
+      await edit();
+      expect(await waitFor(() => changes > before, 2000), `A heard: ${what}`).toBe(true);
+      // Let any second event of the same change land, so the next step starts clean.
+      await sleep(150);
+    };
+    const heardInChat = async (what: string, edit: () => Promise<unknown>, match: (c: ChatChange) => boolean) => {
+      const before = chat.length;
+      await edit();
+      expect(await waitFor(() => chat.slice(before).some(match), 2000), `A heard in chat: ${what}`).toBe(true);
+    };
+    const flowing = async (poke: (n: number) => Promise<unknown>) => {
+      const until = Date.now() + 20_000;
+      for (let n = 1; Date.now() < until; n++) {
+        const before = changes;
+        await poke(n);
+        if (await waitFor(() => changes > before, 1500)) return true;
+      }
+      return false;
+    };
+
+    try {
+      expect(await waitFor(joined, 10_000), 'channels joined').toBe(true);
+      expect(await waitFor(() => changes > 0 && resyncs() > 0, 5000), 'the first joins ask for a reload').toBe(true);
+      const data = await B().load(hidA);
+      const [first, second] = data.areas;
+      expect(await flowing((n) => B().renameArea(first.id, `Warm ${runId} ${n}`)), 'events flowing').toBe(true);
+
+      // Items.
+      let itemId = '';
+      await heard('item created', async () => (itemId = (await B().createItem(hidA, draft({ area_id: first.id, title: `Sync ${runId}` }))).id));
+      await heard('title edited', () => B().updateItem(itemId, { title: `Sync ${runId} edited` }));
+      await heard('note edited', () => B().updateItem(itemId, { note: 'A note.' }));
+      await heard('"What good looks like" edited', () => B().updateItem(itemId, { good: 'Clean and dry.' }));
+      await heard('RAG changed', () => B().updateItem(itemId, { rag: 'red' }));
+      await heard('due date changed', () => B().updateItem(itemId, { due_date: addDays(todayIn(TZ), 3) }));
+      await heard('repeat changed', () => B().updateItem(itemId, { repeat: 'weekly' }));
+      await heard('reminder changed', () => B().updateItem(itemId, { notify: 'same_day' }));
+      await heard('assignee changed', () => B().updateItem(itemId, { assignee_id: memberA }));
+      await heard('moved to another area', () => B().updateItem(itemId, { area_id: second.id }));
+      await heard('kind changed to To maintain', () => B().updateItem(itemId, { kind: 'state' }));
+      await heard('kind changed back to To do', () => B().updateItem(itemId, { kind: 'task', repeat: 'none' }));
+      let completionId = '';
+      await heard('completed', async () => (completionId = await B().completeItem(itemId)));
+      await heard('completion undone', () => B().undoCompletion(completionId));
+      await heard('item deleted', () => B().deleteItem(itemId));
+
+      // Areas.
+      let areaId = '';
+      await heard('area added', async () => (areaId = (await B().createArea(hidA, `Shed ${runId}`)).id));
+      await heard('area renamed', () => B().renameArea(areaId, `Big shed ${runId}`));
+      const order = (await B().load(hidA)).areas.map((a) => a.id);
+      await heard('areas reordered', () => B().reorderAreas(hidA, [...order].reverse()));
+      await heard('area deleted', () => B().deleteArea(areaId));
+
+      // The household.
+      await heard('household renamed', () => B().updateHousehold(hidA, { name: `Synced ${runId}` }));
+      await heard('address changed', () => B().updateHousehold(hidA, { address: '3 Sync Street' }));
+      await heard('time zone changed', () => B().updateHousehold(hidA, { timezone: 'Europe/Athens' }));
+
+      // People: added, edited, email set, claimed by the account with that email, joined, removed.
+      let fenId = '';
+      await heard('person added', async () => (fenId = (await B().addPerson(hidA, { name: 'Fen', emoji: '🦔', email: '' })).id));
+      await heard('person renamed', () => B().updateMember(fenId, { name: 'Fen F' }));
+      await heard('person’s emoji changed', () => B().updateMember(fenId, { emoji: '🦊' }));
+      await heard('person’s email set', () => B().setPersonEmail(fenId, people.f.email));
+      await heard('person claimed', async () => {
+        expect(await F().enterHome()).toEqual({ status: 'claimed', householdId: hidA, memberId: fenId });
+      });
+      await heard('someone joined by invite', async () => {
+        expect(await E().joinHousehold({ token, memberName: 'Eve', memberEmoji: '🦉' })).toBe(hidA);
+      });
+      let tempId = '';
+      await heard('another person added', async () => (tempId = (await B().addPerson(hidA, { name: 'Temp', emoji: '🦔', email: '' })).id));
+      await heard('person removed', () => B().removePerson(tempId));
+      await heard('a member edited their own profile', () => F().updateMember(fenId, { emoji: '🦆' }));
+
+      // Chat.
+      let messageId = '';
+      await heardInChat(
+        'message sent',
+        async () => (messageId = (await B().sendMessage(hidA, `Sync ${runId}`)).id),
+        (c) => c.type === 'message' && c.messageId === messageId && !c.deleted,
+      );
+      await heardInChat(
+        'reaction added',
+        () => B().setReaction(messageId, '👍', true),
+        (c) => c.type === 'reaction' && c.messageId === messageId,
+      );
+      await heardInChat(
+        'reaction removed',
+        () => B().setReaction(messageId, '👍', false),
+        (c) => c.type === 'reaction' && c.messageId === messageId,
+      );
+      await heardInChat(
+        'message deleted',
+        () => B().deleteMessage(messageId),
+        (c) => c.type === 'message' && c.messageId === messageId && c.deleted,
+      );
+
+      // Reconnect: the socket is dropped and reopened, both subscriptions get a fresh channel,
+      // and each join asks for a reload within 5 s.
+      const before = { changes, resyncs: resyncs() };
+      A().reconnect();
+      expect(
+        await waitFor(() => changes > before.changes && resyncs() > before.resyncs, 5000),
+        'rejoined and asked for a reload',
+      ).toBe(true);
+      expect(await waitFor(joined, 5000), 'two joined channels after reconnect').toBe(true);
+      // A second call within 5 s does nothing.
+      A().reconnect();
+      await sleep(500);
+      expect(people.a.client.getChannels()).toHaveLength(2);
+      // And changes are heard again.
+      expect(await flowing((n) => B().renameArea(first.id, `After ${runId} ${n}`)), 'events flowing after reconnect').toBe(true);
+    } finally {
+      stop();
+      stopChat();
+    }
+    expect(await waitFor(() => people.a.client.getChannels().length === 0, 5000)).toBe(true);
   });
 
   it('signs out', async () => {

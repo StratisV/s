@@ -10,9 +10,10 @@ import {
   type SupabaseClient,
   type User,
 } from '@supabase/supabase-js';
-import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
+import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { CHAT_PAGE_SIZE, REACTION_EMOJIS, TEXT_LIMITS } from '../constants';
 import { instantOf } from '../logic/chat';
+import { isValidEmail, normaliseEmail } from '../logic/people';
 import type {
   Area,
   AuthUser,
@@ -82,6 +83,8 @@ const REACTION_EMOJI_MAX = 16;
 /** Message ids per getMessages request, so the URL stays short. */
 const IDS_PER_REQUEST = 100;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** reconnect() drops and reopens the socket at most this often. */
+export const RECONNECT_MIN_MS = 5000;
 
 /** Messages the RPCs and triggers raise that map straight onto a BackendErrorCode. */
 const RPC_CODES: ReadonlySet<string> = new Set<BackendErrorCode>([
@@ -285,7 +288,37 @@ function changedRow(payload: ChangePayload): Record<string, unknown> {
   return (payload.eventType === 'DELETE' ? payload.old : payload.new) ?? {};
 }
 
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * enter_home's JSON as a HomeEntry: {status: 'member' | 'claimed', household_id, member_id},
+ * {status: 'no_home'} or {status: 'private', email, email_verified}. Anything else is
+ * BackendError('unknown').
+ */
+export function toHomeEntry(reply: unknown): HomeEntry {
+  const r = isRecord(reply) ? reply : {};
+  if ((r.status === 'member' || r.status === 'claimed') && typeof r.household_id === 'string' && typeof r.member_id === 'string') {
+    return { status: r.status, householdId: r.household_id, memberId: r.member_id };
+  }
+  if (r.status === 'no_home') return { status: 'no_home' };
+  if (r.status === 'private') {
+    return { status: 'private', email: typeof r.email === 'string' ? r.email : '', emailVerified: r.email_verified === true };
+  }
+  throw new BackendError('unknown', 'enter_home: unexpected reply');
+}
+
 let channelSeq = 0;
+
+/**
+ * One of this backend's realtime subscriptions (subscribe, subscribeChat). Its channel is
+ * replaced by a fresh one with the same listeners when reconnect() reopens the socket.
+ */
+interface LiveChannel {
+  closed: boolean;
+  channel: RealtimeChannel | null;
+  /** Opens a fresh channel (the first time, and after a reconnect). */
+  open(): void;
+}
 
 export interface SupabaseBackendOptions {
   /** Use this client instead of creating one (tests sign in with their own clients). */
@@ -324,6 +357,10 @@ export class SupabaseBackend implements Backend {
   readonly kind = 'supabase' as const;
   readonly client: SupabaseClient;
   private authError: string | null;
+  /** Open subscriptions, reopened by reconnect(). */
+  private live = new Set<LiveChannel>();
+  /** When reconnect() last dropped the socket (Date.now()). */
+  private lastReconnect = -Infinity;
 
   constructor(url: string, anonKey: string, options: SupabaseBackendOptions = {}) {
     this.authError = options.client ? null : takeAuthErrorFromUrl();
@@ -404,35 +441,47 @@ export class SupabaseBackend implements Backend {
 
   // ── Household membership ───────────────────────────────
 
-  /**
-   * RPC enter_home() → {status, household_id?, member_id?, email?, email_verified?}, mapped to
-   * HomeEntry (camelCase). TODO(one-home data builder): implement.
-   */
+  /** RPC enter_home() (it may claim a person who has not joined yet), mapped by toHomeEntry(). */
   async enterHome(): Promise<HomeEntry> {
-    throw new Error('not implemented: enterHome');
+    await this.userId();
+    return toHomeEntry(await run<unknown>(this.client.rpc('enter_home')));
   }
 
-  /** RPC import_household(p_payload jsonb) → household id. TODO(one-home data builder): implement. */
-  async importHousehold(_payload: ImportPayload): Promise<string> {
-    throw new Error('not implemented: importHousehold');
+  /** RPC import_household(p_payload jsonb) → household id. */
+  async importHousehold(payload: ImportPayload): Promise<string> {
+    await this.userId();
+    return run<string>(this.client.rpc('import_household', { p_payload: payload }));
   }
 
-  /**
-   * RPC add_person(p_household_id, p_name, p_emoji, p_email) → member id, then that row
-   * (MEMBER_COLS). TODO(one-home data builder): implement.
-   */
-  async addPerson(_householdId: string, _input: NewPersonInput): Promise<Member> {
-    throw new Error('not implemented: addPerson');
+  /** RPC add_person(p_household_id, p_name, p_emoji, p_email) → member id, then that row. */
+  async addPerson(householdId: string, input: NewPersonInput): Promise<Member> {
+    const name = requireText(input?.name ?? '', 'name');
+    const email = normaliseEmail(input?.email ?? '');
+    if (email && !isValidEmail(email)) throw invalidInput('email');
+    if (!UUID.test(householdId)) throw new BackendError('not_found');
+    const id = await run<string>(
+      this.client.rpc('add_person', {
+        p_household_id: householdId,
+        p_name: name,
+        p_emoji: (input?.emoji ?? '').trim(),
+        p_email: email,
+      }),
+    );
+    const rows = await run<Member[] | null>(this.client.from('members').select(MEMBER_COLS).eq('id', id).limit(1));
+    if (!rows?.[0]) throw new BackendError('not_found');
+    return rows[0];
   }
 
-  /** RPC set_person_email(p_member_id, p_email). TODO(one-home data builder): implement. */
-  async setPersonEmail(_memberId: string, _email: string): Promise<void> {
-    throw new Error('not implemented: setPersonEmail');
+  /** RPC set_person_email(p_member_id, p_email). */
+  async setPersonEmail(memberId: string, email: string): Promise<void> {
+    if (!UUID.test(memberId)) throw new BackendError('not_found');
+    await run<null>(this.client.rpc('set_person_email', { p_member_id: memberId, p_email: normaliseEmail(email ?? '') }));
   }
 
-  /** RPC remove_person(p_member_id). TODO(one-home data builder): implement. */
-  async removePerson(_memberId: string): Promise<void> {
-    throw new Error('not implemented: removePerson');
+  /** RPC remove_person(p_member_id). */
+  async removePerson(memberId: string): Promise<void> {
+    if (!UUID.test(memberId)) throw new BackendError('not_found');
+    await run<null>(this.client.rpc('remove_person', { p_member_id: memberId }));
   }
 
   async getMyHouseholdId(): Promise<string | null> {
@@ -492,9 +541,6 @@ export class SupabaseBackend implements Backend {
   }
 
   subscribe(householdId: string, onChange: () => void): Unsubscribe {
-    // A unique topic, so a quick unsubscribe/subscribe (React StrictMode) never reuses a
-    // channel that is still being torn down.
-    const channel = this.client.channel(`household:${householdId}:${++channelSeq}`);
     const tables: [table: string, filter: string][] = [
       ['households', `id=eq.${householdId}`],
       ['members', `household_id=eq.${householdId}`],
@@ -502,35 +548,73 @@ export class SupabaseBackend implements Backend {
       ['items', `household_id=eq.${householdId}`],
       ['completions', `household_id=eq.${householdId}`],
     ];
-    let closed = false;
-    const notify = () => {
-      if (!closed) onChange();
-    };
-    for (const [table, filter] of tables) {
-      channel.on('postgres_changes', { event: '*', schema: 'public', table, filter }, notify);
-    }
-    channel.subscribe((status) => {
-      // Every join, the first included: changes made before it (since the caller's last load,
-      // or while a dropped connection was down) are never replayed, so reload.
-      if (status === 'SUBSCRIBED') notify();
+    return this.listen(`household:${householdId}`, (channel, current) => {
+      const notify = () => {
+        if (current()) onChange();
+      };
+      for (const [table, filter] of tables) {
+        channel.on('postgres_changes', { event: '*', schema: 'public', table, filter }, notify);
+      }
+      channel.subscribe((status) => {
+        // Every join, the first included: changes made before it (since the caller's last load,
+        // or while a dropped connection was down) are never replayed, so reload.
+        if (status === 'SUBSCRIBED') notify();
+      });
     });
+  }
+
+  /**
+   * Opens a channel on `topic` (made unique, so a quick unsubscribe/subscribe, as in React
+   * StrictMode, never reuses a channel that is still being torn down) and lets `setup` add its
+   * listeners and subscribe. `current()` is true while that channel is the subscription's own:
+   * not unsubscribed, and not replaced by reconnect().
+   */
+  private listen(topic: string, setup: (channel: RealtimeChannel, current: () => boolean) => void): Unsubscribe {
+    const live: LiveChannel = {
+      closed: false,
+      channel: null,
+      open: () => {
+        const channel = this.client.channel(`${topic}:${++channelSeq}`);
+        live.channel = channel;
+        setup(channel, () => !live.closed && live.channel === channel);
+      },
+    };
+    this.live.add(live);
+    live.open();
     return () => {
-      if (closed) return;
-      closed = true;
-      void this.client.removeChannel(channel);
+      if (live.closed) return;
+      live.closed = true;
+      this.live.delete(live);
+      if (live.channel) void this.client.removeChannel(live.channel);
     };
   }
 
   /**
-   * TODO(one-home data builder): drop and reopen the socket even when it reports open (await
-   * realtime.disconnect(), then realtime.connect()), at most once per 5 s, never throwing
-   * (Backend.reconnect). Until then this only reopens a socket that knows it is closed.
+   * Drops the socket and opens a fresh one, at most once per RECONNECT_MIN_MS, never throwing
+   * (Backend.reconnect, docs/ARCHITECTURE.md "Sync guarantees"). A phone that slept can hold a
+   * socket that reports open but is dead, and its channels would never notice: so every
+   * subscription gets a fresh channel on the new socket, whose join asks for a reload.
    */
   reconnect(): void {
-    try {
-      if (!this.client.realtime.isConnected()) this.client.realtime.connect();
-    } catch (err) {
-      console.error(err);
+    const now = Date.now();
+    if (now - this.lastReconnect < RECONNECT_MIN_MS) return;
+    this.lastReconnect = now;
+    this.reopen().catch((err: unknown) => console.error(err));
+  }
+
+  private async reopen(): Promise<void> {
+    const realtime = this.client.realtime;
+    await realtime.disconnect();
+    const live = [...this.live].filter((l) => !l.closed);
+    if (!live.length) return; // the next subscribe() opens the socket
+    realtime.connect();
+    for (const l of live) {
+      if (l.closed) continue;
+      const old = l.channel;
+      // The fresh channel first, so the client never sits without one (it would schedule a
+      // disconnect). Leaving the old one needs no reply while the socket is not open yet.
+      l.open();
+      if (old) void this.client.removeChannel(old).catch(() => {});
     }
   }
 
@@ -798,50 +882,44 @@ export class SupabaseBackend implements Backend {
   }
 
   subscribeChat(householdId: string, onChange: (change: ChatChange) => void): Unsubscribe {
-    // A unique topic, like subscribe().
-    const channel = this.client.channel(`chat:${householdId}:${++channelSeq}`);
-    let closed = false;
-    const emit = (change: ChatChange) => {
-      if (closed) return;
-      try {
-        onChange(change);
-      } catch (err) {
-        // Keep realtime delivering the other events.
-        console.error(err);
-      }
-    };
     // Both tables carry household_id, and with replica identity full Realtime applies the
     // filter to deletes too. An INSERT carries the whole row (Realtime checks RLS first);
     // a DELETE carries only the primary key, which names the message either way. A change
     // that names no message asks for a reload.
     const filter = `household_id=eq.${householdId}`;
-    channel.on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter }, (payload: ChangePayload) => {
-      const id = changedRow(payload).id;
-      emit(
-        typeof id === 'string'
-          ? { type: 'message', messageId: id, deleted: payload.eventType === 'DELETE' }
-          : { type: 'resync' },
+    return this.listen(`chat:${householdId}`, (channel, current) => {
+      const emit = (change: ChatChange) => {
+        if (!current()) return;
+        try {
+          onChange(change);
+        } catch (err) {
+          // Keep realtime delivering the other events.
+          console.error(err);
+        }
+      };
+      channel.on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter }, (payload: ChangePayload) => {
+        const id = changedRow(payload).id;
+        emit(
+          typeof id === 'string'
+            ? { type: 'message', messageId: id, deleted: payload.eventType === 'DELETE' }
+            : { type: 'resync' },
+        );
+      });
+      channel.on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'message_reactions', filter },
+        (payload: ChangePayload) => {
+          const id = changedRow(payload).message_id;
+          emit(typeof id === 'string' ? { type: 'reaction', messageId: id } : { type: 'resync' });
+        },
       );
+      channel.subscribe((status) => {
+        // Every join, the first included: a message posted between the caller's first page and
+        // the join (a slow mobile connection, a join that had to retry), or while a dropped
+        // connection was down, is never replayed. Resync picks it up.
+        if (status === 'SUBSCRIBED') emit({ type: 'resync' });
+      });
     });
-    channel.on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'message_reactions', filter },
-      (payload: ChangePayload) => {
-        const id = changedRow(payload).message_id;
-        emit(typeof id === 'string' ? { type: 'reaction', messageId: id } : { type: 'resync' });
-      },
-    );
-    channel.subscribe((status) => {
-      // Every join, the first included: a message posted between the caller's first page and
-      // the join (a slow mobile connection, a join that had to retry), or while a dropped
-      // connection was down, is never replayed. Resync picks it up.
-      if (status === 'SUBSCRIBED') emit({ type: 'resync' });
-    });
-    return () => {
-      if (closed) return;
-      closed = true;
-      void this.client.removeChannel(channel);
-    };
   }
 
   /** Up to `count` of the household's newest messages created strictly before `before`. */

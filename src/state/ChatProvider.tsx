@@ -10,7 +10,9 @@ import {
   type ChatEntry,
 } from '../lib/logic/chat';
 import type { ChatChange, ChatMessage, ISOTimestamp } from '../lib/types';
-import { useHousehold } from './HomeProvider';
+import { RESUME_AFTER_MS, SAFETY_MS, useHousehold } from './HomeProvider';
+
+const isVisible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden';
 
 export type ChatStatus = 'loading' | 'ready' | 'error';
 
@@ -180,6 +182,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const tempSeq = useRef(0);
   const draftText = useRef('');
   const olderBusy = useRef(false);
+  /** When the last chat event arrived or the newest page was last asked for (the safety net counts from it). */
+  const lastActivity = useRef(Date.now());
 
   const visible = (list: ChatMessage[]) => list.filter((m) => !deleted.current.has(m.id));
 
@@ -225,6 +229,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const loadNewest = useCallback(async (): Promise<Set<string> | null> => {
     const seq = ++pageSeq.current;
     const since = tick.current;
+    lastActivity.current = Date.now();
     try {
       const page = await backend.listMessages(householdId);
       if (!alive.current || seq !== pageSeq.current) return null;
@@ -323,9 +328,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     if (older.length) await refetch(older.slice(-RESYNC_REFRESH_MAX), false);
   }, [loadNewest, refetch]);
 
-  // First load, live changes, and a reload whenever the app comes back into view.
+  // First load, live changes, and a reload whenever the app comes back into view
+  // (docs/ARCHITECTURE.md "Sync guarantees").
   useEffect(() => {
     const onChange = (change: ChatChange) => {
+      lastActivity.current = Date.now();
       if (change.type === 'resync') void resync();
       else if (change.type === 'message' && change.deleted) removeMessage(change.messageId);
       else void refetch([change.messageId], change.type === 'message');
@@ -337,13 +344,49 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       unsub = null; // no live updates; the visibility resync still runs
     }
     void loadNewest();
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') void loadNewest();
+
+    // Back after a while, from the back/forward cache, or back online: changes may have been
+    // missed (HomeProvider reconnects the socket), so resync. A short hide reloads the newest page.
+    let hiddenAt = isVisible() ? null : Date.now();
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenAt ??= Date.now();
+        return;
+      }
+      const away = hiddenAt === null ? 0 : Date.now() - hiddenAt;
+      hiddenAt = null;
+      void (away >= RESUME_AFTER_MS ? resync() : loadNewest());
     };
-    document.addEventListener('visibilitychange', onVisible);
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) void resync();
+    };
+    const onOnline = () => void resync();
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pageshow', onPageShow);
+    window.addEventListener('online', onOnline);
+
+    // Safety net: a channel that joined but silently stopped delivering. 60 s without a chat
+    // event or a load, while in view: load the newest page.
+    lastActivity.current = Date.now();
+    let safety: ReturnType<typeof setTimeout> | undefined;
+    const check = () => {
+      const wait = lastActivity.current + SAFETY_MS - Date.now();
+      if (wait > 0) {
+        safety = setTimeout(check, wait);
+        return;
+      }
+      lastActivity.current = Date.now();
+      if (isVisible()) void loadNewest();
+      safety = setTimeout(check, SAFETY_MS);
+    };
+    safety = setTimeout(check, SAFETY_MS);
+
     return () => {
       unsub?.();
-      document.removeEventListener('visibilitychange', onVisible);
+      clearTimeout(safety);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pageshow', onPageShow);
+      window.removeEventListener('online', onOnline);
     };
   }, [backend, householdId, loadNewest, refetch, removeMessage, resync]);
 
