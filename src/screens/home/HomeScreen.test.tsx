@@ -458,12 +458,63 @@ describe('HomeScreen from a shared area link', () => {
     expect(JSON.parse(localStorage.getItem(collapsedKey(home().data!.household.id))!)).toEqual([gardenId]);
     // Scrolled once its card has opened.
     expect(scrolled).toEqual([]);
+    expect(document.activeElement).toBe(document.body);
     act(() => vi.advanceTimersByTime(400));
     expect(scrolled).toEqual([area('Hallway').region]);
     expect(onLinkedAreaShown).toHaveBeenCalledTimes(1);
     expect(area('Hallway').region.hasAttribute('data-linked')).toBe(true);
+    // Focus is on its name, so VoiceOver reads "Hallway, expanded" and carries on into it.
+    // No focus ring until a key is pressed (a link brought them here, not the keyboard).
+    expect(document.activeElement).toBe(area('Hallway').toggle);
+    expect(area('Hallway').toggle.hasAttribute('data-quiet-focus')).toBe(true);
+    fireEvent.keyDown(window, { key: 'Tab' });
+    expect(area('Hallway').toggle.hasAttribute('data-quiet-focus')).toBe(false);
     act(() => vi.advanceTimersByTime(2500));
     expect(area('Hallway').region.hasAttribute('data-linked')).toBe(false);
+  });
+
+  it('shows everyone’s items when the person filter hides the area or some of its items', async () => {
+    const { home, linkArea } = await setup();
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    const filter = (name: RegExp) => within(screen.getByRole('radiogroup', { name: 'Show tasks for' })).getByRole('radio', { name });
+    const hallway = home().data!.areas.find((a) => a.name === 'Hallway')!;
+    // Hallway's one item is Shea's: Unassigned hides the area.
+    fireEvent.click(filter(/^Unassigned,/));
+    expect(screen.queryByRole('region', { name: 'Hallway' })).toBeNull();
+    vi.useFakeTimers();
+    act(() => linkArea()(hallway.id));
+    expect(filter(/^Everyone,/).getAttribute('aria-checked')).toBe('true');
+    act(() => vi.advanceTimersByTime(100));
+    expect(scrolled).toEqual([area('Hallway').region]);
+    expect(document.activeElement).toBe(area('Hallway').toggle);
+    vi.useRealTimers();
+
+    // Garden has items for more than one person: one person's view shows only some.
+    const garden = home().data!.areas.find((a) => a.name === 'Garden')!;
+    const gardenItems = home().data!.items.filter((it) => it.area_id === garden.id && it.status === 'open');
+    const someone = home().data!.members.find((m) => gardenItems.some((it) => it.assignee_id === m.id))!;
+    expect(gardenItems.every((it) => it.assignee_id === someone.id)).toBe(false);
+    fireEvent.click(filter(new RegExp(`^${someone.name}`)));
+    expect(filter(/^Everyone,/).getAttribute('aria-checked')).toBe('false');
+    act(() => linkArea()(garden.id));
+    expect(filter(/^Everyone,/).getAttribute('aria-checked')).toBe('true');
+    await waitFor(() => expect(scrolled.at(-1)).toBe(area('Garden').region));
+  });
+
+  it('keeps the filter when it already shows all of the area', async () => {
+    const { home, linkArea } = await setup();
+    Element.prototype.scrollIntoView = () => {};
+    const filter = (name: RegExp) => within(screen.getByRole('radiogroup', { name: 'Show tasks for' })).getByRole('radio', { name });
+    const hallway = home().data!.areas.find((a) => a.name === 'Hallway')!;
+    const shea = home().data!.members.find((m) => m.name === 'Shea')!;
+    expect(home().data!.items.filter((it) => it.area_id === hallway.id && it.status === 'open').every((it) => it.assignee_id === shea.id)).toBe(true);
+    fireEvent.click(filter(/^Shea,/));
+    act(() => linkArea()(hallway.id));
+    await waitFor(() => expect(area('Hallway').region.hasAttribute('data-linked')).toBe(true));
+    expect(filter(/^Shea,/).getAttribute('aria-checked')).toBe('true');
   });
 
   it('an open area scrolls straight away', async () => {

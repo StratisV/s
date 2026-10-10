@@ -208,11 +208,15 @@ export function ItemSheet({ target, open, onClose, onExited, onSaved }: ItemShee
     })();
   };
 
-  /** The item as saved (what the link opens), not unsaved edits in the sheet. */
+  /**
+   * What the sheet shows, edits included (as they would be saved; a blank title keeps the
+   * saved one). The link opens the item itself.
+   */
   const shareItem = () => {
     if (!item || busy || confirm) return;
+    const shown = normalizeDraft(effective);
     share(
-      itemShareMessage(item, data.areas, {
+      itemShareMessage({ ...item, ...shown, title: shown.title || item.title }, data.areas, {
         members: data.members,
         today,
         timeZone: data.household.timezone,

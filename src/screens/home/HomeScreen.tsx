@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { RAG_ORDER, RAG_RING, RAG_TEXT, RAG_TINT } from '../../lib/constants';
+import { RAG_ORDER, RAG_TEXT, RAG_TINT } from '../../lib/constants';
 import { longDay } from '../../lib/logic/dates';
 import { itemMeta, itemsByArea } from '../../lib/logic/items';
 import { areaShareMessage } from '../../lib/logic/share';
@@ -157,33 +157,39 @@ export function HomeScreen({
 
   // An area from a shared link: open it, then bring it to the top once it has opened, and
   // light its card up for a moment (near the bottom of the page it can't reach the top).
+  // Focus goes to its name, so VoiceOver reads it ("Garden, expanded") and carries on into it.
   const [flashArea, setFlashArea] = useState<string | null>(null);
-  const collapsedRef = useRef(collapsed);
-  collapsedRef.current = collapsed;
-  const linkedRef = useRef({ setCollapsed, onLinkedAreaShown });
-  linkedRef.current = { setCollapsed, onLinkedAreaShown };
+  const linkedRef = useRef({ collapsed, setCollapsed, onLinkedAreaShown, who, setWho, sections, shown });
+  linkedRef.current = { collapsed, setCollapsed, onLinkedAreaShown, who, setWho, sections, shown };
   useEffect(() => {
     if (!linkedArea) return;
-    const wasCollapsed = collapsedRef.current.has(linkedArea);
+    const now = linkedRef.current;
+    // The person filter hides the area, or some of its items: show everyone's, as shared.
+    const all = now.sections.find((s) => s.area.id === linkedArea)?.items.length ?? 0;
+    const visible = now.shown.find((s) => s.area.id === linkedArea)?.items.length;
+    const unfiltered = now.who !== 'all' && (visible === undefined || visible < all);
+    if (unfiltered) now.setWho('all');
+    const wasCollapsed = now.collapsed.has(linkedArea);
     if (wasCollapsed) {
-      const next = new Set(collapsedRef.current);
+      const next = new Set(now.collapsed);
       next.delete(linkedArea);
-      linkedRef.current.setCollapsed(next);
+      now.setCollapsed(next);
     }
     const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     // A collapsed card takes its slide (HomeScreen.module.css .panel) to reach full height,
-    // and near the bottom of the page it can't come to the top before then.
-    const timer = setTimeout(
-      () => {
-        const section = Array.from(document.querySelectorAll<HTMLElement>('section[data-area-id]')).find(
-          (el) => el.dataset.areaId === linkedArea,
-        );
-        section?.scrollIntoView({ block: 'start', behavior: still ? 'auto' : 'smooth' });
-        setFlashArea(linkedArea);
-        linkedRef.current.onLinkedAreaShown?.();
-      },
-      wasCollapsed && !still ? AREA_SLIDE_MS : 0,
-    );
+    // and near the bottom of the page it can't come to the top before then. An area the
+    // filter hid is drawn afresh, already open.
+    const delay = wasCollapsed && !still ? AREA_SLIDE_MS : unfiltered ? AREA_REDRAW_MS : 0;
+    const timer = setTimeout(() => {
+      const section = Array.from(document.querySelectorAll<HTMLElement>('section[data-area-id]')).find(
+        (el) => el.dataset.areaId === linkedArea,
+      );
+      section?.scrollIntoView({ block: 'start', behavior: still ? 'auto' : 'smooth' });
+      const name = section?.querySelector<HTMLElement>('button[aria-expanded]');
+      if (name) quietFocus(name);
+      setFlashArea(linkedArea);
+      linkedRef.current.onLinkedAreaShown?.();
+    }, delay);
     return () => clearTimeout(timer);
   }, [linkedArea]);
   useEffect(() => {
@@ -265,6 +271,23 @@ export function HomeScreen({
 }
 
 /**
+ * Focuses `el` without scrolling, for assistive tech (VoiceOver reads it and carries on from
+ * there), but without a focus ring until a key is pressed: a link brought the person here,
+ * not the keyboard (`.disclosure[data-quiet-focus]`).
+ */
+function quietFocus(el: HTMLElement): void {
+  el.dataset.quietFocus = '';
+  const done = () => {
+    delete el.dataset.quietFocus;
+    el.removeEventListener('blur', done);
+    window.removeEventListener('keydown', done, true);
+  };
+  el.addEventListener('blur', done);
+  window.addEventListener('keydown', done, true);
+  el.focus({ preventScroll: true });
+}
+
+/**
  * Every area was deleted (the Household editor keeps one, but two people can
  * each delete one at the same time): say where to add one, since items need an area.
  */
@@ -284,6 +307,8 @@ function NoAreas({ onOpenProfile }: { onOpenProfile(): void }) {
 
 /** How long a collapsed area's card takes to open (`.panel` in HomeScreen.module.css), and a little more. */
 const AREA_SLIDE_MS = 360;
+/** Time for the areas the person filter hid to be drawn, before scrolling to one. */
+const AREA_REDRAW_MS = 50;
 /** How long an area opened from a shared link stays lit up (`.section[data-linked]`). */
 const AREA_FLASH_MS = 2400;
 
@@ -297,20 +322,23 @@ export function statusCounts(items: Pick<Item, 'rag'>[]): { counts: { rag: Rag; 
   return { counts, label: counts.map((c) => `${c.count} ${COUNT_LABEL[c.rag]}`).join(', ') };
 }
 
-/** Red, amber and green chips with their counts: "1 urgent, 2 at risk, 3 on track". */
-function StatusCounts({ items }: { items: Item[] }) {
+/**
+ * Red, amber and green badges with their counts: "1 urgent, 2 at risk, 3 on track". A tap on
+ * them does what a tap on the name does (`onTap`), so it lands here: a phone that nudges a
+ * tap onto the nearest control would otherwise give it to Share.
+ */
+function StatusCounts({ items, onTap }: { items: Item[]; onTap(): void }) {
   const { counts, label } = statusCounts(items);
   if (!counts.length) return null;
   return (
-    <span className={styles.counts} role="img" aria-label={label}>
+    <span className={styles.counts} role="img" aria-label={label} onClick={onTap}>
       {counts.map(({ rag, count }) => (
         <span
           key={rag}
           className={styles.count}
           data-rag={rag}
-          style={{ '--dot': RAG_RING[rag], '--text': RAG_TEXT[rag], '--chip': RAG_TINT[rag] } as CSSProperties}
+          style={{ '--text': RAG_TEXT[rag], '--chip': RAG_TINT[rag] } as CSSProperties}
         >
-          <span className={styles.dot} />
           {count}
         </span>
       ))}
@@ -395,7 +423,7 @@ function AreaSection({
             </span>
           </button>
         </h2>
-        <StatusCounts items={items} />
+        <StatusCounts items={items} onTap={() => onToggle(area.id)} />
         <button type="button" className={styles.share} aria-label={`Share ${area.name}`} onClick={() => onShare(area)}>
           <ShareIcon size={20} strokeWidth={2} />
         </button>

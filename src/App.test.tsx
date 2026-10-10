@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { DemoBackend, type StorageLike } from './lib/backend/demo';
+import { collapsedKey } from './screens/home/HomeScreen';
 import { HomeProvider } from './state/HomeProvider';
 import { ConfettiProvider } from './ui/Confetti';
 
@@ -178,5 +179,58 @@ describe('tab bar', () => {
     expect(tabBar().hasAttribute('aria-hidden')).toBe(false);
     expect(within(tabBar()).getByRole('button', { name: 'Home' })).toBeTruthy();
     act(() => field.blur());
+  });
+});
+
+describe('a shared area link', () => {
+  const tabBar = () => screen.getByRole('navigation', { name: 'Tabs' });
+
+  afterEach(() => {
+    localStorage.clear();
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  it('is dropped when Home is left before it was shown, so it can’t scroll Home later', async () => {
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    let gardenId = '';
+    await setup(async (backend) => {
+      const householdId = (await backend.getMyHouseholdId())!;
+      gardenId = (await backend.load(householdId)).areas.find((a) => a.name === 'Garden')!.id;
+      // Garden is collapsed, so Home waits for its card to open before scrolling to it.
+      localStorage.setItem(collapsedKey(householdId), JSON.stringify([gardenId]));
+      localStorage.setItem('homeos.link', JSON.stringify({ kind: 'area', id: gardenId, at: Date.now() }));
+    });
+    const garden = () => document.querySelector(`section[data-area-id="${gardenId}"]`)!;
+    await waitFor(() => expect(garden().querySelector('button[aria-expanded]')!.getAttribute('aria-expanded')).toBe('true'));
+    // Off to Stats straight away, then back after the card would have opened.
+    fireEvent.click(within(tabBar()).getByRole('button', { name: 'Stats' }));
+    await screen.findByRole('heading', { name: 'Stats', level: 1 });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
+    fireEvent.click(within(tabBar()).getByRole('button', { name: 'Home' }));
+    await screen.findByRole('heading', { name: 'Home', level: 1 });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
+    expect(scrolled).toEqual([]);
+    expect(garden().hasAttribute('data-linked')).toBe(false);
+  });
+
+  it('still shows the area when Home stays', async () => {
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    let gardenId = '';
+    await setup(async (backend) => {
+      const householdId = (await backend.getMyHouseholdId())!;
+      gardenId = (await backend.load(householdId)).areas.find((a) => a.name === 'Garden')!.id;
+      localStorage.setItem(collapsedKey(householdId), JSON.stringify([gardenId]));
+      localStorage.setItem('homeos.link', JSON.stringify({ kind: 'area', id: gardenId, at: Date.now() }));
+    });
+    const garden = () => document.querySelector(`section[data-area-id="${gardenId}"]`)!;
+    await waitFor(() => expect(scrolled).toEqual([garden()]));
+    expect(garden().hasAttribute('data-linked')).toBe(true);
+    expect(document.activeElement).toBe(garden().querySelector('button[aria-expanded]'));
   });
 });

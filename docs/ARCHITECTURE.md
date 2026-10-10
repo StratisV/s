@@ -232,13 +232,20 @@ messages above (`network` for fetch failures). `completeItem` on a state throws
 - **Remembered per device**: the collapsed area ids are kept in localStorage under
   `homeos.collapsed.<householdId>` (every read and write in try/catch; deleted areas are
   forgotten). Nothing is stored on the server.
-- **Status counts**: on the right of each header, red, then amber, then green chips (a dot
-  and a number, 13px/600, the RAG text colour on the RAG tint), only for non-zero counts,
-  shown open or collapsed. Every open item in the area counts by its RAG, To maintain items
-  included. Assistive tech reads one label, such as "1 urgent, 2 at risk, 3 on track".
+- **Status counts**: on the right of each header, red, then amber, then green badges (just
+  the number, 13px/600, the RAG text colour on the RAG tint, 20px round like the person
+  filter's counts), only for non-zero counts, shown open or collapsed. Every open item in the
+  area counts by its RAG, To maintain items included. Assistive tech reads one label, such as
+  "1 urgent, 2 at risk, 3 on track". A tap on the counts opens or closes the area like the
+  name does; it also keeps a phone's tap correction from moving that tap onto Share.
 - **Share**: between the counts and the +, a bare tint share glyph ("Share <area>"), see
-  "Sharing" below. It is 22px wide so names still fit on one line at 320px; its 44 × 44 tap
-  target reaches left over the counts (which take no taps) and ends where the +'s begins.
+  "Sharing" below. The button is its own 44 × 44 tap target and overlaps nothing: it starts
+  where the counts end (or 8px after the name, where the name's own target ends, when there
+  are no counts) and ends where the +'s target begins. Dropping the badges' dots paid for
+  its width: with all three counts the name has the room it had before Share (127px at
+  320 wide, 209px at 402), so names wrap where they did, between words. With fewer counts
+  it has more room than that, if less than before Share (at 320 wide: 151px with two
+  counts, 176px with one, 196px with none).
 - **Add**: after the counts and Share, a small tinted + ("Add item to <area>", 44 × 44 tap
   target) opens the new-item sheet with that area chosen.
 - **Saving into a collapsed area opens it**: when an item is created, or moved to another
@@ -260,7 +267,8 @@ messages above (`network` for fetch failures). `completeItem` on a state throws
   them, and only the areas where they have some; Collapse All acts on what is shown. Nothing
   open reads "Nothing for Ela right now." The choice is kept per household on this device
   (`homeos.who.<householdId>`); a member who left reads as Everyone. Saving an item into an
-  area the filter hides switches back to Everyone.
+  area the filter hides switches back to Everyone, and so does a shared area link (see
+  "Sharing").
 - People's 🦆 and 🦔 are drawn (`ui/EmojiText.tsx`: the green duck and brown hedgehog of
   `ui/animals.ts`) wherever a member's emoji shows, with the character kept in the text for
   copying and screen readers.
@@ -318,7 +326,9 @@ Any item or area can be shared, for example to WhatsApp, Messages or Mail.
   left of Save (none while creating an item: there is nothing to link to yet). Each area
   header on Home has **Share <area>** (see "Home"). Both use `ShareIcon` (square.and.arrow.up).
 - **What** (`lib/logic/share.ts`, pure and unit tested): plain text, then a blank line and a
-  link back into the app. An item (as saved, not unsaved edits in the sheet):
+  link back into the app. An item is shared as the sheet shows it, edits not yet saved
+  included (as they would be saved; a blank title keeps the saved one). Sharing saves
+  nothing, and the link opens the item as it is:
 
   ```
   Heaters not working
@@ -351,10 +361,15 @@ Any item or area can be shared, for example to WhatsApp, Messages or Mail.
   hour, when taken, and on sign out. Once the household is ready, `useSharedLink` (in App's
   main shell) opens the item's sheet, or switches to Home, where `HomeScreen` (`linkedArea`)
   expands the area (remembered as open), scrolls it to just under the stuck tab switch once its
-  card has opened, and rings the card in the tint colour for a moment (`data-linked`). An id
-  this household doesn't have gets a toast ("That item isn’t in your home", "That area isn’t
-  in your home"); a one-off item that has been done says "“<title>” is already done". RLS
-  already keeps other households' rows out of `load()`, so a link is no way in.
+  card has opened (the screen's `scroll-padding-top`), moves focus to its name without
+  scrolling (VoiceOver reads "Garden, expanded" and carries on into its items), and rings the
+  card in the tint colour for a moment (`data-linked`). If the person filter hides the area,
+  or some of its items, it goes back to Everyone, so what was shared is all there. Leaving
+  Home before that happens (App's `switchTab`) drops the link, so it can't scroll Home on a
+  later visit. An id this household doesn't have gets a toast ("That item isn’t in your
+  home", "That area isn’t in your home"); a one-off item that has been done says "“<title>”
+  is already done". RLS already keeps other households' rows out of `load()`, so a link is
+  no way in.
 
 ## Item kinds: To do and To maintain
 

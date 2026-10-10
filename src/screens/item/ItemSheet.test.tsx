@@ -737,12 +737,52 @@ describe('ItemSheet: Share', () => {
     expect(text).toContain('\nWhat good looks like: Cover on when not in use, ash cleared out, logs dry and stacked under the bench.\n\n');
   });
 
-  it('shares the item as saved, not edits still in the sheet', async () => {
+  it('shares what the sheet shows, edits included, and saves nothing', async () => {
+    const { home } = await setup(editing('Heaters not working'));
+    const share = stubShare();
+    const heaters = home().data!.items.find((i) => i.title === 'Heaters not working')!;
+    const nextWeek = addDays(home().today, 7);
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: '  Heaters: engineer booked  ' } });
+    fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'Coming next week.' } });
+    fireEvent.click(screen.getByRole('radio', { name: 'Green' }));
+    fireEvent.change(screen.getByLabelText('Assigned to'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Repeat'), { target: { value: 'yearly' } });
+    fireEvent.change(screen.getByLabelText('Due'), { target: { value: nextWeek } });
+    fireEvent.click(shareButton());
+    expect(share).toHaveBeenLastCalledWith({
+      title: 'Heaters: engineer booked',
+      text: [
+        'Heaters: engineer booked',
+        `Hallway · Green · Due ${formatDay(nextWeek, home().today)} · Every year`,
+        'Unassigned',
+        'Coming next week.',
+        '',
+        `${window.location.origin}/?item=${heaters.id}`,
+      ].join('\n'),
+    });
+    // Still only in the sheet.
+    expect(home().data!.items.find((i) => i.id === heaters.id)).toMatchObject({ title: 'Heaters not working', rag: 'red' });
+  });
+
+  it('a blank title shares the saved one', async () => {
     await setup(editing('Heaters not working'));
     const share = stubShare();
-    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Heaters fixed' } });
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: '   ' } });
     fireEvent.click(shareButton());
     expect(share.mock.lastCall![0].title).toBe('Heaters not working');
+    expect(share.mock.lastCall![0].text).toMatch(/^Heaters not working\nHallway · Red · Missed · /);
+  });
+
+  it('a To do made To maintain in the sheet shares as one', async () => {
+    await setup(editing('Olive oil'));
+    const share = stubShare();
+    fireEvent.click(screen.getByRole('radio', { name: 'To maintain' }));
+    fireEvent.change(screen.getByLabelText('What good looks like'), { target: { value: 'Always a full tin.' } });
+    fireEvent.click(shareButton());
+    const text = share.mock.lastCall![0].text!;
+    expect(text).toMatch(/^Olive oil\nKitchen · Green · Updated \w{3} \d{1,2} \w{3}\nLooked after by Stratis\n/);
+    expect(text).not.toContain('Every month');
+    expect(text).toContain('\nWhat good looks like: Always a full tin.\n\n');
   });
 
   it('copies the text where there is no share sheet, and says so', async () => {

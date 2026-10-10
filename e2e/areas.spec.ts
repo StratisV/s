@@ -171,18 +171,22 @@ test.describe('Status counts', () => {
         continue;
       }
       await expect(counts, name).toHaveAccessibleName(label);
-      // One chip per non-zero status, red first: a dot and the number.
+      // One badge per non-zero status, red first: just the number.
       const numbers = label.split(', ').map((part) => part.split(' ')[0]);
       await expect(counts.locator('[data-rag]'), name).toHaveText(numbers);
     }
     await expect(area(page, 'Hallway').getByRole('img')).toHaveAccessibleName('1 urgent');
 
-    // Colours: the RAG ring colour for the dot, the accessible tone for the number.
+    // Colours: the accessible tone for the number, on the RAG tint; a 20px round badge.
     const hallway = area(page, 'Hallway').locator('[data-rag="red"]');
     await expect(hallway).toHaveCSS('color', 'rgb(215, 0, 21)');
     await expect(hallway).toHaveCSS('font-size', '13px');
     await expect(hallway).toHaveCSS('font-weight', '600');
-    await expect(hallway.locator('span')).toHaveCSS('background-color', 'rgb(255, 59, 48)');
+    await expect(hallway).toHaveCSS('background-color', 'rgba(255, 59, 48, 0.12)');
+    const badge = (await hallway.boundingBox())!;
+    expect(badge.height).toBe(20);
+    expect(badge.width).toBeGreaterThanOrEqual(20);
+    expect(badge.width).toBeLessThan(21);
     await expect(area(page, 'Living Room').locator('[data-rag="amber"]')).toHaveCSS('color', 'rgb(201, 52, 0)');
     await expect(area(page, 'Kitchen').locator('[data-rag="green"]')).toHaveCSS('color', 'rgb(36, 138, 61)');
 

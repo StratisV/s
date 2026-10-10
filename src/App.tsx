@@ -172,8 +172,14 @@ function MainShell() {
     },
   });
 
+  // Leaving Home drops an area link it hasn't shown yet, so it can't scroll Home on a later return.
+  const switchTab = useCallback((next: Tab) => {
+    setTab(next);
+    if (next !== 'home') setLinkedArea(null);
+  }, []);
+
   // The tab switch sits under the hero on every tab.
-  const tabs = <TabBar tab={tab} onTab={setTab} unread={unread} />;
+  const tabs = <TabBar tab={tab} onTab={switchTab} unread={unread} />;
 
   return (
     <div className={styles.main} data-pushed={sheetOpen || undefined}>
