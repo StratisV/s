@@ -133,7 +133,7 @@ describe('SupabaseBackend offline: mapping helpers', () => {
 
   it('maps errors to BackendError codes', () => {
     const pg = (message: string, code = 'P0001') => ({ message, code, details: null, hint: null });
-    for (const code of ['not_signed_in', 'already_member', 'invalid_invite', 'not_found'] as const) {
+    for (const code of ['not_signed_in', 'already_member', 'invalid_invite', 'not_found', 'email_taken', 'home_exists'] as const) {
       expect(toBackendError(pg(code), 400).code).toBe(code);
     }
     const invalid = toBackendError(pg('invalid_input'), 400);

@@ -5,14 +5,17 @@ import type {
   ChatMessage,
   ChatPage,
   CreateHouseholdInput,
+  HomeEntry,
   Household,
   HouseholdData,
+  ImportPayload,
   InvitePreview,
   ISOTimestamp,
   Item,
   ItemDraft,
   JoinHouseholdInput,
   Member,
+  NewPersonInput,
   PushSubscriptionInput,
 } from '../types';
 
@@ -31,6 +34,10 @@ export type BackendErrorCode =
   | 'already_member'
   | 'invalid_invite'
   | 'not_found'
+  /** Another person in the home already has that email (addPerson, setPersonEmail). */
+  | 'email_taken'
+  /** importHousehold: a home exists already, so this one cannot be brought over. */
+  | 'home_exists'
   | 'network'
   | 'unknown';
 
@@ -71,17 +78,61 @@ export interface Backend {
   takeAuthError(): string | null;
 
   // ── Household membership ──────────────────────────────
-  /** The household the signed-in user belongs to, or null if none yet. */
+  /**
+   * Where the signed-in person belongs, asked right after every sign-in (and again from
+   * the "This home is private" screen). See HomeEntry. May claim: when a person who has not
+   * joined yet has this account's verified email, the account becomes that person, atomically
+   * (two sessions never both win). Supabase: RPC enter_home. Demo: the same rules, with the
+   * demo account's email counting as verified, except that it never answers 'private' (a
+   * demo sign-in always gets a home: theirs, a claimed one, or 'no_home' to create one).
+   * Throws 'not_signed_in'.
+   */
+  enterHome(): Promise<HomeEntry>;
+  /** The household the signed-in user belongs to, or null if none yet (no claim; enterHome() is the way in). */
   getMyHouseholdId(): Promise<string | null>;
   /** Household, members, areas, open items and completions. */
   load(householdId: string): Promise<HouseholdData>;
-  /** Calls onChange (debounce on your side) when anything in the household changes elsewhere. */
+  /**
+   * Calls onChange (debounce on your side) when anything in the household changes, here or
+   * elsewhere: households, members (people added, claimed, edited or removed), areas, items
+   * and completions. Also calls it whenever the live connection (re)joins, the first time
+   * included, because changes made while it was down are never replayed: the caller reloads.
+   * See docs/ARCHITECTURE.md "Sync guarantees".
+   */
   subscribe(householdId: string, onChange: () => void): Unsubscribe;
+  /**
+   * The live connection may be dead: HomeProvider calls this (and only HomeProvider) when the
+   * app comes back into view after 10 s or more hidden, on `pageshow` from the back/forward
+   * cache, and on `online`. A phone that slept can hold a socket that reports open but died
+   * without a close event, and the 25 s heartbeat takes up to a minute to notice, so the
+   * Supabase backend does not trust it: it drops the socket and opens a fresh one (await
+   * realtime.disconnect(), then realtime.connect()), at most once per 5 s. Every channel
+   * rejoins when the socket opens, and each join asks for a reload (subscribe: onChange;
+   * subscribeChat: resync). Returns at once; never throws. Demo: nothing to do (tabs share
+   * one storage). docs/ARCHITECTURE.md "Sync guarantees".
+   */
+  reconnect(): void;
 
   /** Creates the household with the caller as owner; returns its id. Throws 'already_member'. */
   createHousehold(input: CreateHouseholdInput): Promise<string>;
-  /** Joins via invite token; returns household id. Throws 'invalid_invite' or 'already_member'. */
+  /**
+   * Joins via invite token; returns household id. Throws 'invalid_invite' or 'already_member'.
+   * When the household has a person who has not joined yet with the caller's verified email,
+   * the caller becomes that person (their name, emoji and colour are kept; memberName and
+   * memberEmoji are not applied) instead of being added a second time.
+   */
   joinHousehold(input: JoinHouseholdInput): Promise<string>;
+  /**
+   * Creates the home from the data this phone kept in demo mode (buildImportPayload() in
+   * lib/logic/importHome.ts), all or nothing; returns the household id. The person marked
+   * `me` becomes the caller (owner); everyone else is added as not joined yet, without an
+   * email. Supabase: RPC import_household. Throws 'already_member' (the caller is in a home),
+   * 'home_exists' (a home exists: the caller should be added to it instead), or
+   * BackendError('unknown', 'invalid_input…') for a payload it refuses. The demo backend does
+   * not import (it is where the data comes from): it throws BackendError('unknown', 'not
+   * supported in demo mode').
+   */
+  importHousehold(payload: ImportPayload): Promise<string>;
   /** Household name/address for a valid, unexpired invite token; null otherwise. */
   getInvitePreview(token: string): Promise<InvitePreview | null>;
   /** Creates a reusable invite token (valid 14 days) for the caller's household. */
@@ -89,7 +140,36 @@ export interface Backend {
 
   // ── Edits (any member may edit anything) ──────────────
   updateHousehold(id: string, patch: HouseholdPatch): Promise<void>;
+  /** Name, emoji, weekly email and push of anyone in the home, joined or not (push stays off until they join). */
   updateMember(id: string, patch: MemberPatch): Promise<void>;
+
+  // ── People who have not joined yet ────────────────────
+  /**
+   * Adds a person who has not joined yet (user_id null) and returns their row: role member,
+   * the next colour in MEMBER_COLORS (like a join), push off, weekly email on (it starts once
+   * they join). The email is optional; when they first sign in with it, they become this
+   * person (enterHome). Supabase: RPC add_person, then the row. Throws
+   * BackendError('unknown', 'invalid_input…') for a blank name or an email that fails
+   * isValidEmail(), 'email_taken' when someone in the home has the email (any case), and
+   * 'not_found' when the caller is not in `householdId`.
+   */
+  addPerson(householdId: string, input: NewPersonInput): Promise<Member>;
+  /**
+   * Sets, changes or clears ('') the email of a person who has not joined yet (trimmed and
+   * lower-cased; the same value again is a no-op). Supabase: RPC set_person_email. Throws
+   * 'email_taken', 'not_found' (no such person in the caller's home), or
+   * BackendError('unknown', 'invalid_input…') when they have joined (their email is their
+   * account's) or the value is not an email.
+   */
+  setPersonEmail(memberId: string, email: string): Promise<void>;
+  /**
+   * Removes a person who has not joined yet. Their items become unassigned and their
+   * completions are credited to nobody (Stats leaves them out), as when any member row is
+   * deleted.
+   * Supabase: RPC remove_person. Throws 'not_found', or BackendError('unknown',
+   * 'invalid_input…') when they have joined.
+   */
+  removePerson(memberId: string): Promise<void>;
 
   createArea(householdId: string, name: string): Promise<Area>;
   renameArea(id: string, name: string): Promise<void>;

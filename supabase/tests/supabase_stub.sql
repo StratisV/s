@@ -31,6 +31,9 @@ create table if not exists auth.users (
   raw_user_meta_data jsonb default '{}'::jsonb,
   created_at timestamptz default now()
 );
+-- Set when Supabase Auth has verified the email (Google sign-in always has). Only a verified
+-- email may claim a person who has not joined yet (20261010000500_one_home.sql).
+alter table auth.users add column if not exists email_confirmed_at timestamptz;
 
 -- Same definitions as Supabase: claims come from the request.jwt.claims setting that
 -- PostgREST sets per request (the tests set it with set_config).

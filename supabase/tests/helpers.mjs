@@ -31,15 +31,18 @@ export async function one(sql, params) {
   return rows[0];
 }
 
-/** Creates an auth.users row. Returns { id, email, name }. */
-export async function createUser({ name = 'Tester', email } = {}) {
+/**
+ * Creates an auth.users row. Returns { id, email, name }. The email counts as verified
+ * (email_confirmed_at set, as for every Google account) unless `verified` is false.
+ */
+export async function createUser({ name = 'Tester', email, verified = true } = {}) {
   const id = randomUUID();
   const mail = email ?? `test-${id.slice(0, 8)}@example.com`;
-  await db('insert into auth.users (id, email, raw_user_meta_data) values ($1, $2, $3)', [
-    id,
-    mail,
-    JSON.stringify({ full_name: name }),
-  ]);
+  await db(
+    `insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at)
+     values ($1, $2, $3, case when $4 then now() end)`,
+    [id, mail, JSON.stringify({ full_name: name }), verified],
+  );
   createdUsers.add(id);
   return { id, email: mail, name };
 }

@@ -212,6 +212,43 @@ describe('missed alerts', () => {
   });
 });
 
+describe('people who have not joined yet', () => {
+  // Monday 12 Oct 2026, 08:00 BST: the default weekly email slot, and push time.
+  const MONDAY_8AM = new Date('2026-10-12T07:00:00Z');
+
+  /** The home with a person added in People who has not signed in (push forced on, to be sure). */
+  function withWaiting() {
+    const ctx = home();
+    const waiting = member(ctx.h, { name: 'Noor', user_id: null, push_enabled: true, weekly_email: true, created_at: '2026-01-04T00:00:00Z' });
+    return { ...ctx, waiting, members: [...ctx.members, waiting] };
+  }
+
+  it('get no reminder, and an unassigned reminder goes to those who have joined', () => {
+    const ctx = withWaiting();
+    const theirs = item(ctx.kitchen, { due_date: '2026-10-08', notify: 'same_day', assignee_id: ctx.waiting.id });
+    const nobodys = item(ctx.kitchen, { due_date: '2026-10-08', notify: 'same_day' });
+    const { pushes } = run(ctx, [theirs, nobodys], LONDON_8AM);
+    expect(pushes.filter((p) => p.itemId === theirs.id)).toEqual([]);
+    expect(who(pushes.filter((p) => p.itemId === nobodys.id))).toEqual([ctx.owner.id, ctx.shea.id].sort());
+  });
+
+  it('get no missed alert; the owner still does', () => {
+    const ctx = withWaiting();
+    const missed = item(ctx.kitchen, { due_date: '2026-10-07', assignee_id: ctx.waiting.id });
+    expect(who(run(ctx, [missed], LONDON_8AM).pushes)).toEqual([ctx.owner.id]);
+  });
+
+  it('get no weekly email, but it still names them', () => {
+    const ctx = withWaiting();
+    const theirs = item(ctx.kitchen, { title: 'Leaves', due_date: '2026-10-14', assignee_id: ctx.waiting.id });
+    const { emails } = planNotifications(
+      input({ now: MONDAY_8AM, households: [ctx.h], members: ctx.members, areas: ctx.areas, items: [theirs] }),
+    );
+    expect(emails.map((e) => e.memberId)).toEqual([ctx.owner.id, ctx.shea.id, ctx.ela.id]);
+    expect(emails[0].text).toContain('Noor');
+  });
+});
+
 describe('weekly email', () => {
   // Monday 12 Oct 2026; the default is Monday 08:00.
   const MONDAY_0759 = new Date('2026-10-12T06:59:00Z');

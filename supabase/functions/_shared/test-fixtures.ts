@@ -21,6 +21,7 @@ export function member(h: HouseholdRow, over: Partial<MemberRow> = {}): MemberRo
   return {
     id,
     household_id: h.id,
+    user_id: `u-${id}`,
     name: id,
     email: `${id}@example.com`,
     emoji: '🦔',

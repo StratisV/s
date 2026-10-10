@@ -8,18 +8,39 @@ import type {
   Area,
   AuthUser,
   CreateHouseholdInput,
+  DemoHomeSummary,
   HouseholdData,
   ISODate,
   Item,
   ItemDraft,
   JoinHouseholdInput,
   Member,
+  NewPersonInput,
 } from '../lib/types';
 
+/**
+ * Where the app is. After sign-in, bootstrap asks Backend.enterHome() (docs/ARCHITECTURE.md
+ * "One home") and settles on:
+ * - 'ready' for 'member' and 'claimed' (claimed also sets `claimed` and `onboardingTail`),
+ * - 'onboarding' for 'no_home',
+ * - 'private' for 'private'.
+ */
 export type Phase =
   | { kind: 'loading' }
   | { kind: 'signedOut' }
+  /**
+   * Signed in, not in a home, and no home exists yet: create one (Profile, then Create home),
+   * or bring over the demo home (`demoImport`). An invite link (pendingInvite) still opens the
+   * Join flow, and only here may it offer "set up a new home instead".
+   */
   | { kind: 'onboarding'; user: AuthUser }
+  /**
+   * Signed in, a home exists and nobody there has this account's email: "This home is
+   * private". Says what to do ("Ask someone at home to add <email> in Profile > Household >
+   * People"), offers Check again (recheckHome) and Sign Out, never "create a home". An invite
+   * link (pendingInvite) still opens the Join flow from here (without "set up a new home").
+   */
+  | { kind: 'private'; user: AuthUser; email: string; emailVerified: boolean }
   | { kind: 'ready'; user: AuthUser }
   | { kind: 'error'; message: string };
 
@@ -41,17 +62,71 @@ export interface HomeContextValue {
   today: ISODate;
   /** Invite token from a `?invite=` link, kept across the Google redirect. */
   pendingInvite: string | null;
-  /** True right after creating/joining a household: Onboarding shows its last step. */
+  /** True right after creating/joining/claiming/importing a household: Onboarding shows its last step(s). */
   onboardingTail: boolean;
+  /**
+   * True right after sign-in claimed a person someone at home had added (enterHome
+   * 'claimed'), together with onboardingTail (phase 'ready', data loaded, `me` is that
+   * person): Onboarding shows the short welcome step ("Welcome home, Shea": their name as
+   * housemates set it, the emoji grid on their emoji) and confirmClaimed() moves on to the
+   * notifications step. finishOnboarding() clears both.
+   */
+  claimed: boolean;
+  /**
+   * The claim welcome step's Continue: saves `emoji` when it differs from `me.emoji`
+   * (updateMember, optimistic), then `claimed` becomes false and Onboarding shows the
+   * notifications step (onboardingTail stays true). A failed save keeps the step (the usual
+   * "not saved" toast) and rejects.
+   */
+  confirmClaimed(emoji: string): Promise<void>;
   finishOnboarding(): void;
   /** Forget the pending invite (declined, or signing out). */
   dismissInvite(): void;
 
   signIn(): Promise<void>;
   signOut(): Promise<void>;
+  /**
+   * Create home. On the Supabase backend it first asks enterHome() again: unless that is still
+   * 'no_home' (someone set up the home meanwhile, or added this person), it moves to the
+   * phase that gives and rejects with BackendError('home_exists') instead of creating a second
+   * home (TODO(one-home data builder)). The database does not stop create_household itself.
+   */
   createHousehold(input: CreateHouseholdInput): Promise<void>;
+  /**
+   * Join with an invite link. When the home has a person who has not joined yet with this
+   * account's verified email, the account becomes that person (the typed name and emoji are
+   * not applied); in practice enterHome has already claimed them at sign-in.
+   */
   joinHousehold(input: JoinHouseholdInput): Promise<void>;
   refresh(): Promise<void>;
+
+  // ── One home ──
+  /**
+   * In phase 'onboarding' on the Supabase backend only: the home this browser kept in demo
+   * mode (readDemoDoc(localStorage) then demoHomeSummary()), offered as "Bring over the home
+   * from this phone" with "Start fresh" as the alternative. Null in demo mode, when there is
+   * none, when it was brought over already (marked imported), and after declineDemoImport().
+   */
+  demoImport: DemoHomeSummary | null;
+  /**
+   * "Bring It Over": reads the demo document again, Backend.importHousehold(
+   * buildImportPayload(doc)), then markDemoImported(localStorage, {at, household_id}), then
+   * opens the home like a create (phase 'ready', onboardingTail: the notifications step
+   * follows; no Profile step, the demo name and emoji come along). On 'home_exists' (someone
+   * set up a home meanwhile) or 'already_member', it asks enterHome again and moves to the
+   * phase that gives ('private', a claim, or that home), then rejects with the BackendError so
+   * the screen can say why (errorMessage). Any other failure keeps the offer and rejects.
+   */
+  importDemoHome(): Promise<void>;
+  /** "Start Fresh": demoImport becomes null for this session; the Profile and Create home steps follow. */
+  declineDemoImport(): void;
+  /**
+   * Asks the server again where this person belongs (enterHome) and moves to the phase it
+   * gives. The "This home is private" screen's Check Again; HomeProvider also runs it by
+   * itself whenever the app comes back into view in phase 'private'. Never shows the loading
+   * splash; a failure leaves the phase as it is and rejects (the screen shows errorMessage).
+   */
+  recheckHome(): Promise<void>;
 
   /**
    * Edits below apply at once (optimistically). If the write fails, just that
@@ -59,6 +134,22 @@ export interface HomeContextValue {
    */
   updateHousehold(patch: HouseholdPatch): Promise<void>;
   updateMember(id: string, patch: MemberPatch): Promise<void>;
+  /**
+   * Household > People > Add Person. Not optimistic (the row comes back from the backend and
+   * is added to data.members at once, then the reload). Rejects with BackendError
+   * ('email_taken', or 'unknown' + 'invalid_input…'); the form shows why and keeps its input.
+   */
+  addPerson(input: NewPersonInput): Promise<Member>;
+  /**
+   * Sets, changes or clears ('') a not-yet-joined person's email (optimistic, stored as
+   * normaliseEmail() gives it). Rejects like addPerson; the field shows why and keeps its text.
+   */
+  setPersonEmail(id: string, email: string): Promise<void>;
+  /**
+   * Removes a not-yet-joined person (optimistic: gone from data.members at once, their items
+   * unassigned and their completions credited to nobody, as the database does).
+   */
+  removePerson(id: string): Promise<void>;
   createArea(name: string): Promise<Area>;
   renameArea(id: string, name: string): Promise<void>;
   deleteArea(id: string): Promise<void>;
@@ -123,6 +214,10 @@ export function errorMessage(err: unknown): string {
         return 'No connection. Try again in a moment.';
       case 'not_found':
         return 'That was removed by someone else.';
+      case 'email_taken':
+        return 'Someone at home already has that email.';
+      case 'home_exists':
+        return 'A home has already been set up. Ask someone there to add you.';
       default:
         return 'Something went wrong. Try again.';
     }
@@ -141,9 +236,16 @@ export function notSavedMessage(err: unknown, verb: 'save' | 'undo' = 'save'): s
         return `${lead} That was removed by someone else.`;
       case 'not_signed_in':
         return `${lead} Please sign in again.`;
+      case 'email_taken':
+        return `${lead} Someone at home already has that email.`;
     }
   }
   return `${lead} Try again.`;
+}
+
+/** The one-home API's stubs until the builder implements it (docs/ARCHITECTURE.md "One home"). */
+function notImplemented(name: string): Promise<never> {
+  return Promise.reject(new Error(`not implemented: ${name}`));
 }
 
 // ── Optimistic changes ───────────────────────────────────
@@ -523,6 +625,9 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       today,
       pendingInvite,
       onboardingTail,
+      // TODO(one-home data builder): set from bootstrap (enterHome 'claimed'); confirmClaimed and finishOnboarding clear it.
+      claimed: false,
+      confirmClaimed: () => notImplemented('confirmClaimed'),
       finishOnboarding: () => setOnboardingTail(false),
       dismissInvite: () => {
         clearStoredInvite();
@@ -581,6 +686,15 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       refresh: async () => {
         await refresh();
       },
+
+      // TODO(one-home data builder): implement (docs/ARCHITECTURE.md "One home").
+      demoImport: null,
+      importDemoHome: () => notImplemented('importDemoHome'),
+      declineDemoImport: () => {},
+      recheckHome: () => notImplemented('recheckHome'),
+      addPerson: () => notImplemented('addPerson'),
+      setPersonEmail: () => notImplemented('setPersonEmail'),
+      removePerson: () => notImplemented('removePerson'),
 
       updateHousehold: (patch) => {
         const d = requireData();

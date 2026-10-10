@@ -18,8 +18,10 @@ import type {
   ChatReaction,
   Completion,
   CreateHouseholdInput,
+  HomeEntry,
   Household,
   HouseholdData,
+  ImportPayload,
   InvitePreview,
   ISODate,
   ISOTimestamp,
@@ -29,8 +31,10 @@ import type {
   ItemStatus,
   JoinHouseholdInput,
   Member,
+  NewPersonInput,
   PushSubscriptionInput,
 } from '../types';
+import type { DemoImportMark } from '../logic/importHome';
 import {
   BackendError,
   type Backend,
@@ -222,6 +226,11 @@ interface DemoDoc {
   /** Chat came later: read() fills these in for documents stored before it. */
   messages: MessageRow[];
   message_reactions: ReactionRow[];
+  /**
+   * Set (by markDemoImported in lib/logic/importHome.ts, on the Supabase build) once this
+   * document's home was brought over to the shared database. Kept as it is by read/write.
+   */
+  imported?: DemoImportMark;
 }
 
 export type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -589,6 +598,39 @@ export class DemoBackend implements Backend {
 
   // ── Household membership ───────────────────────────────
 
+  /**
+   * enter_home's rules on the demo document: member; else claim the earliest person with
+   * user_id null whose email equals this account's (lower case; demo emails count as
+   * verified); else 'no_home' (never 'private': a demo sign-in always gets a home).
+   * TODO(one-home data builder): implement.
+   */
+  enterHome(): Promise<HomeEntry> {
+    return Promise.reject(new Error('not implemented: enterHome'));
+  }
+
+  /** The demo is where an import comes from: always BackendError('unknown', 'not supported in demo mode'). */
+  importHousehold(_payload: ImportPayload): Promise<string> {
+    return Promise.reject(new BackendError('unknown', 'not supported in demo mode'));
+  }
+
+  /**
+   * add_person on the demo document (same checks and errors; email_taken compares
+   * normaliseEmail()). TODO(one-home data builder): implement.
+   */
+  addPerson(_householdId: string, _input: NewPersonInput): Promise<Member> {
+    return Promise.reject(new Error('not implemented: addPerson'));
+  }
+
+  /** set_person_email on the demo document. TODO(one-home data builder): implement. */
+  setPersonEmail(_memberId: string, _email: string): Promise<void> {
+    return Promise.reject(new Error('not implemented: setPersonEmail'));
+  }
+
+  /** remove_person on the demo document (items unassigned, credits cleared). TODO(one-home data builder): implement. */
+  removePerson(_memberId: string): Promise<void> {
+    return Promise.reject(new Error('not implemented: removePerson'));
+  }
+
   getMyHouseholdId(): Promise<string | null> {
     return this.query((doc) => {
       const user = this.userIn(doc);
@@ -624,6 +666,9 @@ export class DemoBackend implements Backend {
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }
+
+  /** Tabs share one storage: nothing can drop. */
+  reconnect(): void {}
 
   createHousehold(input: CreateHouseholdInput): Promise<string> {
     return this.mutate((doc) => this.createHouseholdIn(doc, input));

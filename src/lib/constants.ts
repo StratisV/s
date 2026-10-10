@@ -139,6 +139,8 @@ export const TEXT_LIMITS = {
   /** No input: emoji come from EMOJI_SET. The database still caps what a client can store. */
   memberEmoji: 16,
   chatMessage: 4000,
+  /** A person's Google email (members_email_length; isValidEmail() in lib/logic/people.ts). */
+  email: 254,
 } as const;
 
 /** Messages per chat page (the newest page first, older ones as you scroll up). */

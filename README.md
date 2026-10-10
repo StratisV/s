@@ -61,7 +61,7 @@ Without a database the app runs in demo mode and each browser keeps its own data
 2. Redeploy. The build reads those settings (`vite.config.ts`), and `scripts/migrate.mjs` brings
    the database up to date before building (production builds only; it records what it applied
    in `supabase_migrations.schema_migrations`, like the Supabase CLI).
-3. Turn on Google sign-in (step 2 below) and, in Supabase **Authentication > URL Configuration**,
+3. Turn on Google sign-in (step 2 below, including its step 5) and, in Supabase **Authentication > URL Configuration**,
    set the Site URL to the app's address and add `<app address>/**` as a redirect URL.
 
 The numbered steps below do the same by hand, plus push notifications and the weekly email.
@@ -89,6 +89,10 @@ The numbered steps below do the same by hand, plus push notifications and the we
 4. In Supabase: **Authentication → URL Configuration**: set **Site URL** to your app's URL
    (for example `https://homeos.vercel.app`) and add it, plus `http://localhost:5173` for
    local development, to **Redirect URLs**.
+5. In Supabase: **Authentication → Sign In / Providers → Email**: turn it off (home.os only
+   uses Google), or at least keep **Confirm email** on (the default). Someone signing in with
+   a verified email becomes the person a housemate added with that email, so Supabase must
+   never treat an email nobody proved as verified.
 
 ### 3. App settings
 

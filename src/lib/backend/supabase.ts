@@ -22,14 +22,17 @@ import type {
   ChatReaction,
   Completion,
   CreateHouseholdInput,
+  HomeEntry,
   Household,
   HouseholdData,
+  ImportPayload,
   InvitePreview,
   Item,
   ISOTimestamp,
   ItemDraft,
   JoinHouseholdInput,
   Member,
+  NewPersonInput,
   PushSubscriptionInput,
 } from '../types';
 import {
@@ -86,6 +89,8 @@ const RPC_CODES: ReadonlySet<string> = new Set<BackendErrorCode>([
   'already_member',
   'invalid_invite',
   'not_found',
+  'email_taken',
+  'home_exists',
 ]);
 
 // ── Errors ─────────────────────────────────────────────────
@@ -101,7 +106,8 @@ const NETWORK_MESSAGE = /failed to fetch|fetch failed|load failed|networkerror|n
 
 /**
  * Maps anything supabase-js returns or throws to a BackendError:
- * - an RPC/trigger message (not_signed_in, already_member, invalid_invite, not_found) keeps its code;
+ * - an RPC/trigger message (not_signed_in, already_member, invalid_invite, not_found,
+ *   email_taken, home_exists) keeps its code;
  * - invalid_input has no code of its own, so it becomes 'unknown' with that message;
  * - a check violation (23514, the size and format limits) is 'unknown' with
  *   "invalid_input: <constraint name>";
@@ -398,6 +404,37 @@ export class SupabaseBackend implements Backend {
 
   // ── Household membership ───────────────────────────────
 
+  /**
+   * RPC enter_home() → {status, household_id?, member_id?, email?, email_verified?}, mapped to
+   * HomeEntry (camelCase). TODO(one-home data builder): implement.
+   */
+  async enterHome(): Promise<HomeEntry> {
+    throw new Error('not implemented: enterHome');
+  }
+
+  /** RPC import_household(p_payload jsonb) → household id. TODO(one-home data builder): implement. */
+  async importHousehold(_payload: ImportPayload): Promise<string> {
+    throw new Error('not implemented: importHousehold');
+  }
+
+  /**
+   * RPC add_person(p_household_id, p_name, p_emoji, p_email) → member id, then that row
+   * (MEMBER_COLS). TODO(one-home data builder): implement.
+   */
+  async addPerson(_householdId: string, _input: NewPersonInput): Promise<Member> {
+    throw new Error('not implemented: addPerson');
+  }
+
+  /** RPC set_person_email(p_member_id, p_email). TODO(one-home data builder): implement. */
+  async setPersonEmail(_memberId: string, _email: string): Promise<void> {
+    throw new Error('not implemented: setPersonEmail');
+  }
+
+  /** RPC remove_person(p_member_id). TODO(one-home data builder): implement. */
+  async removePerson(_memberId: string): Promise<void> {
+    throw new Error('not implemented: removePerson');
+  }
+
   async getMyHouseholdId(): Promise<string | null> {
     const userId = await this.userId();
     const rows = await run<{ household_id: string }[]>(
@@ -482,6 +519,19 @@ export class SupabaseBackend implements Backend {
       closed = true;
       void this.client.removeChannel(channel);
     };
+  }
+
+  /**
+   * TODO(one-home data builder): drop and reopen the socket even when it reports open (await
+   * realtime.disconnect(), then realtime.connect()), at most once per 5 s, never throwing
+   * (Backend.reconnect). Until then this only reopens a socket that knows it is closed.
+   */
+  reconnect(): void {
+    try {
+      if (!this.client.realtime.isConnected()) this.client.realtime.connect();
+    } catch (err) {
+      console.error(err);
+    }
   }
 
   async createHousehold(input: CreateHouseholdInput): Promise<string> {
