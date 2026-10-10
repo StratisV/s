@@ -1,6 +1,9 @@
 // Pure helpers for the setup steps (kept out of the components so they can be unit tested).
 import { DEFAULT_AREAS, TEXT_LIMITS } from '../../lib/constants';
 
+/** Where People is, kept on one line (non-breaking spaces) so it reads as one path. */
+export const PEOPLE_PATH = 'Profile\u00a0>\u00a0Household\u00a0>\u00a0People';
+
 /** Default profile emoji (the README's first pick). */
 export const DEFAULT_EMOJI = '🦔';
 

@@ -25,12 +25,18 @@ interface JoinHomeProps {
   onRetry(): void;
   /** The invite turned out to be invalid or expired while joining. */
   onInvalid(): void;
-  /** "Set up a new home instead": forget the invite and continue to the create form. */
-  onCreateInstead(): void;
+  /**
+   * Forget the invite. With `canCreate` this is "Set up a new home instead" (the create form
+   * follows); without it, only an invalid invite offers it, as Continue (back to "This home is
+   * private": a home exists, so nobody is offered a second one).
+   */
+  onDecline(): void;
+  /** No home exists yet (phase 'onboarding'): the only time a new home may be offered. */
+  canCreate: boolean;
 }
 
 /** Step 3 with an invite link: preview the home and join it, or explain what went wrong. */
-export function JoinHome({ enter, token, check, profile, onBack, onRetry, onInvalid, onCreateInstead }: JoinHomeProps) {
+export function JoinHome({ enter, token, check, profile, onBack, onRetry, onInvalid, onDecline, canCreate }: JoinHomeProps) {
   const { joinHousehold, showToast } = useHome();
   const [busy, setBusy] = useState(false);
 
@@ -84,9 +90,11 @@ export function JoinHome({ enter, token, check, profile, onBack, onRetry, onInva
           <PrimaryButton onClick={join} busy={busy} busyLabel="Joining">
             Join
           </PrimaryButton>
-          <button type="button" className={shared.textButton} onClick={onCreateInstead} disabled={busy}>
-            Set up a new home instead
-          </button>
+          {canCreate ? (
+            <button type="button" className={shared.textButton} onClick={onDecline} disabled={busy}>
+              Set up a new home instead
+            </button>
+          ) : null}
         </div>
       </StepPage>
     );
@@ -100,21 +108,25 @@ export function JoinHome({ enter, token, check, profile, onBack, onRetry, onInva
         <HeroIcon emoji={invalid ? '📭' : '📡'} />
         <h1 className={shared.title}>{invalid ? 'Invite link not valid' : 'Couldn’t check your invite'}</h1>
         <p className={shared.subtitle}>
-          {invalid
-            ? 'It may have expired, as links last 14 days. Ask someone at home to send you a new one, or set up a new home instead.'
-            : check.message}
+          {!invalid
+            ? check.message
+            : canCreate
+              ? 'It may have expired, as links last 14 days. Ask someone at home to send you a new one, or set up a new home instead.'
+              : 'It may have expired, as links last 14 days.'}
         </p>
       </div>
       <div className={shared.heroAfter} />
       <div className={shared.footer}>
         {invalid ? (
-          <PrimaryButton onClick={onCreateInstead}>Set up a new home instead</PrimaryButton>
+          <PrimaryButton onClick={onDecline}>{canCreate ? 'Set up a new home instead' : 'Continue'}</PrimaryButton>
         ) : (
           <>
             <PrimaryButton onClick={onRetry}>Try Again</PrimaryButton>
-            <button type="button" className={shared.textButton} onClick={onCreateInstead}>
-              Set up a new home instead
-            </button>
+            {canCreate ? (
+              <button type="button" className={shared.textButton} onClick={onDecline}>
+                Set up a new home instead
+              </button>
+            ) : null}
           </>
         )}
       </div>

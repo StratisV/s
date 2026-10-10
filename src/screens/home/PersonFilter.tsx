@@ -1,4 +1,5 @@
 import { useRef, type KeyboardEvent } from 'react';
+import { hasJoined } from '../../lib/logic/people';
 import type { Member } from '../../lib/types';
 import { EmojiText } from '../../ui/EmojiText';
 import type { PersonFilter as Filter } from './personFilter';
@@ -20,9 +21,15 @@ interface PersonFilterProps {
  */
 export function PersonFilter({ members, meId, value, counts, onChange }: PersonFilterProps) {
   const people = [...members].sort((a, b) => (a.id === meId ? -1 : b.id === meId ? 1 : 0));
-  const options: { value: Filter; emoji?: string; label: string }[] = [
+  const options: { value: Filter; emoji?: string; label: string; notJoined?: boolean }[] = [
     { value: 'all', label: 'Everyone' },
-    ...people.map((m) => ({ value: m.id, emoji: m.emoji, label: m.id === meId ? `${m.name} (you)` : m.name })),
+    ...people.map((m) => ({
+      value: m.id,
+      emoji: m.emoji,
+      label: m.id === meId ? `${m.name} (you)` : m.name,
+      // Shown like anyone else; VoiceOver adds that they haven't signed in yet.
+      notJoined: !hasJoined(m),
+    })),
     { value: 'none', label: 'Unassigned' },
   ];
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -56,7 +63,7 @@ export function PersonFilter({ members, meId, value, counts, onChange }: PersonF
             type="button"
             role="radio"
             aria-checked={on}
-            aria-label={`${o.label}, ${count} ${count === 1 ? 'item' : 'items'}`}
+            aria-label={`${o.label}, ${count} ${count === 1 ? 'item' : 'items'}${o.notJoined ? ', not joined yet' : ''}`}
             tabIndex={on ? 0 : -1}
             className={styles.chip}
             onClick={() => onChange(o.value)}

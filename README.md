@@ -149,11 +149,21 @@ also set `VITE_BASE=/your-path/`.
 
 ### 6. On each iPhone
 
+There is one home per deployment, and nobody can set up a second one.
+
 1. Open the app's URL in **Safari** and tap **Continue with Google**.
-2. Create your profile (name and emoji). The first person creates the home; everyone else
-   joins with the **Invite someone** link from Profile.
-3. Tap **Share → Add to Home Screen**, then open home.os from the Home Screen.
-4. In **Profile**, turn on **Push notifications**.
+2. The first person sets up the home. On the phone that kept the home in demo mode, tap
+   **Bring It Over**: the areas, every item, the Stats history and everyone in it come across,
+   and you keep your name and emoji. Otherwise create your profile (name and emoji), then the
+   home.
+3. Add everyone else in **Profile → Household → People → Add Person**: their name, emoji and
+   the Google email they sign in with (people brought over from the phone are there already:
+   tap one to add their email). You can give them items straight away. When they tap
+   **Continue with Google** they go straight into the home as that person, with their items.
+   Someone whose email nobody has added sees "This home is private", with the email to ask for.
+   The **Invite someone** link from Profile still works too.
+4. Tap **Share → Add to Home Screen**, then open home.os from the Home Screen.
+5. In **Profile**, turn on **Push notifications**.
 
 ### 7. Updating
 
@@ -195,6 +205,19 @@ address and time zone, its areas, every item (To do or To maintain, and switchin
 them), completions (undo) and each other's profiles
 (name and emoji, under **Profile → Household → People**).
 
+People can be in the home before they join (**Not joined yet**):
+
+- Anyone at home can add a person under **Profile → Household → People → Add Person** (name,
+  emoji and the Google email they will sign in with), give them items, and set, change or
+  clear their email. Each email belongs to one person in the home.
+- Until they sign in, such a person has no account: they give nobody access, get no
+  notifications or weekly email, and can't post in the chat. Their items show on Home, in the
+  person filter and in Stats like anyone else's.
+- When they sign in with Google using that email (a verified email), they become that person,
+  keeping the name, emoji, items and Stats set up for them.
+- Anyone can remove a person who has not joined yet; their items become unassigned. Someone
+  who has joined can't be removed from the app.
+
 The household chat has its own rules:
 
 - Everyone in the household reads and posts in it.
@@ -204,5 +227,6 @@ The household chat has its own rules:
   only their own reactions.
 - Only the author can delete a message (for everyone); nobody can edit one.
 
-People outside the household can't see or change any of it. New people join only through an
-invite link (valid for 14 days).
+People outside the household can't see or change any of it. Someone new joins by signing in
+with Google using the email someone at home added for them, or with an invite link (valid for
+14 days). Anyone else who signs in sees "This home is private" and nothing of the home.

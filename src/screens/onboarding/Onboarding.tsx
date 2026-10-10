@@ -2,29 +2,50 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BackendError } from '../../lib/backend/types';
 import type { AuthUser } from '../../lib/types';
 import { errorMessage, useHome } from '../../state/HomeProvider';
+import { ClaimWelcome } from './ClaimWelcome';
 import { CreateHome } from './CreateHome';
+import { ImportHome } from './ImportHome';
 import { JoinHome, type InviteCheck } from './JoinHome';
 import { NotificationsStep } from './NotificationsStep';
+import { PrivateHome } from './PrivateHome';
 import { ProfileStep, type ProfileDraft } from './ProfileStep';
 import { DEFAULT_EMOJI, initialHomeDraft, suggestedName, type HomeDraft } from './setup';
 import type { Enter } from './StepPage';
 import { Welcome } from './Welcome';
 
-type View = 'welcome' | 'profile' | 'household' | 'notifications';
-const ORDER: Record<View, number> = { welcome: 0, profile: 1, household: 2, notifications: 3 };
+type View = 'welcome' | 'private' | 'import' | 'profile' | 'household' | 'claimed' | 'notifications';
+const ORDER: Record<View, number> = {
+  welcome: 0,
+  private: 1,
+  import: 1,
+  profile: 2,
+  household: 3,
+  claimed: 3,
+  notifications: 4,
+};
 
 /**
- * Sign-in and setup (README "5. Sign-in and setup"). App shows this while
- * signed out, while onboarding, and for the notifications step right after
- * creating or joining a household (onboardingTail).
+ * Sign-in and setup (README "5. Sign-in and setup", docs/ARCHITECTURE.md "One home"). App
+ * shows this while signed out, while not in the home (phases 'onboarding' and 'private'), and
+ * for the last step(s) right after creating, joining, claiming or importing (onboardingTail).
+ *
+ * - 'onboarding' (no home exists): "Bring over the home from this phone" when this browser
+ *   kept one (demoImport), else Profile, then Create home (or Join, with an invite link).
+ * - 'private' (a home exists, nobody there has this email): "This home is private". With an
+ *   invite link: Profile, then Join, never "Set up a new home instead".
+ * - 'ready' with onboardingTail: "Welcome home" after a claim, then the notifications step.
  */
 export function Onboarding() {
-  const { phase, pendingInvite } = useHome();
-  const setup = useSetupState(phase.kind === 'onboarding' ? phase.user : null, pendingInvite);
+  const { phase, pendingInvite, demoImport, claimed } = useHome();
+  const setupUser = phase.kind === 'onboarding' || phase.kind === 'private' ? phase.user : null;
+  const setup = useSetupState(setupUser, pendingInvite);
+  const inviting = !!pendingInvite && !setup.inviteDeclined;
 
   let view: View;
   if (phase.kind === 'signedOut') view = 'welcome';
-  else if (phase.kind === 'onboarding') view = setup.step;
+  else if (phase.kind === 'onboarding') view = demoImport ? 'import' : setup.step;
+  else if (phase.kind === 'private') view = inviting ? setup.step : 'private';
+  else if (phase.kind === 'ready' && claimed) view = 'claimed';
   else view = 'notifications';
 
   const enter = useEnterDirection(view);
@@ -32,12 +53,33 @@ export function Onboarding() {
   switch (view) {
     case 'welcome':
       return <Welcome key={view} enter={enter} />;
+    case 'private':
+      return (
+        <PrivateHome
+          key={view}
+          enter={enter}
+          email={phase.kind === 'private' ? phase.email : ''}
+          emailVerified={phase.kind === 'private' ? phase.emailVerified : true}
+          onSignOut={setup.signOut}
+          signingOut={setup.signingOut}
+        />
+      );
+    case 'import':
+      return demoImport ? (
+        <ImportHome
+          key={view}
+          enter={enter}
+          summary={demoImport}
+          onSignOut={setup.signOut}
+          signingOut={setup.signingOut}
+        />
+      ) : null;
     case 'profile':
       return (
         <ProfileStep
           key={view}
           enter={enter}
-          email={phase.kind === 'onboarding' ? phase.user.email : ''}
+          email={setupUser?.email ?? ''}
           value={setup.profile}
           onChange={setup.setProfile}
           onContinue={() => setup.setStep('household')}
@@ -58,7 +100,8 @@ export function Onboarding() {
             onBack={back}
             onRetry={setup.recheckInvite}
             onInvalid={setup.markInviteInvalid}
-            onCreateInstead={setup.declineInvite}
+            onDecline={setup.declineInvite}
+            canCreate={phase.kind === 'onboarding'}
           />
         );
       }
@@ -73,6 +116,8 @@ export function Onboarding() {
         />
       );
     }
+    case 'claimed':
+      return <ClaimWelcome key={view} enter={enter} />;
     case 'notifications':
       return <NotificationsStep key={view} enter={enter} />;
   }

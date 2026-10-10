@@ -286,7 +286,8 @@ describe('Household editor: people', () => {
     await openHousehold();
     const people = screen.getByRole('region', { name: 'People' });
     const rows = within(people).getAllByRole('button');
-    expect(rows.map((r) => r.textContent)).toEqual(['🦔Stratis, You', '🦆Shea', '🦊Ela']);
+    // Everyone in member order, then Add Person.
+    expect(rows.map((r) => r.textContent)).toEqual(['🦔Stratis, You', '🦆Shea', '🦊Ela', 'Add Person']);
     // Avatars carry the member colour ring, as in the Stats legend.
     const avatar = rows[1].querySelector('span[aria-hidden="true"]') as HTMLElement;
     expect(avatar.style.boxShadow).toContain('#AF52DE');
