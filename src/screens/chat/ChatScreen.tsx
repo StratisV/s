@@ -8,6 +8,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react';
+import { copyText } from '../../lib/clipboard';
 import {
   buildRows,
   reactionChipLabel,
@@ -20,7 +21,6 @@ import { useChat } from '../../state/ChatProvider';
 import { useHousehold } from '../../state/HomeProvider';
 import { ActionSheet } from '../../ui/ActionSheet';
 import { ScreenHeader } from '../../ui/Screen';
-import { copyText } from './clipboard';
 import { Composer } from './Composer';
 import { ArrowDownIcon } from './icons';
 import { MessageMenu, type MenuAction } from './MessageMenu';

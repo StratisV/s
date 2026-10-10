@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { RAG_ORDER, RAG_RING, RAG_TEXT, RAG_TINT } from '../../lib/constants';
+import { RAG_ORDER, RAG_TEXT, RAG_TINT } from '../../lib/constants';
 import { longDay } from '../../lib/logic/dates';
 import { itemMeta, itemsByArea } from '../../lib/logic/items';
+import { areaShareMessage } from '../../lib/logic/share';
+import { appBaseUrl } from '../../lib/sharedLink';
 import type { Area, ISODate, Item, Member, Rag } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
-import { ChevronRightIcon, PlusIcon } from '../../ui/icons';
+import { ChevronRightIcon, PlusIcon, ShareIcon } from '../../ui/icons';
 import { Screen } from '../../ui/Screen';
+import { useShare } from '../share/useShare';
 import { ItemRow } from './ItemRow';
 import { PersonFilter } from './PersonFilter';
 import { countsFor, isFor, personFilterKey, validFilter, type PersonFilter as Who } from './personFilter';
@@ -24,6 +27,12 @@ interface HomeScreenProps {
    */
   revealArea?: string | null;
   onRevealed?(): void;
+  /**
+   * An area opened from a shared link (`?area=`): it is expanded and scrolled to the top,
+   * under the tab switch. Then `onLinkedAreaShown` is called.
+   */
+  linkedArea?: string | null;
+  onLinkedAreaShown?(): void;
 }
 
 /** Where this device remembers which areas are collapsed: a JSON list of area ids. */
@@ -101,8 +110,18 @@ function usePersonFilter(householdId: string, members: Member[]) {
 }
 
 /** Home: the household's areas, each with its open items (README "1. Home"). */
-export function HomeScreen({ tabs, onOpenItem, onOpenProfile, onAddItem, revealArea, onRevealed }: HomeScreenProps) {
+export function HomeScreen({
+  tabs,
+  onOpenItem,
+  onOpenProfile,
+  onAddItem,
+  revealArea,
+  onRevealed,
+  linkedArea,
+  onLinkedAreaShown,
+}: HomeScreenProps) {
   const { data, me, today, completeItem } = useHousehold();
+  const share = useShare();
   const sections = useMemo(() => itemsByArea(data.areas, data.items), [data.areas, data.items]);
   const areaIds = useMemo(() => sections.map((s) => s.area.id), [sections]);
   const [collapsed, setCollapsed] = useCollapsedAreas(data.household.id, areaIds);
@@ -135,6 +154,59 @@ export function HomeScreen({ tabs, onOpenItem, onOpenProfile, onAddItem, revealA
     onRevealed?.();
     // `who` and `shownIds` are only read when an area is revealed.
   }, [revealArea, collapsed, setCollapsed, onRevealed]);
+
+  // An area from a shared link: open it, then bring it to the top once it has opened, and
+  // light its card up for a moment (near the bottom of the page it can't reach the top).
+  // Focus goes to its name, so VoiceOver reads it ("Garden, expanded") and carries on into it.
+  const [flashArea, setFlashArea] = useState<string | null>(null);
+  const linkedRef = useRef({ collapsed, setCollapsed, onLinkedAreaShown, who, setWho, sections, shown });
+  linkedRef.current = { collapsed, setCollapsed, onLinkedAreaShown, who, setWho, sections, shown };
+  useEffect(() => {
+    if (!linkedArea) return;
+    const now = linkedRef.current;
+    // The person filter hides the area, or some of its items: show everyone's, as shared.
+    const all = now.sections.find((s) => s.area.id === linkedArea)?.items.length ?? 0;
+    const visible = now.shown.find((s) => s.area.id === linkedArea)?.items.length;
+    const unfiltered = now.who !== 'all' && (visible === undefined || visible < all);
+    if (unfiltered) now.setWho('all');
+    const wasCollapsed = now.collapsed.has(linkedArea);
+    if (wasCollapsed) {
+      const next = new Set(now.collapsed);
+      next.delete(linkedArea);
+      now.setCollapsed(next);
+    }
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    // A collapsed card takes its slide (HomeScreen.module.css .panel) to reach full height,
+    // and near the bottom of the page it can't come to the top before then. An area the
+    // filter hid is drawn afresh, already open.
+    const delay = wasCollapsed && !still ? AREA_SLIDE_MS : unfiltered ? AREA_REDRAW_MS : 0;
+    const timer = setTimeout(() => {
+      const section = Array.from(document.querySelectorAll<HTMLElement>('section[data-area-id]')).find(
+        (el) => el.dataset.areaId === linkedArea,
+      );
+      section?.scrollIntoView({ block: 'start', behavior: still ? 'auto' : 'smooth' });
+      const name = section?.querySelector<HTMLElement>('button[aria-expanded]');
+      if (name) quietFocus(name);
+      setFlashArea(linkedArea);
+      linkedRef.current.onLinkedAreaShown?.();
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [linkedArea]);
+  useEffect(() => {
+    if (!flashArea) return;
+    const timer = setTimeout(() => setFlashArea(null), AREA_FLASH_MS);
+    return () => clearTimeout(timer);
+  }, [flashArea]);
+
+  const shareArea = (area: Area) =>
+    share(
+      areaShareMessage(area, data.items, {
+        members: data.members,
+        today,
+        timeZone: data.household.timezone,
+        baseUrl: appBaseUrl(),
+      }),
+    );
 
   const toggle = (areaId: string) => {
     const next = new Set(collapsed);
@@ -182,8 +254,10 @@ export function HomeScreen({ tabs, onOpenItem, onOpenProfile, onAddItem, revealA
               today={today}
               timeZone={data.household.timezone}
               collapsed={collapsed.has(area.id)}
+              linked={flashArea === area.id}
               onToggle={toggle}
               onAddItem={onAddItem}
+              onShare={shareArea}
               onOpenItem={onOpenItem}
               onComplete={completeItem}
             />
@@ -194,6 +268,23 @@ export function HomeScreen({ tabs, onOpenItem, onOpenProfile, onAddItem, revealA
       )}
     </Screen>
   );
+}
+
+/**
+ * Focuses `el` without scrolling, for assistive tech (VoiceOver reads it and carries on from
+ * there), but without a focus ring until a key is pressed: a link brought the person here,
+ * not the keyboard (`.disclosure[data-quiet-focus]`).
+ */
+function quietFocus(el: HTMLElement): void {
+  el.dataset.quietFocus = '';
+  const done = () => {
+    delete el.dataset.quietFocus;
+    el.removeEventListener('blur', done);
+    window.removeEventListener('keydown', done, true);
+  };
+  el.addEventListener('blur', done);
+  window.addEventListener('keydown', done, true);
+  el.focus({ preventScroll: true });
 }
 
 /**
@@ -214,6 +305,13 @@ function NoAreas({ onOpenProfile }: { onOpenProfile(): void }) {
   );
 }
 
+/** How long a collapsed area's card takes to open (`.panel` in HomeScreen.module.css), and a little more. */
+const AREA_SLIDE_MS = 360;
+/** Time for the areas the person filter hid to be drawn, before scrolling to one. */
+const AREA_REDRAW_MS = 50;
+/** How long an area opened from a shared link stays lit up (`.section[data-linked]`). */
+const AREA_FLASH_MS = 2400;
+
 const COUNT_LABEL: Record<Rag, string> = { red: 'urgent', amber: 'at risk', green: 'on track' };
 
 /** Open items per status, red first and zeros left out, and how they are read out. */
@@ -224,20 +322,23 @@ export function statusCounts(items: Pick<Item, 'rag'>[]): { counts: { rag: Rag; 
   return { counts, label: counts.map((c) => `${c.count} ${COUNT_LABEL[c.rag]}`).join(', ') };
 }
 
-/** Red, amber and green chips with their counts: "1 urgent, 2 at risk, 3 on track". */
-function StatusCounts({ items }: { items: Item[] }) {
+/**
+ * Red, amber and green badges with their counts: "1 urgent, 2 at risk, 3 on track". A tap on
+ * them does what a tap on the name does (`onTap`), so it lands here: a phone that nudges a
+ * tap onto the nearest control would otherwise give it to Share.
+ */
+function StatusCounts({ items, onTap }: { items: Item[]; onTap(): void }) {
   const { counts, label } = statusCounts(items);
   if (!counts.length) return null;
   return (
-    <span className={styles.counts} role="img" aria-label={label}>
+    <span className={styles.counts} role="img" aria-label={label} onClick={onTap}>
       {counts.map(({ rag, count }) => (
         <span
           key={rag}
           className={styles.count}
           data-rag={rag}
-          style={{ '--dot': RAG_RING[rag], '--text': RAG_TEXT[rag], '--chip': RAG_TINT[rag] } as CSSProperties}
+          style={{ '--text': RAG_TEXT[rag], '--chip': RAG_TINT[rag] } as CSSProperties}
         >
-          <span className={styles.dot} />
           {count}
         </span>
       ))}
@@ -263,8 +364,12 @@ interface AreaSectionProps {
   /** The household's, for a To maintain row's "Updated <day>". */
   timeZone: string;
   collapsed: boolean;
+  /** Just opened from a shared link: lit up for a moment. */
+  linked: boolean;
   onToggle(areaId: string): void;
   onAddItem(areaId: string): void;
+  /** Shares the area's open items (the share sheet, or the clipboard). */
+  onShare(area: Area): void;
   onOpenItem(itemId: string): void;
   onComplete(itemId: string): Promise<void>;
 }
@@ -276,8 +381,10 @@ function AreaSection({
   today,
   timeZone,
   collapsed,
+  linked,
   onToggle,
   onAddItem,
+  onShare,
   onOpenItem,
   onComplete,
 }: AreaSectionProps) {
@@ -290,7 +397,13 @@ function AreaSection({
     if (panelRef.current) panelRef.current.inert = collapsed;
   }, [collapsed]);
   return (
-    <section aria-labelledby={headingId} data-collapsed={collapsed || undefined}>
+    <section
+      aria-labelledby={headingId}
+      className={styles.section}
+      data-area-id={area.id}
+      data-collapsed={collapsed || undefined}
+      data-linked={linked || undefined}
+    >
       <div className={styles.headerRow}>
         <h2 id={headingId} className={styles.header}>
           <button
@@ -310,7 +423,10 @@ function AreaSection({
             </span>
           </button>
         </h2>
-        <StatusCounts items={items} />
+        <StatusCounts items={items} onTap={() => onToggle(area.id)} />
+        <button type="button" className={styles.share} aria-label={`Share ${area.name}`} onClick={() => onShare(area)}>
+          <ShareIcon size={20} strokeWidth={2} />
+        </button>
         <button
           type="button"
           className={styles.add}

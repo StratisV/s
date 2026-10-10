@@ -5,12 +5,12 @@
   flex-direction: column;
 }
 
-/* ── Nav: close · (drag handle) · save ─────────────────── */
+/* ── Nav: close · (drag handle) · share and save ───────── */
 
 .nav {
   flex: none;
   display: grid;
-  grid-template-columns: 44px 1fr 44px;
+  grid-template-columns: 44px 1fr auto;
   align-items: center;
   padding: 14px 16px 6px;
   touch-action: none;
@@ -18,7 +18,13 @@
   -webkit-user-select: none;
 }
 
+.trailing {
+  display: flex;
+  gap: 12px;
+}
+
 .close,
+.share,
 .save {
   width: 44px;
   height: 44px;
@@ -32,10 +38,16 @@
     box-shadow 0.2s ease;
 }
 
-.close {
+.close,
+.share {
   background: var(--card);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   color: var(--label-strong);
+}
+
+/* The tray makes the glyph bottom-heavy: up 1px so it looks centred in the circle, as on iOS. */
+.share svg {
+  margin-top: -2px;
 }
 
 .save {
@@ -52,6 +64,7 @@
 }
 
 .close:active,
+.share:active,
 .save:not(:disabled):active {
   transform: scale(0.92);
 }
@@ -216,12 +229,14 @@
 
 @media (prefers-reduced-motion: reduce) {
   .close,
+  .share,
   .save,
   .done {
     transition: none;
   }
 
   .close:active,
+  .share:active,
   .save:not(:disabled):active,
   .done:active {
     transform: none;

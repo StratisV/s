@@ -43,8 +43,8 @@
 }
 
 /*
- * Area name (a disclosure button), then the status counts and the + on the
- * right. Above the card so the controls' tap targets win over its first row.
+ * Area name (a disclosure button), then the status counts, Share and the + on
+ * the right. Above the card so the controls' tap targets win over its first row.
  */
 .headerRow {
   position: relative;
@@ -87,6 +87,11 @@
   opacity: 0.6;
 }
 
+/* Focused for a shared link (HomeScreen.tsx quietFocus): no ring until a key is pressed. */
+.disclosure[data-quiet-focus]:focus-visible {
+  outline: none;
+}
+
 /* The last letter and the chevron: no line break between them. */
 .nameTail {
   white-space: nowrap;
@@ -105,20 +110,29 @@ section[data-collapsed] .chevron {
   transform: none;
 }
 
+/*
+ * One small badge per status: the number in the RAG text colour on the RAG tint
+ * (like the person filter's counts). No dot, so three of them leave the name the
+ * room it had before Share joined the row. A tap on them opens or closes the
+ * area, like the name (HomeScreen.tsx StatusCounts).
+ */
 .counts {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .count {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 22px;
-  padding: 0 8px 0 7px;
-  border-radius: 11px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  display: inline-grid;
+  place-items: center;
   background: var(--chip);
   font-size: 13px;
   line-height: 16px;
@@ -128,11 +142,41 @@ section[data-collapsed] .chevron {
   color: var(--text);
 }
 
-.dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--dot);
+/*
+ * Share: the bare glyph in the tint colour, as in an iOS toolbar, so the tinted
+ * + stays the main action. The button itself is the 44px-wide tap target (44px
+ * tall with ::before), so it covers neither the counts nor the name: it starts
+ * where the counts end, or 8px after the name, clear of the disclosure's own
+ * target. It ends where the +'s target begins. The glyph sits with the same
+ * space on either side of it.
+ */
+.share {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 28px;
+  margin: -2px 0 -2px -8px;
+  padding-left: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  color: var(--tint);
+  scroll-margin: calc(var(--top-inset) + 16px) 0 112px;
+}
+
+/* Nothing open, so no counts: keep the 8px after the name for the disclosure's target. */
+.header + .share {
+  margin-left: 0;
+}
+
+.share::before {
+  content: '';
+  position: absolute;
+  inset: -8px 0;
+}
+
+.share:active {
+  opacity: 0.5;
 }
 
 /* A small tinted + that keeps the header line at 25px; the tap target is 44px. */
@@ -197,6 +241,26 @@ section[data-collapsed] .chevron {
 
 .panel[data-collapsed] .card {
   opacity: 0;
+}
+
+/*
+ * Opened from a shared link: a tint ring that fades out, so it is clear which
+ * area was meant. An outline inside the edge (the panel clips anything outside).
+ */
+.section[data-linked] .card {
+  outline: 3px solid transparent;
+  outline-offset: -3px;
+  animation: linked 2.4s ease-out;
+}
+
+@keyframes linked {
+  0%,
+  45% {
+    outline-color: rgba(0, 122, 255, 0.5);
+  }
+  100% {
+    outline-color: rgba(0, 122, 255, 0);
+  }
 }
 
 .list {
@@ -283,5 +347,11 @@ section[data-collapsed] .chevron {
   .chevron,
   .add {
     transition: none;
+  }
+
+  /* No fade: the ring is simply there for a moment. */
+  .section[data-linked] .card {
+    animation: none;
+    outline-color: rgba(0, 122, 255, 0.5);
   }
 }
