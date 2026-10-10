@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { errorMessage, useHome } from '../../state/HomeProvider';
 import shared from './Onboarding.module.css';
 import styles from './OneHome.module.css';
@@ -13,6 +13,28 @@ interface PrivateHomeProps {
   emailVerified: boolean;
   onSignOut(): void;
   signingOut: boolean;
+}
+
+/**
+ * The email with line-break chances after the @ and before each dot, so a long one on a narrow
+ * screen breaks as "robin.morgan.lewis@" / "gmail.com" rather than mid-word (the text stays the same).
+ */
+function breakable(email: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  let part = '';
+  for (const ch of email) {
+    if (ch === '.' && part) {
+      out.push(part, <wbr key={out.length} />);
+      part = '';
+    }
+    part += ch;
+    if (ch === '@') {
+      out.push(part, <wbr key={out.length} />);
+      part = '';
+    }
+  }
+  if (part) out.push(part);
+  return out;
 }
 
 /**
@@ -55,7 +77,7 @@ export function PrivateHome({ enter, email, emailVerified, onSignOut, signingOut
         <p className={shared.subtitle}>
           {email ? (
             <>
-              Ask someone at home to add <strong className={styles.email}>{email}</strong> in {PEOPLE_PATH}, then
+              Ask someone at home to add <strong className={styles.email}>{breakable(email)}</strong> in {PEOPLE_PATH}, then
               check again.
             </>
           ) : (

@@ -74,6 +74,7 @@ supabase/migrations/       schema, RLS, RPCs
 supabase/functions/        Edge Functions (scheduler: push reminders, missed alerts, weekly email)
 supabase/tests/            database tests (run against a local Postgres 16)
 e2e/                       Playwright tests (demo mode)
+e2e-live/                  Playwright tests on a local Supabase stack: two phones, one home
 ```
 
 ## Styling conventions
@@ -316,7 +317,8 @@ Onboarding.
 - **This home is private** (phase `private`). Title "This home is private". Body: "Ask someone
   at home to add **{email}** in Profile > Household > People, then check again." With no email:
   "Ask someone at home to add your Google email in Profile > Household > People, then check
-  again." When `emailVerified` is false, add: "Your Google account's email isn't verified yet,
+  again." A long email breaks after the @ or before a dot (mid-word only when one part is wider
+  than the screen). When `emailVerified` is false, add: "Your Google account's email isn't verified yet,
   so it can't be matched." Buttons: **Check Again** (primary; `recheckHome()`, busy while it
   runs, `errorMessage(err)` under it on failure) and **Sign Out**. Never a way to create a home.
   HomeProvider also rechecks whenever the app comes back into view in this phase.
@@ -367,7 +369,9 @@ Migration `supabase/migrations/20261010000500_one_home.sql`; `Member.user_id: st
   - Adds and email changes lock the household row, so two at once cannot take one email.
 - **Household > People** (`src/screens/profile/HouseholdEditor.tsx`, `PersonPage.tsx`):
   - Each row: avatar, name, and for someone who has not joined a secondary line "Not joined
-    yet · {email}" or "Not joined yet · No email yet". People stay in member order.
+    yet · {email}" or "Not joined yet · No email yet". When the email (or "No email yet") does
+    not fit beside "Not joined yet", it goes on a line of its own without the dot, cut with an
+    ellipsis only if it is wider than the row. People stay in member order.
   - Last row **Add Person** (tint, plus icon), pushing an Add Person page like PersonPage:
     Name (`maxLength` 40, focused), the emoji grid (🦔 chosen), **Google Email** (`type=email`,
     `inputmode=email`, `autocapitalize=none`, `autocorrect=off`, `spellcheck=false`,
@@ -489,6 +493,16 @@ Tests that pin it (required with the data work):
   fresh channels after `reconnect()`, in order, at most once per 5 s, never throwing.
 - e2e (demo, two pages in one browser context, which share localStorage): a change on one page
   shows on the other without a reload, for an item, an area, a person and a chat message.
+- Live e2e (`e2e-live/one-home.spec.ts`, `npm run test:e2e:live`, README "Development"): the
+  app built against the local stack, one browser context per person. Stratis brings over the
+  fixture home, Shea claims her person by email, a stranger sees "This home is private" until
+  added; then each row of the table above, made on one phone through the app, shows on the
+  other within 5 s (`SYNC_MS`) with no reload (each page carries a mark that a reload would
+  lose). Before each change the watching phone has had no request open for 400 ms (`quiet()`),
+  so what it shows next came over Realtime, not from a load of its own: with the app's channels
+  muted, every check that a change arrived fails. A last test takes one phone offline while the
+  other adds an item: nothing arrives while offline, and it shows within 5 s of going back
+  online, after which Realtime carries the next change again.
 
 ## The one-home contract (do not change without the architect)
 
@@ -866,3 +880,7 @@ matches. Messages order by `created_at` to the microsecond (`instantOf` in
   import) inside one transaction that replaces `home_exists()` for itself and is always rolled
   back: nothing it does is seen by anyone else.
 - `npm run test:e2e`: Playwright against the demo-mode build.
+- `npm run test:e2e:live`: Playwright against a build that uses the local Supabase stack
+  (`playwright.live.config.ts`, `e2e-live/`): sessions made with the Auth admin API and the
+  password grant are put into the app's auth storage (`sb-<host>-auth-token`) before it loads.
+  It needs a database with no home in it, waits for one, and removes only what it made.

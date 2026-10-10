@@ -193,6 +193,7 @@ defaults), so the app that is live keeps working on the new schema. In order:
 | `npm test` | Unit tests (logic, demo backend, push client, scheduler modules) |
 | `npm run test:db` | Database tests: schema, row level security and RPCs on a throwaway Postgres 16 |
 | `npm run test:e2e` | Playwright end-to-end tests against a demo-mode build |
+| `npm run test:e2e:live` | Two phones on a real (local) Supabase: bringing the home over, joining by email, "This home is private", and every kind of change syncing live |
 | `npm run icons` | Re-render the app icons from `public/icons/icon.svg` |
 
 With Docker running, `npx supabase start` gives you a full local Supabase stack;
@@ -202,6 +203,32 @@ database tests against it. The live backend suite runs with
 `SUPABASE_TEST_URL=http://127.0.0.1:54321 SUPABASE_TEST_ANON_KEY=<anon key> SUPABASE_TEST_SERVICE_KEY=<service role key> npx vitest run src/lib/backend/supabase.integration.test.ts`
 (keys from `npx supabase status`), and
 `npx supabase functions serve scheduler --no-verify-jwt --env-file <file>` serves the scheduler.
+
+**Live two-phone tests** (`npm run test:e2e:live`, `playwright.live.config.ts`, `e2e-live/`):
+
+1. Start the local stack and apply the migrations: `npx supabase start`, then
+   `npx supabase db reset` (or, on a database other runs share,
+   `MIGRATE_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres node scripts/migrate.mjs --no-record`
+   and `docker restart supabase_rest_home-os` so the API sees the new functions).
+2. Run `npm run test:e2e:live`. It reads the URL and keys from `npx supabase status` (or from
+   `SUPABASE_TEST_URL`, `SUPABASE_TEST_ANON_KEY` and `SUPABASE_TEST_SERVICE_KEY`, as the live
+   backend suite does) and never prints them. It only runs against a local stack, unless
+   `LIVE_E2E_ALLOW_REMOTE=1`.
+3. It builds the app against that stack into `dist-live/` and serves it on port 4214
+   (`E2E_LIVE_PORT` to change it). Google sign-in can't run in a test, so each phone is a
+   browser context whose storage already holds a session: accounts are made with the Auth admin
+   API (email confirmed, like a Google account) and signed in with a password.
+4. Bringing the home over needs a database with no home in it. The tests wait up to 90 seconds
+   for other test runs to finish with theirs, then say so. Afterwards they remove their own
+   accounts and home (accounts named `homeos-live-e2e-…@example.com`), and nothing else.
+
+What they prove, with Stratis's phone holding the household's demo home: he brings it over
+(every area, item, assignment and the Stats history), adds Shea's Google email, and Shea signs
+in and is Shea with her items; someone else sees "This home is private" until they are added;
+then every change one phone makes (items, What good looks like, kind, done and undo, delete,
+areas, household name and address, people, chat messages and reactions) shows on the other
+within 5 seconds, without a reload, and a phone that was offline catches up as soon as it is
+back online.
 
 ## Permissions
 

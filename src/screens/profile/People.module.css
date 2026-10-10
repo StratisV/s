@@ -20,6 +20,36 @@
   line-height: 20px;
   letter-spacing: -0.2px;
   color: var(--label-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  /* Clips the dot of an address that went to its own line (it sits just left of the line). */
+  overflow: hidden;
+}
+
+/* "Not joined yet", then the gap the dot sits in (as wide as " · "). */
+.status {
+  margin-right: 13px;
+  white-space: nowrap;
+}
+
+/* The email (or "No email yet"): beside the status when it fits, else on the next line,
+   cut with an ellipsis only when it is wider than the whole row. */
+.address {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+}
+
+.dot {
+  flex: none;
+  width: 13px;
+  margin-left: -13px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.addressText {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

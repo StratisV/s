@@ -308,6 +308,11 @@ test.describe('People at 320 px', () => {
     const box = (await row.boundingBox())!;
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(320);
+    // "No email yet" is never cut: it goes under "Not joined yet" when the row is too narrow.
+    await addPerson(dialog, { name: 'Kim' });
+    const noEmail = personRow(dialog, 'Kim').getByText('No email yet', { exact: true });
+    await expect(noEmail).toBeVisible();
+    expect(await noEmail.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
 
     await openAddPerson(dialog);
     // Back, title and Add side by side in the bar, all on screen.

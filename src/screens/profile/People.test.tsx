@@ -88,7 +88,7 @@ describe('People: who has joined', () => {
     ]);
     // What the eye sees: the dot, no commas.
     const shea = rows[1];
-    expect(within(shea).getByText('shea@gmail.com', { exact: false }).getAttribute('class')).toMatch(/personDetail/);
+    expect(within(shea).getByText('shea@gmail.com', { exact: false }).getAttribute('class')).toMatch(/addressText/);
     expect(within(shea).getByText('·').getAttribute('aria-hidden')).toBe('true');
   });
 });
@@ -271,7 +271,7 @@ describe("A person's page", () => {
     expect(within(page).getByText('stratis@gmail.com')).toBeTruthy();
     expect(screen.queryByRole('textbox', { name: 'Google Email' })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Remove/ })).toBeNull();
-    expect(screen.queryByText('Not joined yet')).toBeNull();
+    expect(within(page).queryByText('Not joined yet')).toBeNull();
   });
 
   it('saves the email on Return or when the field is left, as it is stored', async () => {

@@ -108,11 +108,18 @@ function PersonRow({ member, isMe, onOpen }: { member: Member; isMe: boolean; on
         <span className={people.personText}>
           <span className={people.personName}>{member.name}</span>
           <span className={people.personDetail}>
-            <span className="visually-hidden">, </span>
-            {NOT_JOINED}
-            <span aria-hidden="true"> · </span>
-            <span className="visually-hidden">, </span>
-            {member.email || 'No email yet'}
+            <span className={people.status}>
+              <span className="visually-hidden">, </span>
+              {NOT_JOINED}
+            </span>
+            {/* On its own line when it doesn't fit beside "Not joined yet" (the dot then hides). */}
+            <span className={people.address}>
+              <span className={people.dot} aria-hidden="true">
+                {' · '}
+              </span>
+              <span className="visually-hidden">, </span>
+              <span className={people.addressText}>{member.email || 'No email yet'}</span>
+            </span>
           </span>
         </span>
       )}
