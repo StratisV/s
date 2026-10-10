@@ -15,6 +15,7 @@ import {
   createHousehold,
   createUser,
   db,
+  insertAuthUser,
   insertItem,
   joinHousehold,
   MEMBER_COLORS,
@@ -84,15 +85,11 @@ async function rolledBack(fn) {
       const res = await tx.as(user, `select public.${fn}(${placeholders}) as value`, args);
       return res.rows[0].value;
     },
-    /** A verified (unless verified: false) auth user that exists only in this transaction. */
-    async user({ name = 'Tester', email, verified = true } = {}) {
+    /** A verified (unless verified: false) Google account that exists only in this transaction. */
+    async user({ name = 'Tester', email, verified = true, google = true } = {}) {
       const id = randomUUID();
       const mail = email ?? `tx-${id.slice(0, 8)}@example.com`;
-      await tx.admin(
-        `insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at)
-         values ($1, $2, $3, case when $4 then now() end)`,
-        [id, mail, JSON.stringify({ full_name: name }), verified],
-      );
+      await insertAuthUser(tx.admin, { id, email: mail, name, verified, google });
       return { id, email: mail, name };
     },
     /**
@@ -356,7 +353,15 @@ describe('remove_person', () => {
 describe('enter_home', () => {
   test('member: already in a home', async () => {
     const h = await createHousehold();
-    assert.deepEqual(await rpc(h.owner, 'enter_home'), { status: 'member', household_id: h.id, member_id: h.member.id });
+    // Set up and not used since: the home from a phone may still replace what is in it.
+    assert.deepEqual(await rpc(h.owner, 'enter_home'), {
+      status: 'member',
+      household_id: h.id,
+      member_id: h.member.id,
+      can_import: true,
+    });
+    await insertItem(h, { title: 'Bins' });
+    assert.equal((await rpc(h.owner, 'enter_home')).can_import, false);
   });
 
   test('claimed: the person with this verified email (any case) becomes the account, keeping everything', async () => {
@@ -365,13 +370,24 @@ describe('enter_home', () => {
     const item = await insertItem(h, { assignee_id: person.id, title: 'Rubbish fill level' });
     const shea = await createUser({ name: 'Shea Google', email: 'Shea.Claims@Example.com' });
 
-    assert.deepEqual(await rpc(shea, 'enter_home'), { status: 'claimed', household_id: h.id, member_id: person.id });
+    assert.deepEqual(await rpc(shea, 'enter_home'), {
+      status: 'claimed',
+      household_id: h.id,
+      member_id: person.id,
+      can_import: false,
+    });
     const row = await memberRow(person.id);
     assert.equal(row.user_id, shea.id);
+    assert.ok(row.claimed_at, 'claimed_at is set');
     assert.deepEqual([row.name, row.emoji, row.color, row.role], ['Shea', '🦆', person.color, 'member']);
     assert.equal((await one('select assignee_id from public.items where id = $1', [item.id])).assignee_id, person.id);
     // Now a member like anyone else.
-    assert.deepEqual(await rpc(shea, 'enter_home'), { status: 'member', household_id: h.id, member_id: person.id });
+    assert.deepEqual(await rpc(shea, 'enter_home'), {
+      status: 'member',
+      household_id: h.id,
+      member_id: person.id,
+      can_import: false,
+    });
     const seen = await q(shea, 'select count(*)::int as n from public.items where household_id = $1', [h.id]);
     assert.equal(seen.rows[0].n, 1);
     assert.equal(await rpc(shea, 'current_member_id'), person.id);
@@ -502,7 +518,7 @@ describe('enter_home', () => {
     assert.equal((await first).status, 'claimed');
     const out = await settled;
     assert.equal(out.err, undefined);
-    assert.deepEqual(out.v, { status: 'member', household_id: h.id, member_id: person.id });
+    assert.deepEqual(out.v, { status: 'member', household_id: h.id, member_id: person.id, can_import: true });
   });
 });
 
@@ -614,16 +630,21 @@ describe('import_household', () => {
           [hid],
         )
       ).rows;
-      assert.equal(completions.length, 7);
-      assert.deepEqual(completions[0], {
+      // The real history only: the demo's made-up history stayed on the phone.
+      assert.deepEqual(
+        completions.map((c) => c.item_title),
+        ['Order water test strips', 'Fix the doorbell', 'Change the filter'],
+      );
+      assert.deepEqual(completions[1], {
         item_id: null,
-        item_title: 'Clean the oven',
-        credited_to: ela,
-        completed_by: ela,
-        prev_due_date: null,
+        item_title: 'Fix the doorbell',
+        credited_to: me,
+        completed_by: me,
+        prev_due_date: '2026-10-09',
         prev_status: 'open',
-        at: '2026-08-03T10:17:00',
+        at: '2026-10-09T07:40:00',
       });
+      assert.ok(ela);
       const stripsDone = completions.find((c) => c.item_title === 'Order water test strips');
       assert.deepEqual([stripsDone.item_id, stripsDone.credited_to, stripsDone.prev_due_date], [strips.id, shea, '2026-10-08']);
       const filterDone = completions.find((c) => c.item_title === 'Change the filter');
@@ -635,9 +656,22 @@ describe('import_household', () => {
       }
 
       // The caller is in the home and sees it all through RLS.
-      assert.deepEqual(await tx.rpc(stratis, 'enter_home'), { status: 'member', household_id: hid, member_id: me });
+      assert.deepEqual(await tx.rpc(stratis, 'enter_home'), { status: 'member', household_id: hid, member_id: me, can_import: false });
       const seen = await tx.as(stratis, 'select count(*)::int as n from public.items where household_id = $1', [hid]);
       assert.equal(seen.rows[0].n, 20);
+    });
+  });
+
+  test('a home the demo set up itself: its items and people, one real completion, none of the made-up history', async () => {
+    const created = JSON.parse(readFileSync(new URL('./fixtures/demo-created-import.json', import.meta.url), 'utf8'));
+    await rolledBack(async (tx) => {
+      await tx.noHome();
+      const hid = await importAs(tx, await tx.user(), created);
+      const count = async (table, where = '') =>
+        (await tx.adminOne(`select count(*)::int as n from public.${table} where household_id = $1 ${where}`, [hid])).n;
+      assert.equal(await count('completions'), 1);
+      assert.equal(await count('items'), created.items.length);
+      assert.equal(await count('members', 'and user_id is null'), 2);
     });
   });
 
@@ -650,7 +684,12 @@ describe('import_household', () => {
       await tx.rpc(stratis, 'set_person_email', [sheaRow.id, 'Shea@Gmail.com']);
 
       const shea = await tx.user({ name: 'Shea Google', email: 'shea@gmail.com' });
-      assert.deepEqual(await tx.rpc(shea, 'enter_home'), { status: 'claimed', household_id: hid, member_id: sheaRow.id });
+      assert.deepEqual(await tx.rpc(shea, 'enter_home'), {
+        status: 'claimed',
+        household_id: hid,
+        member_id: sheaRow.id,
+        can_import: false,
+      });
       const mine = await tx.as(
         shea,
         `select count(*)::int as n from public.items
@@ -670,7 +709,9 @@ describe('import_household', () => {
     await createHousehold();
     const user = await createUser();
     await rejects(rpc(user, 'import_household', [JSON.stringify(PAYLOAD)]), 'home_exists');
+    // In a home that is in use (an item added after it was set up).
     const member = await createHousehold();
+    await insertItem(member, { title: 'Bins' });
     await rejects(rpc(member.owner, 'import_household', [JSON.stringify(PAYLOAD)]), 'already_member');
     await rejects(rpc({ claims: { role: 'authenticated' } }, 'import_household', [JSON.stringify(PAYLOAD)]), 'not_signed_in');
     await rolledBack(async (tx) => {
@@ -790,6 +831,197 @@ describe('import_household', () => {
   });
 });
 
+describe('invite_preview and join_as_person ("Are you one of these people?")', () => {
+  test('the preview lists the people waiting to join without an email, and the emojis in use', async () => {
+    const h = await createHousehold({ emoji: '🦆' });
+    await addPerson(h, h.owner, { name: 'Shea', emoji: '🦔', email: 'shea.preview@example.com' });
+    const ela = await addPerson(h, h.owner, { name: 'Ela', emoji: '🦊' });
+    const robin = await addPerson(h, h.owner, { name: 'Robin', emoji: '🐝' });
+    const token = await rpc(h.owner, 'create_invite');
+    const preview = await rpc(await createUser(), 'invite_preview', [token]);
+    assert.deepEqual(preview.people, [
+      { id: ela.id, name: 'Ela', emoji: '🦊' },
+      { id: robin.id, name: 'Robin', emoji: '🐝' },
+    ]);
+    assert.deepEqual(preview.emojis, ['🦆', '🦔', '🦊', '🐝']);
+  });
+
+  test('joining as one of them: their row becomes the account, with its email; nobody is added', async () => {
+    const h = await createHousehold();
+    const ela = await addPerson(h, h.owner, { name: 'Ela', emoji: '🦊' });
+    const item = await insertItem(h, { assignee_id: ela.id, title: 'Weeds' });
+    const token = await rpc(h.owner, 'create_invite');
+    const user = await createUser({ email: 'Ela.Joins@Example.com' });
+    assert.equal(await rpc(user, 'join_as_person', [token, ela.id]), h.id);
+    const row = await memberRow(ela.id);
+    assert.deepEqual([row.user_id, row.name, row.emoji, row.email], [user.id, 'Ela', '🦊', 'ela.joins@example.com']);
+    assert.ok(row.claimed_at);
+    assert.equal((await one('select assignee_id from public.items where id = $1', [item.id])).assignee_id, ela.id);
+    assert.equal((await one('select count(*)::int as n from public.members where household_id = $1', [h.id])).n, 2);
+    // Opening the link again is harmless.
+    assert.equal(await rpc(user, 'join_as_person', [token, ela.id]), h.id);
+  });
+
+  test('not_found for someone who joined, has another email or is gone; the usual invite errors', async () => {
+    const h = await createHousehold();
+    const ela = await addPerson(h, h.owner, { name: 'Ela' });
+    const shea = await addPerson(h, h.owner, { name: 'Shea', email: 'shea.kept@example.com' });
+    const robin = await addPerson(h, h.owner, { name: 'Robin' });
+    const token = await rpc(h.owner, 'create_invite');
+    await rpc(await createUser(), 'join_as_person', [token, ela.id]);
+    const late = await createUser();
+    await rejects(rpc(late, 'join_as_person', [token, ela.id]), 'not_found');
+    await rejects(rpc(late, 'join_as_person', [token, shea.id]), 'not_found');
+    await rejects(rpc(late, 'join_as_person', [token, randomUUID()]), 'not_found');
+    await rejects(rpc(late, 'join_as_person', [token, h.member.id]), 'not_found');
+    const other = await createHousehold();
+    await rejects(rpc(late, 'join_as_person', [token, other.member.id]), 'not_found');
+    await rejects(rpc(late, 'join_as_person', ['0'.repeat(32), robin.id]), 'invalid_invite');
+    await rejects(rpc(other.owner, 'join_as_person', [token, robin.id]), 'already_member');
+    await rejects(rpc({ claims: { role: 'authenticated' } }, 'join_as_person', [token, robin.id]), 'not_signed_in');
+    await db("update public.invites set expires_at = now() - interval '1 second' where token = $1", [token]);
+    await rejects(rpc(late, 'join_as_person', [token, robin.id]), 'invalid_invite');
+    assert.equal((await memberRow(robin.id)).user_id, null);
+    // The person with the caller's own verified email can be taken this way too.
+    const token2 = await rpc(h.owner, 'create_invite');
+    const realShea = await createUser({ email: 'shea.kept@example.com' });
+    assert.equal(await rpc(realShea, 'join_as_person', [token2, shea.id]), h.id);
+  });
+
+  test('an email someone else in the home has stays theirs: the newcomer joins as the person without it', async () => {
+    const owner = await createUser({ email: 'owner.clash@example.com' });
+    const h = await createHousehold({ owner });
+    const robin = await addPerson(h, owner, { name: 'Robin' });
+    const token = await rpc(owner, 'create_invite');
+    const twin = await createUser({ email: 'owner.clash@example.com', google: false });
+    await rpc(twin, 'join_as_person', [token, robin.id]);
+    assert.deepEqual(await one('select user_id, email from public.members where id = $1', [robin.id]), {
+      user_id: twin.id,
+      email: '',
+    });
+  });
+});
+
+describe('release_claim ("Not Shea?")', () => {
+  test('within a day of a claim: back to not joined, without the email, and the account is in no home', async () => {
+    const h = await createHousehold();
+    const person = await addPerson(h, h.owner, { name: 'Shea', email: 'wrong.person@example.com' });
+    const wrong = await createUser({ email: 'wrong.person@example.com' });
+    assert.equal((await rpc(wrong, 'enter_home')).status, 'claimed');
+    await db(
+      `insert into public.push_subs (member_id, user_id, endpoint, p256dh, auth)
+       values ($1, $2, 'https://push.example.com/wrong', 'key', 'auth')`,
+      [person.id, wrong.id],
+    );
+    await rpc(wrong, 'release_claim');
+    assert.deepEqual(await one('select user_id, email, claimed_at from public.members where id = $1', [person.id]), {
+      user_id: null,
+      email: '',
+      claimed_at: null,
+    });
+    assert.equal((await one('select count(*)::int as n from public.push_subs where member_id = $1', [person.id])).n, 0);
+    assert.equal((await rpc(wrong, 'enter_home')).status, 'private');
+    // Their name, emoji and items stay with the person, for the right account.
+    assert.equal((await memberRow(person.id)).name, 'Shea');
+  });
+
+  test('not_found without a claim, or more than a day after it; not_signed_in without a user', async () => {
+    const h = await createHousehold();
+    await rejects(rpc(h.owner, 'release_claim'), 'not_found');
+    const joiner = await joinHousehold(h);
+    await rejects(rpc(joiner.user, 'release_claim'), 'not_found');
+    const person = await addPerson(h, h.owner, { email: 'old.claim@example.com' });
+    const user = await createUser({ email: 'old.claim@example.com' });
+    await rpc(user, 'enter_home');
+    await db("update public.members set claimed_at = now() - interval '25 hours' where id = $1", [person.id]);
+    await rejects(rpc(user, 'release_claim'), 'not_found');
+    assert.equal((await memberRow(person.id)).user_id, user.id);
+    await rejects(rpc({ claims: { role: 'authenticated' } }, 'release_claim'), 'not_signed_in');
+  });
+});
+
+describe('import_household into an untouched home', () => {
+  const SEED = [{ area: 'Kitchen', title: 'Olive oil', note: '', rag: 'amber', due_in_days: 3, repeat: 'none', notify: 'day_before' }];
+
+  test('replaces what is in it, in place; its people stay, matched by name', async () => {
+    const h = await createHousehold({ name: 'Laptop home', memberName: 'Stratis V', emoji: '🐻', items: SEED });
+    const shea = await joinHousehold(h, { name: ' shea ', emoji: '🦄' });
+    const robin = await addPerson(h, h.owner, { name: 'Robin' });
+    const token = await rpc(h.owner, 'create_invite');
+    assert.equal((await rpc(h.owner, 'enter_home')).can_import, true);
+
+    assert.equal(await rpc(h.owner, 'import_household', [JSON.stringify(PAYLOAD)]), h.id);
+
+    assert.deepEqual(await one('select name, address, timezone from public.households where id = $1', [h.id]), {
+      name: 'Our home',
+      address: '21 Alderbrook Road',
+      timezone: 'Europe/London',
+    });
+    const areas = (await db('select name from public.areas where household_id = $1 order by position', [h.id])).rows;
+    assert.deepEqual(areas.map((a) => a.name), PAYLOAD.areas.map((a) => a.name));
+    const items = (await db('select title, assignee_id, created_by, status from public.items where household_id = $1', [h.id])).rows;
+    assert.equal(items.length, PAYLOAD.items.length);
+    assert.ok(!items.some((i) => i.title === 'Olive oil'));
+    // People: the caller as they are, Shea is the Shea who joined, Ela is new, Robin stays.
+    const people = (
+      await db('select id, user_id, name, emoji, role from public.members where household_id = $1 order by created_at, id', [h.id])
+    ).rows;
+    assert.deepEqual(
+      people.map((p) => [p.name, p.emoji, p.role, p.user_id]),
+      [
+        ['Stratis V', '🐻', 'owner', h.owner.id],
+        ['shea', '🦄', 'member', shea.user.id],
+        ['Robin', '🦔', 'member', null],
+        ['Ela', '🦊', 'member', null],
+      ],
+    );
+    const sheaKey = PAYLOAD.people.find((p) => p.name === 'Shea').key;
+    const meKey = PAYLOAD.people.find((p) => p.me).key;
+    const sheaOpen = PAYLOAD.items.filter((i) => i.assignee === sheaKey && i.status === 'open').length;
+    assert.equal(items.filter((i) => i.assignee_id === shea.member.id && i.status === 'open').length, sheaOpen);
+    assert.equal(
+      items.filter((i) => i.assignee_id === h.member.id).length,
+      PAYLOAD.items.filter((i) => i.assignee === meKey).length,
+    );
+    assert.ok(items.every((i) => i.created_by === h.member.id));
+    assert.equal(
+      (await one('select count(*)::int as n from public.completions where household_id = $1', [h.id])).n,
+      PAYLOAD.completions.length,
+    );
+    assert.equal((await memberRow(robin.id)).user_id, null);
+    // The invite still works, and the home is in use now: no second replace.
+    assert.equal((await rpc(await createUser(), 'invite_preview', [token])).household_name, 'Our home');
+    assert.equal((await rpc(h.owner, 'enter_home')).can_import, false);
+    await rejects(rpc(shea.user, 'import_household', [JSON.stringify(PAYLOAD)]), 'already_member');
+  });
+
+  test('a home in use is never replaced: already_member, and nothing changes', async () => {
+    const uses = {
+      'renamed': (h) => db(`update public.households set name = 'Renamed' where id = $1`, [h.id]),
+      'an area added': (h) => db(`insert into public.areas (household_id, name, position) values ($1, 'Loft', 9)`, [h.id]),
+      'an item added': (h) => insertItem(h, { title: 'Bins' }),
+      'an item edited': (h) => db(`update public.items set note = 'Bought' where household_id = $1`, [h.id]),
+      'something done': async (h) => {
+        const item = (await one('select id from public.items where household_id = $1', [h.id])).id;
+        await rpc(h.owner, 'complete_item', [item]);
+      },
+      'a chat message': (h) =>
+        db(`insert into public.messages (household_id, member_id, body) values ($1, $2, 'Hi')`, [h.id, h.member.id]),
+    };
+    for (const [name, use] of Object.entries(uses)) {
+      const h = await createHousehold({ items: SEED });
+      assert.equal((await rpc(h.owner, 'enter_home')).can_import, true, name);
+      await use(h);
+      assert.equal((await rpc(h.owner, 'enter_home')).can_import, false, name);
+      await assert.rejects(rpc(h.owner, 'import_household', [JSON.stringify(PAYLOAD)]), (err) => {
+        assert.equal(err.message, 'already_member', name);
+        return true;
+      });
+      assert.equal((await one('select count(*)::int as n from public.areas where household_id = $1', [h.id])).n >= 3, true, name);
+    }
+  });
+});
+
 describe('the migration', () => {
   test('re-running it over a home with people waiting to join changes nothing, and claims still work', async () => {
     const sql = readFileSync(new URL('../migrations/20261010000500_one_home.sql', import.meta.url), 'utf8');
@@ -810,7 +1042,12 @@ describe('the migration', () => {
       assert.deepEqual(await people(), before);
 
       const shea = await tx.user({ email: 'shea.rerun@gmail.com' });
-      assert.deepEqual(await tx.rpc(shea, 'enter_home'), { status: 'claimed', household_id: hid, member_id: sheaRow.id });
+      assert.deepEqual(await tx.rpc(shea, 'enter_home'), {
+        status: 'claimed',
+        household_id: hid,
+        member_id: sheaRow.id,
+        can_import: false,
+      });
       await rejects(tx.rpc(stratis, 'add_person', [hid, 'Shea again', '🦔', 'SHEA.RERUN@gmail.com']), 'email_taken');
     });
   });

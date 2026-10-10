@@ -7,6 +7,26 @@
   overflow-wrap: anywhere;
 }
 
+/* What a check found (Check Again), under its button; takes no room while empty. */
+.status {
+  margin: 8px 0 0;
+  padding: 0 16px;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  text-align: center;
+  color: var(--label-secondary);
+}
+
+.status:empty {
+  margin: 0;
+}
+
+/* The phone's own home, under the ask on "This home is private". */
+.phoneHome {
+  margin-top: 16px;
+}
+
 /* Why a tap didn't work, under the button it belongs to. */
 .error {
   margin: 8px 0 4px;
@@ -67,10 +87,11 @@
   list-style: none;
 }
 
-/* Emoji and name, with the hairline starting at the name (as in grouped lists). */
+/* Emoji and name, with the hairline starting at the name and ending at the right padding, as
+   in every other grouped list (People, Areas, Household details). */
 .person {
   min-height: 52px;
-  padding-left: 18px;
+  padding: 0 18px;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -83,13 +104,38 @@
   flex: 1;
   min-width: 0;
   align-self: stretch;
-  padding: 15px 18px 15px 0;
+  padding: 15px 0;
   border-top: 0.5px solid var(--separator);
   overflow-wrap: anywhere;
 }
 
 .you {
   color: var(--label-secondary);
+}
+
+/* ── The people who came along ─────────────────────────── */
+
+/* The subtitle wraps here (two lines or more), unlike a one-line address. */
+.lead {
+  line-height: 20px;
+}
+
+.emailCard {
+  flex: none;
+  margin-top: 16px;
+}
+
+/* The email reads from the left, under the name. */
+.emailInput {
+  text-align: left;
+}
+
+.fieldError {
+  margin: 0;
+  padding: 8px 20px 0;
+  font-size: 13px;
+  line-height: 16px;
+  color: var(--destructive);
 }
 
 /* ── Welcome home ──────────────────────────────────────── */

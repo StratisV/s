@@ -226,12 +226,17 @@ web3 = 30
 
 [auth.email]
 # Allow/disallow new user signups via email to your project.
+# home.os signs people in with Google only. This stays on locally because the CLI maps it to the
+# whole Email provider (GOTRUE_EXTERNAL_EMAIL_ENABLED), and the live test suites sign their test
+# accounts in with a password. Turn the Email provider off on the hosted project (README).
 enable_signup = true
 # If enabled, a user will be required to confirm any email change on both the old, and new email
 # addresses. If disabled, only the new email is required to confirm.
 double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
-enable_confirmations = false
+# On, so a password sign-up never gets an email nobody proved. A claim needs a Google identity
+# anyway (verified_email() in 20261010000500_one_home.sql), so this is a second lock.
+enable_confirmations = true
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = false
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.

@@ -28,6 +28,7 @@ const SUMMARY: DemoHomeSummary = {
   address: '21 Alderbrook Road',
   areas: 6,
   items: 19,
+  done: 3,
   people: [
     { name: 'Stratis', emoji: '🦆', me: true },
     { name: 'Shea', emoji: '🦔', me: false },
@@ -56,6 +57,14 @@ function privateHome(over: Partial<HomeContextValue> = {}, email = 'ela@gmail.co
 function noHome(over: Partial<HomeContextValue> = {}) {
   return makeHome({ data: null, phase: { kind: 'onboarding', user: USER }, ...over });
 }
+
+/** No home exists, and this phone kept one in demo mode: the offer. */
+function offering(over: Partial<HomeContextValue> = {}) {
+  return noHome({ demoImport: SUMMARY, demoImportMode: 'create', ...over });
+}
+
+/** The real backend, as the provider says it is (only the kind matters to these screens). */
+const supabase = () => fakeBackend({ kind: 'supabase' } as never);
 
 /** A promise the test settles by hand. */
 function deferred<T = void>() {
@@ -128,17 +137,30 @@ describe('This home is private', () => {
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toBe('No connection. Try again in a moment.');
     expect(screen.getByRole('button', { name: 'Check Again' }).getAttribute('aria-busy')).toBeNull();
-    // The message sits between Check Again and Sign Out.
+    // The message sits between Check Again and Sign Out (after the empty status line).
     const footer = alert.parentElement!;
     expect(Array.from(footer.children).map((el) => el.textContent)).toEqual([
       'Check Again',
+      '',
       'No connection. Try again in a moment.',
       'Sign Out',
     ]);
-    // Trying again clears it.
+    // Trying again clears it; nothing changed, and it says so.
     (home.recheckHome as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
     fireEvent.click(screen.getByRole('button', { name: 'Check Again' }));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    const status = await screen.findByText('Not added yet. Checked just now.');
+    expect(status.getAttribute('role')).toBe('status');
+  });
+
+  it('says when this phone kept a home that can’t come over now', () => {
+    show(privateHome({ demoImport: SUMMARY, demoImportMode: 'blocked' }));
+    expect(
+      screen.getByText(
+        'This phone still has Our home (6 areas · 19 items · 3 done). Someone has already set up a home here, so it can’t be brought over now.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Bring It Over' })).toBeNull();
   });
 
   it('signs out', async () => {
@@ -148,44 +170,110 @@ describe('This home is private', () => {
   });
 
   it('with an invite link goes Profile then Join, without "Set up a new home instead"', async () => {
-    const preview: InvitePreview = { household_name: 'Our home', address: '21 Alderbrook Road' };
+    const preview: InvitePreview = { household_name: 'Our home', address: '21 Alderbrook Road', people: [], emojis: ['🦆', '🦔'] };
     const backend = fakeBackend({ getInvitePreview: vi.fn(async () => preview) });
     const home = show(privateHome({ backend, pendingInvite: 'tok-1' }));
     expect(await screen.findByRole('heading', { name: 'Your profile' })).toBeTruthy();
+    // Starts on the first emoji nobody in that home has (the duck and hedgehog are taken).
+    await waitFor(() => expect(screen.getByRole('radio', { name: '🦊' }).getAttribute('aria-checked')).toBe('true'));
     fireEvent.click(screen.getByRole('radio', { name: '🐻' }));
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(await screen.findByRole('heading', { name: 'Join Our home' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Set up a new home instead' })).toBeNull();
+    // Nobody is waiting to join: no question to answer.
+    expect(screen.queryByRole('radiogroup', { name: 'Are you one of these people?' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Join' }));
     await waitFor(() =>
-      expect(home.joinHousehold).toHaveBeenCalledWith({ token: 'tok-1', memberName: 'Stratis', memberEmoji: '🐻' }),
+      expect(home.joinHousehold).toHaveBeenCalledWith({ token: 'tok-1', memberName: 'Stratis', memberEmoji: '🐻', personId: null }),
     );
   });
 
-  it('with an invite link that is no longer valid, Continue forgets it and shows the private screen', async () => {
+  it('with an invite link that is no longer valid: straight to the private screen, which says so', async () => {
     const home = show(
       privateHome({
         pendingInvite: 'old',
         dismissInvite: vi.fn(() => setHome({ pendingInvite: null })),
       }),
     );
-    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
-    expect(await screen.findByRole('heading', { name: 'Invite link not valid' })).toBeTruthy();
-    expect(screen.getByText('It may have expired, as links last 14 days.')).toBeTruthy();
+    expect(await screen.findByText('That invite link has expired.')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'This home is private' })).toBeTruthy();
+    // No profile to fill in first, and the link is forgotten (a reload won't bring it back).
+    expect(screen.queryByRole('heading', { name: 'Your profile' })).toBeNull();
+    await waitFor(() => expect(home.dismissInvite).toHaveBeenCalled());
+    expect(screen.getByText('That invite link has expired.')).toBeTruthy();
     expect(screen.queryByText(/new home/)).toBeNull();
+  });
+});
+
+describe('Join: "Are you one of these people?"', () => {
+  const preview: InvitePreview = {
+    household_name: 'Our home',
+    address: '21 Alderbrook Road',
+    people: [
+      { id: 'm-ela', name: 'Ela', emoji: '🦊' },
+      { id: 'm-robin', name: 'Robin', emoji: '🐝' },
+    ],
+    emojis: ['🦆', '🦔', '🦊', '🐝'],
+  };
+
+  async function toJoin(over: Partial<HomeContextValue> = {}, name?: string) {
+    const backend = fakeBackend({ getInvitePreview: vi.fn(async () => preview) });
+    const home = show(privateHome({ backend, pendingInvite: 'tok-1', ...over }));
+    await screen.findByRole('heading', { name: 'Your profile' });
+    if (name !== undefined) fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: name } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    expect(home.dismissInvite).toHaveBeenCalled();
-    expect(await screen.findByRole('heading', { name: 'This home is private' })).toBeTruthy();
+    await screen.findByRole('heading', { name: 'Join Our home' });
+    return home;
+  }
+
+  it('lists the people the home is waiting for; Join waits for an answer', async () => {
+    await toJoin();
+    const group = screen.getByRole('radiogroup', { name: 'Are you one of these people?' });
+    expect(within(group).getAllByRole('radio').map((r) => r.textContent)).toEqual([
+      '🦊Ela',
+      '🐝Robin',
+      '🐻Someone new (Stratis)',
+    ]);
+    expect(within(group).getAllByRole('radio').every((r) => r.getAttribute('aria-checked') === 'false')).toBe(true);
+    expect((screen.getByRole('button', { name: 'Join' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('picking one joins as them', async () => {
+    const home = await toJoin();
+    fireEvent.click(screen.getByRole('radio', { name: /Ela/ }));
+    expect(screen.getByRole('radio', { name: /Ela/ }).getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Join as Ela' }));
+    await waitFor(() =>
+      expect(home.joinHousehold).toHaveBeenCalledWith({ token: 'tok-1', memberName: 'Stratis', memberEmoji: '🐻', personId: 'm-ela' }),
+    );
+  });
+
+  it('the name typed on Your profile picks them already; "Someone new" joins as the profile', async () => {
+    const home = await toJoin({}, 'ela');
+    expect(screen.getByRole('radio', { name: /Ela/ }).getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(screen.getByRole('radio', { name: /Someone new/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Join' }));
+    await waitFor(() =>
+      expect(home.joinHousehold).toHaveBeenCalledWith({ token: 'tok-1', memberName: 'ela', memberEmoji: '🐻', personId: null }),
+    );
+  });
+
+  it('someone who joined meanwhile: says so and looks again', async () => {
+    const home = await toJoin({ joinHousehold: vi.fn(async () => Promise.reject(new BackendError('not_found'))) });
+    fireEvent.click(screen.getByRole('radio', { name: /Robin/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Join as Robin' }));
+    await waitFor(() => expect(home.showToast).toHaveBeenCalledWith('Robin has joined already or was removed.'));
   });
 });
 
 describe('Bring over the home from this phone', () => {
   it('summarises the home this phone kept: name, address, counts and people', () => {
-    show(noHome({ demoImport: SUMMARY }));
+    show(offering());
     expect(screen.getByRole('heading', { level: 1, name: 'Bring over the home from this phone' })).toBeTruthy();
     expect(screen.getByText('Our home')).toBeTruthy();
     expect(screen.getByText('21 Alderbrook Road')).toBeTruthy();
-    expect(screen.getByText('6 areas · 19 items')).toBeTruthy();
+    // What was done comes along too, and says so.
+    expect(screen.getByText('6 areas · 19 items · 3 done')).toBeTruthy();
     const people = screen.getByRole('list', { name: 'People' });
     expect(within(people).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
       '🦆Stratis (you)',
@@ -203,7 +291,7 @@ describe('Bring over the home from this phone', () => {
   });
 
   it('says 1 area and 1 item, and leaves out a blank address', () => {
-    show(noHome({ demoImport: { ...SUMMARY, address: '', areas: 1, items: 1 } }));
+    show(offering({ demoImport: { ...SUMMARY, address: '', areas: 1, items: 1, done: 0 } }));
     expect(screen.getByText('1 area · 1 item')).toBeTruthy();
     expect(screen.queryByText('21 Alderbrook Road')).toBeNull();
   });
@@ -211,8 +299,7 @@ describe('Bring over the home from this phone', () => {
   it('brings it over (busy meanwhile) and opens the home without a Profile step', async () => {
     const done = deferred();
     const home = show(
-      noHome({
-        demoImport: SUMMARY,
+      offering({
         importDemoHome: vi.fn(async () => {
           await done.promise;
           setHome({ phase: { kind: 'ready', user: USER }, data: sampleData(), onboardingTail: true, demoImport: null });
@@ -235,12 +322,7 @@ describe('Bring over the home from this phone', () => {
   });
 
   it('keeps the offer and says why when bringing it over fails', async () => {
-    show(
-      noHome({
-        demoImport: SUMMARY,
-        importDemoHome: vi.fn(async () => Promise.reject(new BackendError('network'))),
-      }),
-    );
+    show(offering({ importDemoHome: vi.fn(async () => Promise.reject(new BackendError('network'))) }));
     fireEvent.click(screen.getByRole('button', { name: 'Bring It Over' }));
     expect((await screen.findByRole('alert')).textContent).toBe('No connection. Try again in a moment.');
     expect(screen.getByRole('button', { name: 'Bring It Over' }).getAttribute('aria-busy')).toBeNull();
@@ -249,12 +331,11 @@ describe('Bring over the home from this phone', () => {
 
   it('when a home was set up meanwhile, moves to where the provider says (here: private)', async () => {
     show(
-      noHome({
-        demoImport: SUMMARY,
+      offering({
         importDemoHome: vi.fn(async () => {
           setHome({
             phase: { kind: 'private', user: USER, email: USER.email, emailVerified: true },
-            demoImport: null,
+            demoImportMode: 'blocked',
           });
           throw new BackendError('home_exists');
         }),
@@ -263,14 +344,37 @@ describe('Bring over the home from this phone', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Bring It Over' }));
     expect(await screen.findByRole('heading', { name: 'This home is private' })).toBeTruthy();
     expect(screen.getByText('stratis@gmail.com')).toBeTruthy();
+    // And why the phone's home did not come over.
+    expect(screen.getByText(/This phone still has Our home .* so it can’t be brought over now\./)).toBeTruthy();
   });
 
-  it('Start Fresh goes on to Profile, then Create home', async () => {
-    const home = show(noHome({ demoImport: SUMMARY, declineDemoImport: vi.fn(() => setHome({ demoImport: null })) }));
+  it('Start Fresh asks first; then Profile (with Back to the offer), then Create home', async () => {
+    const home = show(
+      offering({
+        declineDemoImport: vi.fn(() => setHome({ demoImport: null, demoImportMode: null, canReopenDemoImport: true })),
+        reopenDemoImport: vi.fn(() => setHome({ demoImport: SUMMARY, demoImportMode: 'create', canReopenDemoImport: false })),
+      }),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Start Fresh' }));
+    const sheet = await screen.findByRole('alertdialog', { name: 'Start a new home?' });
+    expect(sheet.textContent).toContain('The home on this phone (19 items) won’t come along, and can’t be brought over later.');
+    // Cancel: nothing happens.
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(home.declineDemoImport).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start Fresh' }));
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Start Fresh' }));
     expect(home.declineDemoImport).toHaveBeenCalledTimes(1);
     expect(await screen.findByRole('heading', { name: 'Your profile' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    // Back: the offer again.
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(home.reopenDemoImport).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole('heading', { name: 'Bring over the home from this phone' })).toBeTruthy();
+    // Start Fresh again, on to Create home: it was turned down here, so it doesn't ask again.
+    fireEvent.click(screen.getByRole('button', { name: 'Start Fresh' }));
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Start Fresh' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
     expect(await screen.findByRole('heading', { name: 'Your home' })).toBeTruthy();
   });
 
@@ -281,7 +385,7 @@ describe('Bring over the home from this phone', () => {
   });
 
   it('signs out', async () => {
-    const home = show(noHome({ demoImport: SUMMARY }));
+    const home = show(offering());
     fireEvent.click(screen.getByRole('button', { name: 'Sign Out' }));
     await waitFor(() => expect(home.signOut).toHaveBeenCalledTimes(1));
   });
@@ -345,5 +449,155 @@ describe('Onboarding routing', () => {
     expect(screen.getByRole('heading', { name: 'This home is private' })).toBeTruthy();
     updateHome({ phase: { kind: 'ready', user: USER }, data: sampleData(), onboardingTail: true, claimed: true });
     expect(await screen.findByRole('heading', { name: 'Welcome home, Stratis' })).toBeTruthy();
+  });
+});
+
+describe('the phone’s home, once in a home', () => {
+  /** In a home (made on another device) with the tail up for the phone's home. */
+  function inHome(mode: 'replace' | 'blocked', over: Partial<HomeContextValue> = {}) {
+    const data = sampleData();
+    data.household.name = 'Laptop home';
+    return makeHome({ data, onboardingTail: true, demoImport: SUMMARY, demoImportMode: mode, ...over });
+  }
+
+  it('while the home has nothing in it: offered to take its place; Keep asks first', async () => {
+    const home = show(inHome('replace'));
+    expect(screen.getByRole('heading', { name: 'Bring over the home from this phone' })).toBeTruthy();
+    expect(
+      screen.getByText('It takes the place of Laptop home, which has nothing in it yet. Everyone already in Laptop home stays.'),
+    ).toBeTruthy();
+    // In a home already: no Sign Out here.
+    expect(screen.queryByRole('button', { name: 'Sign Out' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep Laptop home' }));
+    const sheet = await screen.findByRole('alertdialog', { name: 'Keep Laptop home as it is?' });
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Keep Laptop home' }));
+    expect(home.declineDemoImport).toHaveBeenCalledTimes(1);
+  });
+
+  it('Bring It Over brings it in', async () => {
+    const home = show(inHome('replace'));
+    fireEvent.click(screen.getByRole('button', { name: 'Bring It Over' }));
+    await waitFor(() => expect(home.importDemoHome).toHaveBeenCalledTimes(1));
+  });
+
+  it('when the home is in use: says the phone’s home stays there, once', () => {
+    const home = show(inHome('blocked'));
+    expect(screen.getByRole('heading', { name: 'The home on this phone stays here' })).toBeTruthy();
+    expect(
+      screen.getByText(
+        'This phone still has Our home (6 areas · 19 items · 3 done) from before. Laptop home already has things in it, so that home can’t be brought over.',
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    expect(home.declineDemoImport).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('after bringing a home over: the people who came along', () => {
+  function afterImport(over: Partial<HomeContextValue> = {}) {
+    const data = sampleData();
+    // Pat came along without an email; Shea has one already.
+    return makeHome({ data, onboardingTail: true, invitePeople: true, ...over });
+  }
+
+  it('asks for the emails of the people waiting without one, then moves on', async () => {
+    const home = show(
+      afterImport({
+        setPersonEmail: vi.fn(async (id: string, email: string) =>
+          updateHome((h) => ({ data: { ...h.data!, members: h.data!.members.map((m) => (m.id === id ? { ...m, email } : m)) } })),
+        ),
+        doneInvitingPeople: vi.fn(() => setHome({ invitePeople: false })),
+      }),
+    );
+    expect(screen.getByRole('heading', { level: 1, name: 'Pat hasn’t joined yet' })).toBeTruthy();
+    const field = screen.getByRole('textbox', { name: 'Pat’s Google email' }) as HTMLInputElement;
+    expect(field.type).toBe('email');
+    // Not an email: says so, and nothing is saved.
+    fireEvent.change(field, { target: { value: 'pat' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('Enter the full email address, like name@gmail.com.')).toBeTruthy();
+    expect(home.setPersonEmail).not.toHaveBeenCalled();
+    // Someone has it already: says so.
+    fireEvent.change(field, { target: { value: 'Shea@Gmail.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('Someone at home already has that email.')).toBeTruthy();
+    fireEvent.change(field, { target: { value: ' Pat@Gmail.com ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(home.setPersonEmail).toHaveBeenCalledWith('m-pat', 'pat@gmail.com'));
+    expect(home.doneInvitingPeople).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole('heading', { name: 'You’re all set' })).toBeTruthy();
+  });
+
+  it('names everyone waiting, and can be left for later', async () => {
+    const data = sampleData();
+    data.members.push({ ...data.members[2], id: 'm-ela', name: 'Ela', emoji: '🦊' });
+    const home = show(afterImport({ data }));
+    expect(screen.getByRole('heading', { level: 1, name: 'Pat and Ela haven’t joined yet' })).toBeTruthy();
+    expect(screen.getByText('You can add or change them later in Profile > Household > People.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(home.doneInvitingPeople).toHaveBeenCalledTimes(1));
+    expect(home.setPersonEmail).not.toHaveBeenCalled();
+  });
+
+  it('with nobody waiting without an email: straight to notifications', () => {
+    const data = sampleData();
+    data.members = data.members.filter((m) => m.id !== 'm-pat');
+    show(afterImport({ data }));
+    expect(screen.getByRole('heading', { name: 'You’re all set' })).toBeTruthy();
+  });
+});
+
+describe('Welcome home: "Not Shea?"', () => {
+  it('asks first, then gives the person back and signs out', async () => {
+    const data = sampleData();
+    const shea = { id: 'user-shea', email: 'shea@gmail.com', name: 'Shea Byrne' };
+    data.members = data.members.map((m) => (m.id === 'm-shea' ? { ...m, user_id: shea.id } : m));
+    const home = show(makeHome({ user: shea, data, phase: { kind: 'ready', user: shea }, onboardingTail: true, claimed: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Not Shea? Sign Out' }));
+    const sheet = await screen.findByRole('alertdialog', { name: 'Not Shea?' });
+    expect(sheet.textContent).toContain('You’ll be signed out and Shea goes back to waiting to join.');
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(home.releaseClaim).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Not Shea? Sign Out' }));
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Sign Out' }));
+    await waitFor(() => expect(home.releaseClaim).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('Create home while no home exists', () => {
+  async function toCreate(over: Partial<HomeContextValue> = {}) {
+    const home = show(noHome(over));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByRole('heading', { name: 'Your home' });
+    return home;
+  }
+
+  it('on the real backend: says to bring a home over from the phone first, and asks before creating', async () => {
+    const home = await toCreate({ backend: supabase() });
+    expect(
+      screen.getByText('Used home.os on your phone before? Sign in on that phone first to bring your home over.'),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create Home' }));
+    const sheet = await screen.findByRole('alertdialog', { name: 'Create a new home?' });
+    expect(sheet.textContent).toContain('If your home is already on another phone, sign in on that phone first to bring it over.');
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(home.createHousehold).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Create Home' }));
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Create Home' }));
+    await waitFor(() => expect(home.createHousehold).toHaveBeenCalledTimes(1));
+  });
+
+  it('after Start Fresh on this phone, or in demo mode: creates straight away', async () => {
+    const fresh = await toCreate({ backend: supabase(), canReopenDemoImport: true });
+    expect(screen.queryByText(/Used home.os on your phone before/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Create Home' }));
+    await waitFor(() => expect(fresh.createHousehold).toHaveBeenCalledTimes(1));
+    cleanup();
+    const demo = await toCreate({ backend: fakeBackend({ kind: 'demo' } as never) });
+    fireEvent.click(screen.getByRole('button', { name: 'Create Home' }));
+    await waitFor(() => expect(demo.createHousehold).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 });

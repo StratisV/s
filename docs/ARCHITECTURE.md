@@ -6,12 +6,12 @@ top of Supabase. The design spec is `design/README.md` (Turn 3, option 3a in
 
 ## Product rules that shape the code
 
-- Sign in with **Google** only. **One home** per deployment (see "One home"): after sign-in
-  the server says where the person belongs. Someone already in the home goes straight in;
-  someone a housemate added with their Google email (Profile > Household > People) becomes
-  that person; the very first person creates the home (with a **profile**: name from Google,
-  editable, plus an emoji), or brings it over from their phone's demo data; anyone else sees
-  "This home is private". Nobody is ever offered a second home. Invite links still work.
+- Sign in with **Google** only. **One home** per deployment (see "One home"), kept by the
+  database: after sign-in the server says where the person belongs. Someone already in the home
+  goes straight in; someone a housemate added with their Google email (Profile > Household >
+  People) becomes that person; the very first person creates the home (with a **profile**: name
+  from Google, editable, plus an emoji), or brings it over from their phone's demo data; anyone
+  else sees "This home is private". Nobody can make a second home. Invite links still work.
 - **Every member can edit everything** in their household: household name,
   address and time zone, areas, items, completions (undo), and every member's
   profile. There are no owner-only permissions. The `owner` role only decides
@@ -102,7 +102,8 @@ All ids are `uuid default gen_random_uuid()`. Timestamps are `timestamptz defaul
 | table | columns |
 | --- | --- |
 | `households` | id, name text not null, address text not null default '', timezone text not null default 'Europe/London', weekly_email_day smallint not null default 1 (0=Sun…6=Sat), weekly_email_time time not null default '08:00', created_at, updated_at, updated_by uuid null |
-| `members` | id, household_id → households on delete cascade, user_id uuid **null** **unique** → auth.users on delete cascade (null: "Not joined yet", see "People before they join"), name text not null, email text not null default '' (stored trimmed and lower case, <= 254, unique per household among non-blank emails), emoji text not null default '🦔', color text not null, role text not null default 'member' check (owner, member), weekly_email bool not null default true, push_enabled bool not null default false (always false while user_id is null), created_at |
+| `members` | id, household_id → households on delete cascade, user_id uuid **null** **unique** → auth.users on delete cascade (null: "Not joined yet", see "People before they join"), name text not null, email text not null default '' (stored trimmed and lower case, <= 254, unique per household among non-blank emails), emoji text not null default '🦔', color text not null, role text not null default 'member' check (owner, member), weekly_email bool not null default true, push_enabled bool not null default false (always false while user_id is null), created_at, claimed_at timestamptz null (when an account became this person by a claim; "Not Shea?" is allowed for a day) |
+| `app_settings` | id boolean primary key default true check (id) (one row at most), many_homes boolean not null default false (development and test databases only, see "One home") |
 | `areas` | id, household_id → households on delete cascade, name text not null, position int not null default 0, created_at |
 | `items` | id, household_id → households on delete cascade, area_id → areas on delete cascade, kind text not null default 'task' check (task, state), title text not null (non-blank), note text not null default '', good text not null default '' ("What good looks like", see "Item kinds"), rag text not null default 'amber' check (red, amber, green), due_date date null, assignee_id → members on delete set null, repeat text not null default 'none' check (none, weekly, monthly, quarterly, biannual, yearly), notify text not null default 'day_before' check (none, same_day, day_before, week_before), status text not null default 'open' check (open, done), created_by → members on delete set null, updated_by → members on delete set null, created_at, updated_at, completed_at timestamptz null |
 | `completions` | id, household_id → households on delete cascade, item_id → items **on delete set null**, item_title text not null, credited_to → members on delete set null, completed_by → members on delete set null, completed_at, prev_due_date date null, prev_status text not null |
@@ -142,6 +143,7 @@ Helper functions (`security definer`, `stable`, `set search_path = ''`):
 - `push_subs`: all operations where `user_id = auth.uid()` (and on insert the member_id must
   be the caller's member).
 - `notifications_log`: no policies (service role only).
+- `app_settings`: no policies, no grants to clients (the service role may read it).
 
 `anon` gets nothing. `authenticated` gets table privileges limited as above.
 
@@ -184,18 +186,31 @@ same names).
 7. `reorder_areas(p_household_id uuid, p_area_ids uuid[]) returns void`. Sets
    `position = index` for each id that belongs to the household.
 8. `enter_home() returns json`: where the signed-in person belongs, claiming a person who has
-   not joined yet by verified email (see "One home").
+   not joined yet by Google-verified email, and whether the home is untouched (see "One home").
 9. `add_person(p_household_id uuid, p_name text, p_emoji text, p_email text) returns uuid`,
    `set_person_email(p_member_id uuid, p_email text) returns void`,
    `remove_person(p_member_id uuid) returns void` (see "People before they join").
 10. `import_household(p_payload jsonb) returns uuid` (see "Bring over the home from this
     phone").
+11. `join_as_person(p_token text, p_member_id uuid) returns uuid`: join through an invite as a
+    person the home is waiting for (no email, or the caller's verified one); they keep their
+    name, emoji, colour and items, and their email becomes the caller's unless someone in the
+    home has it. Errors as `join_household`, and `not_found` when they cannot be taken.
+12. `release_claim() returns void`: "Not Shea?" (see "One home").
+
+`invite_preview` (2) also returns, since `20261010000500_one_home.sql`, `"people"` (the people
+waiting to join without an email: id, name, emoji, in join order) and `"emojis"` (every emoji in
+use in the home), and is null for a household other than the deployment's home.
 
 `join_household` (3) also claims, since `20261010000500_one_home.sql`: a person in that
 household who has not joined yet and has the caller's verified email becomes the caller
 (their name, emoji and colour are kept; `p_member_name` and `p_member_emoji` are not applied)
 instead of a second row being added. An unverified caller whose email someone in the home
-already has joins as someone new, without the email.
+already has joins as someone new, without the email. Only the deployment's home can be joined
+(`invalid_invite` otherwise).
+
+`create_household` (1) is refused with `home_exists` when a home exists (the
+`households_one_home` trigger, see "One home"), unless the database allows many homes.
 
 Realtime: add `households, members, areas, items, completions` to the `supabase_realtime`
 publication (guarded so the migration also runs on plain Postgres).
@@ -261,7 +276,30 @@ messages above (`network` for fetch failures). `completeItem` on a state throws
 
 Migration `supabase/migrations/20261010000500_one_home.sql`; types `HomeEntry` and
 `Phase` (`private`) in `src/lib/types.ts` and `src/state/HomeProvider.tsx`;
-`Backend.enterHome()`. A deployment holds one home, and signing in never creates a second.
+`Backend.enterHome()`. A deployment holds one home, and nobody can create a second: not the
+app, and not a client calling the database directly.
+
+### One home, kept by the database
+
+- **`households_one_home`** (BEFORE INSERT on `households`): takes the advisory lock
+  `(4712, 1)` (the same as `import_household`), then raises `home_exists` when a household
+  exists already and the request comes from a client (`auth.role()` is `authenticated` or
+  `anon`). So `create_household` (which this migration does not redefine; the Housekeeping
+  migration owns it) refuses a second home, and two people creating, or one creating while
+  another brings a home over, end up with one home. The service role and the database owner
+  (SQL editor, migrations) are not limited.
+- **The deployment's home** is the oldest household (`deployment_home()`). Claims
+  (`enter_home`, `join_household`, `join_as_person`) and joins only reach it
+  (`reachable_home()`): an invite to any other household is `invalid_invite` (and its preview
+  null), and a person with the same email in another household is never claimed. A household
+  that got in some other way (an admin, or one left from before this rule) captures nobody.
+- **`app_settings.many_homes`** (one-row table, RLS on, no policies; the service role may read
+  it): for development and test databases only, which hold many homes (the tests make one per
+  case; a shared local stack holds several people's). On, clients may create more homes and
+  claims and joins reach every home (oldest home first, then oldest person). Off, or no row:
+  one home. `npm run test:db` turns it on for its throwaway database, and
+  `supabase/tests/one_home_deployment.test.mjs` makes a fresh database without it, as a
+  deployment has it. The live suites check it is on before they start.
 
 ### Where a person belongs: `enter_home()`
 
@@ -270,71 +308,126 @@ HomeProvider's bootstrap asks `Backend.enterHome()` after every sign-in (instead
 
 | status | when | the app |
 | --- | --- | --- |
-| `member` | the account has a member row | phase `ready`: the home |
-| `claimed` | not a member, and a person in a home has not joined yet (`user_id` null) and has this account's **verified** email (`auth.users.email_confirmed_at` not null; both trimmed and lower case) | the account is now that person; phase `ready` with `claimed` and `onboardingTail`: the welcome step, the notifications step, then the home |
+| `member` | the account has a member row | phase `ready`: the home (first the offer of this phone's home, when it has one) |
+| `claimed` | not a member, and a person in the deployment's home has not joined yet (`user_id` null) and has this account's **Google-verified** email (see below; both trimmed and lower case) | the account is now that person; phase `ready` with `claimed` and `onboardingTail`: the welcome step, the notifications step, then the home |
 | `no_home` | not a member, no such person, and no household exists | phase `onboarding`: "Bring over the home from this phone" when this browser has one, else Profile then Create home |
 | `private` | not a member, no such person, and a household exists | phase `private`: "This home is private" |
 
-JSON from the RPC: `{"status":"member"|"claimed","household_id","member_id"}`,
+JSON from the RPC: `{"status":"member"|"claimed","household_id","member_id","can_import"}`,
 `{"status":"no_home"}`, `{"status":"private","email","email_verified"}`; the backend maps it
-to `HomeEntry` (`householdId`, `memberId`, `email`, `emailVerified`). `not_signed_in` without a
-user.
+to `HomeEntry` (`householdId`, `memberId`, `canImport`, `email`, `emailVerified`).
+`can_import` is `home_untouched()` of that home (see "Bring over the home from this phone").
+`not_signed_in` without a user.
 
-- **The claim is atomic**: `update members set user_id = auth.uid() where id = <person> and
-  user_id is null and lower(email) = <verified email>`. Of two accounts claiming one person at
-  once, exactly one wins and the other gets `private`; the same account in two tabs gets
-  `claimed` once and `member` in the other; an email changed in People while someone signs in
-  with the old one is not claimed. A claimed person keeps their id, name, emoji, colour, role,
-  items and Stats. With several matches (only in a database holding several homes, like the
-  tests) the oldest person wins.
-- **Only a verified email claims.** Google accounts always are. Supabase Auth must never
-  mark an email verified that nobody proved: keep the Email provider off, or on with "Confirm
-  email" on (the default). README "Going live" says so.
+- **The claim is atomic**: `update members set user_id = auth.uid(), claimed_at = now() where id
+  = <person> and user_id is null and lower(email) = <verified email>`. Of two accounts
+  claiming one person at once, exactly one wins and the other gets `private`; the same account
+  in two tabs gets `claimed` once and `member` in the other; an email changed in People while
+  someone signs in with the old one is not claimed. A claimed person keeps their id, name,
+  emoji, colour, role, items and Stats.
+- **Only a Google-verified email claims** (`verified_email()`): the account needs
+  `auth.users.email_confirmed_at`, and a Google identity (`auth.identities`, provider `google`)
+  whose own email is the account's and that Google marked `email_verified`. A confirmed email
+  alone is not enough: a project whose Email provider confirms sign-ups by itself would let
+  anyone who types a waiting person's address with a password become them. The local
+  `supabase/config.toml` also keeps `enable_confirmations` on, and README "Going live" asks for
+  the Email provider to be off. An email and password account is always `private` (with
+  `email_verified` false), and through an invite joins as someone new without the email.
 - `private` reveals nothing about the home: only the caller's own email and whether it is
   verified.
-- **No second home.** The app reaches Create home only from `no_home`, and HomeProvider's
-  `createHousehold` asks `enterHome()` once more just before creating (anything but `no_home`
-  moves to that phase and rejects with `home_exists`). The database does not refuse a second
-  household from `create_household` (the tests and the shared development database hold many,
-  and the Housekeeping migration owns that function); `import_household` refuses with
-  `home_exists` itself, serialised by an advisory lock.
+- **No second home**, in the app too. The app reaches Create home only from `no_home`, and
+  HomeProvider's `createHousehold` asks `enterHome()` once more just before creating (anything
+  but `no_home` moves to that phase and rejects with `home_exists`); when the database refuses
+  anyway (someone set one up in between), it asks again and moves to the phase that gives.
+  On the real backend Create Home says, under the button, "Used home.os on your phone before?
+  Sign in on that phone first to bring your home over." and asks first ("Create a new home?"),
+  unless this browser's own home was just turned down (Start Fresh).
 - **Invite links** keep working. From phase `private` an invite opens Profile then Join, without
-  "Set up a new home instead"; a link that is no longer valid says so and offers **Continue**,
-  which forgets it and shows "This home is private". `join_household` claims a not-yet-joined person with the
-  caller's verified email instead of adding a duplicate; in practice `enter_home` has already
-  claimed them at sign-in, so the invite is simply cleared as for any member.
+  "Set up a new home instead". `invite_preview` also lists the people waiting to join without an
+  email, and Join asks "Are you one of these people?" (see "Screens"): picking one joins as them
+  (`join_as_person`). `join_household` claims a not-yet-joined person with the caller's verified
+  email instead of adding a duplicate; in practice `enter_home` has already claimed them at
+  sign-in, so the invite is simply cleared as for any member. A link that is no longer valid:
+  with a home, straight to "This home is private" with the line "That invite link has
+  expired." (no Profile step; the link is forgotten); with no home yet, "Invite link not valid"
+  first, whose main action is Check Again.
+- **"Not Shea?"** (`release_claim()`, `Backend.releaseClaim`): within a day of a claim (by
+  email or as a listed person; `members.claimed_at`), the account stops being that person,
+  who goes back to "Not joined yet" without the email that matched (someone at home puts in the
+  right one), and its push subscriptions for them go. The account is then in no home.
+  `not_found` without a claim from the last day.
 - **Demo mode** (`DemoBackend.enterHome`): the same rules on the local document, with the demo
   account's email counting as verified, except that it never answers `private`: a demo sign-in
-  always gets a home (its own, a claimed person, or `no_home` to create one). The demo never
-  offers the import (it is where the data comes from).
+  always gets a home (its own, a claimed person, or `no_home` to create one), and `canImport`
+  is always false. The demo never offers the import (it is where the data comes from).
 
 ### Screens (Onboarding views; copy is exact)
 
-All three are full-screen steps like ProfileStep (`StepPage`), in `src/screens/onboarding/`.
-App needs no change: every phase but loading, error and ready-without-tail already shows
-Onboarding.
+Full-screen steps like ProfileStep (`StepPage`), in `src/screens/onboarding/`. App only shows
+the new ErrorScreen for phase `error`; every phase but loading, error and ready-without-tail
+already shows Onboarding.
 
 - **This home is private** (phase `private`). Title "This home is private". Body: "Ask someone
   at home to add **{email}** in Profile > Household > People, then check again." With no email:
   "Ask someone at home to add your Google email in Profile > Household > People, then check
   again." A long email breaks after the @ or before a dot (mid-word only when one part is wider
   than the screen). When `emailVerified` is false, add: "Your Google account's email isn't verified yet,
-  so it can't be matched." Buttons: **Check Again** (primary; `recheckHome()`, busy while it
-  runs, `errorMessage(err)` under it on failure) and **Sign Out**. Never a way to create a home.
-  HomeProvider also rechecks whenever the app comes back into view in this phase.
-- **Bring over the home from this phone** (phase `onboarding` and `demoImport` not null; shown
-  before Profile). Title "Bring over the home from this phone". A white card: the household name
-  (17/600), the address under it if any, "{n} areas · {m} items" (singular "1 area", "1 item";
-  `m` counts open items), then each person as emoji and name, "(you)" after the one with `me`.
-  Footnote: "Everyone else joins when someone adds their Google email in Profile > Household >
-  People." Buttons: **Bring It Over** (primary; `importDemoHome()`, busy while it runs,
-  `errorMessage(err)` under it on failure) and **Start Fresh** (`declineDemoImport()`: Profile,
-  then Create home). Sign Out as on ProfileStep. No Profile step after an import: the demo name
-  and emoji come along.
-- **Welcome** after a claim (phase `ready`, `onboardingTail` and `claimed`). Title "Welcome
-  home, {me.name}". Body "{household name} is all set up for you. Pick your emoji." The emoji
-  grid (`EmojiGrid`) on `me.emoji`. Button **Continue** (`confirmClaimed(emoji)`), then the
-  notifications step as after a create or join.
+  so it can't be matched." When this browser kept a home in demo mode: "This phone still has
+  {name} ({counts}). Someone has already set up a home here, so it can't be brought over now."
+  After an invite link that was no good, first: "That invite link has expired." Buttons:
+  **Check Again** (primary; `recheckHome()`, busy while it runs; when nothing changed, "Not
+  added yet. Checked just now." under it as a status; `errorMessage(err)` on failure) and
+  **Sign Out**. Never a way to create a home. HomeProvider also rechecks whenever the app comes
+  back into view in this phase.
+- **Invite link not valid** (phase `onboarding` with an invite link that is no good, before
+  Profile). "It may have expired, as links last 14 days, or be from before your home was set up
+  here. Ask whoever sent it to sign in to home.os first, then add you in Profile > Household >
+  People." **Check Again** (primary; "No home here yet. Checked just now." when nothing
+  changed), then the text button **Set up a new home instead** (forgets the link: Profile, then
+  Create home, which asks first).
+- **Bring over the home from this phone** (`demoImport` with `demoImportMode` 'create' in phase
+  `onboarding`, shown before Profile; or 'replace' in phase `ready` with `onboardingTail`).
+  Title "Bring over the home from this phone". A white card: the household name (17/600), the
+  address under it if any, "{n} areas · {m} items" plus " · {d} done" when completions come
+  along (singular "1 area", "1 item"; `m` counts open items), then each person as emoji and
+  name, "(you)" after the one with `me`, hairlines inset on both sides. Footnote: 'create':
+  "Everyone else joins when someone adds their Google email in Profile > Household > People.";
+  'replace': "It takes the place of {home}, which has nothing in it yet. Everyone already in
+  {home} stays." Buttons: **Bring It Over** (primary; `importDemoHome()`, busy while it runs,
+  `errorMessage(err)` under it on failure) and a text button that asks first in an action
+  sheet: 'create' **Start Fresh** ("Start a new home?" / "The home on this phone ({m} items)
+  won't come along, and can't be brought over later." / **Start Fresh**, destructive); 'replace'
+  **Keep {home}** ("Keep {home} as it is?" / "... won't come along, and won't be offered again.").
+  Sign Out in the nav bar for 'create' only. No Profile step after an import: the demo name and
+  emoji come along. After Start Fresh, Profile has **Back** (left of Sign Out) to the offer,
+  until a home is created.
+- **The home on this phone stays here** (`demoImportMode` 'blocked' in phase `ready`, once).
+  "This phone still has {name} ({counts}) from before. {home} already has things in it, so that
+  home can't be brought over." **OK** marks the document declined.
+- **{Names} haven't joined yet** (phase `ready`, `onboardingTail`, `invitePeople`, someone
+  without an email; right after bringing a home over). "Add the Google email each of them signs
+  in with. When they sign in, they join as themselves, with their items." One card per person
+  (emoji and name, then the email field, "{name}'s Google email"), the same rules and messages
+  as People. "You can add or change them later in Profile > Household > People." **Continue**
+  saves what was typed (`setPersonEmail`), then the notifications step.
+- **Welcome** after a claim (phase `ready`, `onboardingTail` and `claimed`, also after joining
+  as a listed person). Title "Welcome home, {me.name}". Body "{household name} is all set up
+  for you. Pick your emoji." The emoji grid (`EmojiGrid`) on `me.emoji`. Button **Continue**
+  (`confirmClaimed(emoji)`), then the notifications step as after a create or join. Text button
+  **Not {name}? Sign Out**, which asks first ("Not {name}?" / "You'll be signed out and {name}
+  goes back to waiting to join. Ask someone at home to check the email they added for you.")
+  and then runs `releaseClaim()`.
+- **Join {home}** with people waiting (`InvitePreview.people` not empty): under the invite card,
+  "Are you one of these people?" as a radio group: each person (emoji and name), then "Someone
+  new ({profile name})". Nothing is chosen at first unless exactly one has the name typed on
+  Your profile. **Join as {name}** (`joinHousehold({..., personId})`, then the welcome step as
+  that person) or **Join**; off until there is an answer. Someone who joined meanwhile: a toast
+  "{name} has joined already or was removed." and the list again.
+- **ErrorScreen** (phase `error`, `src/screens/onboarding/ErrorScreen.tsx`): a hero step,
+  "You're offline" / "Your home opens by itself as soon as you're back online." when it was the
+  connection (`phase.offline`), else "Couldn't open your home" with the message; **Try Again**
+  (`retry()`). HomeProvider retries by itself on `online`, when the app comes back into view and
+  every 15 s while in view.
 
 ## People before they join
 
@@ -373,7 +466,9 @@ Migration `supabase/migrations/20261010000500_one_home.sql`; `Member.user_id: st
     not fit beside "Not joined yet", it goes on a line of its own without the dot, cut with an
     ellipsis only if it is wider than the row. People stay in member order.
   - Last row **Add Person** (tint, plus icon), pushing an Add Person page like PersonPage:
-    Name (`maxLength` 40, focused), the emoji grid (🦔 chosen), **Google Email** (`type=email`,
+    Name (`maxLength` 40, focused), the emoji grid (on the first emoji nobody at home has,
+    `firstFreeEmoji()`; Your profile does the same for someone joining through an invite, from
+    `InvitePreview.emojis`), **Google Email** (`type=email`,
     `inputmode=email`, `autocapitalize=none`, `autocorrect=off`, `spellcheck=false`,
     `maxLength` 254, placeholder "name@gmail.com"), footnote "When they sign in with Google
     using this email, they join as this person, with their items." **Add** in the navigation bar
@@ -383,8 +478,13 @@ Migration `supabase/migrations/20261010000500_one_home.sql`; `Member.user_id: st
   - PersonPage for someone who has not joined: name and emoji as today, plus **Google Email**
     (same field and footnote; saved with `setPersonEmail` on blur or Return, an error shows
     under it and keeps the text), and at the bottom a destructive **Remove {name}** that asks
-    (ActionSheet) "Remove {name}? Their items become unassigned." with **Remove** and Cancel,
-    then pops the page. For someone who has joined: as today (no email field, no remove).
+    (ActionSheet) "Remove {name}? Their items become unassigned." (or, when Stats credits them
+    with something, "Their items become unassigned and their {n} done tasks leave Stats.",
+    `removeMessage()`) with **Remove** and Cancel, then pops the page. For someone who has
+    joined: as today (no email field, no remove).
+  - Profile's **Invite someone** has a caption: "Someone already in People? Add their Google
+    email there instead, and they join as themselves." (and the Join screen asks "Are you one
+    of these people?", see "One home").
 - **Elsewhere**: the Item sheet's assignee list adds a quiet secondary "Not joined yet" after
   such a person's name (the Sharing work also edits the Item sheet: keep this to the option's
   label). The Home person filter, Home rows and Stats show them like anyone else, with no
@@ -400,11 +500,23 @@ Migration `supabase/migrations/20261010000500_one_home.sql`; `Member.user_id: st
 
 The household used the live site in demo mode, so their home lives in one phone's
 localStorage (`homeos.demo.v1`, the `DemoBackend` document). The first person to sign in with
-Google on that phone, while no home exists, is offered to bring it over.
+Google on that phone, while no home exists, is offered to bring it over. If someone set up a
+home first, the phone's home still comes over once its person is in that home, as long as the
+home has nothing in it yet.
 
-- **Offer**: phase `onboarding` (`no_home`) on the Supabase backend, and
-  `demoHomeSummary(readDemoDoc(localStorage))` is not null: the document has a household and is
-  not marked `imported`. "Start Fresh" hides it for the session.
+- **Offer** (Supabase backend only; `demoHomeSummary(readDemoDoc(localStorage))` not null: the
+  document has a household and is marked neither `imported` nor `declined`), by
+  `HomeProvider.demoImportMode`:
+  - 'create': phase `onboarding` (`no_home`). Start Fresh (asked first) hides it for the
+    session; Profile's Back brings it back (`reopenDemoImport`); creating the home then marks the
+    document `declined` (`markDemoDeclined`), so it never comes back.
+  - 'replace': phase `ready`, the home untouched (`HomeEntry.canImport`), before the home opens
+    (`onboardingTail`; after the welcome step for a claim). Keep (asked first) marks it declined.
+  - 'blocked': phase `private` (a line on that screen), or phase `ready` with a home in use (said
+    once; OK marks it declined).
+  - A home that is this document's home already (`demoHomeMatches()`: same name, areas in order,
+    everyone by name, the same open items; an import whose reply was lost) marks it imported
+    instead of offering it again.
 - **Payload**: `buildImportPayload(doc)` in `src/lib/logic/importHome.ts` (pure,
   deterministic), `ImportPayload` version 1 in `src/lib/types.ts`. The home is the demo's
   signed-in person's (else the earliest owner's, else the earliest person's). That person is
@@ -412,14 +524,26 @@ Google on that phone, while no home exists, is offered to bring it over.
   name, emoji and colour; everyone else in that home comes as not joined yet, without the
   demo's made-up emails. Areas in order; every open and done item with all its fields (kind,
   title, note, good, rag, due date, repeat, notify, status, assignee, created and updated by,
-  created, updated and completed times); every completion (Stats history), linked to its item
-  when the item came along. Chat, invites and push subscriptions stay behind. Anything the
+  created, updated and completed times); every real completion (Stats history), linked to its
+  item when the item came along. The made-up history the demo adds to every home it sets up
+  (`addHistory`: no item, done no later than the home was set up) stays behind, as do chat,
+  invites and push subscriptions. The summary counts what comes along ("· 3 done"). Anything the
   database would refuse is repaired or left out (text cut to `TEXT_LIMITS`, unknown values to
   their defaults, an item without an area or title or a done state left out, a completion
   without a time left out), so a payload from this builder is always accepted while no home
   exists.
-- **`import_household(p_payload jsonb) returns uuid`**, all or nothing: `not_signed_in`;
-  `already_member` (the caller is in a home); `home_exists` (any home exists); `invalid_input`
+- **`import_household(p_payload jsonb) returns uuid`**, all or nothing. With no home: a new
+  home, as above. When the caller is in a home that is untouched (`home_untouched()`: its name,
+  address and time zone never changed, every area and item is one it was created with and no
+  item was edited or done, no completions, no chat, and with the Housekeeping migration no
+  visit, no message and only the starter list; people do not count), the phone's home goes into
+  it in place, keeping its id (invites and every open device carry on): its name, address and
+  time zone become the phone's, its areas, items and completions are replaced, and its people
+  stay: `me` is the caller as they are, each other person from the phone is the person of the
+  same name already there (trimmed, any case, each once), else is added as not joined yet. Its
+  housekeeping list stays. Errors: `not_signed_in`;
+  `already_member` (the caller is in a home in use); `home_exists` (a home exists and the caller
+  is not in it); `invalid_input`
   for anything it refuses (wrong types, unknown keys or references, duplicate keys, not exactly
   one `me`, text over the limits, unknown kind/rag/repeat/notify/status, a done state, a date
   or time it cannot read, over 50 people, 100 areas, 2000 items or 20000 completions). A state
@@ -429,13 +553,16 @@ Google on that phone, while no home exists, is offered to bring it over.
   home also gets the starter task list, as `create_household` gives.
 - **Afterwards**: `markDemoImported(localStorage, {at, household_id})` marks the document and
   changes nothing else in it, so the offer never comes back on that phone, then the home opens
-  like after a create (notifications step). The owner then adds Shea's Google email in People;
-  when Shea signs in, `enter_home` makes her Shea, with her items.
-- **Fixture**: `src/lib/logic/importHome.fixture.ts` is the household's real home as the phone
-  stores it (six areas, 19 open items and one done, Stratis, Shea and Ela, and a Stats
-  history). `supabase/tests/fixtures/demo-import.json` is its payload; the unit test checks they
-  agree (`UPDATE_IMPORT_FIXTURE=1 npx vitest run src/lib/logic/importHome.test.ts` rewrites it)
-  and the database tests import it.
+  like after a create: first "{Names} haven't joined yet" for the emails of the people who came
+  along without one (`invitePeople`), then the notifications step. When Shea signs in with the
+  email added for her, `enter_home` makes her Shea, with her items.
+- **Fixtures**: `src/lib/logic/importHome.fixture.ts` is the household's real home as the phone
+  stores it (six areas, 19 open items and one done, Stratis, Shea and Ela, three real
+  completions and some of the demo's made-up history), and `demoCreatedDoc()` is a home as the
+  real `DemoBackend.createHousehold` sets one up (111 made-up completions, one real one).
+  `supabase/tests/fixtures/demo-import.json` and `demo-created-import.json` are their payloads;
+  the unit test checks they agree (`UPDATE_IMPORT_FIXTURE=1 npx vitest run
+  src/lib/logic/importHome.test.ts` rewrites them) and the database tests import them.
 
 ## Sync guarantees
 
@@ -469,7 +596,9 @@ What makes it hold (timings are constants in `src/state/HomeProvider.tsx`: `RETR
 4. **Coming back**: on `visibilitychange` to visible after 10 s or more hidden, on `pageshow`
    with `persisted`, and on `online`, HomeProvider calls `backend.reconnect()` (it alone does)
    and reloads at once; ChatProvider resyncs on the same three events. A shorter hide keeps the
-   debounced reload it has today. In phase `private` the same events run `recheckHome()`.
+   debounced reload it has today. In phase `private` the same events run `recheckHome()`, and in
+   phase `error` (no connection when the app opened, say) they run `retry()`, as does a 15 s
+   timer while in view, so the home opens by itself once the connection is back.
 5. **Reconnect** (`Backend.reconnect`): the Supabase backend drops the socket and opens a fresh
    one, at most once per 5 s (`RECONNECT_MIN_MS`), because a phone that slept can hold a socket
    that says it is open but is dead, and the 25 s heartbeat takes up to a minute to notice. Each
@@ -528,6 +657,16 @@ Fixed (both builders code against these; a change needs the architect):
 - `src/lib/logic/importHome.ts` and `people.ts`: exported names and signatures, and the fixture.
 - Rules: a null `user_id` never grants anything (`hasJoined()`); emails are compared with
   `normaliseEmail()`; nothing anywhere offers a second home; the copy above.
+
+Changed after review (the fixer of one/int): the database keeps one home
+(`households_one_home`, `app_settings.many_homes`) and claims only reach the deployment's
+home; only a Google-verified email claims; `enter_home` returns `can_import`
+(`HomeEntry.canImport`); `import_household` also replaces an untouched home; `invite_preview`
+returns `people` and `emojis`; new `join_as_person` (`JoinHouseholdInput.personId`) and
+`release_claim` (`Backend.releaseClaim`); `DemoHomeSummary.done`; `Phase` 'error' has
+`offline`; HomeContextValue adds `demoImportMode`, `reopenDemoImport`, `canReopenDemoImport`,
+`invitePeople`, `doneInvitingPeople`, `releaseClaim` and `retry`; importHome.ts adds
+`markDemoDeclined`, `demoHomeMatches` and leaves the demo's made-up history behind.
 
 ## Home
 

@@ -123,7 +123,8 @@ test('the first person to sign in brings over the home from this phone', async (
   await expect(offer.getByRole('heading', { level: 1 })).toHaveText('Bring over the home from this phone');
   await expect(offer).toContainText('Our home');
   await expect(offer).toContainText('21 Alderbrook Road');
-  await expect(offer).toContainText('6 areas · 19 items');
+  // What was really done comes along (3), the demo's made-up history does not.
+  await expect(offer).toContainText('6 areas · 19 items · 3 done');
   await expect(offer.getByRole('list', { name: 'People' }).getByRole('listitem')).toHaveText([
     '🦆Stratis (you)',
     '🦔Shea',
@@ -142,6 +143,12 @@ test('the first person to sign in brings over the home from this phone', async (
   await page.setViewportSize({ width: 402, height: 874 });
   // Never a Profile step or a second home on the way.
   await offer.getByRole('button', { name: 'Bring It Over' }).click();
+  // Next, the people who came along without an email (added later here, in People).
+  const waiting = page.getByRole('region', { name: 'Shea and Ela haven’t joined yet' });
+  await expect(waiting.getByRole('heading', { level: 1 })).toHaveText('Shea and Ela haven’t joined yet');
+  await expect(waiting.getByRole('textbox', { name: 'Shea’s Google email' })).toBeVisible();
+  await expect(waiting.getByRole('textbox', { name: 'Ela’s Google email' })).toBeVisible();
+  await waiting.getByRole('button', { name: 'Continue' }).click();
   await finishSetup(page);
 
   // Every area in order, every open item with its kind, status, person, date and note.
@@ -178,11 +185,11 @@ test('the first person to sign in brings over the home from this phone', async (
   await expect(dialog.getByRole('button', { name: /^Household/ })).toContainText('Our home');
   await closeProfile(page);
 
-  // The Stats history came along.
+  // The real Stats history came along, and none of the demo's made-up history.
   await goToTab(page, 'Stats');
   await statsScreen(page).getByRole('radio', { name: 'Lifetime' }).click();
   await expect(statsScreen(page).getByRole('img', { name: /tasks? done/ })).toHaveAccessibleName(
-    '7 tasks done in total: Stratis 2, Shea 3, Ela 2.',
+    '3 tasks done in total: Stratis 1, Shea 2, Ela 0.',
   );
   await goToTab(page, 'Home');
 
@@ -253,6 +260,8 @@ test('anyone else sees "This home is private" until someone adds their email', a
   await shut.getByRole('button', { name: 'Check Again' }).click();
   await expect(shut.getByRole('button', { name: 'Check Again' })).toBeEnabled();
   await expect(shut.getByRole('heading', { name: 'This home is private', level: 1 })).toBeVisible();
+  // It says the check ran.
+  await expect(shut.getByRole('status')).toHaveText('Not added yet. Checked just now.');
   expect((await homeIds()).length).toBe(1);
 
   // Stratis adds Robin with that email (his Household page is still open).
@@ -384,7 +393,7 @@ test('items: create, edit, What good looks like, kind, complete, undo and delete
   await goToTab(a, 'Stats');
   await expect(statsScreen(a).getByRole('radio', { name: 'Lifetime' })).toBeChecked();
   await expect(statsScreen(a).getByRole('img', { name: /tasks? done/ })).toHaveAccessibleName(
-    /^8 tasks done in total: Stratis 2, Shea 4, Ela 2(, Robin 0)?\.$/,
+    /^4 tasks done in total: Stratis 1, Shea 3, Ela 0(, Robin 0)?\.$/,
   );
   await goToTab(a, 'Home');
 

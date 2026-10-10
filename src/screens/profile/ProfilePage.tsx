@@ -111,6 +111,9 @@ export function ProfilePage({ onDone, onOpenHousehold, householdRowRef }: Profil
             <ChevronRightIcon className={list.chevron} />
           </button>
         </div>
+        <p className={list.caption}>
+          Someone already in People? Add their Google email there instead, and they join as themselves.
+        </p>
       </section>
 
       <div className={`${list.card} ${list.lone}`}>

@@ -96,8 +96,13 @@ The numbered steps below do the same by hand, plus push notifications and the we
    local development, to **Redirect URLs**.
 5. In Supabase: **Authentication → Sign In / Providers → Email**: turn it off (home.os only
    uses Google), or at least keep **Confirm email** on (the default). Someone signing in with
-   a verified email becomes the person a housemate added with that email, so Supabase must
-   never treat an email nobody proved as verified.
+   Google becomes the person a housemate added with that email. The database only accepts an
+   email Google vouches for (the account needs a Google identity with that email, verified by
+   Google), so an email and password account can never become anyone; turning the Email
+   provider off also keeps such accounts from being made at all.
+6. Nothing to set for **one home**: the database refuses a second home from the app itself.
+   (`public.app_settings.many_homes` lets a development or test database hold many homes; never
+   turn it on for a real deployment.)
 
 ### 3. App settings
 
@@ -157,16 +162,22 @@ also set `VITE_BASE=/your-path/`.
 There is one home per deployment, and nobody can set up a second one.
 
 1. Open the app's URL in **Safari** and tap **Continue with Google**.
-2. The first person sets up the home. On the phone that kept the home in demo mode, tap
-   **Bring It Over**: the areas, every item, the Stats history and everyone in it come across,
-   and you keep your name and emoji. Otherwise create your profile (name and emoji), then the
-   home.
+2. The first person sets up the home. **Do this on the phone that kept the home in demo mode**
+   and tap **Bring It Over**: the areas, every item, what was done (Stats) and everyone in it
+   come across, and you keep your name and emoji (the demo's made-up history stays behind).
+   Then add the others' Google emails right there. Otherwise create your profile (name and
+   emoji), then the home. If someone set up an empty home first on another phone, ask them to
+   add your email: once you are in, and while that home still has nothing in it, your phone
+   offers to bring its home over in its place.
 3. Add everyone else in **Profile → Household → People → Add Person**: their name, emoji and
    the Google email they sign in with (people brought over from the phone are there already:
    tap one to add their email). You can give them items straight away. When they tap
    **Continue with Google** they go straight into the home as that person, with their items.
    Someone whose email nobody has added sees "This home is private", with the email to ask for.
-   The **Invite someone** link from Profile still works too.
+   The **Invite someone** link from Profile still works too: whoever opens it is asked "Are you
+   one of these people?" first, so nobody brought over from the phone ends up there twice.
+   If the wrong person got in with an email, they tap **Not Shea? Sign Out** on the welcome
+   step, and Shea waits for the right email again.
 4. Tap **Share → Add to Home Screen**, then open home.os from the Home Screen.
 5. In **Profile**, turn on **Push notifications**.
 
@@ -197,11 +208,17 @@ defaults), so the app that is live keeps working on the new schema. In order:
 | `npm run icons` | Re-render the app icons from `public/icons/icon.svg` |
 
 With Docker running, `npx supabase start` gives you a full local Supabase stack;
-`npx supabase db reset` applies the migrations to it, and
+`npx supabase db reset` applies the migrations to it. A deployment holds one home, and the
+database refuses a second one from the app; the tests make many, so a **development** database
+they run against must allow that once:
+`insert into public.app_settings (id, many_homes) values (true, true) on conflict (id) do update set many_homes = true;`
+(`npm run test:db` does it for its own throwaway database, whose `one_home_deployment` tests
+also make a fresh database without it, as a deployment has it). Then
 `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres npm run test:db` runs the
 database tests against it. The live backend suite runs with
 `SUPABASE_TEST_URL=http://127.0.0.1:54321 SUPABASE_TEST_ANON_KEY=<anon key> SUPABASE_TEST_SERVICE_KEY=<service role key> npx vitest run src/lib/backend/supabase.integration.test.ts`
-(keys from `npx supabase status`), and
+(keys from `npx supabase status`; the database at `SUPABASE_TEST_DB_URL`, by default the local
+stack's), and
 `npx supabase functions serve scheduler --no-verify-jwt --env-file <file>` serves the scheduler.
 
 **Live two-phone tests** (`npm run test:e2e:live`, `playwright.live.config.ts`, `e2e-live/`):
@@ -217,14 +234,18 @@ database tests against it. The live backend suite runs with
 3. It builds the app against that stack into `dist-live/` and serves it on port 4214
    (`E2E_LIVE_PORT` to change it). Google sign-in can't run in a test, so each phone is a
    browser context whose storage already holds a session: accounts are made with the Auth admin
-   API (email confirmed, like a Google account) and signed in with a password.
+   API (email confirmed) and given the Google identity a Google sign-in leaves (with SQL, on the
+   database `npx supabase status` names or `SUPABASE_TEST_DB_URL`), then signed in with a password.
 4. Bringing the home over needs a database with no home in it. The tests wait up to 90 seconds
    for other test runs to finish with theirs, then say so. Afterwards they remove their own
    accounts and home (accounts named `homeos-live-e2e-…@example.com`), and nothing else.
 
-What they prove, with Stratis's phone holding the household's demo home: he brings it over
-(every area, item, assignment and the Stats history), adds Shea's Google email, and Shea signs
-in and is Shea with her items; someone else sees "This home is private" until they are added;
+What they prove, with Stratis's phone holding the household's demo home: when Shea set up an
+empty home first, his phone says its home can't come over yet, and once she adds him it takes
+the place of the empty one (Shea matched by name), and Ela joins through an invite link as the
+Ela who came along. Then, from no home: he brings it over (every area, item, assignment and the
+real Stats history), adds Shea's Google email, and Shea signs in and is Shea with her items;
+someone else sees "This home is private" until they are added;
 then every change one phone makes (items, What good looks like, kind, done and undo, delete,
 areas, household name and address, people, chat messages and reactions) shows on the other
 within 5 seconds, without a reload, and a phone that was offline catches up as soon as it is
@@ -245,10 +266,12 @@ People can be in the home before they join (**Not joined yet**):
 - Until they sign in, such a person has no account: they give nobody access, get no
   notifications or weekly email, and can't post in the chat. Their items show on Home, in the
   person filter and in Stats like anyone else's.
-- When they sign in with Google using that email (a verified email), they become that person,
-  keeping the name, emoji, items and Stats set up for them.
-- Anyone can remove a person who has not joined yet; their items become unassigned. Someone
-  who has joined can't be removed from the app.
+- When they sign in with Google using that email (Google must have verified it), they become
+  that person, keeping the name, emoji, items and Stats set up for them. Within a day they can
+  say it isn't them (**Not Shea?**): the person waits to join again, without that email.
+- Anyone can remove a person who has not joined yet; their items become unassigned, and what
+  they did leaves Stats (the confirmation says how many). Someone who has joined can't be
+  removed from the app.
 
 The household chat has its own rules:
 

@@ -10,6 +10,7 @@
 //    SUPABASE_TEST_SERVICE_KEY=... npx vitest run src/lib/backend/supabase.integration.test.ts
 
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
+import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { addDays, todayIn } from '../logic/dates';
 import { seedItemsFor } from '../logic/items';
@@ -245,7 +246,8 @@ describe('SupabaseBackend offline: requests', () => {
     expect(await backend.joinHousehold({ token: 'tok', memberName: 'Bea', memberEmoji: '🦊' })).toBe(
       'join_household-result',
     );
-    expect(await backend.getInvitePreview('tok')).toEqual({ household_name: 'Flat 2', address: '1 Test Street' });
+    // A database from before the people list: none, and no emojis.
+    expect(await backend.getInvitePreview('tok')).toEqual({ household_name: 'Flat 2', address: '1 Test Street', people: [], emojis: [] });
     expect(await backend.createInvite()).toBe('create_invite-result');
     expect(await backend.completeItem('i1')).toBe('complete_item-result');
     await backend.undoCompletion('c1');
@@ -564,15 +566,18 @@ describe('SupabaseBackend offline: one home', () => {
   };
 
   it('maps enter_home replies to HomeEntry', () => {
-    expect(toHomeEntry({ status: 'member', household_id: 'h', member_id: 'm' })).toEqual({
+    expect(toHomeEntry({ status: 'member', household_id: 'h', member_id: 'm', can_import: true })).toEqual({
       status: 'member',
       householdId: 'h',
       memberId: 'm',
+      canImport: true,
     });
+    // can_import missing (or not true): false.
     expect(toHomeEntry({ status: 'claimed', household_id: 'h', member_id: 'm' })).toEqual({
       status: 'claimed',
       householdId: 'h',
       memberId: 'm',
+      canImport: false,
     });
     expect(toHomeEntry({ status: 'no_home' })).toEqual({ status: 'no_home' });
     expect(toHomeEntry({ status: 'private', email: 'ada@example.com', email_verified: true })).toEqual({
@@ -594,8 +599,20 @@ describe('SupabaseBackend offline: one home', () => {
     const { backend, client, calls, rest } = fakeServer(
       withAuth((call) => {
         const fn = call.url.pathname.replace('/rest/v1/rpc/', '');
-        if (fn === 'enter_home') return { body: { status: 'claimed', household_id: H, member_id: P } };
+        if (fn === 'enter_home') return { body: { status: 'claimed', household_id: H, member_id: P, can_import: false } };
         if (fn === 'import_household') return { body: H };
+        if (fn === 'join_as_person') return { body: H };
+        if (fn === 'release_claim') return { status: 204 };
+        if (fn === 'invite_preview') {
+          return {
+            body: {
+              household_name: 'Our home',
+              address: '',
+              people: [{ id: P, name: 'Ela', emoji: '🦊' }, { name: 'no id' }, 'odd'],
+              emojis: ['🦆', '🦊', 7],
+            },
+          };
+        }
         if (fn === 'add_person') return { body: P };
         if (fn === 'set_person_email' || fn === 'remove_person') return { status: 204 };
         if (call.url.pathname === '/rest/v1/members') return { body: [PERSON] };
@@ -608,7 +625,16 @@ describe('SupabaseBackend offline: one home', () => {
     expect(calls.filter((c) => c.url.pathname.startsWith('/rest/'))).toEqual([]);
 
     await signInFake(client);
-    expect(await backend.enterHome()).toEqual({ status: 'claimed', householdId: H, memberId: P });
+    expect(await backend.enterHome()).toEqual({ status: 'claimed', householdId: H, memberId: P, canImport: false });
+    expect(await backend.getInvitePreview('tok')).toEqual({
+      household_name: 'Our home',
+      address: '',
+      people: [{ id: P, name: 'Ela', emoji: '🦊' }],
+      emojis: ['🦆', '🦊'],
+    });
+    expect(await backend.joinHousehold({ token: 'tok', memberName: 'Ela', memberEmoji: '🦔', personId: P })).toBe(H);
+    await rejectsWith(backend.joinHousehold({ token: 'tok', memberName: 'Ela', memberEmoji: '🦔', personId: 'nope' }), 'not_found');
+    await backend.releaseClaim();
     const payload = {
       version: 1 as const,
       household: { name: 'Our home', address: '', timezone: 'Europe/London' },
@@ -632,6 +658,9 @@ describe('SupabaseBackend offline: one home', () => {
       { p_member_id: P, p_email: '' },
     ]);
     expect(rpc('remove_person')[0].body).toEqual({ p_member_id: P });
+    expect(rpc('join_as_person').map((c) => c.body)).toEqual([{ p_token: 'tok', p_member_id: P }]);
+    expect(rpc('join_household')).toEqual([]);
+    expect(rpc('release_claim')[0]).toMatchObject({ method: 'POST', body: {} });
     // addPerson reads the new row back, with the member columns.
     const read = rest('members')[0];
     expect(read.url.searchParams.get('id')).toBe(`eq.${P}`);
@@ -1250,6 +1279,32 @@ const LIVE_ANON = process.env.SUPABASE_TEST_ANON_KEY ?? '';
 const LIVE_SERVICE = process.env.SUPABASE_TEST_SERVICE_KEY ?? '';
 const LIVE = Boolean(LIVE_URL && LIVE_ANON && LIVE_SERVICE);
 const describeLive = LIVE ? describe : describe.skip;
+/**
+ * The stack's database (SUPABASE_TEST_DB_URL; for a local stack, its usual address). Google
+ * sign-in can't run in a test, so each account gets the Google identity a Google sign-in would
+ * leave (auth.identities): only a Google-verified email claims a person (verified_email()).
+ */
+const LIVE_DB =
+  process.env.SUPABASE_TEST_DB_URL ??
+  (/^https?:\/\/(127\.0\.0\.1|localhost):54321\/?$/.test(LIVE_URL) ? 'postgresql://postgres:postgres@127.0.0.1:54322/postgres' : '');
+
+/** Gives the account the Google identity a Google sign-in leaves, with its email verified. */
+async function linkGoogle(userId: string, email: string, fullName: string): Promise<void> {
+  if (!LIVE_DB) throw new Error('Set SUPABASE_TEST_DB_URL: the live tests give each account a Google identity with SQL.');
+  const db = new pg.Client({ connectionString: LIVE_DB });
+  await db.connect();
+  try {
+    const sub = `google-${userId}`;
+    await db.query(
+      `insert into auth.identities (provider_id, user_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
+       values ($1, $2, $3, 'google', now(), now(), now())
+       on conflict do nothing`,
+      [sub, userId, JSON.stringify({ sub, email, email_verified: true, full_name: fullName, provider_id: sub })],
+    );
+  } finally {
+    await db.end();
+  }
+}
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -1297,6 +1352,7 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
       user_metadata: { full_name: fullName },
     });
     if (error || !data.user) throw error ?? new Error('createUser returned no user');
+    await linkGoogle(data.user.id, email, fullName);
     const client = createClient(LIVE_URL, LIVE_ANON, {
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     });
@@ -1339,6 +1395,15 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     admin = createClient(LIVE_URL, LIVE_SERVICE, {
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     });
+    // These tests make homes of their own beside whatever the stack holds: it must allow many
+    // homes (a development stack; a deployment holds one).
+    const settings = await admin.from('app_settings').select('many_homes');
+    if (settings.error || !settings.data?.some((r: { many_homes: boolean }) => r.many_homes)) {
+      throw new Error(
+        'The live tests make several homes, and this stack allows one. On a local development stack only, run ' +
+          '`insert into public.app_settings (id, many_homes) values (true, true) on conflict (id) do update set many_homes = true;`',
+      );
+    }
     people.a = await createPerson('a', 'Ada Tester');
     people.b = await createPerson('b', 'Bea Tester');
     people.c = await createPerson('c', 'Cy Tester');
@@ -1445,7 +1510,13 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
   it('invites a second member', async () => {
     token = await A().createInvite();
     expect(token).toMatch(/^[0-9a-f]{32}$/);
-    expect(await B().getInvitePreview(token)).toEqual({ household_name: 'Test Flat', address: '1 Test Street' });
+    // Nobody waiting to join; Ada's hedgehog is taken.
+    expect(await B().getInvitePreview(token)).toEqual({
+      household_name: 'Test Flat',
+      address: '1 Test Street',
+      people: [],
+      emojis: ['🦔'],
+    });
     expect(await B().getInvitePreview('not-a-token')).toBeNull();
     await rejectsWith(
       B().joinHousehold({ token: 'not-a-token', memberName: 'Bea', memberEmoji: '🦊' }),
@@ -2222,8 +2293,9 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     const E = () => people.e.backend;
     const payload = buildImportPayload(readDemoDoc({ getItem: () => JSON.stringify(USER_DEMO_DOC) })!)!;
 
-    expect(await A().enterHome()).toEqual({ status: 'member', householdId: hidA, memberId: memberA });
-    expect(await C().enterHome()).toEqual({ status: 'member', householdId: hidC, memberId: memberC });
+    // Ada's home is in use, so no phone's home may replace it.
+    expect(await A().enterHome()).toEqual({ status: 'member', householdId: hidA, memberId: memberA, canImport: false });
+    expect(await C().enterHome()).toMatchObject({ status: 'member', householdId: hidC, memberId: memberC });
     // Homes exist and nobody has Eve's email: "This home is private", and no import.
     expect(await E().enterHome()).toEqual({ status: 'private', email: people.e.email, emailVerified: true });
     await rejectsWith(E().importHousehold(payload), 'home_exists');
@@ -2262,8 +2334,8 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     expect(await D().enterHome()).toEqual({ status: 'private', email: people.d.email, emailVerified: true });
     await A().setPersonEmail(dee.id, people.d.email);
     await rejectsWith(C().setPersonEmail(dee.id, people.c.email), 'not_found');
-    expect(await D().enterHome()).toEqual({ status: 'claimed', householdId: hidA, memberId: dee.id });
-    expect(await D().enterHome()).toEqual({ status: 'member', householdId: hidA, memberId: dee.id });
+    expect(await D().enterHome()).toEqual({ status: 'claimed', householdId: hidA, memberId: dee.id, canImport: false });
+    expect(await D().enterHome()).toEqual({ status: 'member', householdId: hidA, memberId: dee.id, canImport: false });
     const claimed = (await D().load(hidA)).members.find((m) => m.id === dee.id)!;
     expect(claimed).toMatchObject({ user_id: people.d.userId, name: 'Dee D', emoji: '🦉', color: dee.color });
     expect((await D().load(hidA)).items.find((i) => i.id === theirs.id)!.assignee_id).toBe(dee.id);
@@ -2283,6 +2355,41 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     await rejectsWith(A().removePerson(temp.id), 'not_found');
     await A().deleteItem(tempItem.id);
     await A().deleteItem(theirs.id);
+  });
+
+  it('one home: only a Google account claims; a confirmed email and password account with the email does not', async () => {
+    const email = `homeos-pw-${runId}@example.com`;
+    const waiting = await A().addPerson(hidA, { name: 'Pat', emoji: '🐻', email });
+    // Signed up with a password, by someone who never opened that mailbox. Whatever the
+    // stack's "Confirm email" says (a local stack confirms at once), it is not a Google account.
+    const client = createClient(LIVE_URL, LIVE_ANON, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    });
+    const password = `pw-${runId}-Secret1!`;
+    const signUp = await client.auth.signUp({ email, password });
+    let userId = signUp.data.user?.id ?? '';
+    if (!signUp.data.session) {
+      // This stack wants the email confirmed first: confirm it as an admin, which is the most
+      // a password account can ever get, then sign in.
+      if (!userId) {
+        const made = await admin.auth.admin.createUser({ email, password, email_confirm: true });
+        if (made.error || !made.data.user) throw made.error ?? new Error('createUser returned no user');
+        userId = made.data.user.id;
+      } else {
+        await admin.auth.admin.updateUserById(userId, { email_confirm: true });
+      }
+      const signIn = await client.auth.signInWithPassword({ email, password });
+      if (signIn.error) throw signIn.error;
+    }
+    try {
+      const backend = new SupabaseBackend(LIVE_URL, LIVE_ANON, { client });
+      expect(await backend.enterHome()).toEqual({ status: 'private', email, emailVerified: false });
+      expect((await loadA()).members.find((m) => m.id === waiting.id)!.user_id).toBeNull();
+    } finally {
+      await A().removePerson(waiting.id);
+      await client.auth.signOut().catch(() => {});
+      if (userId) await admin.auth.admin.deleteUser(userId).catch(() => {});
+    }
   });
 
   it('sync: every kind of change one member makes is heard by another within 2 s', { timeout: 180_000 }, async () => {
@@ -2368,7 +2475,7 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
       await heard('person’s emoji changed', () => B().updateMember(fenId, { emoji: '🦊' }));
       await heard('person’s email set', () => B().setPersonEmail(fenId, people.f.email));
       await heard('person claimed', async () => {
-        expect(await F().enterHome()).toEqual({ status: 'claimed', householdId: hidA, memberId: fenId });
+        expect(await F().enterHome()).toEqual({ status: 'claimed', householdId: hidA, memberId: fenId, canImport: false });
       });
       await heard('someone joined by invite', async () => {
         expect(await E().joinHousehold({ token, memberName: 'Eve', memberEmoji: '🦉' })).toBe(hidA);

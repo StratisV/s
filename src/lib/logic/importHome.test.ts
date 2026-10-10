@@ -7,14 +7,17 @@ import {
   DEMO_DOC_KEY,
   demoHomeSummary,
   IMPORT_LIMITS,
+  markDemoDeclined,
   markDemoImported,
   readDemoDoc,
   type StoredDemoDoc,
 } from './importHome';
-import { USER_DEMO_DOC } from './importHome.fixture';
+import { demoCreatedDoc, USER_DEMO_DOC } from './importHome.fixture';
 
 /** The payload the database tests import (supabase/tests/one_home.test.mjs). */
 const PAYLOAD_FILE = new URL('../../../supabase/tests/fixtures/demo-import.json', import.meta.url);
+/** The payload of a home the demo set up itself (demoCreatedDoc), for the database tests too. */
+const CREATED_PAYLOAD_FILE = new URL('../../../supabase/tests/fixtures/demo-created-import.json', import.meta.url);
 
 class MemoryStorage {
   map = new Map<string, string>();
@@ -142,15 +145,20 @@ describe('buildImportPayload: the household’s own home', () => {
     });
   });
 
-  it('brings the Stats history, linked to the items that still exist', () => {
-    expect(payload.completions).toHaveLength(7);
-    expect(payload.completions[0]).toEqual({
+  it('brings the real Stats history, linked to the items that still exist, and none of the made-up one', () => {
+    expect(payload.completions.map((c) => c.item_title)).toEqual([
+      'Order water test strips',
+      'Fix the doorbell',
+      'Change the filter',
+    ]);
+    // Done, then its item deleted: real, so it comes along without an item.
+    expect(payload.completions[1]).toEqual({
       item: null,
-      item_title: 'Clean the oven',
-      credited_to: 'p3',
-      completed_by: 'p3',
-      completed_at: '2026-08-03T10:17:00.000Z',
-      prev_due_date: null,
+      item_title: 'Fix the doorbell',
+      credited_to: 'p1',
+      completed_by: 'p1',
+      completed_at: '2026-10-09T07:40:00.000Z',
+      prev_due_date: '2026-10-09',
       prev_status: 'open',
     });
     const strips = payload.completions.find((c) => c.item_title === 'Order water test strips')!;
@@ -242,8 +250,9 @@ describe('buildImportPayload: anything the database would refuse is repaired or 
     doc.items[6].area_id = 'a-gone';
     doc.completions[0].completed_at = 'soon';
     doc.completions[1].item_title = '';
-    doc.completions[2].item_id = 'i-gone';
-    doc.completions[2].credited_to = 'm-gone';
+    // Made-up history (c-h1) that names an item is not the demo's: it comes along.
+    doc.completions[3].item_id = 'i-gone';
+    doc.completions[3].credited_to = 'm-gone';
     const p = buildImportPayload(doc)!;
     expect(p.items).toHaveLength(17);
     expect(p.items[0]).toMatchObject({ title: 'Rubbish fill level', kind: 'task' });
@@ -256,7 +265,7 @@ describe('buildImportPayload: anything the database would refuse is repaired or 
       assignee: null,
     });
     expect(p.items.some((i) => i.title === 'Remove AC' || i.title === 'Hand towels solution')).toBe(false);
-    expect(p.completions).toHaveLength(5);
+    expect(p.completions.map((c) => c.item_title)).toEqual(['Clean the oven', 'Fix the doorbell']);
     const oven = p.completions.find((c) => c.item_title === 'Clean the oven')!;
     expect(oven).toMatchObject({ item: null, credited_to: null });
   });
@@ -266,11 +275,11 @@ describe('buildImportPayload: anything the database would refuse is repaired or 
     doc.completions = Array.from({ length: IMPORT_LIMITS.completions + 5 }, (_, i) => ({
       ...doc.completions[2],
       id: `c-${i}`,
-      completed_at: new Date(Date.UTC(2026, 0, 1) + i * 60_000).toISOString(),
+      completed_at: new Date(Date.UTC(2026, 9, 9) + i * 1_000).toISOString(),
     }));
     const p = buildImportPayload(doc)!;
     expect(p.completions).toHaveLength(IMPORT_LIMITS.completions);
-    expect(p.completions[0].completed_at).toBe(new Date(Date.UTC(2026, 0, 1) + 5 * 60_000).toISOString());
+    expect(p.completions[0].completed_at).toBe(new Date(Date.UTC(2026, 9, 9) + 5 * 1_000).toISOString());
   });
 });
 
@@ -281,6 +290,7 @@ describe('demoHomeSummary and markDemoImported', () => {
       address: '21 Alderbrook Road',
       areas: 6,
       items: 19,
+      done: 3,
       people: [
         { name: 'Stratis', emoji: '🦆', me: true },
         { name: 'Shea', emoji: '🦔', me: false },
@@ -305,6 +315,19 @@ describe('demoHomeSummary and markDemoImported', () => {
     expect(demoHomeSummary(doc)).toBeNull();
   });
 
+  it('marks the document declined: the offer does not come back, and nothing else changes', () => {
+    const storage = stored(USER_DEMO_DOC);
+    markDemoDeclined(storage, { at: '2026-10-09T20:00:00.000Z' });
+    const raw = JSON.parse(storage.getItem(DEMO_DOC_KEY)!);
+    expect(raw.declined).toEqual({ at: '2026-10-09T20:00:00.000Z' });
+    expect({ ...raw, declined: undefined }).toEqual({ ...USER_DEMO_DOC, declined: undefined });
+    const doc = readDemoDoc(storage)!;
+    expect(doc.declined).toEqual({ at: '2026-10-09T20:00:00.000Z' });
+    expect(demoHomeSummary(doc)).toBeNull();
+    // The home can still be read (and so brought over, if that were ever asked for).
+    expect(buildImportPayload(doc)).not.toBeNull();
+  });
+
   it('leaves a missing or unwritable document alone', () => {
     const empty = new MemoryStorage();
     markDemoImported(empty, { at: 'x', household_id: 'h' });
@@ -320,5 +343,31 @@ describe('demoHomeSummary and markDemoImported', () => {
         { at: 'x', household_id: 'h' },
       ),
     ).not.toThrow();
+  });
+});
+
+describe('a home the demo set up itself (DemoBackend.createHousehold)', () => {
+  it('comes with the made-up history, which stays behind; what was really done comes along', async () => {
+    const raw = await demoCreatedDoc();
+    const doc = readDemoDoc(stored(raw))!;
+    // As on the user's phone: 111 made-up completions, one real one.
+    expect(doc.completions).toHaveLength(112);
+    const payload = buildImportPayload(doc)!;
+    expect(payload.completions).toHaveLength(1);
+    expect(payload.completions[0]).toMatchObject({ completed_at: '2026-10-09T09:12:00.000Z', credited_to: 'p2', completed_by: 'p1' });
+    expect(payload.completions[0].item).not.toBeNull();
+    // Shea and Ela come along as people, without their made-up emails.
+    expect(payload.people.map((p) => [p.name, p.me ?? false])).toEqual([
+      ['Stratis', true],
+      ['Shea', false],
+      ['Ela', false],
+    ]);
+    const summary = demoHomeSummary(doc)!;
+    expect(summary).toMatchObject({ householdName: 'Our home', done: 1 });
+    expect(summary.items).toBe(payload.items.filter((i) => i.status === 'open').length);
+
+    if (process.env.UPDATE_IMPORT_FIXTURE) writeFileSync(CREATED_PAYLOAD_FILE, `${JSON.stringify(payload, null, 2)}\n`);
+    const file = JSON.parse(readFileSync(CREATED_PAYLOAD_FILE, 'utf8')) as ImportPayload;
+    expect(payload).toEqual(file);
   });
 });

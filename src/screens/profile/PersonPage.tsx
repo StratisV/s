@@ -167,9 +167,19 @@ function PersonEmail({ member }: { member: Member }) {
   );
 }
 
+/**
+ * What removing someone does, for the confirmation: their items become unassigned, and what
+ * they did leaves Stats (completions credited to them are credited to nobody).
+ */
+export function removeMessage(member: Pick<Member, 'id'>, completions: { credited_to: string | null }[]): string {
+  const done = completions.filter((c) => c.credited_to === member.id).length;
+  if (done === 0) return 'Their items become unassigned.';
+  return `Their items become unassigned and their ${done} done ${done === 1 ? 'task leaves' : 'tasks leave'} Stats.`;
+}
+
 /** "Remove Shea", confirmed: their items become unassigned. Then back to Household. */
 function RemovePerson({ member, onRemoved }: { member: Member; onRemoved(): void }) {
-  const { removePerson } = useHousehold();
+  const { data, removePerson } = useHousehold();
   const [confirm, setConfirm] = useState(false);
   return (
     <>
@@ -181,7 +191,7 @@ function RemovePerson({ member, onRemoved }: { member: Member; onRemoved(): void
       <ActionSheet
         open={confirm}
         title={`Remove ${member.name}?`}
-        message="Their items become unassigned."
+        message={removeMessage(member, data.completions)}
         actions={[
           {
             label: 'Remove',

@@ -148,6 +148,21 @@ export interface HouseholdData {
 export interface InvitePreview {
   household_name: string;
   address: string;
+  /**
+   * The people in the home who have not joined yet and have no email, in join order: the Join
+   * screen asks "Are you one of these people?", so nobody ends up there twice
+   * (JoinHouseholdInput.personId).
+   */
+  people: InvitePerson[];
+  /** Every emoji in use in the home, so a newcomer starts on one nobody has. */
+  emojis: string[];
+}
+
+/** Someone the home is waiting for, as an invite shows them. */
+export interface InvitePerson {
+  id: string;
+  name: string;
+  emoji: string;
 }
 
 /** An item from the client's notes list, seeded on household creation when asked. */
@@ -181,7 +196,9 @@ export interface CreateHouseholdInput {
 
 /**
  * Where the signed-in person belongs (Backend.enterHome, RPC enter_home), asked right after
- * sign-in:
+ * sign-in. `canImport` (member, claimed): the home is untouched (set up and not used since), so
+ * the home this phone kept in demo mode may still replace what is in it (importHousehold).
+ * The statuses:
  * - member: already in a home. Open it.
  * - claimed: someone at home had added a person with this account's verified email who had
  *   not joined yet. The account is now that person (their name, emoji, colour, items and Stats
@@ -194,8 +211,8 @@ export interface CreateHouseholdInput {
  *   not help (never the case for a Google account). Nothing about the home is revealed.
  */
 export type HomeEntry =
-  | { status: 'member'; householdId: string; memberId: string }
-  | { status: 'claimed'; householdId: string; memberId: string }
+  | { status: 'member'; householdId: string; memberId: string; canImport: boolean }
+  | { status: 'claimed'; householdId: string; memberId: string; canImport: boolean }
   | { status: 'no_home' }
   | { status: 'private'; email: string; emailVerified: boolean };
 
@@ -306,6 +323,8 @@ export interface DemoHomeSummary {
   areas: number;
   /** Open items that come along (To do and To maintain). */
   items: number;
+  /** Things done that come along (Stats history; the demo's made-up history stays behind). */
+  done: number;
   /** In join order; `me` is the person who becomes the signed-in account. */
   people: { name: string; emoji: string; me: boolean }[];
 }
@@ -314,6 +333,12 @@ export interface JoinHouseholdInput {
   token: string;
   memberName: string;
   memberEmoji: string;
+  /**
+   * "Are you one of these people?": join as this person the home is waiting for
+   * (InvitePreview.people), keeping their name, emoji and items; memberName and memberEmoji
+   * are then not applied. Omitted or null: join as someone new.
+   */
+  personId?: string | null;
 }
 
 /** Web Push subscription as produced by PushSubscription.toJSON(). */

@@ -298,7 +298,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 export function toHomeEntry(reply: unknown): HomeEntry {
   const r = isRecord(reply) ? reply : {};
   if ((r.status === 'member' || r.status === 'claimed') && typeof r.household_id === 'string' && typeof r.member_id === 'string') {
-    return { status: r.status, householdId: r.household_id, memberId: r.member_id };
+    return { status: r.status, householdId: r.household_id, memberId: r.member_id, canImport: r.can_import === true };
   }
   if (r.status === 'no_home') return { status: 'no_home' };
   if (r.status === 'private') {
@@ -644,6 +644,11 @@ export class SupabaseBackend implements Backend {
   }
 
   async joinHousehold(input: JoinHouseholdInput): Promise<string> {
+    if (input.personId) {
+      // "Are you one of these people?": join as someone the home is waiting for.
+      if (!UUID.test(input.personId)) throw new BackendError('not_found');
+      return run<string>(this.client.rpc('join_as_person', { p_token: input.token, p_member_id: input.personId }));
+    }
     return run<string>(
       this.client.rpc('join_household', {
         p_token: input.token,
@@ -654,9 +659,24 @@ export class SupabaseBackend implements Backend {
   }
 
   async getInvitePreview(token: string): Promise<InvitePreview | null> {
-    const data = await run<Partial<InvitePreview> | null>(this.client.rpc('invite_preview', { p_token: token }));
+    const data = await run<Record<string, unknown> | null>(this.client.rpc('invite_preview', { p_token: token }));
     if (!data || typeof data.household_name !== 'string') return null;
-    return { household_name: data.household_name, address: data.address ?? '' };
+    const people = Array.isArray(data.people) ? data.people : [];
+    return {
+      household_name: data.household_name,
+      address: typeof data.address === 'string' ? data.address : '',
+      people: people
+        .filter(isRecord)
+        .filter((p) => typeof p.id === 'string' && typeof p.name === 'string')
+        .map((p) => ({ id: p.id as string, name: p.name as string, emoji: typeof p.emoji === 'string' ? p.emoji : '' })),
+      emojis: Array.isArray(data.emojis) ? data.emojis.filter((e): e is string => typeof e === 'string') : [],
+    };
+  }
+
+  /** RPC release_claim(). */
+  async releaseClaim(): Promise<void> {
+    await this.userId();
+    await run<null>(this.client.rpc('release_claim'));
   }
 
   async createInvite(): Promise<string> {

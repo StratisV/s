@@ -248,13 +248,20 @@ test.describe('Sign-in and setup', () => {
     await expect(page.getByText(/invited to join a home/)).toHaveCount(0);
   });
 
-  test('an invite link that is not valid offers to set up a new home', async ({ page }) => {
+  test('an invite link that is not valid says so first; Check Again, and a new home only as the quiet way out', async ({
+    page,
+  }) => {
     await page.goto('/?demo-reset=1&invite=0123456789abcdef0123456789abcdef');
     await page.getByRole('button', { name: 'Continue with Google' }).click();
-    await page.getByRole('region', { name: 'Your profile' }).getByRole('button', { name: 'Continue' }).click();
+    // Before the profile, so nothing typed is thrown away.
     const invalid = page.getByRole('region', { name: 'Invite link not valid' });
     await expect(invalid.getByRole('heading', { name: 'Invite link not valid' })).toBeVisible();
+    await expect(invalid).toContainText('Ask whoever sent it to sign in to home.os first');
+    // The main action checks again; nothing changed, and it says so.
+    await invalid.getByRole('button', { name: 'Check Again' }).click();
+    await expect(invalid.getByRole('status')).toHaveText('No home here yet. Checked just now.');
     await invalid.getByRole('button', { name: 'Set up a new home instead' }).click();
+    await page.getByRole('region', { name: 'Your profile' }).getByRole('button', { name: 'Continue' }).click();
     await expect(page.getByRole('region', { name: 'Your home' }).getByRole('button', { name: 'Create Home' })).toBeVisible();
   });
 });

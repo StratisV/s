@@ -212,13 +212,22 @@ interface ReactionRow extends ChatReaction {
   household_id: string;
 }
 
+/** A member as stored: claimed_at (members.claimed_at) is kept for release_claim only. */
+interface MemberRow extends Member {
+  /** When an account became this person by a claim (null or missing otherwise). */
+  claimed_at?: ISOTimestamp | null;
+}
+
+/** How long after a claim "Not Shea?" (releaseClaim) may undo it, as release_claim. */
+const RELEASE_MS = 86_400_000;
+
 interface DemoDoc {
   version: 1;
   /** Signed-in user id, or null. */
   session: string | null;
   users: AuthUser[];
   households: HouseholdRow[];
-  members: Member[];
+  members: MemberRow[];
   areas: AreaRow[];
   items: ItemRow[];
   completions: CompletionRow[];
@@ -384,6 +393,7 @@ const toHousehold = (h: HouseholdRow): Household => ({
   weekly_email_time: h.weekly_email_time,
 });
 const toArea = (a: AreaRow): Area => ({ id: a.id, household_id: a.household_id, name: a.name, position: a.position });
+const toMember = ({ claimed_at: _c, ...member }: MemberRow): Member => member;
 const toItem = ({ completed_at: _c, ...item }: ItemRow): Item => item;
 const toCompletion = ({ prev_due_date: _d, prev_status: _s, ...c }: CompletionRow): Completion => c;
 const toReaction = ({ household_id: _h, ...r }: ReactionRow): ChatReaction => r;
@@ -607,14 +617,35 @@ export class DemoBackend implements Backend {
    */
   enterHome(): Promise<HomeEntry> {
     // Storing an unchanged document fires no storage event, so only a claim reaches other tabs.
+    // canImport is always false: the demo never brings a home over (it is where one comes from).
     return this.mutate((doc): HomeEntry => {
       const user = this.userIn(doc);
       const mine = doc.members.find((m) => m.user_id === user.id);
-      if (mine) return { status: 'member', householdId: mine.household_id, memberId: mine.id };
+      if (mine) return { status: 'member', householdId: mine.household_id, memberId: mine.id, canImport: false };
       const person = this.waitingWith(doc, normaliseEmail(user.email));
       if (!person) return { status: 'no_home' };
       person.user_id = user.id;
-      return { status: 'claimed', householdId: person.household_id, memberId: person.id };
+      person.claimed_at = this.stamp();
+      return { status: 'claimed', householdId: person.household_id, memberId: person.id, canImport: false };
+    });
+  }
+
+  /**
+   * release_claim on the demo document: within a day of a claim, the signed-in account stops
+   * being that person (back to not joined, without the email, its push subscriptions gone).
+   * not_found without a claim from the last day.
+   */
+  releaseClaim(): Promise<void> {
+    return this.mutate((doc) => {
+      const user = this.userIn(doc);
+      const mine = doc.members.find((m) => m.user_id === user.id);
+      const at = mine?.claimed_at ? new Date(mine.claimed_at).getTime() : NaN;
+      if (!mine || Number.isNaN(at) || this.now().getTime() - at > RELEASE_MS) throw new BackendError('not_found');
+      doc.push_subs = doc.push_subs.filter((sub) => sub.member_id !== mine.id);
+      mine.user_id = null;
+      mine.email = '';
+      mine.claimed_at = null;
+      mine.push_enabled = false;
     });
   }
 
@@ -622,7 +653,7 @@ export class DemoBackend implements Backend {
    * The earliest person (join order, then id) who has not joined yet and has `email`, in
    * `householdId` when given: the one a sign-in with that email becomes.
    */
-  private waitingWith(doc: DemoDoc, email: string, householdId?: string): Member | undefined {
+  private waitingWith(doc: DemoDoc, email: string, householdId?: string): MemberRow | undefined {
     if (!email) return undefined;
     return doc.members
       .filter(
@@ -745,7 +776,8 @@ export class DemoBackend implements Backend {
       const household = this.householdIn(doc, householdId);
       const members = doc.members
         .filter((m) => m.household_id === householdId)
-        .sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
+        .sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0))
+        .map(toMember);
       const areas = doc.areas
         .filter((a) => a.household_id === householdId)
         .sort((a, b) => a.position - b.position || (a.created_at < b.created_at ? -1 : 1))
@@ -985,12 +1017,32 @@ export class DemoBackend implements Backend {
         if (existing.household_id === invite.household_id) return existing.household_id;
         throw new BackendError('already_member');
       }
+      const email = normaliseEmail(user.email);
+      // "Are you one of these people?" (join_as_person): someone the home is waiting for, with
+      // no email or this account's; their email becomes the caller's unless someone has it.
+      if (input.personId) {
+        const person = doc.members.find(
+          (m) =>
+            m.id === input.personId &&
+            m.household_id === invite.household_id &&
+            !hasJoined(m) &&
+            (normaliseEmail(m.email) === '' || normaliseEmail(m.email) === email),
+        );
+        if (!person) throw new BackendError('not_found');
+        const taken = doc.members.some(
+          (m) => m.household_id === invite.household_id && m.id !== person.id && normaliseEmail(m.email) === email,
+        );
+        person.user_id = user.id;
+        person.email = taken ? '' : email;
+        person.claimed_at = this.stamp();
+        return invite.household_id;
+      }
       // Someone at home added this person with the caller's email (demo emails count as
       // verified): the caller becomes them, keeping their name, emoji and colour.
-      const email = normaliseEmail(user.email);
       const waiting = this.waitingWith(doc, email, invite.household_id);
       if (waiting) {
         waiting.user_id = user.id;
+        waiting.claimed_at = this.stamp();
         return invite.household_id;
       }
       const housemates = doc.members.filter((m) => m.household_id === invite.household_id);
@@ -1031,7 +1083,17 @@ export class DemoBackend implements Backend {
       const invite = this.validInvite(doc, token);
       if (!invite) return null;
       const h = this.householdIn(doc, invite.household_id);
-      return { household_name: h.name, address: h.address };
+      const people = doc.members
+        .filter((m) => m.household_id === h.id)
+        .sort((a, b) => compareText(a.created_at, b.created_at) || compareText(a.id, b.id));
+      return {
+        household_name: h.name,
+        address: h.address,
+        people: people
+          .filter((m) => !hasJoined(m) && normaliseEmail(m.email) === '')
+          .map((m) => ({ id: m.id, name: m.name, emoji: m.emoji })),
+        emojis: people.map((m) => m.emoji),
+      };
     });
   }
 

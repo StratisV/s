@@ -32,17 +32,37 @@ export async function one(sql, params) {
 }
 
 /**
- * Creates an auth.users row. Returns { id, email, name }. The email counts as verified
- * (email_confirmed_at set, as for every Google account) unless `verified` is false.
+ * The SQL that makes an account as Supabase Auth leaves it after a sign-in: an auth.users row
+ * and, unless `google` is false, a Google identity with the same email. The email counts as
+ * verified (email_confirmed_at set, and Google's email_verified true, as for every Google
+ * account) unless `verified` is false. `google: false` is an email and password account
+ * (confirmed or not), which never claims anyone. Run `run(sql, params)` for each statement.
  */
-export async function createUser({ name = 'Tester', email, verified = true } = {}) {
-  const id = randomUUID();
-  const mail = email ?? `test-${id.slice(0, 8)}@example.com`;
-  await db(
+export async function insertAuthUser(run, { id, email, name, verified = true, google = true }) {
+  await run(
     `insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at)
      values ($1, $2, $3, case when $4 then now() end)`,
-    [id, mail, JSON.stringify({ full_name: name }), verified],
+    [id, email, JSON.stringify({ full_name: name }), verified],
   );
+  if (google) {
+    const sub = `google-${id}`;
+    await run(
+      `insert into auth.identities (provider_id, user_id, identity_data, provider)
+       values ($1, $2, $3, 'google')`,
+      [sub, id, JSON.stringify({ sub, email, email_verified: verified, full_name: name })],
+    );
+  }
+}
+
+/**
+ * Creates an account (insertAuthUser). Returns { id, email, name }. A Google account whose
+ * email counts as verified unless `verified` is false; `google: false` for an email and
+ * password account.
+ */
+export async function createUser({ name = 'Tester', email, verified = true, google = true } = {}) {
+  const id = randomUUID();
+  const mail = email ?? `test-${id.slice(0, 8)}@example.com`;
+  await insertAuthUser(db, { id, email: mail, name, verified, google });
   createdUsers.add(id);
   return { id, email: mail, name };
 }

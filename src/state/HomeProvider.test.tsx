@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DemoBackend, DEMO_USER, type StorageLike } from '../lib/backend/demo';
 import { BackendError, type Backend } from '../lib/backend/types';
 import { buildImportPayload, DEMO_DOC_KEY, readDemoDoc } from '../lib/logic/importHome';
+import type { DemoHomeSummary } from '../lib/types';
 import { USER_DEMO_DOC } from '../lib/logic/importHome.fixture';
 import type { AuthUser, CreateHouseholdInput, HomeEntry, HouseholdData, ImportPayload } from '../lib/types';
 import {
@@ -371,9 +372,14 @@ describe('setup', () => {
     const { backend, home, storage } = await newcomer();
     vi.spyOn(backend, 'load').mockRejectedValueOnce(offline());
     await act(() => home().createHousehold(input));
-    expect(home().phase).toEqual({ kind: 'error', message: 'No connection. Try again in a moment.' });
+    expect(home().phase).toEqual({ kind: 'error', message: 'No connection. Try again in a moment.', offline: true });
 
-    // Try again reloads the app: it opens the home that was created.
+    // Try Again opens the home that was created, without a reload.
+    await act(() => home().retry());
+    expect(home().phase.kind).toBe('ready');
+    expect(home().data!.household.name).toBe('Alderbrook');
+
+    // And so does opening the app again.
     cleanup();
     const again = mount(new DemoBackend({ storage, search: '', latency: 0 }));
     await waitFor(() => expect(again().phase.kind).toBe('ready'));
@@ -591,6 +597,68 @@ describe('one home: where a person belongs', () => {
     expect(home().claimed).toBe(false);
   });
 
+  it('"Not Bobby?": gives the person back and signs out; a failure stays and says why', async () => {
+    const { hid, bobby, bob, server } = await homeWithBobWaiting();
+    const home = mount(bob);
+    await waitFor(() => expect(home().claimed).toBe(true));
+    const release = vi.spyOn(bob, 'releaseClaim').mockRejectedValueOnce(offline());
+    await act(async () => {
+      await expect(home().releaseClaim()).rejects.toThrow();
+    });
+    expect(home().phase.kind).toBe('ready');
+    expect(home().toast?.message).toBe('No connection. Try again in a moment.');
+
+    await act(() => home().releaseClaim());
+    expect(release).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(home().phase.kind).toBe('signedOut'));
+    expect(home().claimed).toBe(false);
+    const stratis = new DemoBackend({ storage: server, search: '', latency: 0 });
+    await stratis.signInWithGoogle();
+    expect((await stratis.load(hid)).members.find((m) => m.id === bobby.id)).toMatchObject({ user_id: null, email: '' });
+  });
+
+  it('joining as one of the people the home is waiting for: the welcome step as them', async () => {
+    const server = new MemoryStorage();
+    const stratis = new DemoBackend({ storage: server, search: '?demo-seed=1', latency: 0 });
+    const hid = (await stratis.getMyHouseholdId())!;
+    const ela = await stratis.addPerson(hid, { name: 'Ela K', emoji: '🐝', email: '' });
+    const token = await stratis.createInvite();
+    await stratis.signOut();
+    const bob = new DemoBackend({ storage: server, search: '', latency: 0, user: BOB });
+    await bob.signInWithGoogle();
+    const home = mount(bob);
+    await waitFor(() => expect(home().phase.kind).toBe('onboarding'));
+    await act(() => home().joinHousehold({ token, memberName: 'Bob', memberEmoji: '🦁', personId: ela.id }));
+    expect(home().phase.kind).toBe('ready');
+    expect(home().me).toMatchObject({ id: ela.id, name: 'Ela K', emoji: '🐝' });
+    expect(home().claimed).toBe(true);
+    expect(home().onboardingTail).toBe(true);
+  });
+
+  it('phase error: tries again by itself when back online or back in view, and Try Again works', async () => {
+    const { backend } = await seeded();
+    cleanup();
+    const enter = vi.spyOn(backend, 'enterHome').mockRejectedValue(offline());
+    const home = mount(backend);
+    await waitFor(() => expect(home().phase.kind).toBe('error'));
+    expect(home().phase).toMatchObject({ offline: true });
+    expect(enter).toHaveBeenCalledTimes(1);
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    await waitFor(() => expect(enter).toHaveBeenCalledTimes(2));
+    expect(home().phase.kind).toBe('error');
+    act(() => setVisibility('visible'));
+    await waitFor(() => expect(enter).toHaveBeenCalledTimes(3));
+    // The connection is back: the next try opens the home, with no reload.
+    enter.mockRestore();
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    await waitFor(() => expect(home().phase.kind).toBe('ready'));
+    expect(home().data).not.toBeNull();
+  });
+
   it('a member opens the home with no welcome; signing out clears the steps', async () => {
     const { home, backend } = await seeded();
     expect(home().claimed).toBe(false);
@@ -679,11 +747,13 @@ describe('one home: bring over the home from this phone', () => {
 
   it('offers the home this browser kept, with what comes along', async () => {
     const { home } = await noHomeYet({ supabase: true });
-    expect(home().demoImport).toEqual({
+    expect(home().demoImportMode).toBe('create');
+    expect(home().demoImport).toEqual<DemoHomeSummary>({
       householdName: 'Our home',
       address: '21 Alderbrook Road',
       areas: 6,
       items: 19,
+      done: 3,
       people: [
         { name: 'Stratis', emoji: '🦆', me: true },
         { name: 'Shea', emoji: '🦔', me: false },
@@ -710,13 +780,46 @@ describe('one home: bring over the home from this phone', () => {
     expect(home().demoImport).toBeNull();
   });
 
-  it('Start Fresh hides the offer for the session', async () => {
+  it('Start Fresh hides the offer for the session; Back brings it back until a home is created', async () => {
     const { home } = await noHomeYet({ supabase: true });
+    expect(home().canReopenDemoImport).toBe(false);
     act(() => home().declineDemoImport());
     expect(home().demoImport).toBeNull();
+    expect(home().canReopenDemoImport).toBe(true);
     await act(() => home().recheckHome());
     expect(home().phase.kind).toBe('onboarding');
     expect(home().demoImport).toBeNull();
+    // Profile's Back: the offer again.
+    act(() => home().reopenDemoImport());
+    expect(home().demoImport).not.toBeNull();
+    expect(home().demoImportMode).toBe('create');
+    expect(home().canReopenDemoImport).toBe(false);
+    // Start Fresh again, then Create Home: the phone's home is turned down for good.
+    act(() => home().declineDemoImport());
+    await act(() =>
+      home().createHousehold({
+        name: 'New home',
+        address: '',
+        timezone: 'Europe/London',
+        memberName: 'Stratis',
+        memberEmoji: '🦆',
+        areas: ['Kitchen'],
+        items: [],
+      }),
+    );
+    expect(home().phase.kind).toBe('ready');
+    expect(home().canReopenDemoImport).toBe(false);
+    expect(JSON.parse(localStorage.getItem(DEMO_DOC_KEY)!).declined).toMatchObject({ at: expect.any(String) });
+    expect(home().demoImport).toBeNull();
+  });
+
+  it('"This home is private": says the phone’s home can’t come over now', async () => {
+    const { demo, home } = await noHomeYet({ supabase: true });
+    vi.spyOn(demo, 'enterHome').mockResolvedValue(privateEntry);
+    await act(() => home().recheckHome());
+    expect(home().phase.kind).toBe('private');
+    expect(home().demoImportMode).toBe('blocked');
+    expect(home().demoImport).toMatchObject({ householdName: 'Our home', items: 19 });
   });
 
   it('a home set up meanwhile: moves to where this person belongs and says why', async () => {
@@ -750,6 +853,108 @@ describe('one home: bring over the home from this phone', () => {
     });
     expect(home().phase.kind).toBe('onboarding');
     expect(home().demoImport).not.toBeNull();
+  });
+
+  /** Signed in (as the "Supabase" build) in a home made on another device, with this phone's demo home in storage. */
+  async function memberElsewhere(canImport: boolean) {
+    const server = new MemoryStorage();
+    const demo = new DemoBackend({ storage: server, search: '', latency: 0 });
+    await demo.signInWithGoogle();
+    const hid = await demo.createHousehold({
+      name: 'Laptop home',
+      address: '',
+      timezone: 'Europe/London',
+      memberName: 'Stratis',
+      memberEmoji: '🦆',
+      areas: ['Kitchen'],
+      items: [],
+    });
+    const real = demo.enterHome.bind(demo);
+    vi.spyOn(demo, 'enterHome').mockImplementation(async () => {
+      const entry = await real();
+      return entry.status === 'member' || entry.status === 'claimed' ? { ...entry, canImport } : entry;
+    });
+    const home = mount(asSupabase(demo));
+    await waitFor(() => expect(home().phase.kind).toBe('ready'));
+    return { demo, home, hid };
+  }
+
+  it('in a home with nothing in it yet: offered to replace it, before the home opens', async () => {
+    const { demo, home, hid } = await memberElsewhere(true);
+    expect(home().onboardingTail).toBe(true);
+    expect(home().demoImportMode).toBe('replace');
+    expect(home().demoImport).toMatchObject({ householdName: 'Our home' });
+    const imported = vi.spyOn(demo, 'importHousehold').mockResolvedValue(hid);
+    await act(() => home().importDemoHome());
+    expect(imported).toHaveBeenCalledWith(buildImportPayload(readDemoDoc(localStorage)!));
+    expect(home().phase.kind).toBe('ready');
+    expect(home().demoImport).toBeNull();
+    // Next: the people who came along, then notifications.
+    expect(home().invitePeople).toBe(true);
+    expect(home().onboardingTail).toBe(true);
+    expect(JSON.parse(localStorage.getItem(DEMO_DOC_KEY)!).imported).toMatchObject({ household_id: hid });
+    act(() => home().doneInvitingPeople());
+    expect(home().invitePeople).toBe(false);
+  });
+
+  it('someone started using that home meanwhile: the offer turns into "it can’t come over"', async () => {
+    const { demo, home } = await memberElsewhere(true);
+    vi.spyOn(demo, 'importHousehold').mockRejectedValue(new BackendError('already_member'));
+    await act(async () => {
+      await expect(home().importDemoHome()).rejects.toMatchObject({ code: 'already_member' });
+    });
+    expect(home().demoImportMode).toBe('blocked');
+    expect(home().demoImport).not.toBeNull();
+  });
+
+  it('Keep: turned down for good, and the home opens', async () => {
+    const { home } = await memberElsewhere(true);
+    act(() => home().declineDemoImport());
+    expect(home().demoImport).toBeNull();
+    expect(home().onboardingTail).toBe(false);
+    expect(JSON.parse(localStorage.getItem(DEMO_DOC_KEY)!).declined).toBeTruthy();
+  });
+
+  it('in a home already in use: says once that the phone’s home stays there', async () => {
+    const first = await memberElsewhere(false);
+    expect(first.home().demoImportMode).toBe('blocked');
+    expect(first.home().onboardingTail).toBe(true);
+    act(() => first.home().declineDemoImport());
+    expect(first.home().onboardingTail).toBe(false);
+    expect(first.home().demoImport).toBeNull();
+    // Not again on this phone.
+    cleanup();
+    const again = mount(asSupabase(first.demo));
+    await waitFor(() => expect(again().phase.kind).toBe('ready'));
+    expect(again().onboardingTail).toBe(false);
+    expect(again().demoImport).toBeNull();
+  });
+
+  it('in the home this phone brought over (a reply that was lost): marked, never offered again', async () => {
+    const server = new MemoryStorage();
+    const demo = new DemoBackend({ storage: server, search: '', latency: 0 });
+    await demo.signInWithGoogle();
+    // The server has the phone's home: same name, areas, people and open items.
+    const payload = buildImportPayload(readDemoDoc(localStorage)!)!;
+    const hid = await demo.createHousehold({
+      name: payload.household.name,
+      address: payload.household.address,
+      timezone: 'Europe/London',
+      memberName: 'Stratis',
+      memberEmoji: '🦆',
+      areas: payload.areas.map((a) => a.name),
+      items: [],
+    });
+    const data = await demo.load(hid);
+    for (const item of payload.items.filter((i) => i.status === 'open')) {
+      const area = data.areas[Number(item.area.slice(1)) - 1];
+      await demo.createItem(hid, { ...item, area_id: area.id, assignee_id: null });
+    }
+    const home = mount(asSupabase(demo));
+    await waitFor(() => expect(home().phase.kind).toBe('ready'));
+    expect(home().demoImport).toBeNull();
+    expect(home().onboardingTail).toBe(false);
+    expect(JSON.parse(localStorage.getItem(DEMO_DOC_KEY)!).imported).toMatchObject({ household_id: hid });
   });
 
   it('no offer once the phone’s copy was brought over, or without one', async () => {
@@ -804,6 +1009,20 @@ describe('one home: Create home never makes a second home', () => {
     expect(home().phase.kind).toBe('ready');
     expect(home().data!.household.id).toBe(hid);
     expect(home().claimed).toBe(true);
+  });
+
+  it('the database refuses it (someone set one up a moment ago): moves to where this person belongs', async () => {
+    const { demo, home } = await noHomeYet({ supabase: true });
+    const enter = vi.spyOn(demo, 'enterHome');
+    // Still no home when asked first; by the time it creates, there is one.
+    vi.spyOn(demo, 'createHousehold').mockImplementation(async () => {
+      enter.mockResolvedValue(privateEntry);
+      throw new BackendError('home_exists');
+    });
+    await act(async () => {
+      await expect(home().createHousehold(create)).rejects.toMatchObject({ code: 'home_exists' });
+    });
+    expect(home().phase.kind).toBe('private');
   });
 
   it('still no home: creates it', async () => {

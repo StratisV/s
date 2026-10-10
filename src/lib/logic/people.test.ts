@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { emailTaken, hasJoined, isValidEmail, normaliseEmail } from './people';
+import { EMOJIS } from '../constants';
+import { emailTaken, firstFreeEmoji, hasJoined, isValidEmail, normaliseEmail } from './people';
 
 describe('hasJoined', () => {
   it('is true with an account and false while the person has not joined', () => {
@@ -41,5 +42,18 @@ describe('emailTaken', () => {
     expect(emailTaken(people, 'stratis@gmail.com', 'm1')).toBe(false);
     expect(emailTaken(people, '')).toBe(false);
     expect(emailTaken(people, 'shea@gmail.com')).toBe(false);
+  });
+});
+
+describe('firstFreeEmoji', () => {
+  it('is the first emoji in the grid nobody in the home has', () => {
+    expect(firstFreeEmoji([])).toBe('🦔');
+    // Stratis took the duck and Shea the hedgehog: the next person starts on the fox.
+    expect(firstFreeEmoji(['🦆', '🦔'])).toBe('🦊');
+    expect(firstFreeEmoji(['🦔', '🦆', '🦊', '🐻'])).toBe('🐼');
+  });
+
+  it('is the first one when every emoji is taken', () => {
+    expect(firstFreeEmoji([...EMOJIS])).toBe('🦔');
   });
 });

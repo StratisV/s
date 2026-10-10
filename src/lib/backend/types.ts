@@ -120,20 +120,36 @@ export interface Backend {
    * When the household has a person who has not joined yet with the caller's verified email,
    * the caller becomes that person (their name, emoji and colour are kept; memberName and
    * memberEmoji are not applied) instead of being added a second time.
+   * With `personId` ("Are you one of these people?", one of InvitePreview.people), the caller
+   * becomes that person instead (Supabase: RPC join_as_person); 'not_found' when they cannot
+   * be taken (joined meanwhile, removed, or given someone else's email).
    */
   joinHousehold(input: JoinHouseholdInput): Promise<string>;
+  /**
+   * "Not Shea?" on the welcome step after a claim: within a day of it, the signed-in account
+   * stops being that person, who goes back to "Not joined yet" without the email (it matched
+   * the wrong account). The account is then in no home. Supabase: RPC release_claim. Throws
+   * 'not_found' when there is no claim from the last day.
+   */
+  releaseClaim(): Promise<void>;
   /**
    * Creates the home from the data this phone kept in demo mode (buildImportPayload() in
    * lib/logic/importHome.ts), all or nothing; returns the household id. The person marked
    * `me` becomes the caller (owner); everyone else is added as not joined yet, without an
-   * email. Supabase: RPC import_household. Throws 'already_member' (the caller is in a home),
-   * 'home_exists' (a home exists: the caller should be added to it instead), or
+   * email. When the caller is in a home that is untouched (HomeEntry.canImport), the phone's
+   * home replaces what is in it instead, in place: its people stay (the caller as they are,
+   * the phone's people matched by name, the rest added as not joined yet).
+   * Supabase: RPC import_household. Throws 'already_member' (the caller is in a home that is
+   * in use), 'home_exists' (a home exists and the caller is not in it), or
    * BackendError('unknown', 'invalid_input…') for a payload it refuses. The demo backend does
    * not import (it is where the data comes from): it throws BackendError('unknown', 'not
    * supported in demo mode').
    */
   importHousehold(payload: ImportPayload): Promise<string>;
-  /** Household name/address for a valid, unexpired invite token; null otherwise. */
+  /**
+   * Household name and address, the people waiting to join without an email, and the emojis
+   * in use, for a valid, unexpired invite token; null otherwise.
+   */
   getInvitePreview(token: string): Promise<InvitePreview | null>;
   /** Creates a reusable invite token (valid 14 days) for the caller's household. */
   createInvite(): Promise<string>;

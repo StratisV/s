@@ -1,0 +1,354 @@
+{
+  "version": 1,
+  "household": {
+    "name": "Our home",
+    "address": "21 Alderbrook Road",
+    "timezone": "Europe/London"
+  },
+  "people": [
+    {
+      "key": "p1",
+      "name": "Stratis",
+      "emoji": "🦆",
+      "color": "#007AFF",
+      "me": true
+    },
+    {
+      "key": "p2",
+      "name": "Shea",
+      "emoji": "🦆",
+      "color": "#AF52DE"
+    },
+    {
+      "key": "p3",
+      "name": "Ela",
+      "emoji": "🦊",
+      "color": "#30B0C7"
+    }
+  ],
+  "areas": [
+    {
+      "key": "a1",
+      "name": "Kitchen"
+    },
+    {
+      "key": "a2",
+      "name": "Living Room"
+    },
+    {
+      "key": "a3",
+      "name": "Bathroom Small"
+    },
+    {
+      "key": "a4",
+      "name": "Bathroom Large"
+    },
+    {
+      "key": "a5",
+      "name": "Bedroom Small"
+    },
+    {
+      "key": "a6",
+      "name": "Bedroom Large"
+    },
+    {
+      "key": "a7",
+      "name": "Garden"
+    },
+    {
+      "key": "a8",
+      "name": "Garden Lounge"
+    },
+    {
+      "key": "a9",
+      "name": "Jacuzzi"
+    },
+    {
+      "key": "a10",
+      "name": "Hallway"
+    },
+    {
+      "key": "a11",
+      "name": "Front garden"
+    }
+  ],
+  "items": [
+    {
+      "key": "i1",
+      "area": "a1",
+      "kind": "task",
+      "title": "Kitchen paper",
+      "note": "Restocked.",
+      "good": "",
+      "rag": "green",
+      "due_date": "2026-11-05",
+      "repeat": "monthly",
+      "notify": "day_before",
+      "status": "open",
+      "assignee": "p1",
+      "created_by": "p1",
+      "updated_by": "p1",
+      "created_at": "2026-10-08T09:12:00.000Z",
+      "updated_at": "2026-10-08T09:12:00.000Z",
+      "completed_at": null
+    },
+    {
+      "key": "i2",
+      "area": "a1",
+      "kind": "task",
+      "title": "Olive oil",
+      "note": "Restocked, 5L tin is in the pantry.",
+      "good": "",
+      "rag": "green",
+      "due_date": "2026-11-12",
+      "repeat": "monthly",
+      "notify": "day_before",
+      "status": "open",
+      "assignee": "p1",
+      "created_by": "p1",
+      "updated_by": "p1",
+      "created_at": "2026-10-08T09:12:00.001Z",
+      "updated_at": "2026-10-08T09:12:00.001Z",
+      "completed_at": null
+    },
+    {
+      "key": "i3",
+      "area": "a2",
+      "kind": "task",
+      "title": "Mirror lights not level",
+      "note": "One is 3cm higher. We need to bring someone in to make it even.",
+      "good": "",
+      "rag": "amber",
+      "due_date": "2026-10-20",
+      "repeat": "none",
+      "notify": "day_before",
+      "status": "open",
+      "assignee": null,
+      "created_by": "p1",
+      "updated_by": "p1",
+      "created_at": "2026-10-08T09:12:00.002Z",
+      "updated_at": "2026-10-08T09:12:00.002Z",
+      "completed_at": null
+    },
+    {
+      "key": "i4",
+      "area": "a3",
+      "kind": "task",
+      "title": "Re-seal around the shower",
+      "note": "Mould starting in the corner.",
+      "good": "",
+      "rag": "amber",
+      "due_date": "2026-10-24",
+      "repeat": "none",
+      "notify": "day_before",
+      "status": "open",
+      "assignee": "p2",
+      "created_by": "p1",
+      "updated_by": "p1",
+      "created_at": "2026-10-08T09:12:00.003Z",
+      "updated_at": "2026-10-08T09:12:00.003Z",
+      "completed_at": null
+    },
+    {
+      "key": "i5",
+      "area": "a4",
+      "kind": "task",
+      "title": "Shower draining slowly",
+      "note": "Tried the plunger, still slow.",
+      "good": "",
+      "rag": "amber",
+      "due_date": "2026-10-14",
+      "repeat": "none",
+      "notify": "day_before",
+      "status": "open",
+      "assignee": "p2",
+      "created_by": "p1",
+      "updated_by": "p1",
+      "created_at": "2026-10-08T09:12:00.004Z",
+      "updated_at": "2026-10-08T09:12:00.004Z",
+      "completed_at": null
+    },
+    {
+      "key": "i6",
+      "area": "a6",
+      "kind": "task",
+      "title": "Wardrobe door hinge",
+      "note": "Works, but squeaks.",
+      "good": "",
+      "rag": "green",
+      "due_date": "2026-10-31",
+      "repeat": "none",
+      "notify": "day_before",
+      "status": "open",
+      "assignee": "p1",
+      "created_by": "p1",
+      "updated_by": "p1",
+      "created_at": "2026-10-08T09:12:00.005Z",
+      "updated_at": "2026-10-08T09:12:00.005Z",
+      "completed_at": null
+    },
+    {
+      "key": "i7",
+      "area": "a7",
+      "kind": "task",
+      "title": "Garden room wall panel",
+      "note": "Collapsed where it was cut for the AC. Solved for now, but the solution is not the most elegant.",
+      "good": "",
+      "rag": "amber",
+      "due_date": "2026-10-30",
+      "repeat": "none",
+      "notify": "day_before",
+      "status": "open",
+      "assignee": "p1",
+      "created_by": "p1",
+      "updated_by": "p1",
+      "created_at": "2026-10-08T09:12:00.006Z",
+      "updated_at": "2026-10-08T09:12:00.006Z",
+      "completed_at": null
+    },
+    {
+      "key": "i8",
+      "area": "a7",
+      "kind": "task",
+      "title": "Give away the old firepit",
+      "note": "Ela will take it, she has a garden. She will confirm next week.",
+      "good": "",
+      "rag": "green",
+      "due_date": "2026-10-15",
+      "repeat": "none",
+      "notify": "day_before",
+      "status": "open",
+      "assignee": "p3",
+      "created_by": "p1",
+      "updated_by": "p1",
+      "created_at": "2026-10-08T09:12:00.007Z",
+      "updated_at": "2026-10-08T09:12:00.007Z",
+      "completed_at": null
+    },
+    {
+      "key": "i9",
+      "area": "a7",
+      "kind": "state",
+      "title": "Firepit",
+      "note": "New one installed. Keep the cover on when it's not in use.",
+      "good": "Cover on when not in use, ash cleared out, logs dry and stacked under the bench.",
+      "rag": "green",
+      "due_date": null,
+      "repeat": "none",
+      "notify": "none",
+      "status": "open",
+      "assignee": "p3",
+      "created_by": "p1",
+      "updated_by": "p1",
+      "created_at": "2026-10-08T09:12:00.008Z",
+      "updated_at": "2026-10-08T09:12:00.008Z",
+      "completed_at": null
+    },
+    {
+      "key": "i10",
+      "area": "a8",
+      "kind": "task",
+      "title": "Clean cushions before winter",
+      "note": "",
+      "good": "",
+      "rag": "green",
+      "due_date": "2026-10-31",
+      "repeat": "none",
+      "notify": "day_before",
+      "status": "open",
+      "assignee": "p3",
+      "created_by": "p1",
+      "updated_by": "p1",
+      "created_at": "2026-10-08T09:12:00.009Z",
+      "updated_at": "2026-10-08T09:12:00.009Z",
+      "completed_at": null
+    },
+    {
+      "key": "i11",
+      "area": "a9",
+      "kind": "task",
+      "title": "Water test strips running low",
+      "note": "Order a new pack.",
+      "good": "",
+      "rag": "amber",
+      "due_date": "2026-10-12",
+      "repeat": "none",
+      "notify": "day_before",
+      "status": "open",
+      "assignee": null,
+      "created_by": "p1",
+      "updated_by": "p1",
+      "created_at": "2026-10-08T09:12:00.010Z",
+      "updated_at": "2026-10-08T09:12:00.010Z",
+      "completed_at": null
+    },
+    {
+      "key": "i12",
+      "area": "a9",
+      "kind": "task",
+      "title": "Change the filter",
+      "note": "",
+      "good": "",
+      "rag": "green",
+      "due_date": "2026-11-20",
+      "repeat": "monthly",
+      "notify": "day_before",
+      "status": "open",
+      "assignee": "p2",
+      "created_by": "p1",
+      "updated_by": "p1",
+      "created_at": "2026-10-08T09:12:00.011Z",
+      "updated_at": "2026-10-09T09:12:00.000Z",
+      "completed_at": null
+    },
+    {
+      "key": "i13",
+      "area": "a10",
+      "kind": "task",
+      "title": "Heaters not working",
+      "note": "No heat since the weekend. Engineer needs booking.",
+      "good": "",
+      "rag": "red",
+      "due_date": "2026-10-06",
+      "repeat": "none",
+      "notify": "day_before",
+      "status": "open",
+      "assignee": "p2",
+      "created_by": "p1",
+      "updated_by": "p1",
+      "created_at": "2026-10-08T09:12:00.012Z",
+      "updated_at": "2026-10-08T09:12:00.012Z",
+      "completed_at": null
+    },
+    {
+      "key": "i14",
+      "area": "a11",
+      "kind": "task",
+      "title": "Trim the hedges",
+      "note": "",
+      "good": "",
+      "rag": "green",
+      "due_date": "2026-11-02",
+      "repeat": "quarterly",
+      "notify": "day_before",
+      "status": "open",
+      "assignee": null,
+      "created_by": "p1",
+      "updated_by": "p1",
+      "created_at": "2026-10-08T09:12:00.013Z",
+      "updated_at": "2026-10-08T09:12:00.013Z",
+      "completed_at": null
+    }
+  ],
+  "completions": [
+    {
+      "item": "i12",
+      "item_title": "Change the filter",
+      "credited_to": "p2",
+      "completed_by": "p1",
+      "completed_at": "2026-10-09T09:12:00.000Z",
+      "prev_due_date": "2026-10-20",
+      "prev_status": "open"
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { expect, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test';
+import pg from 'pg';
 import { liveEnv } from './env';
 
 // Helpers for the live two-device tests: accounts made with the GoTrue admin API, sessions
@@ -38,7 +39,11 @@ async function api<T>(path: string, init: RequestInit & { key: 'anon' | 'service
   return (text ? JSON.parse(text) : null) as T;
 }
 
-/** A confirmed account, as a Google sign-in would leave it (verified email, a full name). */
+/**
+ * An account as a Google sign-in would leave it: a verified email, a full name, and a Google
+ * identity with that email (only a Google-verified email claims a person, verified_email()).
+ * The identity is written with SQL: no API makes one without Google itself.
+ */
 export async function createAccount(key: string, googleName: string): Promise<Account> {
   const email = `${EMAIL_PREFIX}${key}-${RUN}@example.com`;
   const password = `pw-${randomBytes(12).toString('hex')}`;
@@ -47,7 +52,23 @@ export async function createAccount(key: string, googleName: string): Promise<Ac
     method: 'POST',
     body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { full_name: googleName } }),
   });
+  await sql(
+    `insert into auth.identities (provider_id, user_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
+     values ($1, $2, $3, 'google', now(), now(), now()) on conflict do nothing`,
+    [`google-${user.id}`, user.id, JSON.stringify({ sub: `google-${user.id}`, email, email_verified: true, full_name: googleName })],
+  );
   return { id: user.id, email, password, googleName };
+}
+
+/** One statement on the stack's database (as its owner). */
+async function sql(text: string, params: unknown[] = []): Promise<pg.QueryResult> {
+  const client = new pg.Client({ connectionString: env.dbUrl });
+  await client.connect();
+  try {
+    return await client.query(text, params);
+  } finally {
+    await client.end();
+  }
 }
 
 /** A session for the account (password grant), in the shape supabase-js stores. */
@@ -57,6 +78,24 @@ async function signIn(account: Account): Promise<unknown> {
     method: 'POST',
     body: JSON.stringify({ email: account.email, password: account.password }),
   });
+}
+
+/** Calls RPC `fn` as `account` (signed in with a password) and returns its reply. */
+export async function rpcAs<T>(account: Account, fn: string, args: Record<string, unknown> = {}): Promise<T> {
+  const session = (await signIn(account)) as { access_token: string };
+  const res = await fetch(`${env.url}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: { apikey: env.anonKey, Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(args),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`${fn}: HTTP ${res.status} ${text.slice(0, 300)}`);
+  return (text ? JSON.parse(text) : null) as T;
+}
+
+/** A fresh invite link's token for the home `account` is in (RPC create_invite as them). */
+export function createInviteAs(account: Account): Promise<string> {
+  return rpcAs<string>(account, 'create_invite');
 }
 
 /** Ids of every home in the database (the service role sees them all). */
@@ -128,6 +167,8 @@ export async function openDevice(
   baseURL: string,
   account: Account,
   extra: Record<string, string> = {},
+  /** Where the phone opens the app (an invite link, say). */
+  path = '/',
 ): Promise<Device> {
   const session = await signIn(account);
   const localStorage = [
@@ -154,7 +195,7 @@ export async function openDevice(
   page.on('request', (req) => pending.add(req));
   page.on('requestfinished', (req) => pending.delete(req));
   page.on('requestfailed', (req) => pending.delete(req));
-  await page.goto('/');
+  await page.goto(path);
   // Marks this page load: if the page reloads or navigates, the mark is gone (see expectNoReload).
   await page.evaluate(() => {
     (window as unknown as { __homeosLive?: string }).__homeosLive = 'same page';

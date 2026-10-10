@@ -1,9 +1,8 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type Ref } from 'react';
 import { TEXT_LIMITS } from '../../lib/constants';
-import { emailTaken, isValidEmail, normaliseEmail } from '../../lib/logic/people';
+import { emailTaken, firstFreeEmoji, isValidEmail, normaliseEmail } from '../../lib/logic/people';
 import { useHousehold } from '../../state/HomeProvider';
 import { Avatar } from '../../ui/Avatar';
-import { DEFAULT_EMOJI } from '../onboarding/setup';
 import { EmojiGrid } from './EmojiGrid';
 import { EMAIL_INVALID, EMAIL_TAKEN, GoogleEmailField, personErrorMessage } from './GoogleEmailField';
 import { BackButton, NavPage } from './NavPage';
@@ -31,7 +30,8 @@ export function AddPersonPage({ onBack, onAdded, backRef, nameRef }: AddPersonPa
   const { data, addPerson } = useHousehold();
   const emojiHeadingId = useId();
   const [name, setName] = useState('');
-  const [emoji, setEmoji] = useState(DEFAULT_EMOJI);
+  // The first emoji nobody at home has, so people stay easy to tell apart.
+  const [emoji, setEmoji] = useState(() => firstFreeEmoji(data.members.map((m) => m.emoji)));
   const [email, setEmail] = useState('');
   /** The email field has been left once: from then on a problem with it shows as you type. */
   const [checked, setChecked] = useState(false);

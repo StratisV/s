@@ -9,12 +9,15 @@
 // - That person becomes the Google account signing in now ("me"), keeping their demo name,
 //   emoji and colour. Everyone else in the home comes along as not joined yet, without the
 //   demo's made-up emails.
-// - Areas in order, every open and done item with all its fields and history, and every
-//   completion (Stats). Chat, invites and push subscriptions stay behind.
+// - Areas in order, every open and done item with all its fields and history, and every real
+//   completion (Stats). The made-up history the demo adds to every new home (no item, done
+//   before the home was set up) stays behind, as do chat, invites and push subscriptions.
 // - Text is trimmed and cut to the database's limits, and anything the database would refuse
 //   is repaired or left out (an item without a title, a done state, a completion without a
 //   time), so a payload from this builder is always accepted while no home exists.
 // - Afterwards the document is kept as it is, marked `imported`, so the offer never repeats.
+//   Turning the offer down for good (Start Fresh then creating a home, Keep, or the notice that
+//   it can't come over) marks it `declined`, which does the same.
 
 import { TEXT_LIMITS } from '../constants';
 import type {
@@ -41,6 +44,12 @@ export const DEMO_DOC_KEY = 'homeos.demo.v1';
 /** The most import_household takes of each list (the migration refuses more). */
 export const IMPORT_LIMITS = { people: 50, areas: 100, items: 2000, completions: 20000 } as const;
 
+/** Stored in the demo document once the offer was turned down for good. */
+export interface DemoDeclineMark {
+  /** When. */
+  at: ISOTimestamp;
+}
+
 /** Stored in the demo document once its home was brought over. */
 export interface DemoImportMark {
   /** When it was brought over. */
@@ -58,6 +67,7 @@ export interface StoredHousehold {
   name?: unknown;
   address?: unknown;
   timezone?: unknown;
+  created_at?: unknown;
 }
 export interface StoredMember {
   id: string;
@@ -119,6 +129,8 @@ export interface StoredDemoDoc {
   completions: StoredCompletion[];
   /** Set by markDemoImported(). */
   imported?: DemoImportMark;
+  /** Set by markDemoDeclined(). */
+  declined?: DemoDeclineMark;
 }
 
 // ── Reading and marking ──
@@ -153,6 +165,7 @@ export function readDemoDoc(storage: Pick<Storage, 'getItem'> | null | undefined
   const imported = isRecord(parsed.imported) && typeof parsed.imported.household_id === 'string'
     ? { at: String(parsed.imported.at ?? ''), household_id: parsed.imported.household_id }
     : undefined;
+  const declined = isRecord(parsed.declined) ? { at: String(parsed.declined.at ?? '') } : undefined;
   return {
     version: 1,
     session: typeof parsed.session === 'string' ? parsed.session : null,
@@ -162,6 +175,7 @@ export function readDemoDoc(storage: Pick<Storage, 'getItem'> | null | undefined
     items: rows<StoredItem>(parsed.items),
     completions: rows<StoredCompletion>(parsed.completions),
     ...(imported ? { imported } : {}),
+    ...(declined ? { declined } : {}),
   };
 }
 
@@ -171,14 +185,27 @@ export function readDemoDoc(storage: Pick<Storage, 'getItem'> | null | undefined
  * written is left alone (never throws).
  */
 export function markDemoImported(storage: Pick<Storage, 'getItem' | 'setItem'> | null | undefined, mark: DemoImportMark): void {
+  markDoc(storage, 'imported', mark);
+}
+
+/**
+ * Marks the stored demo document as turned down for good (`declined`), leaving everything else
+ * in it as it is, so the offer (and the notice that it can't come over) never comes back on
+ * this browser. Never throws.
+ */
+export function markDemoDeclined(storage: Pick<Storage, 'getItem' | 'setItem'> | null | undefined, mark: DemoDeclineMark): void {
+  markDoc(storage, 'declined', mark);
+}
+
+function markDoc(storage: Pick<Storage, 'getItem' | 'setItem'> | null | undefined, key: 'imported' | 'declined', mark: object) {
   try {
     const raw = storage?.getItem(DEMO_DOC_KEY);
     if (!raw) return;
     const doc: unknown = JSON.parse(raw);
     if (!isRecord(doc)) return;
-    storage?.setItem(DEMO_DOC_KEY, JSON.stringify({ ...doc, imported: mark }));
+    storage?.setItem(DEMO_DOC_KEY, JSON.stringify({ ...doc, [key]: mark }));
   } catch {
-    /* storage unavailable or full: the offer may show again, the import itself is done */
+    /* storage unavailable or full: the offer may show again */
   }
 }
 
@@ -262,10 +289,11 @@ function pick(doc: StoredDemoDoc): Picked | null {
 
 /**
  * What the offer shows: the demo home this browser holds. Null when there is nothing to bring
- * over (no document, no home in it) or it was brought over already (`imported`).
+ * over (no document, no home in it), it was brought over already (`imported`), or the offer
+ * was turned down for good (`declined`).
  */
 export function demoHomeSummary(doc: StoredDemoDoc | null): DemoHomeSummary | null {
-  if (!doc || doc.imported) return null;
+  if (!doc || doc.imported || doc.declined) return null;
   const payload = buildImportPayload(doc);
   if (!payload) return null;
   return {
@@ -273,8 +301,49 @@ export function demoHomeSummary(doc: StoredDemoDoc | null): DemoHomeSummary | nu
     address: payload.household.address,
     areas: payload.areas.length,
     items: payload.items.filter((i) => i.status === 'open').length,
+    done: payload.completions.length,
     people: payload.people.map((p) => ({ name: p.name, emoji: p.emoji, me: p.me === true })),
   };
+}
+
+/**
+ * Whether `home` (as loaded) is the home in `doc` brought over already: same name, the same
+ * areas in the same order, everyone from the phone there by name, and the same open items.
+ * For an import whose reply was lost (the document was never marked): it must not be offered,
+ * or said to be stuck on the phone, again.
+ */
+export function demoHomeMatches(
+  doc: StoredDemoDoc | null,
+  home: {
+    household: { name: string };
+    areas: { name: string }[];
+    members: { name: string }[];
+    items: { title: string }[];
+  },
+): boolean {
+  const payload = doc ? buildImportPayload(doc) : null;
+  if (!payload) return false;
+  const lower = (v: string) => v.trim().toLowerCase();
+  const sorted = (titles: string[]) => titles.map(lower).sort().join('\n');
+  const names = new Set(home.members.map((m) => lower(m.name)));
+  return (
+    lower(payload.household.name) === lower(home.household.name) &&
+    payload.areas.map((a) => lower(a.name)).join('\n') === home.areas.map((a) => lower(a.name)).join('\n') &&
+    payload.people.every((p) => names.has(lower(p.name))) &&
+    sorted(payload.items.filter((i) => i.status === 'open').map((i) => i.title)) === sorted(home.items.map((i) => i.title))
+  );
+}
+
+/**
+ * The made-up Stats history the demo adds to every home it sets up (DemoBackend addHistory):
+ * not linked to an item, and done no later than the home was set up. Anything really done in
+ * the demo was done after that (and was linked to its item, until the item was deleted).
+ */
+function seededHistory(c: StoredCompletion, householdCreated: number): boolean {
+  if (typeof c.item_id === 'string' && c.item_id !== '') return false;
+  if (Number.isNaN(householdCreated)) return false;
+  const at = typeof c.completed_at === 'string' ? Date.parse(c.completed_at) : NaN;
+  return !Number.isNaN(at) && at <= householdCreated;
 }
 
 /**
@@ -363,7 +432,10 @@ export function buildImportPayload(doc: StoredDemoDoc): ImportPayload | null {
   const completions: ImportCompletion[] = [];
   const byCompleted = (a: StoredCompletion, b: StoredCompletion) =>
     str(a.completed_at) < str(b.completed_at) ? -1 : str(a.completed_at) > str(b.completed_at) ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  const householdCreated = typeof household.created_at === 'string' ? Date.parse(household.created_at) : NaN;
   for (const c of doc.completions.filter((x) => x.household_id === household.id).sort(byCompleted)) {
+    // The demo's made-up history stays behind (it would read as real in Stats).
+    if (seededHistory(c, householdCreated)) continue;
     const title = text(c.item_title, TEXT_LIMITS.itemTitle);
     const completedAt = timestamp(c.completed_at);
     if (!title || !completedAt) continue;

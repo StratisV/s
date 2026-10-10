@@ -436,57 +436,21 @@
   ],
   "completions": [
     {
-      "item": null,
-      "item_title": "Clean the oven",
-      "credited_to": "p3",
-      "completed_by": "p3",
-      "completed_at": "2026-08-03T10:17:00.000Z",
-      "prev_due_date": null,
-      "prev_status": "open"
-    },
-    {
-      "item": null,
-      "item_title": "Mow the lawn",
-      "credited_to": "p1",
-      "completed_by": "p1",
-      "completed_at": "2026-09-12T14:34:00.000Z",
-      "prev_due_date": null,
-      "prev_status": "open"
-    },
-    {
-      "item": null,
-      "item_title": "Bleed the radiators",
-      "credited_to": "p2",
-      "completed_by": "p2",
-      "completed_at": "2026-10-04T11:45:00.000Z",
-      "prev_due_date": null,
-      "prev_status": "open"
-    },
-    {
-      "item": null,
-      "item_title": "Kitchen paper",
-      "credited_to": "p1",
-      "completed_by": "p1",
-      "completed_at": "2026-10-06T10:05:00.000Z",
-      "prev_due_date": null,
-      "prev_status": "open"
-    },
-    {
-      "item": null,
-      "item_title": "Install the new firepit",
-      "credited_to": "p3",
-      "completed_by": "p3",
-      "completed_at": "2026-10-07T18:20:00.000Z",
-      "prev_due_date": null,
-      "prev_status": "open"
-    },
-    {
       "item": "i20",
       "item_title": "Order water test strips",
       "credited_to": "p2",
       "completed_by": "p2",
       "completed_at": "2026-10-08T17:05:00.000Z",
       "prev_due_date": "2026-10-08",
+      "prev_status": "open"
+    },
+    {
+      "item": null,
+      "item_title": "Fix the doorbell",
+      "credited_to": "p1",
+      "completed_by": "p1",
+      "completed_at": "2026-10-09T07:40:00.000Z",
+      "prev_due_date": "2026-10-09",
       "prev_status": "open"
     },
     {

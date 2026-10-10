@@ -5,6 +5,7 @@ import { TEXT_LIMITS } from '../../lib/constants';
 import type { Member, NewPersonInput } from '../../lib/types';
 import type { HomeContextValue } from '../../state/HomeProvider';
 import { makeHome, MockHome, mockHome, person, setHome, updateHome } from '../testing/mockHome';
+import { removeMessage } from './PersonPage';
 import { ProfileScreen } from './ProfileScreen';
 
 vi.mock('../../state/HomeProvider', async (importOriginal) => {
@@ -99,9 +100,10 @@ describe('Add Person', () => {
     const name = await openAddPerson();
     expect(screen.getByRole('heading', { level: 1, name: 'Add Person' })).toBeTruthy();
     expect(name.maxLength).toBe(TEXT_LIMITS.memberName);
-    // 🦔 to start with.
+    // The first emoji nobody at home has: Stratis has the duck, Shea the hedgehog, so the fox.
     const grid = screen.getByRole('radiogroup', { name: 'Emoji' });
-    expect(within(grid).getByRole('radio', { name: '🦔' }).getAttribute('aria-checked')).toBe('true');
+    expect(within(grid).getByRole('radio', { name: '🦊' }).getAttribute('aria-checked')).toBe('true');
+    expect(within(grid).getByRole('radio', { name: '🦔' }).getAttribute('aria-checked')).toBe('false');
 
     const email = emailField();
     expect(email.type).toBe('email');
@@ -136,7 +138,7 @@ describe('Add Person', () => {
     const name = await openAddPerson();
     fireEvent.change(name, { target: { value: 'Robin' } });
     fireEvent.click(addButton());
-    await waitFor(() => expect(home.addPerson).toHaveBeenCalledWith({ name: 'Robin', emoji: '🦔', email: '' }));
+    await waitFor(() => expect(home.addPerson).toHaveBeenCalledWith({ name: 'Robin', emoji: '🦊', email: '' }));
     await waitFor(() => expect(members().map((m) => m.name)).toContain('Robin'));
   });
 
@@ -149,7 +151,7 @@ describe('Add Person', () => {
     expect(home.addPerson).not.toHaveBeenCalled();
     fireEvent.change(emailField(), { target: { value: 'robin@gmail.com' } });
     fireEvent.keyDown(emailField(), { key: 'Enter' });
-    await waitFor(() => expect(home.addPerson).toHaveBeenCalledWith({ name: 'Robin', emoji: '🦔', email: 'robin@gmail.com' }));
+    await waitFor(() => expect(home.addPerson).toHaveBeenCalledWith({ name: 'Robin', emoji: '🦊', email: 'robin@gmail.com' }));
   });
 
   it('is off while the email is not one, and says so once the field is left', async () => {
@@ -365,6 +367,27 @@ describe("A person's page", () => {
     expect(screen.getByText('shea@gmail.com')).toBeTruthy();
   });
 
+  it('Remove says when what they did leaves Stats', async () => {
+    const done = (id: string, credited: string | null) => ({
+      id,
+      household_id: 'h-1',
+      item_id: null,
+      item_title: 'Weeds',
+      credited_to: credited,
+      completed_by: credited,
+      completed_at: '2026-10-07T10:00:00.000Z',
+    });
+    const base = addsPeople();
+    await openPeople({
+      ...base,
+      data: { ...base.data!, completions: [done('c1', 'm-pat'), done('c2', 'm-pat'), done('c3', 'm-stratis')] },
+    });
+    await openPersonPage('Pat');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Pat' }));
+    const sheet = await screen.findByRole('alertdialog', { name: 'Remove Pat?' });
+    expect(sheet.textContent).toContain('Their items become unassigned and their 2 done tasks leave Stats.');
+  });
+
   it('Remove asks first, then removes them and goes back, focus on Add Person', async () => {
     const { home } = await openPeople(
       addsPeople({
@@ -389,5 +412,16 @@ describe("A person's page", () => {
     await waitFor(() => expect(screen.queryByRole('heading', { level: 1, name: 'Shea' })).toBeNull());
     expect(members().map((m) => m.name)).toEqual(['Stratis', 'Pat']);
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Add Person' })));
+  });
+});
+
+describe('removeMessage', () => {
+  it('says how many done tasks leave Stats with them, if any', () => {
+    const c = (credited: string | null) => ({ credited_to: credited });
+    expect(removeMessage({ id: 'm-pat' }, [])).toBe('Their items become unassigned.');
+    expect(removeMessage({ id: 'm-pat' }, [c('m-shea'), c(null)])).toBe('Their items become unassigned.');
+    expect(removeMessage({ id: 'm-pat' }, [c('m-pat'), c('m-shea')])).toBe(
+      'Their items become unassigned and their 1 done task leaves Stats.',
+    );
   });
 });

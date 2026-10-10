@@ -1,7 +1,7 @@
 // People in the home: who has joined, and the email rules the database applies
 // (supabase/migrations/20261010000500_one_home.sql).
 
-import { TEXT_LIMITS } from '../constants';
+import { EMOJIS, TEXT_LIMITS } from '../constants';
 import type { Member } from '../types';
 
 /**
@@ -31,4 +31,14 @@ export function emailTaken(members: Pick<Member, 'id' | 'email'>[], email: strin
   const wanted = normaliseEmail(email);
   if (!wanted) return false;
   return members.some((m) => m.id !== exceptId && normaliseEmail(m.email) === wanted);
+}
+
+/**
+ * The emoji a new person starts on (Add Person, and Your profile when joining): the first in
+ * the grid (EMOJIS) that nobody in the home has, so people stay easy to tell apart. All taken:
+ * the first one.
+ */
+export function firstFreeEmoji(taken: Iterable<string>): string {
+  const used = new Set(taken);
+  return EMOJIS.find((e) => !used.has(e)) ?? EMOJIS[0];
 }

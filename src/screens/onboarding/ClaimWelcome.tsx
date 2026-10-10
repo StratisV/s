@@ -1,5 +1,6 @@
 import { useId, useState } from 'react';
 import { useHome } from '../../state/HomeProvider';
+import { ActionSheet } from '../../ui/ActionSheet';
 import { Avatar } from '../../ui/Avatar';
 import { EmojiGrid } from './EmojiGrid';
 import shared from './Onboarding.module.css';
@@ -11,15 +12,30 @@ import { PrimaryButton, StepPage, type Enter } from './StepPage';
  * "Welcome home, Shea" (phase 'ready' with onboardingTail and claimed; docs/ARCHITECTURE.md
  * "One home"): sign-in just made this account the person someone at home had added. They keep
  * the name, emoji and colour already set; this step lets them confirm or change the emoji,
- * then the notifications step follows.
+ * then the notifications step follows. "Not Shea?" (asked first) gives the person back, without
+ * the email that matched, and signs out, for when someone at home put the wrong email on them.
  */
 export function ClaimWelcome({ enter }: { enter: Enter }) {
-  const { me, data, confirmClaimed } = useHome();
+  const { me, data, confirmClaimed, releaseClaim } = useHome();
   const [emoji, setEmoji] = useState(() => me?.emoji || DEFAULT_EMOJI);
   const [busy, setBusy] = useState(false);
+  const [confirmNotMe, setConfirmNotMe] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const emojiLabelId = useId();
   const name = me?.name ?? '';
   const title = name ? `Welcome home, ${name}` : 'Welcome home';
+
+  const notMe = async () => {
+    setConfirmNotMe(false);
+    if (leaving) return;
+    setLeaving(true);
+    try {
+      await releaseClaim();
+    } catch {
+      // The provider said why; stay so they can try again.
+      setLeaving(false);
+    }
+  };
 
   const confirm = async () => {
     if (busy) return;
@@ -57,14 +73,32 @@ export function ClaimWelcome({ enter }: { enter: Enter }) {
       <span id={emojiLabelId} className="visually-hidden">
         Your emoji
       </span>
-      <EmojiGrid value={emoji} onChange={setEmoji} labelledBy={emojiLabelId} disabled={busy} />
+      <EmojiGrid value={emoji} onChange={setEmoji} labelledBy={emojiLabelId} disabled={busy || leaving} />
 
       <div className={shared.spacer} />
       <div className={shared.footer}>
-        <PrimaryButton onClick={() => void confirm()} busy={busy}>
+        <PrimaryButton onClick={() => void confirm()} busy={busy} disabled={leaving}>
           Continue
         </PrimaryButton>
+        {name ? (
+          <button
+            type="button"
+            className={shared.textButton}
+            onClick={() => setConfirmNotMe(true)}
+            disabled={busy || leaving}
+            aria-busy={leaving || undefined}
+          >
+            Not {name}? Sign Out
+          </button>
+        ) : null}
       </div>
+      <ActionSheet
+        open={confirmNotMe}
+        title={`Not ${name}?`}
+        message={`You’ll be signed out and ${name} goes back to waiting to join. Ask someone at home to check the email they added for you.`}
+        actions={[{ label: 'Sign Out', destructive: true, onSelect: () => void notMe() }]}
+        onCancel={() => setConfirmNotMe(false)}
+      />
     </StepPage>
   );
 }

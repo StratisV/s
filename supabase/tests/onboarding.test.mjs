@@ -274,11 +274,14 @@ describe('invite_preview', () => {
   });
 
   test('valid token: household name and address, for any signed-in user', async () => {
+    // Since 20261010000500_one_home.sql it also lists the people waiting to join without an
+    // email (none here) and the emojis in use.
+    const preview = { household_name: 'Preview home', address: '7 Preview Lane', people: [], emojis: ['🦔'] };
     const stranger = await createUser();
-    assert.deepEqual(await rpc(stranger, 'invite_preview', [token]), { household_name: 'Preview home', address: '7 Preview Lane' });
-    assert.deepEqual(await rpc(stranger, 'invite_preview', [` ${token}\n`]), { household_name: 'Preview home', address: '7 Preview Lane' });
+    assert.deepEqual(await rpc(stranger, 'invite_preview', [token]), preview);
+    assert.deepEqual(await rpc(stranger, 'invite_preview', [` ${token}\n`]), preview);
     const other = await createHousehold();
-    assert.deepEqual(await rpc(other.owner, 'invite_preview', [token]), { household_name: 'Preview home', address: '7 Preview Lane' });
+    assert.deepEqual(await rpc(other.owner, 'invite_preview', [token]), preview);
   });
 
   test('unknown, empty or expired tokens: null', async () => {

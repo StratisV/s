@@ -5,6 +5,8 @@ export interface LiveEnv {
   url: string;
   anonKey: string;
   serviceKey: string;
+  /** The stack's database, for what the APIs can't do (an account's Google identity). */
+  dbUrl: string;
 }
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
@@ -22,11 +24,13 @@ export function liveEnv(): LiveEnv {
   let url = process.env.SUPABASE_TEST_URL ?? '';
   let anonKey = process.env.SUPABASE_TEST_ANON_KEY ?? '';
   let serviceKey = process.env.SUPABASE_TEST_SERVICE_KEY ?? '';
-  if (!url || !anonKey || !serviceKey) {
+  let dbUrl = process.env.SUPABASE_TEST_DB_URL ?? '';
+  if (!url || !anonKey || !serviceKey || !dbUrl) {
     const status = supabaseStatus();
     url ||= status.API_URL ?? '';
     anonKey ||= status.ANON_KEY ?? '';
     serviceKey ||= status.SERVICE_ROLE_KEY ?? '';
+    dbUrl ||= status.DB_URL ?? '';
   }
   if (!url || !anonKey || !serviceKey) {
     throw new Error(
@@ -41,10 +45,17 @@ export function liveEnv(): LiveEnv {
         'Set LIVE_E2E_ALLOW_REMOTE=1 to run them against a disposable remote project.',
     );
   }
+  if (!dbUrl) {
+    throw new Error('The live e2e tests need the stack database too: set SUPABASE_TEST_DB_URL (or run a local stack).');
+  }
+  if (!LOCAL_HOSTS.has(new URL(dbUrl).hostname) && process.env.LIVE_E2E_ALLOW_REMOTE !== '1') {
+    throw new Error('The live e2e tests only change a local database (set LIVE_E2E_ALLOW_REMOTE=1 for a disposable remote one).');
+  }
   process.env.SUPABASE_TEST_URL = url;
   process.env.SUPABASE_TEST_ANON_KEY = anonKey;
   process.env.SUPABASE_TEST_SERVICE_KEY = serviceKey;
-  return { url, anonKey, serviceKey };
+  process.env.SUPABASE_TEST_DB_URL = dbUrl;
+  return { url, anonKey, serviceKey, dbUrl };
 }
 
 /** `npx supabase status -o env` as a map ({} when the CLI or the stack is not there). */

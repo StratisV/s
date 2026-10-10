@@ -5,7 +5,14 @@ import { formatDay, todayIn } from '../lib/logic/dates';
 import { disablePush } from '../lib/push';
 import { forgetSharedLink } from '../lib/sharedLink';
 import { applyKindRules, nextDueDate } from '../lib/logic/items';
-import { buildImportPayload, demoHomeSummary, markDemoImported, readDemoDoc } from '../lib/logic/importHome';
+import {
+  buildImportPayload,
+  demoHomeMatches,
+  demoHomeSummary,
+  markDemoDeclined,
+  markDemoImported,
+  readDemoDoc,
+} from '../lib/logic/importHome';
 import { normaliseEmail } from '../lib/logic/people';
 import type {
   Area,
@@ -46,7 +53,23 @@ export type Phase =
    */
   | { kind: 'private'; user: AuthUser; email: string; emailVerified: boolean }
   | { kind: 'ready'; user: AuthUser }
-  | { kind: 'error'; message: string };
+  /**
+   * Something failed before the home could open (no connection, say). `offline`: it was the
+   * connection. retry() tries again, and runs by itself when the connection comes back or the
+   * app comes back into view.
+   */
+  | { kind: 'error'; message: string; offline: boolean };
+
+/**
+ * What the offer of the home this browser kept in demo mode does (docs/ARCHITECTURE.md "Bring
+ * over the home from this phone"):
+ * - 'create': no home exists yet (phase 'onboarding'): Bring It Over creates the home from it.
+ * - 'replace': the person is in a home that is untouched (HomeEntry.canImport; phase 'ready'
+ *   with onboardingTail): Bring It Over puts the phone's home into it, in place.
+ * - 'blocked': a home exists that is in use, or the person is not in one yet (phase 'private',
+ *   or 'ready' with onboardingTail): it can't come over now, and the screen says so.
+ */
+export type DemoImportMode = 'create' | 'replace' | 'blocked';
 
 export interface ToastState {
   id: number;
@@ -66,7 +89,11 @@ export interface HomeContextValue {
   today: ISODate;
   /** Invite token from a `?invite=` link, kept across the Google redirect. */
   pendingInvite: string | null;
-  /** True right after creating/joining/claiming/importing a household: Onboarding shows its last step(s). */
+  /**
+   * True right after creating/joining/claiming/importing a household, or when signing in finds
+   * the home this phone kept in demo mode (demoImport in phase 'ready'): Onboarding shows its
+   * last step(s).
+   */
   onboardingTail: boolean;
   /**
    * True right after sign-in claimed a person someone at home had added (enterHome
@@ -83,7 +110,20 @@ export interface HomeContextValue {
    * "not saved" toast) and rejects.
    */
   confirmClaimed(emoji: string): Promise<void>;
+  /**
+   * "Not Shea?" on the welcome step after a claim: Backend.releaseClaim() (the person goes back
+   * to waiting to join, without the email that matched this account), then signs out. A
+   * failure keeps the step, says why in a toast, and rejects.
+   */
+  releaseClaim(): Promise<void>;
   finishOnboarding(): void;
+  /**
+   * True right after bringing a home over (either way): Onboarding then asks for the Google
+   * emails of the people who came along without one, before the notifications step.
+   * doneInvitingPeople() moves on.
+   */
+  invitePeople: boolean;
+  doneInvitingPeople(): void;
   /** Forget the pending invite (declined, or signing out). */
   dismissInvite(): void;
 
@@ -93,9 +133,16 @@ export interface HomeContextValue {
    * Create home. On the Supabase backend it first asks enterHome() again: unless that is still
    * 'no_home' (someone set up the home meanwhile, or added this person), it moves to the
    * phase that gives and rejects with BackendError('home_exists') instead of creating a second
-   * home. The database does not stop create_household itself.
+   * home. The database refuses a second home too (home_exists, when someone set one up between
+   * that question and the create): then it asks enterHome() again and moves to that phase.
    */
   createHousehold(input: CreateHouseholdInput): Promise<void>;
+  /**
+   * Phase 'error': asks where this person belongs again (bootstrap, without the loading
+   * splash). HomeProvider also runs it by itself on 'online', and when the app comes back into
+   * view, while in that phase.
+   */
+  retry(): Promise<void>;
   /**
    * Join with an invite link. When the home has a person who has not joined yet with this
    * account's verified email, the account becomes that person (the typed name and emoji are
@@ -106,12 +153,17 @@ export interface HomeContextValue {
 
   // ── One home ──
   /**
-   * In phase 'onboarding' on the Supabase backend only: the home this browser kept in demo
-   * mode (readDemoDoc(localStorage) then demoHomeSummary()), offered as "Bring over the home
-   * from this phone" with "Start fresh" as the alternative. Null in demo mode, when there is
-   * none, when it was brought over already (marked imported), and after declineDemoImport().
+   * On the Supabase backend only: the home this browser kept in demo mode
+   * (readDemoDoc(localStorage) then demoHomeSummary()), with what can be done with it
+   * (demoImportMode): offered as "Bring over the home from this phone" in phase 'onboarding'
+   * ('create') and, while the person's home is untouched, in phase 'ready' with
+   * onboardingTail ('replace'); otherwise shown as something that can't come over ('blocked',
+   * on the private screen, and once in phase 'ready'). Null in demo mode, when there is none,
+   * when it was brought over already (marked imported) or turned down for good (marked
+   * declined), and after declineDemoImport().
    */
   demoImport: DemoHomeSummary | null;
+  demoImportMode: DemoImportMode | null;
   /**
    * "Bring It Over": reads the demo document again, Backend.importHousehold(
    * buildImportPayload(doc)), then markDemoImported(localStorage, {at, household_id}), then
@@ -122,8 +174,19 @@ export interface HomeContextValue {
    * the screen can say why (errorMessage). Any other failure keeps the offer and rejects.
    */
   importDemoHome(): Promise<void>;
-  /** "Start Fresh": demoImport becomes null for this session; the Profile and Create home steps follow. */
+  /**
+   * Turns the offer down. 'create' ("Start Fresh", after the screen asked): demoImport becomes
+   * null for this session and the Profile and Create home steps follow; creating the home then
+   * marks the document declined, so the offer never comes back. 'replace' (Keep) and 'blocked'
+   * (OK): marks it declined at once, and the steps go on (or the home opens).
+   */
   declineDemoImport(): void;
+  /**
+   * After Start Fresh, before a home is created: back to the offer (Profile's Back). True in
+   * canReopenDemoImport while that is possible.
+   */
+  reopenDemoImport(): void;
+  canReopenDemoImport: boolean;
   /**
    * Asks the server again where this person belongs (enterHome) and moves to the phase it
    * gives. The "This home is private" screen's Check Again; HomeProvider also runs it by
@@ -260,6 +323,13 @@ export function errorMessage(err: unknown): string {
   return 'Something went wrong. Try again.';
 }
 
+/** The 'error' phase for a failure: `offline` when it was the connection (or the browser says it is offline). */
+export function errorPhase(err: unknown): Extract<Phase, { kind: 'error' }> {
+  const offline =
+    (err instanceof BackendError && err.code === 'network') || (typeof navigator !== 'undefined' && navigator.onLine === false);
+  return { kind: 'error', message: errorMessage(err), offline };
+}
+
 /** The toast for a failed edit: it was not saved (the screen shows it as before), and why. */
 export function notSavedMessage(err: unknown, verb: 'save' | 'undo' = 'save'): string {
   const lead = `Couldn’t ${verb}.`;
@@ -381,10 +451,24 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
   const [data, setData] = useState<HouseholdData | null>(null);
   const [pendingInvite, setPendingInvite] = useState<string | null>(() => readInviteFromUrl());
   const [onboardingTail, setOnboardingTail] = useState(false);
+  /** onboardingTail as last set (actions decide from it before React renders). */
+  const tailRef = useRef(false);
+  const setTail = useCallback((on: boolean) => {
+    tailRef.current = on;
+    setOnboardingTail(on);
+  }, []);
   const [claimed, setClaimed] = useState(false);
   const [demoImport, setDemoImport] = useState<DemoHomeSummary | null>(null);
-  /** "Start Fresh": the import offer stays away for this session. */
+  const [demoImportMode, setDemoImportMode] = useState<DemoImportMode | null>(null);
+  /** The offer was turned down: it stays away for this session (and for good once marked declined). */
   const declinedImport = useRef(false);
+  /** Start Fresh this session, no home created yet: Profile's Back can bring the offer back. */
+  const [canReopenImport, setCanReopenImport] = useState(false);
+  /** The tail is only there for the offer (a member signing in): turning it down opens the home. */
+  const tailForOffer = useRef(false);
+  const [invitePeople, setInvitePeople] = useState(false);
+  /** A retry() is running (phase 'error'). */
+  const retrying = useRef(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [now, setNow] = useState(() => new Date());
   const householdIdRef = useRef<string | null>(null);
@@ -543,30 +627,50 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
   const enter = useCallback(
     async (u: AuthUser, entry: HomeEntry, session: number): Promise<Phase['kind'] | null> => {
       if (session !== epoch.current) return null;
+      // The home this browser kept in demo mode, unless it was turned down.
+      let offer = declinedImport.current ? null : demoImportOffer(backend);
       switch (entry.status) {
         case 'member':
         case 'claimed': {
           if (!(await loadHousehold(entry.householdId, true))) return null;
           if (session !== epoch.current) return null;
+          // This is that home, brought over by a tap whose reply was lost: mark it now.
+          const loaded = dataRef.current;
+          if (offer && loaded && demoHomeMatches(readDemoDoc(localStore()), loaded)) {
+            markDemoImported(localStore(), { at: new Date().toISOString(), household_id: loaded.household.id });
+            offer = null;
+          }
           if (entry.status === 'claimed') {
             setClaimed(true);
-            setOnboardingTail(true);
+            setTail(true);
+          }
+          // In a home already: the phone's home may still replace it while it is untouched;
+          // otherwise the person is told, once, that it can't come over.
+          setDemoImport(offer);
+          setDemoImportMode(offer ? (entry.canImport ? 'replace' : 'blocked') : null);
+          if (offer) {
+            if (!tailRef.current) tailForOffer.current = true;
+            setTail(true);
           }
           setPhase({ kind: 'ready', user: u });
           return 'ready';
         }
         case 'no_home':
           clearHousehold();
-          setDemoImport(declinedImport.current ? null : demoImportOffer(backend));
+          setDemoImport(offer);
+          setDemoImportMode(offer ? 'create' : null);
           setPhase({ kind: 'onboarding', user: u });
           return 'onboarding';
         case 'private':
           clearHousehold();
+          // A home exists that this person is not in: the phone's home can't come over now.
+          setDemoImport(offer);
+          setDemoImportMode(offer ? 'blocked' : null);
           setPhase({ kind: 'private', user: u, email: entry.email, emailVerified: entry.emailVerified });
           return 'private';
       }
     },
-    [backend, loadHousehold, clearHousehold],
+    [backend, loadHousehold, clearHousehold, setTail],
   );
 
   /** Decide the phase for a (possibly null) user. Resolves to the phase it settled on, or null if overtaken. */
@@ -577,9 +681,14 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       userRef.current = u;
       setUser(u);
       if (!u || (previous && previous.id !== u.id)) {
-        // A welcome or notifications step belongs to the person it was for.
+        // A welcome or notifications step, and turning the phone's home down, belong to the
+        // person they were for.
         setClaimed(false);
-        setOnboardingTail(false);
+        setTail(false);
+        setInvitePeople(false);
+        tailForOffer.current = false;
+        declinedImport.current = false;
+        setCanReopenImport(false);
       }
       if (!u) {
         clearHousehold();
@@ -596,12 +705,59 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         return await enter(u, entry, session);
       } catch (err) {
         if (session !== epoch.current) return null;
-        setPhase({ kind: 'error', message: errorMessage(err) });
+        setPhase(errorPhase(err));
         return 'error';
       }
     },
-    [backend, enter, clearHousehold],
+    [backend, enter, clearHousehold, setTail],
   );
+
+  /**
+   * Phase 'error': decide again where this person belongs (as on start-up), without the loading
+   * splash. One at a time. When even the signed-in user cannot be read, the phase stays 'error'.
+   */
+  const retry = useCallback(async () => {
+    if (retrying.current) return;
+    retrying.current = true;
+    try {
+      let u: AuthUser | null;
+      try {
+        u = await backend.getUser();
+      } catch (err) {
+        setPhase(errorPhase(err));
+        return;
+      }
+      await bootstrap(u);
+    } finally {
+      retrying.current = false;
+    }
+  }, [backend, bootstrap]);
+
+  // Phase 'error' (no connection when the app opened, say): try again by itself when the
+  // connection comes back, when the app comes back into view, and every 15 s while in view.
+  const isError = phase.kind === 'error';
+  useEffect(() => {
+    if (!isError) return;
+    const again = () => void retry().catch(() => {});
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') again();
+    };
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) again();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pageshow', onPageShow);
+    window.addEventListener('online', again);
+    const timer = setInterval(() => {
+      if (isVisible()) again();
+    }, RETRY_EVERY_MS);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pageshow', onPageShow);
+      window.removeEventListener('online', again);
+      clearInterval(timer);
+    };
+  }, [isError, retry]);
 
   /**
    * Asks enterHome() again and moves to the phase it gives, without the loading splash. A
@@ -629,7 +785,7 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
     backend
       .getUser()
       .then(handle)
-      .catch((err) => alive && setPhase({ kind: 'error', message: errorMessage(err) }));
+      .catch((err) => alive && setPhase(errorPhase(err)));
     const unsub = backend.onAuthChange(handle);
     return () => {
       alive = false;
@@ -842,19 +998,40 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
      * After a create or join succeeded: show the household. The household exists
      * now, so if loading it fails the form must not come back (a second tap would
      * only say "already part of a household"): show the error screen, whose
-     * Try again reloads straight into it.
+     * Try Again (retry) opens it.
      */
     const enterHousehold = async (u: AuthUser, session: number, hid: string) => {
       try {
         if (!(await loadHousehold(hid, true))) return;
       } catch (err) {
-        if (session === epoch.current) setPhase({ kind: 'error', message: errorMessage(err) });
+        if (session === epoch.current) setPhase(errorPhase(err));
         return;
       }
       if (session === epoch.current) setPhase({ kind: 'ready', user: u });
     };
 
     const isAlreadyMember = (err: unknown) => err instanceof BackendError && err.code === 'already_member';
+
+    const signOut = async () => {
+      dismissToast();
+      // Stop this device getting the previous person's pushes (only the owner can delete the row).
+      await disablePush(backend);
+      // An invite or shared link opened on this device shouldn't follow the next person who signs in.
+      clearStoredInvite();
+      setPendingInvite(null);
+      forgetSharedLink();
+      await backend.signOut();
+    };
+
+    /** The offer is over (brought over, or turned down): the steps go on, or the home opens. */
+    const closeOffer = () => {
+      setDemoImport(null);
+      setDemoImportMode(null);
+      if (tailForOffer.current) {
+        tailForOffer.current = false;
+        setTail(false);
+      }
+    };
 
     return {
       backend,
@@ -874,26 +1051,31 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         }
         setClaimed(false);
       },
-      finishOnboarding: () => {
-        setOnboardingTail(false);
-        setClaimed(false);
+      releaseClaim: async () => {
+        try {
+          await backend.releaseClaim();
+        } catch (err) {
+          showToast(errorMessage(err));
+          throw err;
+        }
+        await signOut();
       },
+      finishOnboarding: () => {
+        setTail(false);
+        setClaimed(false);
+        setInvitePeople(false);
+        tailForOffer.current = false;
+      },
+      invitePeople,
+      doneInvitingPeople: () => setInvitePeople(false),
       dismissInvite: () => {
         clearStoredInvite();
         setPendingInvite(null);
       },
 
       signIn: () => backend.signInWithGoogle(),
-      signOut: async () => {
-        dismissToast();
-        // Stop this device getting the previous person's pushes (only the owner can delete the row).
-        await disablePush(backend);
-        // An invite or shared link opened on this device shouldn't follow the next person who signs in.
-        clearStoredInvite();
-        setPendingInvite(null);
-        forgetSharedLink();
-        await backend.signOut();
-      },
+      signOut,
+      retry,
       createHousehold: async (input) => {
         if (!user) throw new BackendError('not_signed_in');
         const session = epoch.current;
@@ -906,12 +1088,12 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
             // Already a member: most likely an earlier tap created it and its reply was lost,
             // so the steps after a create follow.
             const tail = entry.status === 'member';
-            if (tail) setOnboardingTail(true);
+            if (tail) setTail(true);
             let landed: Phase['kind'] | null = null;
             try {
               landed = await enter(user, entry, session);
             } finally {
-              if (tail && landed !== 'ready') setOnboardingTail(false);
+              if (tail && landed !== 'ready') setTail(false);
             }
             throw new BackendError('home_exists');
           }
@@ -920,16 +1102,26 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         try {
           hid = await backend.createHousehold(input);
         } catch (err) {
+          if (err instanceof BackendError && err.code === 'home_exists' && session === epoch.current) {
+            // Someone set up the home a moment ago: go where this person belongs now.
+            await recheckHome().catch(() => null);
+            throw err;
+          }
           if (!isAlreadyMember(err) || session !== epoch.current) throw err;
           // Most likely an earlier tap created it but its reply was lost: open that home.
-          setOnboardingTail(true);
+          setTail(true);
           const landed = await bootstrap(user);
-          if (landed !== 'ready') setOnboardingTail(false);
+          if (landed !== 'ready') setTail(false);
           if (landed === 'onboarding') throw err;
           return;
         }
         if (session !== epoch.current) return;
-        setOnboardingTail(true);
+        // Start Fresh, then a new home: the home on this phone is not offered again.
+        if (declinedImport.current && backend.kind === 'supabase') {
+          markDemoDeclined(localStore(), { at: new Date().toISOString() });
+        }
+        setCanReopenImport(false);
+        setTail(true);
         await enterHousehold(user, session, hid);
       },
       joinHousehold: async (input) => {
@@ -949,23 +1141,35 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         if (session !== epoch.current) return;
         clearStoredInvite();
         setPendingInvite(null);
-        setOnboardingTail(true);
+        // Joined as one of the people the home was waiting for: welcome them as that person.
+        if (input.personId) setClaimed(true);
+        setTail(true);
         await enterHousehold(user, session, hid);
       },
       refresh: async () => {
         await refresh();
       },
 
-      demoImport: phase.kind === 'onboarding' ? demoImport : null,
+      demoImport:
+        phase.kind === 'onboarding' || phase.kind === 'private' || (phase.kind === 'ready' && onboardingTail)
+          ? demoImport
+          : null,
+      demoImportMode:
+        phase.kind === 'onboarding' || phase.kind === 'private' || (phase.kind === 'ready' && onboardingTail)
+          ? demoImport
+            ? demoImportMode
+            : null
+          : null,
       importDemoHome: async () => {
         if (!user) throw new BackendError('not_signed_in');
         const session = epoch.current;
+        const mode = demoImportMode;
         // Read again: the document may have changed (or been brought over) since the offer.
         const storage = localStore();
         const doc = readDemoDoc(storage);
-        const payload = doc && !doc.imported ? buildImportPayload(doc) : null;
+        const payload = doc && !doc.imported && !doc.declined ? buildImportPayload(doc) : null;
         if (!payload) {
-          setDemoImport(null);
+          closeOffer();
           throw new BackendError('not_found', 'No home to bring over');
         }
         let hid: string;
@@ -973,26 +1177,51 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
           hid = await backend.importHousehold(payload);
         } catch (err) {
           const code = err instanceof BackendError ? err.code : null;
-          if (session === epoch.current && (code === 'home_exists' || code === 'already_member')) {
+          if (session === epoch.current && mode === 'replace') {
+            // Someone started using the home meanwhile: it can't be replaced any more.
+            if (code === 'already_member') setDemoImportMode('blocked');
+          } else if (session === epoch.current && (code === 'home_exists' || code === 'already_member')) {
             // Someone set up the home meanwhile (or an earlier tap brought it over and its
             // reply was lost): go where this person belongs now, then say why.
             const tail = code === 'already_member';
-            if (tail) setOnboardingTail(true);
+            if (tail) setTail(true);
             const landed = await recheckHome().catch(() => null);
-            if (tail && landed !== 'ready') setOnboardingTail(false);
+            if (tail && landed !== 'ready') setTail(false);
+            if (tail && landed === 'ready') setInvitePeople(true);
           }
           throw err;
         }
         markDemoImported(storage, { at: new Date().toISOString(), household_id: hid });
         if (session !== epoch.current) return;
         setDemoImport(null);
-        setOnboardingTail(true);
+        setDemoImportMode(null);
+        tailForOffer.current = false;
+        // Next: the emails of the people who came along, then notifications.
+        setInvitePeople(true);
+        setTail(true);
         await enterHousehold(user, session, hid);
       },
       declineDemoImport: () => {
         declinedImport.current = true;
-        setDemoImport(null);
+        if (demoImportMode === 'create') {
+          // Start Fresh: for this session, until a home is created (Profile's Back undoes it).
+          setCanReopenImport(true);
+          setDemoImport(null);
+          setDemoImportMode(null);
+          return;
+        }
+        markDemoDeclined(localStore(), { at: new Date().toISOString() });
+        closeOffer();
       },
+      reopenDemoImport: () => {
+        if (phase.kind !== 'onboarding') return;
+        declinedImport.current = false;
+        setCanReopenImport(false);
+        const offer = demoImportOffer(backend);
+        setDemoImport(offer);
+        setDemoImportMode(offer ? 'create' : null);
+      },
+      canReopenDemoImport: phase.kind === 'onboarding' && canReopenImport,
       recheckHome: async () => {
         await recheckHome();
       },
@@ -1123,6 +1352,11 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
     onboardingTail,
     claimed,
     demoImport,
+    demoImportMode,
+    canReopenImport,
+    invitePeople,
+    setTail,
+    retry,
     refresh,
     loadHousehold,
     bootstrap,

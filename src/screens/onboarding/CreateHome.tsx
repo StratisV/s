@@ -3,6 +3,7 @@ import { DEFAULT_ADDRESS } from '../../lib/constants';
 import { deviceTimeZone } from '../../lib/logic/dates';
 import { seedItemsFor } from '../../lib/logic/items';
 import { errorMessage, useHome } from '../../state/HomeProvider';
+import { ActionSheet } from '../../ui/ActionSheet';
 import { ChevronLeftIcon } from '../../ui/icons';
 import { Toggle } from '../../ui/Toggle';
 import { AreasEditor } from './AreasEditor';
@@ -20,10 +21,20 @@ interface CreateHomeProps {
   onBack(): void;
 }
 
-/** Step 3 without an invite: name, address, areas, and whether to start with the current list. */
+/** Under Create Home, while this browser has no home of its own to bring over. */
+export const OTHER_PHONE_HINT = 'Used home.os on your phone before? Sign in on that phone first to bring your home over.';
+
+/**
+ * Step 3 without an invite: name, address, areas, and whether to start with the current list.
+ * One home per deployment, and a home kept on another phone can only come over while no home
+ * exists: so on the real backend, unless this browser's own home was just turned down (Start
+ * Fresh), it says so under the button and asks before creating.
+ */
 export function CreateHome({ enter, profile, value, onChange, onBack }: CreateHomeProps) {
-  const { createHousehold, showToast } = useHome();
+  const { backend, createHousehold, showToast, canReopenDemoImport } = useHome();
   const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const askFirst = backend.kind === 'supabase' && !canReopenDemoImport;
   const nameId = useId();
   const addressId = useId();
   const areasHeadingId = useId();
@@ -32,8 +43,14 @@ export function CreateHome({ enter, profile, value, onChange, onBack }: CreateHo
   const seedCount = seedItemsFor(areas).length;
   const ready = areas.length > 0;
 
-  const submit = async (e: FormEvent) => {
+  const submit = (e: FormEvent) => {
     e.preventDefault();
+    if (!ready || busy) return;
+    if (askFirst) setConfirm(true);
+    else void create();
+  };
+
+  const create = async () => {
     if (!ready || busy) return;
     setBusy(true);
     try {
@@ -155,8 +172,24 @@ export function CreateHome({ enter, profile, value, onChange, onBack }: CreateHo
           <PrimaryButton type="submit" disabled={!ready} busy={busy} busyLabel="Creating Home">
             Create Home
           </PrimaryButton>
+          {askFirst ? <p className={styles.hint}>{OTHER_PHONE_HINT}</p> : null}
         </div>
       </form>
+      <ActionSheet
+        open={confirm}
+        title="Create a new home?"
+        message="If your home is already on another phone, sign in on that phone first to bring it over. Only one home can be set up here."
+        actions={[
+          {
+            label: 'Create Home',
+            onSelect: () => {
+              setConfirm(false);
+              void create();
+            },
+          },
+        ]}
+        onCancel={() => setConfirm(false)}
+      />
     </StepPage>
   );
 }

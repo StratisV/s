@@ -2,10 +2,16 @@
 // (localStorage homeos.demo.v1, the shape lib/backend/demo.ts writes): the realistic fixture
 // for "Bring over the home from this phone". Stratis signed in on this phone (the demo
 // account) and set his emoji to the duck; Shea took the hedgehog; Ela is the demo's third
-// person. Today is Fri 9 Oct 2026; most tasks are due Fri 16 Oct.
+// person. Today is Fri 9 Oct 2026; most tasks are due Fri 16 Oct. Its Stats history holds
+// three real completions and some of the demo's made-up history (which stays behind).
+// DEMO_CREATED_DOC below is a home as the demo itself sets one up, history and all.
 //
 // supabase/tests/fixtures/demo-import.json is buildImportPayload() of this document
 // (importHome.test.ts checks they agree), and the database tests import that payload.
+
+import { DEMO_STORAGE_KEY, DemoBackend } from '../backend/demo';
+import { DEFAULT_AREAS } from '../constants';
+import { seedItemsFor } from './items';
 
 const HOUSEHOLD = 'hh-our-home';
 const STRATIS = 'm-stratis';
@@ -224,7 +230,10 @@ export const USER_DEMO_DOC = {
       prev_due_date: '2026-09-21',
       prev_status: 'open',
     },
-    // The demo's history (items long gone).
+    // Done, and the item deleted afterwards: real history, not linked to an item any more.
+    { id: 'c-gone', household_id: HOUSEHOLD, item_id: null, item_title: 'Fix the doorbell', credited_to: STRATIS, completed_by: STRATIS, completed_at: '2026-10-09T07:40:00.000Z', prev_due_date: '2026-10-09', prev_status: 'open' },
+    // The made-up history the demo adds to every home it sets up (DemoBackend addHistory): no
+    // item, done before the home was set up. It stays behind.
     { id: 'c-h1', household_id: HOUSEHOLD, item_id: null, item_title: 'Clean the oven', credited_to: ELA, completed_by: ELA, completed_at: '2026-08-03T10:17:00.000Z', prev_due_date: null, prev_status: 'open' },
     { id: 'c-h2', household_id: HOUSEHOLD, item_id: null, item_title: 'Mow the lawn', credited_to: STRATIS, completed_by: STRATIS, completed_at: '2026-09-12T14:34:00.000Z', prev_due_date: null, prev_status: 'open' },
     { id: 'c-h3', household_id: HOUSEHOLD, item_id: null, item_title: 'Bleed the radiators', credited_to: SHEA, completed_by: SHEA, completed_at: '2026-10-04T11:45:00.000Z', prev_due_date: null, prev_status: 'open' },
@@ -239,3 +248,42 @@ export const USER_DEMO_DOC = {
   ],
   message_reactions: [],
 };
+
+/**
+ * A home as the demo itself sets one up on a phone, made by the real DemoBackend: Continue with
+ * Google, then Create Home with the default areas and the current list. Like every home the
+ * demo sets up, it comes with 111 made-up completions (Stats history) and a made-up chat. A
+ * day later, one thing really gets done. Deterministic for a given clock (the payload uses
+ * keys, not the demo's random ids).
+ *
+ * Bringing it over must bring that one completion and none of the made-up history
+ * (importHome.test.ts, supabase/tests/fixtures/demo-created-import.json and the database
+ * tests).
+ */
+export async function demoCreatedDoc(created = new Date('2026-10-08T09:12:00.000Z')): Promise<Record<string, unknown>> {
+  const map = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => map.get(key) ?? null,
+    setItem: (key: string, value: string) => void map.set(key, value),
+    removeItem: (key: string) => void map.delete(key),
+  };
+  let now = created;
+  const demo = new DemoBackend({ storage, now: () => now, search: '', latency: 0 });
+  await demo.signInWithGoogle();
+  const hid = await demo.createHousehold({
+    name: 'Our home',
+    address: '21 Alderbrook Road',
+    timezone: 'Europe/London',
+    memberName: 'Stratis',
+    memberEmoji: '🦆',
+    areas: [...DEFAULT_AREAS],
+    items: seedItemsFor([...DEFAULT_AREAS]),
+  });
+  now = new Date(created.getTime() + 86_400_000);
+  const data = await demo.load(hid);
+  const task = data.items
+    .filter((i) => i.kind === 'task')
+    .sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0))[0];
+  await demo.completeItem(task.id);
+  return JSON.parse(map.get(DEMO_STORAGE_KEY)!) as Record<string, unknown>;
+}

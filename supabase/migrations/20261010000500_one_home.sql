@@ -11,20 +11,29 @@
 --     household among non-blank emails (members_household_email_key), at most 254 characters.
 --   A person who has not joined never has push on (members_before_write), and the scheduler
 --     skips them (supabase/functions/_shared/plan.ts).
+--   One home per deployment: clients cannot add a second household (households_one_home,
+--     home_exists), and claims and joins only reach the deployment's home, the oldest one.
+--     Development and test databases turn on app_settings.many_homes.
 --   enter_home()                      where the signed-in person belongs; claims a person
 --                                     whose email is their verified Google email
 --   add_person(hid, name, emoji, email)  a person who has not joined yet
 --   set_person_email(member, email)   set or clear a not-yet-joined person's email
 --   remove_person(member)             remove a not-yet-joined person (items become unassigned)
---   import_household(payload)         create the home from this phone's demo data
+--   import_household(payload)         create the home from this phone's demo data, or put it
+--                                     into the caller's home while that is untouched
 --   join_household(...)               as before, but claims a not-yet-joined person with the
 --                                     caller's verified email instead of adding a duplicate
+--   invite_preview(token)             as before, plus the people waiting to join and the
+--                                     emojis in use
+--   join_as_person(token, member)     join through an invite as a person waiting to join
+--   release_claim()                   "Not Shea?": undo a claim made in the last day
 --
 -- New error messages (BackendError codes): email_taken (another person in the home has that
--- email) and home_exists (import_household when a home already exists).
+-- email) and home_exists (a home exists already: no second one, and no import).
 --
--- create_household is NOT redefined here (the Housekeeping migration owns it). Like the
--- earlier migrations, everything here can be applied again without errors.
+-- create_household is NOT redefined here (the Housekeeping migration owns it); the trigger on
+-- households keeps it to one home. Like the earlier migrations, everything here can be
+-- applied again without errors.
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- members: people before they join
@@ -68,6 +77,11 @@ create index if not exists members_unjoined_email_idx
   on public.members (lower(email))
   where user_id is null and email <> '';
 
+-- When an account became this person (a claim by email at sign-in, or "Are you one of these
+-- people?" on an invite). Null for everyone else. release_claim() ("Not Shea?") is only
+-- allowed for a day after it. Clients cannot write it (members has column UPDATE grants).
+alter table public.members add column if not exists claimed_at timestamptz null;
+
 -- members: the email in its stored form, and no push for someone who has not joined (there
 -- is no browser to push to; push_subs needs the person's own account anyway).
 create or replace function public.members_before_write()
@@ -93,8 +107,13 @@ create trigger members_before_write
 -- Internal helpers (not callable by clients)
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- The account's email in stored form if Supabase Auth has verified it (Google accounts always
--- are), else ''. Only a verified email may claim a person.
+-- The account's email in stored form when Google vouches for it, else ''. Only such an email
+-- may claim a person. That takes a Google identity on the account (auth.identities, provider
+-- 'google') whose own email is this one and that Google marked verified, as well as Supabase
+-- Auth's email_confirmed_at. A confirmed email alone is not enough: a project whose Email
+-- provider auto-confirms sign-ups (Supabase's "Confirm email" off, or the CLI's
+-- enable_confirmations = false) would let anyone who types a waiting person's address with a
+-- password become them.
 create or replace function public.verified_email(p_user_id uuid)
 returns text
 language plpgsql
@@ -107,7 +126,18 @@ declare
 begin
   select lower(btrim(coalesce(u.email, ''), E' \t\r\n')) into v_email
   from auth.users u
-  where u.id = p_user_id and u.email_confirmed_at is not null;
+  where u.id = p_user_id
+    and u.email_confirmed_at is not null
+    and coalesce(u.email, '') <> ''
+    and exists (
+      select 1
+      from auth.identities i
+      where i.user_id = u.id
+        and i.provider = 'google'
+        and lower(coalesce(i.identity_data ->> 'email_verified', '')) = 'true'
+        and lower(btrim(coalesce(i.identity_data ->> 'email', ''), E' \t\r\n'))
+          = lower(btrim(u.email, E' \t\r\n'))
+    );
   return coalesce(v_email, '');
 end;
 $$;
@@ -141,6 +171,160 @@ security definer
 set search_path = ''
 as $$
   select exists (select 1 from public.households)
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- One home per deployment, kept by the database itself
+--
+-- Clients (anon, authenticated) can never add a second household: a BEFORE INSERT trigger
+-- refuses it with home_exists, under the same advisory lock as import_household, so two people
+-- creating (or creating and bringing a home over) at once end up with one home. The service
+-- role and the database owner (SQL editor, migrations) are not limited.
+--
+-- Claims (enter_home, join_household, join_as_person) and joins only ever reach the
+-- deployment's home, the oldest household, so a household that got in some other way (made by
+-- an admin, or left from before this rule) can never capture anyone.
+--
+-- Development and test databases hold many homes (the tests make one per case, and a shared
+-- local stack has several people's). There, someone with database access turns on
+-- app_settings.many_homes: clients may then create more homes, and claims and joins reach
+-- every home (the oldest home first). Clients can neither read nor change it.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+create table if not exists public.app_settings (
+  -- One row at most.
+  id boolean primary key default true constraint app_settings_one_row check (id),
+  -- Development and test databases only. Off (or no row): one home.
+  many_homes boolean not null default false
+);
+alter table public.app_settings enable row level security;
+-- No policies: only the owner and the service role (which bypasses RLS) get through, and only
+-- the service role gets to read it (the live test suites check it before they start).
+revoke all on table public.app_settings from public, anon, authenticated, service_role;
+grant select on table public.app_settings to service_role;
+
+-- True when this database allows many homes (app_settings.many_homes).
+create or replace function public.many_homes()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce((select s.many_homes from public.app_settings s where s.id), false)
+$$;
+
+-- The deployment's home: the oldest household (null when there is none).
+create or replace function public.deployment_home()
+returns uuid
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select h.id from public.households h order by h.created_at, h.id limit 1
+$$;
+
+-- Whether claims and joins may reach household p: the deployment's home, or any home while
+-- many_homes is on.
+create or replace function public.reachable_home(p_household_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select p_household_id is not null
+    and (public.many_homes() or p_household_id = public.deployment_home())
+$$;
+
+create or replace function public.households_one_home()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  -- Serialised with import_household and every other insert: the check below sees what a
+  -- concurrent insert committed (each statement here reads the newest committed rows).
+  perform pg_catalog.pg_advisory_xact_lock(4712, 1);
+  if coalesce(auth.role(), '') in ('authenticated', 'anon')
+    and not public.many_homes()
+    and public.home_exists()
+  then
+    raise exception 'home_exists';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists households_one_home on public.households;
+create trigger households_one_home
+  before insert on public.households
+  for each row execute function public.households_one_home();
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- An untouched home: set up and not used since, so bringing the home over from a phone may
+-- replace what is in it (import_household). Nothing anyone did would be lost:
+--   the household's name, address and time zone never changed (updated_at = created_at),
+--   every area and item is one it was created with, and no item was edited or done,
+--   nothing was ever done (no completions) and nobody wrote in the chat,
+--   and, when the Housekeeping migration is present, no visit, no message for the
+--   housekeeper and only the starter task list.
+-- People are not counted: they stay (import_household matches them by name).
+-- ─────────────────────────────────────────────────────────────────────────────
+create or replace function public.home_untouched(p_household_id uuid)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_created timestamptz;
+  v_updated timestamptz;
+  v_busy boolean;
+begin
+  select h.created_at, h.updated_at into v_created, v_updated
+  from public.households h
+  where h.id = p_household_id;
+  if v_created is null or v_updated is distinct from v_created then
+    return false;
+  end if;
+  if exists (select 1 from public.areas a where a.household_id = p_household_id and a.created_at <> v_created)
+    or exists (
+      select 1 from public.items i
+      where i.household_id = p_household_id
+        and (i.created_at <> v_created or i.updated_at <> v_created or i.status <> 'open')
+    )
+    or exists (select 1 from public.completions c where c.household_id = p_household_id)
+    or exists (select 1 from public.messages m where m.household_id = p_household_id)
+  then
+    return false;
+  end if;
+  if pg_catalog.to_regclass('public.housekeeping_visits') is not null then
+    execute 'select exists (select 1 from public.housekeeping_visits v where v.household_id = $1)'
+      into v_busy using p_household_id;
+    if v_busy then
+      return false;
+    end if;
+  end if;
+  if pg_catalog.to_regclass('public.housekeeping_notes') is not null then
+    execute 'select exists (select 1 from public.housekeeping_notes n where n.household_id = $1 and n.body <> '''')'
+      into v_busy using p_household_id;
+    if v_busy then
+      return false;
+    end if;
+  end if;
+  if pg_catalog.to_regclass('public.housekeeping_tasks') is not null then
+    execute 'select exists (select 1 from public.housekeeping_tasks t where t.household_id = $1 and t.created_at <> $2)'
+      into v_busy using p_household_id, v_created;
+    if v_busy then
+      return false;
+    end if;
+  end if;
+  return true;
+end;
 $$;
 
 -- A plausible email address (what add_person and set_person_email accept): one @, no spaces,
@@ -225,23 +409,26 @@ begin
   return new;
 end;
 $$;
-
 -- ─────────────────────────────────────────────────────────────────────────────
 -- enter_home: where the signed-in person belongs. Called right after sign-in (and again by
 -- the "This home is private" screen). Returns json, one of:
---   {"status": "member",  "household_id": uuid, "member_id": uuid}
+--   {"status": "member",  "household_id": uuid, "member_id": uuid, "can_import": boolean}
 --       already in a home: open it
---   {"status": "claimed", "household_id": uuid, "member_id": uuid}
---       someone at home had added a person with this account's verified email who had not
---       joined yet: the caller is now that person (name, emoji, colour, items and Stats kept)
+--   {"status": "claimed", "household_id": uuid, "member_id": uuid, "can_import": boolean}
+--       someone at home had added a person with this account's verified Google email who had
+--       not joined yet: the caller is now that person (name, emoji, colour, items and Stats
+--       kept)
 --   {"status": "no_home"}
 --       not in a home, and no home exists at all: the first person creates it (or brings it
 --       over from their phone)
 --   {"status": "private", "email": text, "email_verified": boolean}
 --       a home exists and nobody there has this account's email: ask someone at home to add
 --       it in Profile > Household > People. Nothing about the home is revealed.
+-- can_import: the home is untouched (home_untouched), so the home this phone kept in demo
+-- mode may still replace what is in it (import_household).
 -- A claim is atomic: two sessions claiming the same person cannot both win, and an account
--- never ends up as two people (members_user_id_key).
+-- never ends up as two people (members_user_id_key). It only reaches the deployment's home
+-- (reachable_home): a person with the same email in any other household is never claimed.
 -- ─────────────────────────────────────────────────────────────────────────────
 create or replace function public.enter_home()
 returns json
@@ -255,6 +442,8 @@ declare
   v_email text;
   v_target uuid;
   v_claimed uuid;
+  v_many boolean := public.many_homes();
+  v_home uuid := public.deployment_home();
 begin
   if v_uid is null then
     raise exception 'not_signed_in';
@@ -262,18 +451,23 @@ begin
 
   select * into v_member from public.members m where m.user_id = v_uid;
   if v_member.id is not null then
-    return json_build_object('status', 'member', 'household_id', v_member.household_id, 'member_id', v_member.id);
+    return json_build_object(
+      'status', 'member', 'household_id', v_member.household_id, 'member_id', v_member.id,
+      'can_import', public.home_untouched(v_member.household_id)
+    );
   end if;
 
   v_email := public.verified_email(v_uid);
   if v_email <> '' then
-    -- Oldest first, so the outcome is the same every time (one home holds one such person
-    -- at most; several homes in one database only happen in tests).
+    -- The deployment's home only (every home, oldest first, while many_homes is on), then the
+    -- oldest person, so the outcome is the same every time.
     for v_target in
       select m.id
       from public.members m
+      join public.households h on h.id = m.household_id
       where m.user_id is null and m.email <> '' and lower(m.email) = v_email
-      order by m.created_at, m.id
+        and (v_many or m.household_id = v_home)
+      order by h.created_at, h.id, m.created_at, m.id
     loop
       v_claimed := null;
       begin
@@ -281,7 +475,7 @@ begin
         -- changed in People, that committed first makes this touch no row: READ COMMITTED
         -- re-checks the whole condition on the newest row version.
         update public.members m
-        set user_id = v_uid
+        set user_id = v_uid, claimed_at = now()
         where m.id = v_target
           and m.user_id is null
           and m.email <> ''
@@ -293,14 +487,20 @@ begin
       end;
       if v_claimed is not null then
         select * into v_member from public.members m where m.id = v_claimed;
-        return json_build_object('status', 'claimed', 'household_id', v_member.household_id, 'member_id', v_member.id);
+        return json_build_object(
+          'status', 'claimed', 'household_id', v_member.household_id, 'member_id', v_member.id,
+          'can_import', public.home_untouched(v_member.household_id)
+        );
       end if;
     end loop;
 
     -- Claimed (or joined) by this same account in a concurrent call.
     select * into v_member from public.members m where m.user_id = v_uid;
     if v_member.id is not null then
-      return json_build_object('status', 'member', 'household_id', v_member.household_id, 'member_id', v_member.id);
+      return json_build_object(
+        'status', 'member', 'household_id', v_member.household_id, 'member_id', v_member.id,
+        'can_import', public.home_untouched(v_member.household_id)
+      );
     end if;
   end if;
 
@@ -316,11 +516,14 @@ end;
 $$;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- join_household: as in 20261008000300_rpc.sql, plus: when the household has a person who has
--- not joined yet with the caller's verified email, the caller becomes that person (their
--- name, emoji, colour and items are kept; p_member_name and p_member_emoji are not applied)
--- instead of being added a second time. Otherwise a new member is added as before; if their
--- email is already someone else's in this home (an unverified account), they join without it.
+-- join_household: as in 20261008000300_rpc.sql, plus:
+-- - Only the deployment's home can be joined (reachable_home): an invite to any other
+--   household is invalid_invite.
+-- - When the household has a person who has not joined yet with the caller's verified Google
+--   email, the caller becomes that person (their name, emoji, colour and items are kept;
+--   p_member_name and p_member_emoji are not applied) instead of being added a second time.
+--   Otherwise a new member is added as before; if their email is already someone else's in
+--   this home, they join without it.
 -- ─────────────────────────────────────────────────────────────────────────────
 create or replace function public.join_household(
   p_token text,
@@ -354,7 +557,7 @@ begin
   if v_current is not null and v_current = v_invite.household_id then
     return v_current;
   end if;
-  if v_invite.id is null or v_invite.expires_at <= now() then
+  if v_invite.id is null or v_invite.expires_at <= now() or not public.reachable_home(v_invite.household_id) then
     raise exception 'invalid_invite';
   end if;
   if v_current is not null then
@@ -372,7 +575,7 @@ begin
   if v_verified <> '' then
     begin
       update public.members m
-      set user_id = v_uid
+      set user_id = v_uid, claimed_at = now()
       where m.household_id = v_invite.household_id
         and m.user_id is null
         and m.email <> ''
@@ -386,11 +589,7 @@ begin
     end if;
   end if;
 
-  v_email := lower(btrim(coalesce(
-    nullif(auth.jwt() ->> 'email', ''),
-    (select u.email from auth.users u where u.id = v_uid),
-    ''
-  ), E' \t\r\n'));
+  v_email := public.account_email(v_uid);
   if v_email <> '' and exists (
     select 1 from public.members m
     where m.household_id = v_invite.household_id and lower(m.email) = v_email
@@ -416,6 +615,146 @@ begin
   end;
 
   return v_invite.household_id;
+end;
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- invite_preview: as in 20261008000300_rpc.sql (null for a token that is unknown, expired, or
+-- for a household other than the deployment's home), plus what the Join screen needs to
+-- avoid a second copy of someone:
+--   "people": the people in the home who have not joined yet and have no email, in join
+--             order: [{"id", "name", "emoji"}]. "Are you one of these people?" lists them, and
+--             join_as_person makes the caller one of them.
+--   "emojis": every emoji in use in the home, so a newcomer starts on one nobody has.
+-- ─────────────────────────────────────────────────────────────────────────────
+create or replace function public.invite_preview(p_token text)
+returns json
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select json_build_object(
+    'household_name', h.name,
+    'address', h.address,
+    'people', coalesce((
+      select json_agg(json_build_object('id', m.id, 'name', m.name, 'emoji', m.emoji) order by m.created_at, m.id)
+      from public.members m
+      where m.household_id = h.id and m.user_id is null and m.email = ''
+    ), '[]'::json),
+    'emojis', coalesce((
+      select json_agg(m.emoji order by m.created_at, m.id)
+      from public.members m
+      where m.household_id = h.id
+    ), '[]'::json)
+  )
+  from public.invites i
+  join public.households h on h.id = i.household_id
+  where i.token = btrim(p_token, E' \t\r\n')
+    and i.expires_at > now()
+    and public.reachable_home(h.id)
+  limit 1
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- join_as_person: join through an invite as one of the people the home is waiting for ("Are
+-- you one of these people?" on the Join screen). Returns the household id.
+-- The person must be in the invite's household, not joined yet, and have no email (or the
+-- caller's verified Google email): someone with another email is kept for that account.
+-- They keep their name, emoji, colour, items and Stats; their email becomes the caller's
+-- (unless someone else in the home has it).
+-- Errors as join_household (not_signed_in, invalid_invite, already_member), and not_found
+-- when that person cannot be taken (gone, joined meanwhile, or kept for another email).
+-- ─────────────────────────────────────────────────────────────────────────────
+create or replace function public.join_as_person(p_token text, p_member_id uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_invite public.invites%rowtype;
+  v_current uuid;
+  v_email text;
+  v_verified text;
+  v_claimed uuid;
+begin
+  if v_uid is null then
+    raise exception 'not_signed_in';
+  end if;
+
+  select * into v_invite from public.invites i where i.token = btrim(p_token, E' \t\r\n');
+  select m.household_id into v_current from public.members m where m.user_id = v_uid;
+
+  if v_current is not null and v_current = v_invite.household_id then
+    return v_current;
+  end if;
+  if v_invite.id is null or v_invite.expires_at <= now() or not public.reachable_home(v_invite.household_id) then
+    raise exception 'invalid_invite';
+  end if;
+  if v_current is not null then
+    raise exception 'already_member';
+  end if;
+
+  -- The same lock as joins and new people: an email is checked and taken in one step.
+  perform 1 from public.households h where h.id = v_invite.household_id for update;
+
+  v_verified := public.verified_email(v_uid);
+  v_email := public.account_email(v_uid);
+  if v_email <> '' and exists (
+    select 1 from public.members m
+    where m.household_id = v_invite.household_id and m.id <> p_member_id and lower(m.email) = v_email
+  ) then
+    v_email := '';
+  end if;
+
+  begin
+    update public.members m
+    set user_id = v_uid, email = v_email, claimed_at = now()
+    where m.id = p_member_id
+      and m.household_id = v_invite.household_id
+      and m.user_id is null
+      and (m.email = '' or (v_verified <> '' and lower(m.email) = v_verified))
+    returning m.id into v_claimed;
+  exception when unique_violation then
+    raise exception 'already_member';
+  end;
+  if v_claimed is null then
+    raise exception 'not_found';
+  end if;
+  return v_invite.household_id;
+end;
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- release_claim: "Not Shea?" on the welcome step after a claim. Within a day of the claim, the
+-- caller stops being that person: the row goes back to "Not joined yet", without the email
+-- (it matched the wrong account, so someone at home has to put in the right one), and this
+-- account's push subscriptions for it are removed. The caller is then in no home.
+-- not_found when the caller has no claim from the last day.
+-- ─────────────────────────────────────────────────────────────────────────────
+create or replace function public.release_claim()
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_member public.members%rowtype;
+begin
+  if v_uid is null then
+    raise exception 'not_signed_in';
+  end if;
+  select * into v_member from public.members m where m.user_id = v_uid for update;
+  if v_member.id is null or v_member.claimed_at is null or v_member.claimed_at < now() - interval '1 day' then
+    raise exception 'not_found';
+  end if;
+  delete from public.push_subs s where s.member_id = v_member.id;
+  update public.members m
+  set user_id = null, email = '', claimed_at = null
+  where m.id = v_member.id;
 end;
 $$;
 
@@ -720,8 +1059,9 @@ end;
 $$;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- import_household: create the home from the data this phone kept in demo mode, all or
--- nothing. Returns the household id. The payload (ImportPayload in src/lib/types.ts, built by
+-- import_household: create the home from the data this phone kept in demo mode, or put it
+-- into the caller's home while that home is untouched (home_untouched), all or nothing.
+-- Returns the household id. The payload (ImportPayload in src/lib/types.ts, built by
 -- buildImportPayload() in src/lib/logic/importHome.ts):
 --
 --   { "version": 1,
@@ -744,17 +1084,28 @@ $$;
 --
 -- Keys are 1-64 character strings, unique within their list. Names, titles and the address
 -- are trimmed; notes and "good" are kept as they are. Times later than now become now; an
--- item without times gets now, a done item without completed_at gets now. The person marked
--- "me" is the caller (role owner, the account's email); every other person is added as not
--- joined yet, with no email. A state is never done (invalid_input) and has no due date,
--- repeat or reminder (the kind trigger clears them). Chat, invites and push subscriptions
--- are not part of it. When the Housekeeping migration is present, the home gets its starter
--- task list, as create_household gives one.
+-- item without times gets now, a done item without completed_at gets now. A state is never
+-- done (invalid_input) and has no due date, repeat or reminder (the kind trigger clears
+-- them). Chat, invites and push subscriptions are not part of it.
 --
--- Errors: not_signed_in; already_member (the caller is in a home); home_exists (any home
--- exists: the caller should be added to it instead); invalid_input (a payload it refuses;
--- nothing is created). Concurrent imports are serialised; the second sees home_exists or
--- already_member.
+-- Two ways in:
+-- - No home exists (and the caller is in none): a new home. The person marked "me" is the
+--   caller (role owner, the account's email); every other person is added as not joined
+--   yet, with no email. When the Housekeeping migration is present, the home gets its starter
+--   task list, as create_household gives one.
+-- - The caller is in a home that is untouched (set up and not used since: someone created it
+--   on another device first, say): the phone's home replaces what is in it, in place (same
+--   household id, so its invites and every device showing it carry on). Its name, address and
+--   time zone become the phone's; its areas, items and completions go and the phone's come in.
+--   Its people stay: "me" is the caller, as they are; each other person from the phone is the
+--   person of the same name already there (trimmed, any case, each at most once), else is
+--   added as not joined yet.
+--
+-- Errors: not_signed_in; already_member (the caller is in a home that is in use);
+-- home_exists (a home exists and the caller is not in it: they should be added to it
+-- instead); invalid_input (a payload it refuses; nothing changes). Imports are serialised
+-- with each other and with every new household (households_one_home); the second of two at
+-- once sees home_exists or already_member.
 -- ─────────────────────────────────────────────────────────────────────────────
 create or replace function public.import_household(p_payload jsonb)
 returns uuid
@@ -791,19 +1142,25 @@ declare
   v_completed timestamptz;
   v_area uuid;
   v_task_title text;
+  v_emoji text;
+  v_replace uuid;
+  v_match uuid;
+  v_matched jsonb := '{}'::jsonb;
   v_colors constant text[] := array['#007AFF', '#AF52DE', '#30B0C7', '#FF9500', '#34C759', '#FF2D55'];
 begin
   if v_uid is null then
     raise exception 'not_signed_in';
   end if;
 
-  -- One import (or claim of the first home) at a time.
+  -- One import (or new household) at a time.
   perform pg_catalog.pg_advisory_xact_lock(4712, 1);
 
-  if exists (select 1 from public.members m where m.user_id = v_uid) then
-    raise exception 'already_member';
-  end if;
-  if public.home_exists() then
+  select m.household_id, m.id into v_replace, v_me from public.members m where m.user_id = v_uid;
+  if v_replace is not null then
+    if not public.home_untouched(v_replace) then
+      raise exception 'already_member';
+    end if;
+  elsif public.home_exists() then
     raise exception 'home_exists';
   end if;
 
@@ -873,9 +1230,21 @@ begin
   if not public.is_valid_timezone(v_timezone) then
     v_timezone := 'Europe/London';
   end if;
-  insert into public.households (name, address, timezone)
-  values (v_name, public.import_text(v_household -> 'address', 120, true), v_timezone)
-  returning id into v_household_id;
+  if v_replace is null then
+    insert into public.households (name, address, timezone)
+    values (v_name, public.import_text(v_household -> 'address', 120, true), v_timezone)
+    returning id into v_household_id;
+  else
+    -- In place. The update locks the household row (joins, new people and email changes wait
+    -- for this); its areas take their items with them.
+    v_household_id := v_replace;
+    update public.households h
+    set name = v_name, address = public.import_text(v_household -> 'address', 120, true), timezone = v_timezone
+    where h.id = v_household_id;
+    delete from public.completions c where c.household_id = v_household_id;
+    delete from public.areas a where a.household_id = v_household_id;
+    delete from public.items i where i.household_id = v_household_id;
+  end if;
 
   -- ── People, in join order (created_at a millisecond apart, all in the past) ──
   v_count := jsonb_array_length(v_people);
@@ -886,11 +1255,33 @@ begin
     if v_name = '' then
       raise exception 'invalid_input';
     end if;
+    v_emoji := coalesce(nullif(public.import_text(v_entry -> 'emoji', 16, true), ''), '🦔');
     v_color := case when jsonb_typeof(v_entry -> 'color') = 'string' then v_entry ->> 'color' else '' end;
     if v_color !~ '^#[0-9A-Fa-f]{6}$' then
       v_color := v_colors[((v_index - 1) % 6) + 1];
     end if;
     v_is_me := coalesce((v_entry -> 'me') = 'true'::jsonb, false);
+    if v_replace is not null then
+      if v_is_me then
+        -- The caller, as they are in this home.
+        v_person_ids := v_person_ids || jsonb_build_object(v_entry ->> 'key', v_me);
+        continue;
+      end if;
+      -- Someone already in this home with the same name is this person.
+      select m.id into v_match
+      from public.members m
+      where m.household_id = v_household_id
+        and m.id <> v_me
+        and lower(btrim(m.name)) = lower(v_name)
+        and not (v_matched ? m.id::text)
+      order by m.created_at, m.id
+      limit 1;
+      if v_match is not null then
+        v_matched := v_matched || jsonb_build_object(v_match::text, true);
+        v_person_ids := v_person_ids || jsonb_build_object(v_entry ->> 'key', v_match);
+        continue;
+      end if;
+    end if;
     insert into public.members (id, household_id, user_id, name, email, emoji, color, role, created_at)
     values (
       (v_person_ids ->> (v_entry ->> 'key'))::uuid,
@@ -902,7 +1293,7 @@ begin
         (select u.email from auth.users u where u.id = v_uid),
         ''
       ) else '' end,
-      coalesce(nullif(public.import_text(v_entry -> 'emoji', 16, true), ''), '🦔'),
+      v_emoji,
       v_color,
       case when v_is_me then 'owner' else 'member' end,
       v_now - (v_count - v_index) * interval '1 millisecond'
@@ -997,7 +1388,9 @@ begin
   end loop;
 
   -- ── Housekeeping starter list, when that migration is present (as create_household) ──
-  if pg_catalog.to_regclass('public.housekeeping_tasks') is not null
+  -- (A home it replaced keeps the list it has.)
+  if v_replace is null
+    and pg_catalog.to_regclass('public.housekeeping_tasks') is not null
     and pg_catalog.to_regprocedure('public.housekeeping_starter_tasks()') is not null
   then
     for v_task_title in
@@ -1022,6 +1415,9 @@ revoke all on function public.set_person_email(uuid, text) from public, anon;
 revoke all on function public.remove_person(uuid) from public, anon;
 revoke all on function public.import_household(jsonb) from public, anon;
 revoke all on function public.join_household(text, text, text) from public, anon;
+revoke all on function public.invite_preview(text) from public, anon;
+revoke all on function public.join_as_person(text, uuid) from public, anon;
+revoke all on function public.release_claim() from public, anon;
 
 grant execute on function public.enter_home() to authenticated, service_role;
 grant execute on function public.add_person(uuid, text, text, text) to authenticated, service_role;
@@ -1029,6 +1425,9 @@ grant execute on function public.set_person_email(uuid, text) to authenticated, 
 grant execute on function public.remove_person(uuid) to authenticated, service_role;
 grant execute on function public.import_household(jsonb) to authenticated, service_role;
 grant execute on function public.join_household(text, text, text) to authenticated, service_role;
+grant execute on function public.invite_preview(text) to authenticated, service_role;
+grant execute on function public.join_as_person(text, uuid) to authenticated, service_role;
+grant execute on function public.release_claim() to authenticated, service_role;
 
 -- Internal only (called by RPCs and triggers, which run as the owner).
 revoke all on function public.members_before_write() from public, anon, authenticated;
@@ -1036,6 +1435,11 @@ revoke all on function public.items_before_write() from public, anon, authentica
 revoke all on function public.verified_email(uuid) from public, anon, authenticated;
 revoke all on function public.account_email(uuid) from public, anon, authenticated;
 revoke all on function public.home_exists() from public, anon, authenticated;
+revoke all on function public.many_homes() from public, anon, authenticated;
+revoke all on function public.deployment_home() from public, anon, authenticated;
+revoke all on function public.reachable_home(uuid) from public, anon, authenticated;
+revoke all on function public.households_one_home() from public, anon, authenticated;
+revoke all on function public.home_untouched(uuid) from public, anon, authenticated;
 revoke all on function public.is_valid_email(text) from public, anon, authenticated;
 revoke all on function public.import_text(jsonb, integer, boolean) from public, anon, authenticated;
 revoke all on function public.import_key(jsonb) from public, anon, authenticated;

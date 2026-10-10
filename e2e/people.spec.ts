@@ -99,8 +99,9 @@ test.describe('People before they join', () => {
 
     await openAddPerson(dialog);
     await expect(dialog.getByRole('heading', { name: 'Add Person', level: 1 })).toBeAttached();
+    // On the first emoji nobody at home has (the hedgehog, duck and fox are taken): the bear.
     const grid = dialog.getByRole('radiogroup', { name: 'Emoji', exact: true });
-    await expect(grid.getByRole('radio', { name: '🦔' })).toBeChecked();
+    await expect(grid.getByRole('radio', { name: '🐻' })).toBeChecked();
     const email = dialog.getByRole('textbox', { name: 'Google Email' });
     await expect(email).toHaveAttribute('type', 'email');
     await expect(email).toHaveAttribute('placeholder', 'name@gmail.com');
