@@ -8,6 +8,8 @@ interface NavPageProps {
   trailing?: ReactNode;
   /** Shown small in the bar once the large title has scrolled under it. */
   inlineTitle?: string;
+  /** Show inlineTitle in the bar all the time (a page without a large title, like Add Person). */
+  pinTitle?: boolean;
   scrollRef?: Ref<HTMLDivElement>;
   children: ReactNode;
 }
@@ -20,7 +22,7 @@ const TITLE_GONE = 44;
  * content and turns into a frosted bar once something scrolls under it.
  * At the top it is transparent, exactly like the 3a frames.
  */
-export function NavPage({ leading, trailing, inlineTitle, scrollRef, children }: NavPageProps) {
+export function NavPage({ leading, trailing, inlineTitle, pinTitle = false, scrollRef, children }: NavPageProps) {
   const [scroll, setScroll] = useState<'top' | 'scrolled' | 'pastTitle'>('top');
   const onScroll = (e: UIEvent<HTMLDivElement>) => {
     const y = e.currentTarget.scrollTop;
@@ -32,7 +34,12 @@ export function NavPage({ leading, trailing, inlineTitle, scrollRef, children }:
     <div className={styles.page}>
       <div className={styles.bar} data-scrolled={scroll !== 'top' || undefined}>
         <div className={styles.leading}>{leading}</div>
-        <div className={styles.title} data-visible={scroll === 'pastTitle' || undefined} aria-hidden="true">
+        <div
+          className={styles.title}
+          data-visible={pinTitle || scroll === 'pastTitle' || undefined}
+          data-pinned={pinTitle || undefined}
+          aria-hidden="true"
+        >
           {inlineTitle}
         </div>
         <div className={styles.trailing}>{trailing}</div>

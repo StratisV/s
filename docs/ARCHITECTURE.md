@@ -60,8 +60,11 @@ src/
   screens/item/            Item sheet (edit / new)
   screens/stats/           Stats screen + donut
   screens/profile/         Profile (full-screen cover) + Household editor (pushed inside Profile, with
-                           People: each member's name and emoji on a page pushed on top)
-  screens/onboarding/      Welcome, create profile, household create/join, notifications step
+                           People: each member's name and emoji on a page pushed on top, Add Person,
+                           and for someone not joined yet their Google email and Remove)
+  screens/onboarding/      Welcome, create profile, household create/join, notifications step, and the
+                           one-home steps: This home is private, Bring over the home, Welcome home
+  screens/testing/         test support only: MockHome, a stand-in for HomeProvider in unit tests
 public/                    manifest, service worker (sw.js), icons, favicon.ico (npm run icons)
 supabase/migrations/       schema, RLS, RPCs
 supabase/functions/        Edge Functions (scheduler: push reminders, missed alerts, weekly email)
@@ -291,7 +294,8 @@ user.
   and the Housekeeping migration owns that function); `import_household` refuses with
   `home_exists` itself, serialised by an advisory lock.
 - **Invite links** keep working. From phase `private` an invite opens Profile then Join, without
-  "Set up a new home instead". `join_household` claims a not-yet-joined person with the
+  "Set up a new home instead"; a link that is no longer valid says so and offers **Continue**,
+  which forgets it and shows "This home is private". `join_household` claims a not-yet-joined person with the
   caller's verified email instead of adding a duplicate; in practice `enter_home` has already
   claimed them at sign-in, so the invite is simply cleared as for any member.
 - **Demo mode** (`DemoBackend.enterHome`): the same rules on the local document, with the demo
@@ -376,7 +380,7 @@ Migration `supabase/migrations/20261010000500_one_home.sql`; `Member.user_id: st
 - **Elsewhere**: the Item sheet's assignee list adds a quiet secondary "Not joined yet" after
   such a person's name (the Sharing work also edits the Item sheet: keep this to the option's
   label). The Home person filter, Home rows and Stats show them like anyone else, with no
-  label.
+  label (only the filter chip's VoiceOver name ends ", not joined yet").
 - **Scheduler** (`supabase/functions/_shared/plan.ts`, reading `members.user_id`): nobody with
   `user_id` null gets a reminder, a missed alert or the weekly email; an unassigned reminder
   goes to the members who have joined; a missed item assigned to someone who has not joined
