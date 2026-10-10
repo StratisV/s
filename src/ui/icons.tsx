@@ -64,7 +64,7 @@ export function ChevronLeftIcon({ size = 20, strokeWidth = 2.6, ...p }: IconProp
   );
 }
 
-/** square.and.arrow.up (iOS Share), for the Add to Home Screen hint. */
+/** square.and.arrow.up (iOS Share): Share item, Share <area>, and the Add to Home Screen hint. */
 export function ShareIcon({ size = 18, strokeWidth = 1.8, ...p }: IconProps) {
   return (
     <svg {...base(size, p)}>

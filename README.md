@@ -29,6 +29,11 @@ never gets done and stays on the list, and says **What good looks like** for it,
   first): what was asked, what was done, the comments and the price, with each month's total.
   Any past day's visit can be opened, corrected or deleted, and a missed one added.
 - **Stats**: who has done what.
+- **Share**: send an item (from its sheet, as the sheet shows it) or a whole area (the share
+  button in its header) to WhatsApp, Messages or Mail as a short summary with a link. The
+  link opens that item, or that area on Home, in home.os for anyone in the household (after
+  signing in if need be; on iPhone, links open in Safari rather than the Home Screen app).
+  Where there is no share sheet, the text is copied instead.
 - A **weekly email** with the full status, and **push notifications** before deadlines and when
   one is missed.
 
@@ -213,4 +218,6 @@ the list and of that day's message, so renaming or deleting a task later never c
 visits, and two people ticking at the same time never undo each other's ticks.
 
 People outside the household can't see or change any of it. New people join only through an
-invite link (valid for 14 days).
+invite link (valid for 14 days). A shared item or area link opens the item or area only for
+people in the household; anyone else just sees their own home. The text of a shared message
+can be read by whoever it was sent to.

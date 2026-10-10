@@ -84,12 +84,17 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   delete (window as { visualViewport?: unknown }).visualViewport;
 });
 
 describe('ChatScreen', () => {
   it('shows the conversation: names over runs, avatars, day separators, your bubbles on the right', async () => {
+    // The seeded chat is "yesterday evening and this morning" from now: a mid-morning clock
+    // keeps the labels the same whatever time the tests run (after midnight they read days).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-08T10:00:00+01:00'));
     await setup();
     const messages = within(log()).getAllByRole('article');
     expect(messages).toHaveLength(8);

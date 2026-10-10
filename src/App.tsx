@@ -8,6 +8,7 @@ import { TaskListSheet } from './screens/housekeeping/TaskListSheet';
 import { ItemSheet } from './screens/item/ItemSheet';
 import { Onboarding } from './screens/onboarding/Onboarding';
 import { ProfileScreen } from './screens/profile/ProfileScreen';
+import { useSharedLink } from './screens/share/useSharedLink';
 import { StatsScreen } from './screens/stats/StatsScreen';
 import type { ItemSheetTarget, Tab } from './screens/types';
 import { ChatProvider, useChat } from './state/ChatProvider';
@@ -111,6 +112,9 @@ function MainShell() {
   // The area an item was just saved into, for Home to expand if it is collapsed.
   const [revealArea, setRevealArea] = useState<string | null>(null);
   const clearReveal = useCallback(() => setRevealArea(null), []);
+  // The area a shared link (?area=) points at, for Home to open and scroll to.
+  const [linkedArea, setLinkedArea] = useState<string | null>(null);
+  const clearLinkedArea = useCallback(() => setLinkedArea(null), []);
   const stageRef = useRef<HTMLDivElement>(null);
 
   // Page-sheet push-back: scale the stage so it sits 18px in from each side.
@@ -164,8 +168,23 @@ function MainShell() {
     setSheetOpen(true);
   }, []);
 
+  // Opened from a shared link (?item= or ?area=).
+  useSharedLink({
+    openItem: (itemId) => openSheet({ kind: 'edit', itemId }),
+    showArea: (areaId) => {
+      setTab('home');
+      setLinkedArea(areaId);
+    },
+  });
+
+  // Leaving Home drops an area link it hasn't shown yet, so it can't scroll Home on a later return.
+  const switchTab = useCallback((next: Tab) => {
+    setTab(next);
+    if (next !== 'home') setLinkedArea(null);
+  }, []);
+
   // The tab switch sits under the hero on every tab.
-  const tabs = <TabBar tab={tab} onTab={setTab} unread={unread} />;
+  const tabs = <TabBar tab={tab} onTab={switchTab} unread={unread} />;
 
   return (
     <div className={styles.main} data-pushed={pushed || undefined}>
@@ -178,6 +197,8 @@ function MainShell() {
             onAddItem={(areaId) => openSheet({ kind: 'new', areaId })}
             revealArea={revealArea}
             onRevealed={clearReveal}
+            linkedArea={linkedArea}
+            onLinkedAreaShown={clearLinkedArea}
           />
         ) : tab === 'chat' ? (
           <ChatScreen tabs={tabs} onOpenProfile={() => setProfileOpen(true)} />
