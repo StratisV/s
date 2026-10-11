@@ -36,6 +36,7 @@
   letter-spacing: -0.2px;
   text-align: center;
   color: var(--destructive);
+  text-wrap: balance;
   animation: error-in 0.3s ease both;
 }
 

@@ -6,8 +6,9 @@ red, amber or green status, a note and an assignee. An item is either **To do** 
 "fix the gate", with a due date, an optional repeat and a push reminder, ticked off when it is
 done) or **To maintain** (something whose condition you keep track of, like the firepit: it
 never gets done and stays on the list, and says **What good looks like** for it, such as
-"cover on, ash cleared out, logs dry and stacked"). Everyone in the household signs in with
-**Google**, picks an emoji for their profile, and **can edit everything**.
+"cover on, ash cleared out, logs dry and stacked"). Everyone in the household signs in (with
+a **code** from someone at home on this deployment's own server, or with **Google** on
+Supabase), picks an emoji for their profile, and **can edit everything**.
 
 - **Home**: today's date, then every area and its items, with how many are red, amber and green.
   A row of people at the top (Everyone, you, each person, Unassigned, with counts) shows just
@@ -40,7 +41,7 @@ never gets done and stays on the list, and says **What good looks like** for it,
 It is an installable web app (PWA): no App Store needed. Add it to the iPhone Home Screen
 and it behaves like a native app, including notifications (iOS 16.4 or later).
 
-- Live: https://home-os-orpin.vercel.app (demo mode until Supabase is configured)
+- Live: https://home-os-orpin.vercel.app (server mode once its Blob store is connected; see [Server mode](#server-mode-shared-on-every-phone-nothing-to-set-up))
 - Design spec: [`design/README.md`](design/README.md) (Turn 3, option 3a)
 - How it is built: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 
@@ -55,7 +56,54 @@ Open http://localhost:5173. Without Supabase settings the app runs in **demo mod
 sign-in is simulated and data stays in your browser. Add `?demo-seed=1` to the URL to jump
 straight into a household filled with example data, or `?demo-reset=1` to start over.
 
-## Going live
+## Server mode: shared on every phone, nothing to set up
+
+When the Vercel project has a private **Vercel Blob** store connected, home.os keeps the
+household's home on its own server (one Vercel Function, `/api/home`) and everyone signs in
+with a **code** instead of Google. Nobody has to open a console or make an account. Supabase,
+Google sign-in, push notifications and the weekly email stay in the code, unused in this
+mode (they need other services), and are hidden in the app.
+
+**What you do, once:** open the **setup link** you were sent (it ends in `?setup=…`) on the
+phone that has the home, check what comes along (the home's name and address, areas, items,
+who's who, real history, chat and housekeeping) and tap **Bring It Online**. That phone is now
+signed in as you, and everyone else in the home is waiting to join with their items. If the
+home lives in the home.os app on your Home Screen and the link opened in Safari instead, open
+the app and type the setup code under **Setup code**. The setup code works once, only while no
+home is online.
+
+**Inviting the others:** right after that, or later in **Profile > Household > People**, tap
+**Invite** next to someone (for someone new, **Add Person** first: a name and an emoji). The
+code sheet shows a code like `K7QM-3XRP` and **Share** sends it with a link. They open the link,
+or open home.os and type the code under **Have a code?**, and they are in as themselves, with
+their items. A code works once and for 7 days; a new one replaces the last one for that person.
+
+- **Another phone or tablet of your own:** **Profile > Add another device**.
+- **Someone's devices:** their page in People lists where they are signed in; **Remove** signs
+  that device out. **Sign in on a new phone** makes them a fresh code.
+- **Sign Out** forgets this device; signing in again needs a new code from someone at home
+  (the app warns you when it is the only device signed in, so nobody is locked out).
+- Anyone without a code sees "This home is private." and nothing of the home. Wrong codes are
+  limited (a few tries per address, then a 15-minute wait).
+- Changes show on everyone's phone within a few seconds while the app is open (each phone asks
+  the server every few seconds while it is on screen, and at once when it comes back).
+
+**Limits:** on Vercel's free (Hobby) plan the Blob store allows about 2,000 saved changes and
+10,000 reads a month. home.os counts them; if the month's saving runs out, Home says
+"Saving is paused until next month" and everything can still be read, instead of the store
+being blocked. On a paid plan set `HOMEOS_BLOB_WRITES_PER_MONTH` and `HOMEOS_BLOB_READS_PER_MONTH`
+to `0` (no limit).
+
+**For whoever deploys** (not the household): connect a private Blob store to the Vercel
+project (all environments; Vercel adds `BLOB_READ_WRITE_TOKEN`), set `HOMEOS_SETUP_CODE` to
+12 or more letters from `23456789ABCDEFGHJKLMNPQRSTUVWXYZ` (for example `K7QM-3XRP-WN9D`),
+and redeploy. `vercel.json`'s build command then publishes the app and the function together
+(the Build Output API, `scripts/build-server.mjs`); without a Blob store it deploys the demo
+build exactly as before. After the deploy, `curl -H 'X-HomeOS: 1' <app>/api/home?op=status`
+must answer `{"home":false}` (JSON) until the home is brought online. Details:
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) "Server mode (no setup)".
+
+## Going live with Supabase
 
 You need four free accounts: **Supabase** (database, Google sign-in, scheduled jobs),
 **Google Cloud** (the OAuth client for "Continue with Google"), **Resend** (the weekly email)
@@ -211,6 +259,10 @@ defaults), so the app that is live keeps working on the new schema. In order:
 | `npm run test:db` | Database tests: schema, row level security and RPCs on a throwaway Postgres 16 |
 | `npm run test:e2e` | Playwright end-to-end tests against a demo-mode build |
 | `npm run test:e2e:live` | Two phones on a real (local) Supabase: bringing the home over, joining by email, "This home is private", and every kind of change syncing live |
+| `npm run dev:server` | Server mode on this computer: the local API server (home kept in `.homeos-local/`) and Vite in server mode; setup code `TEST-SETU-PCDE` unless `HOMEOS_SETUP_CODE` is set |
+| `npm run build:server` | Bundle the local server into `dist-server/local.mjs` |
+| `npm run test:e2e:server` | Two and three phones in server mode on the local server: setup, codes, devices, read-only, and every kind of change syncing live |
+| `npm run test:build` | The production builds as Vercel makes them: demo mode without a Blob store, server mode with one, and no secret in anything deployed |
 | `npm run icons` | Re-render the app icons from `public/icons/icon.svg` |
 
 With Docker running, `npx supabase start` gives you a full local Supabase stack;
@@ -257,6 +309,22 @@ areas, household name and address, people, chat messages and reactions) shows on
 within 5 seconds, without a reload, and a phone that was offline catches up as soon as it is
 back online.
 
+**Server-mode tests** (`npm run test:e2e:server`, `playwright.server.config.ts`, `e2e-server/`)
+need nothing running: they build the app in server mode into `dist-server/app`, start the
+local server over an in-memory store on `E2E_PORT` (default 4316) and a second one on the next
+port whose month of saving runs out after 3 changes, and reset the home before each test.
+They prove, with Stratis's phone holding the household's demo home: bringing it online with
+the setup link (and with the code typed, after a wrong one), everything coming along, Shea
+joining with her code typed or as a link and seeing her items, used codes and the used setup
+link refused, a stranger kept out, wrong codes refused then limited and never stored, Add
+another device, removing a device signing that browser out, Sign Out, the last-device warning,
+"Not Shea?", read-only mode, and every kind of change (items, areas, household, people, chat,
+housekeeping) showing on the other phone within 5 seconds without a reload, including two
+people writing at the same moment on three phones, a phone that was offline catching up, and
+no polling while the app is hidden. `npm run test:build` and `scripts/vercel-function.test.ts`
+(part of `npm test`) check the Vercel deployment offline: the builds, and the function bundle
+running with the real `@vercel/blob` against a fake Blob service.
+
 ## Permissions
 
 Everyone who belongs to a household can edit everything in it: the household's name,
@@ -296,6 +364,6 @@ ticking at the same time never undo each other's ticks.
 
 People outside the household can't see or change any of it. Someone new joins by signing in
 with Google using the email someone at home added for them, or with an invite link (valid for
-14 days). Anyone else who signs in sees "This home is private" and nothing of the home. A shared
+14 days); in server mode, with a code someone at home made for them (single use, valid 7 days). Anyone else who signs in sees "This home is private" and nothing of the home. A shared
 item or area link opens the item or area only for people in the household. The text of a shared
 message can be read by whoever it was sent to.

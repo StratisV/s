@@ -239,6 +239,8 @@
   line-height: 20px;
   letter-spacing: -0.2px;
   color: var(--destructive);
+  /* Two even lines, never a last word on its own. */
+  text-wrap: balance;
 }
 
 .join {

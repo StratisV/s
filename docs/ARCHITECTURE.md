@@ -1090,14 +1090,21 @@ they are stored, and the writer reloads at once (with `minRev`).
 - `server/entry/local.ts` (bundled by `npm run build:server` into `dist-server/local.mjs`): the
   built app and `/api/home` on one port, `FileBlobStore` under `.homeos-local/` or `--memory`,
   `--allow-reset` (`POST /__homeos/reset`), `--attempts`. `npm run dev:server`
-  (`scripts/dev-server.mjs`): the local server on 4300 and Vite's dev server with
+  (`scripts/dev-server.mjs`): bundles the local server, runs it on 4300 (`--api-port` to
+  change; `--allow-reset`; `HOMEOS_SETUP_CODE` from the shell, else `TEST-SETU-PCDE`) and Vite's
+  dev server (its own script, so Ctrl+C stops both; other arguments go to Vite) with
   `HOMEOS_LOCAL_SERVER=1 HOMEOS_API_PROXY=http://localhost:4300`.
 - `playwright.server.config.ts` (`npm run test:e2e:server`, `e2e-server/`): port
   `E2E_PORT` (default 4316); builds with `HOMEOS_LOCAL_SERVER=1` (Supabase and VAPID variables
   emptied, `VITE_FORCE_DEMO` empty) into `dist-server/app`, then runs the local server with
-  `--memory --allow-reset --attempts 5,20,60000` and `HOMEOS_SETUP_CODE=TEST-SETU-PCDE`; one
-  worker; each test starts from a reset; `serviceWorkers: 'block'`; timezone Europe/London. Each
-  person is their own browser context. It proves: setup from the user's home fixture
+  `--memory --allow-reset --attempts 5,20,60000` and `HOMEOS_SETUP_CODE=TEST-SETU-PCDE` (the
+  default Blob budgets), plus a second local server on `E2E_PORT + 1` over the same build with
+  `HOMEOS_BLOB_WRITES_PER_MONTH=3` (`readonly.spec.ts`); one worker; each test starts from a
+  reset; `serviceWorkers: 'block'`; timezone Europe/London. Each person is their own browser
+  context (`e2e-server/helpers.ts`: `openDevice()` can sign a context in first through its own
+  cookie jar, with the same setup or redeem call the screens make, so a test that is not about
+  signing in starts on Home). Console errors fail a test, except the 400, 401 and 429 answers
+  the app expects and shows (a signed-out session check, a refused code, a limit). It proves: setup from the user's home fixture
   (`USER_DEMO_DOC` put in localStorage first) with the summary and everything coming along;
   Shea joining with her code (typed, and as a link) and seeing her items; a stranger with no code
   sees "This home is private"; wrong codes are refused and then limited; removing a device signs
@@ -1106,7 +1113,12 @@ they are stored, and the writer reloads at once (with `minRev`).
   reactions; housekeeping message, ticks, comments, price, task list, visits) showing on the
   other context within 5 s without a reload (a mark on the page a reload would lose), including
   two people ticking different tasks and editing different fields of one item at the same moment
-  (both changes stay), and a browser that was offline catching up when back online.
+  (both changes stay), with a third context (Stratis's tablet) seeing it all and the stored home
+  holding every change once; a browser that was offline catching up when back online; no GET
+  version while the page is hidden and a catch-up as soon as it is visible; the used code and the
+  used setup link refused; the code sheet's copy and focus return; the only device's Sign Out
+  warning; and read-only (the month's last change, then Home's line and the failed save's toast,
+  and reading still working).
 - Unit tests (Vitest, `server/**/*.test.ts` and `src`): `rpc` (every method accepts the app's
   real shapes; wrong types, unknown keys, unknown methods, `constructor` and `__proto__` refused);
   `runAs` (the session never reaches the stored home); `auth` (format, normalising, one code per
@@ -1121,6 +1133,78 @@ they are stored, and the writer reloads at once (with `minRev`).
   RPC round trip, polling with fake timers (visible, hidden, focus, online, first poll, rev and
   chatRev changes, recovery), 401 signing out, the one-off `claimed` entry. HomeProvider and the
   screens' server-mode behaviour in `src`.
+- `scripts/vercel-function.test.ts` (Vitest): `server/entry/vercel.ts` bundled with the same
+  esbuild options as `build-server.mjs`, loaded by Node's own loader from a temporary folder
+  outside the repository (nothing resolvable from there), its default export served with
+  Node's `IncomingMessage` and `ServerResponse` (the Nodejs launcher with helpers off), and the
+  real `@vercel/blob` 2.8.1 talking to a fake Blob service through undici's `MockAgent` (the SDK's
+  fetch uses undici's global dispatcher; the network is shut off). It checks the requests the
+  SDK really sends (the private blob URL with `cache=0`, `If-None-Match`, `x-vercel-blob-access:
+  private`, `x-allow-overwrite: 0` on create, `x-if-match` on every other put, the bearer token),
+  the 412 from a moved ETag becoming a retry that keeps both changes, polls with no Blob call,
+  the Secure HttpOnly cookie, and no token, setup code or key hash in any response.
+- `npm run test:build` (`scripts/check-build.mjs`): with every mode variable emptied, a build is
+  demo mode and `build-server.mjs --vercel` publishes nothing (no `.vercel/output`: Vercel
+  deploys `dist/` as before); with a random made-up `BLOB_READ_WRITE_TOKEN` and setup code,
+  `vercel.json`'s own `buildCommand` succeeds, the app is server mode, `.vercel/output` holds
+  `static/` (the built `dist/`), `config.json` (v3, the headers, then the filesystem) and
+  `functions/api/home.func` with exactly `.vc-config.json` (Node 22, `index.mjs`, launcher
+  `Nodejs`) and a self-contained `index.mjs` with a default export; neither secret nor any part
+  of the token is in any deployed file or the build log, and the browser's files don't name
+  `BLOB_READ_WRITE_TOKEN` or `HOMEOS_SETUP_CODE`. It removes `.vercel/output` afterwards.
+
+### Verifying a deployment
+
+`npx vercel build` needs a Vercel login, so the deployment is proven offline instead (above):
+`npm run test:build` (the builds and the Build Output), `scripts/vercel-function.test.ts` (the
+function as Vercel runs it, with the real SDK), and the server e2e suite (the app and API
+together). Why Vercel will use the output: the Vite preset builds with `@vercel/static-build`,
+which, after the build command, uses `.vercel/output` whenever `.vercel/output/config.json`
+exists (`getBuildOutputDirectory()` in `packages/static-build/src/utils/build-output-v3.ts`), so
+`framework` and `outputDirectory` in `vercel.json` only matter for a build without a Blob store.
+There is no `api/` folder, so no zero-config function competes with the bundled one.
+
+After the first deploy with the Blob store connected and `HOMEOS_SETUP_CODE` set, the main
+session checks (no user step, nothing here changes the home):
+
+1. The build log says `build-server: published dist/ and /api/home in .vercel/output.` (else
+   the build was not in server mode: `BLOB_READ_WRITE_TOKEN` was missing at build time).
+2. `curl -sS -H 'X-HomeOS: 1' https://<app>/api/home?op=status` gives `{"home":false}` with
+   `Content-Type: application/json` and `Cache-Control: no-store`; without the header it gives
+   403 `{"error":{"code":"forbidden",…}}`. HTML or a 404 means the function was not deployed
+   (see the fallback under "Deploying").
+3. `curl -sS -H 'X-HomeOS: 1' https://<app>/api/home?op=version` gives 401 `not_signed_in`.
+4. `https://<app>/` serves the app, whose Welcome screen (in a fresh private window) says "This
+   home is private." and "home.os isn't set up here yet." with a "Have a code?" field.
+5. The function's logs show no `HOMEOS_SETUP_CODE is set but is not a setup code` warning.
+6. Then the setup link `https://<app>/?setup=<HOMEOS_SETUP_CODE>` goes to the user; once the
+   home is online, step 2 gives `{"home":true}` and a second setup answers `home_exists`.
+
+Connected Blob stores also get `BLOB_STORE_ID` and OIDC credentials; `@vercel/blob` uses OIDC
+when it can and falls back to `BLOB_READ_WRITE_TOKEN` (its token lookup never throws), so
+either works. The build only needs the token's presence to choose server mode.
+
+### Open points after integration
+
+- **The saved home (`src/lib/logic/savedHome.json`) is not wired.** It was meant for setup when
+  the phone's own copy is not in this browser ("Use my saved copy"). Importing it into the app
+  would put the household's address, names and items in the public JavaScript bundle, so it
+  must stay out of the client: if wanted, the function should hold it (for example setup with
+  `phone: 'saved'`, the summary returned only after the setup code checks out). Today, a setup
+  link opened where the home isn't (Safari, while the home is in the Home Screen app) shows
+  "home.os isn't set up here yet."; the setup code can then be typed in the Home Screen app.
+- **UI additions beyond the contract, awaiting the architect:** the Item sheet hides Notify in
+  server mode; Sign Out and removing the last device say that a new code is needed (and that
+  nobody could make one when it is the only device signed in); the extra copy "No devices
+  signed in.", "Loading…", a device-list error with Try Again, "Checking" (screen readers only),
+  "Joining", "Bringing It Online" and "Everyone has joined"; a failed Add Person in server mode
+  shows the not-saved toast. The integration keeps them (the e2e suite checks the first two).
+- **Integration changes:** `deviceLabel()` reads `HeadlessChrome/` as Chrome; the code errors
+  under the Welcome and setup fields wrap in balanced lines (`text-wrap: balance`).
+- A completion that fails because saving is paused still shows its confetti before it comes
+  back (as any failed save does, offline too).
+- `setupUsed` repeats "Ask someone at home for a code." under the line that already says it
+  (the contract's copy).
 
 ### The server-mode contract (do not change without the architect)
 
@@ -2011,7 +2095,10 @@ subtitle reads "Last visit Thu 1 Oct", October "1 visit · £60.00", September "
   back: nothing it does is seen by anyone else.
 - `npm run test:e2e`: Playwright against the demo-mode build.
 - `npm run test:e2e:server`: Playwright against the local server in server mode
-  (`playwright.server.config.ts`, `e2e-server/`; see "Server mode (no setup)").
+  (`playwright.server.config.ts`, `e2e-server/`; see "Server mode (no setup)", "Local server and
+  tests").
+- `npm run test:build`: the production builds as Vercel makes them, demo and server mode, with
+  no secret in anything deployed (`scripts/check-build.mjs`).
 - `npm run test:e2e:live`: Playwright against a build that uses the local Supabase stack
   (`playwright.live.config.ts`, `e2e-live/`): sessions made with the Auth admin API and the
   password grant are put into the app's auth storage (`sb-<host>-auth-token`) before it loads.
