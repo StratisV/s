@@ -2,8 +2,12 @@
 // "<device> · <browser>". Device: iPhone, iPad, Android phone, Android tablet, Mac, Windows PC,
 // Linux PC, else "Device". Browser: Safari, Chrome, Firefox, Edge, Samsung Internet, else
 // "Browser" (Chrome on iOS reports CriOS, Firefox FxiOS, Edge EdgiOS). An iPad that reports
-// itself as a Mac reads as Mac. At most 60 characters. Examples:
-//   iPhone Safari → "iPhone · Safari"; Pixel Chrome → "Android phone · Chrome"; '' → "Device · Browser".
+// itself as a Mac reads as Mac. A browser that said it runs as an installed app (setup's and
+// redeem's `app: 'standalone'`, from display-mode: standalone or navigator.standalone) is
+// "Home Screen app" instead, since on an iPhone Safari and the Home Screen app send the same
+// user agent and keep separate sign-ins. At most 60 characters. Examples:
+//   iPhone Safari → "iPhone · Safari"; the same as an app → "iPhone · Home Screen app";
+//   Pixel Chrome → "Android phone · Chrome"; '' → "Device · Browser".
 
 /** The longest label (DeviceInfo.label). */
 export const DEVICE_LABEL_MAX = 60;
@@ -28,7 +32,8 @@ function browserOf(ua: string): string {
   return 'Browser';
 }
 
-export function deviceLabel(userAgent: string | undefined): string {
+export function deviceLabel(userAgent: string | undefined, app?: unknown): string {
   const ua = typeof userAgent === 'string' ? userAgent : '';
-  return Array.from(`${deviceOf(ua)} · ${browserOf(ua)}`).slice(0, DEVICE_LABEL_MAX).join('');
+  const browser = app === 'standalone' ? 'Home Screen app' : browserOf(ua);
+  return Array.from(`${deviceOf(ua)} · ${browser}`).slice(0, DEVICE_LABEL_MAX).join('');
 }

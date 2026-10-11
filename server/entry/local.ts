@@ -10,7 +10,8 @@
 //   --data <dir>          FileBlobStore directory (default .homeos-local); --memory: MemoryBlobStore
 //   --allow-reset         POST /__homeos/reset (header X-HomeOS: 1) wipes the store, the cache
 //                         and the attempt limits; never in the Vercel bundle
-//   --attempts <perIp>,<global>,<windowMs>   attempt limits (tests use small windows)
+//   --attempts <perIp>,<global>,<windowMs>[,<trustedPerIp>]   attempt limits (tests use small
+//                         windows; trustedPerIp defaults to twice perIp)
 // Environment: HOMEOS_SETUP_CODE (as on Vercel), HOMEOS_BLOB_WRITES_PER_MONTH,
 // HOMEOS_BLOB_READS_PER_MONTH. Cookies are not Secure (http://localhost); the IP is the socket's.
 // Logs one line when listening: "home.os local server on http://localhost:<port>".
@@ -62,9 +63,10 @@ function parseArgs(argv: string[]): Options {
         opts.allowReset = true;
         break;
       case '--attempts': {
-        const [perIp, global, windowMs] = next().split(',').map(Number);
-        if (![perIp, global, windowMs].every((n) => Number.isInteger(n) && n > 0)) throw new Error('--attempts <perIp>,<global>,<windowMs>');
-        opts.attempts = { perIp, global, windowMs };
+        const [perIp, global, windowMs, trusted] = next().split(',').map(Number);
+        const given = [perIp, global, windowMs, ...(trusted === undefined ? [] : [trusted])];
+        if (!given.every((n) => Number.isInteger(n) && n > 0)) throw new Error('--attempts <perIp>,<global>,<windowMs>[,<trustedPerIp>]');
+        opts.attempts = { perIp, global, windowMs, ...(trusted === undefined ? {} : { trustedPerIp: trusted }) };
         break;
       }
       default:
@@ -153,6 +155,7 @@ function main() {
         await files?.clear();
         ctx.store.reset();
         ctx.limiter.reset();
+        ctx.keyMisses.reset();
         writeResponse(res, { status: 200, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }, body: '{"ok":true}' });
         return;
       }

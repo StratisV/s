@@ -25,8 +25,10 @@
 //
 // Signed in = a device key the server recognises, from the `homeos_key` cookie (HttpOnly,
 // Secure on https, SameSite=Lax, Path=/api, Max-Age 400 days; set by setup and redeem, renewed
-// by session) or from `Authorization: Bearer <key>` (tests and tools). The browser app only
-// ever uses the cookie and never sees the key.
+// by session) or from `Authorization: Bearer <key>` (tests and tools). The cookie holds a
+// device token, the key with the device's id, the rev that first held it and the server's
+// signature (server/core/auth.ts), so any instance can tell a device signed in elsewhere a
+// moment ago from a made-up key. The browser app only ever uses the cookie and never sees it.
 
 import type { HomeEntry, ISOTimestamp, AuthUser, DeviceInfo } from '../types';
 import { BackendError, type Backend, type BackendErrorCode } from './types';
@@ -91,16 +93,29 @@ export function codeLink(appUrl: string, code: string): string {
 
 export type ApiGetOp = 'status' | 'session' | 'version' | 'devices';
 
-/** "Bring this home online". `phone`: the raw localStorage homeos.demo.v1 string (at most SETUP_BODY_MAX). */
+/**
+ * How the page runs, sent with setup and redeem so the device list can tell them apart (on an
+ * iPhone, Safari and the Home Screen app send the same user agent but keep separate sign-ins):
+ * 'standalone' when installed (display-mode: standalone, or navigator.standalone).
+ */
+export type AppMode = 'standalone' | 'browser';
+
+/**
+ * "Bring this home online". `phone`: the raw localStorage homeos.demo.v1 string (at most
+ * SETUP_BODY_MAX). With a home online already, the right setup code still signs this browser
+ * in as the owner when none of the owner's devices was ever used (the first reply was lost).
+ */
 export interface SetupRequest {
   op: 'setup';
   code: string;
   phone: string;
+  app?: AppMode;
 }
 /** A sign-in code, as typed (the server normalises it). */
 export interface RedeemRequest {
   op: 'redeem';
   code: string;
+  app?: AppMode;
 }
 /**
  * One Backend method from RPC_METHODS, with its arguments as the method takes them (JSON).

@@ -8,7 +8,7 @@ import { API_HEADER, API_HEADER_VALUE, API_PATH, KEY_COOKIE } from '../../src/li
 import { configFromEnv } from '../core/config';
 import { handleApi, type ApiRequest, type ApiResponse, type ServerContext } from '../core/handler';
 import { HomeStore } from '../core/homeStore';
-import { AttemptLimiter, type AttemptLimits } from '../core/limits';
+import { AttemptLimiter, DEFAULT_KEY_MISS_LIMITS, type AttemptLimits } from '../core/limits';
 import { homeBlobPath } from '../core/serverDoc';
 import { MemoryBlobStore } from '../store/memory';
 import type { BlobStore } from '../store/types';
@@ -28,6 +28,8 @@ export interface HarnessOptions {
   attempts?: AttemptLimits;
   blobs?: BlobStore;
   secureCookies?: boolean;
+  /** HomeStore's wait between write attempts (default: real time). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface TestClock {
@@ -73,8 +75,9 @@ export function createHarness(opts: HarnessOptions = {}): Harness {
     if (opts.attempts) config.attempts = { ...opts.attempts };
     return {
       config,
-      store: new HomeStore(blobs, { path: homeBlobPath(env), budget: config.budget, now }),
+      store: new HomeStore(blobs, { path: homeBlobPath(env), budget: config.budget, now, sleep: opts.sleep }),
       limiter: new AttemptLimiter(config.attempts, now),
+      keyMisses: new AttemptLimiter(DEFAULT_KEY_MISS_LIMITS, now),
       deps: { now: () => new Date(now()), randomBytes: (n) => new Uint8Array(randomBytes(n)), newId: () => randomUUID() },
     };
   };

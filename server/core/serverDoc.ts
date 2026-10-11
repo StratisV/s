@@ -37,8 +37,19 @@ export interface ServerDoc {
 export interface ServerAuth {
   /** Signed-in browsers, in sign-in order. At most DEVICE_LIMITS.perPerson per person and DEVICE_LIMITS.perHome in all. */
   devices: DeviceRow[];
-  /** Live sign-in codes, at most one per person (a new one replaces it). Expired ones are pruned on every write. */
+  /**
+   * Sign-in codes: live ones (at most MAX_LIVE_CODES per person) and, for CODE_REPLAY_MS, used
+   * ones (`usedAt`). Expired and old used ones are pruned on every write.
+   */
   codes: CodeRow[];
+  /**
+   * 32 random bytes (base64url), made when the home came online: the key that signs device
+   * tokens (deviceToken() in ./auth.ts), so an instance whose copy is behind can tell a device
+   * another instance signed in from a made-up key. Never changes; never leaves the server.
+   */
+  secret?: string;
+  /** hex SHA-256 of the normalised setup code that brought the home online (setup's recovery checks it). */
+  setupHash?: string;
 }
 
 export interface DeviceRow {
@@ -51,6 +62,12 @@ export interface DeviceRow {
   /** deviceLabel(user agent) when it signed in, at most 60 characters. */
   label: string;
   createdAt: ISOTimestamp;
+  /**
+   * When the browser first used its key (its first signed-in request; stored once, so one put
+   * per device ever). Missing: the browser never got its key, or never used it (a reply that
+   * was lost): setup and redeem may then hand out a new one in its place.
+   */
+  seenAt?: ISOTimestamp;
 }
 
 export interface CodeRow {
@@ -64,6 +81,16 @@ export interface CodeRow {
   createdAt: ISOTimestamp;
   /** createdAt + CODE_TTL_MS. */
   expiresAt: ISOTimestamp;
+  /**
+   * Set when the code was used: it signs nobody in any more, except that the same code again
+   * within CODE_REPLAY_MS replaces `usedBy` while that device has never been used (the reply
+   * to the first redeem was lost). Pruned CODE_REPLAY_MS after.
+   */
+  usedAt?: ISOTimestamp;
+  /** The device the code signed in. */
+  usedBy?: string;
+  /** Using it made its person join ('claimed'), so a repeat gives the welcome step too. */
+  usedClaimed?: boolean;
 }
 
 export interface ServerMeta {
@@ -85,14 +112,22 @@ export function usageMonth(at: Date): string {
   return at.toISOString().slice(0, 7);
 }
 
-/** A new document for a home that is coming online (setup): rev 1, chatRev 1, no devices or codes yet. */
-export function newServerDoc(home: DemoDoc, now: Date): ServerDoc {
+/**
+ * A new document for a home that is coming online (setup): rev 1, chatRev 1, no devices or codes
+ * yet; `auth` gets the token secret and the setup code's hash when given.
+ */
+export function newServerDoc(home: DemoDoc, now: Date, auth: { secret?: string; setupHash?: string } = {}): ServerDoc {
   return {
     format: SERVER_DOC_FORMAT,
     rev: 1,
     chatRev: 1,
     home: { ...home, session: null, users: [], invites: [], push_subs: [] },
-    auth: { devices: [], codes: [] },
+    auth: {
+      devices: [],
+      codes: [],
+      ...(auth.secret ? { secret: auth.secret } : {}),
+      ...(auth.setupHash ? { setupHash: auth.setupHash } : {}),
+    },
     meta: { createdAt: now.toISOString(), writes: [], usage: { month: usageMonth(now), puts: 0, reads: 0 } },
   };
 }
@@ -128,7 +163,15 @@ export function parseServerDoc(body: string): ServerDoc {
     throw new Error('server document: bad home');
   }
   const auth = doc.auth;
-  if (!isRecord(auth) || !Array.isArray(auth.devices) || !Array.isArray(auth.codes)) throw new Error('server document: bad auth');
+  if (
+    !isRecord(auth) ||
+    !Array.isArray(auth.devices) ||
+    !Array.isArray(auth.codes) ||
+    (auth.secret !== undefined && typeof auth.secret !== 'string') ||
+    (auth.setupHash !== undefined && typeof auth.setupHash !== 'string')
+  ) {
+    throw new Error('server document: bad auth');
+  }
   const meta = doc.meta;
   if (
     !isRecord(meta) ||

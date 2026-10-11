@@ -2,26 +2,47 @@
 // of writes, and the Blob budget. docs/ARCHITECTURE.md "Server mode (no setup)", "Storage",
 // "Writes" and "Budget".
 //
-// Reads: from the cached copy when it was checked against the store within `maxAgeMs` (and is
-// at least `minRev`), else get(path, { ifNoneMatch: cached etag }) first ('unchanged' just
-// renews the check). Many concurrent reads share one store call. Writes made on this instance
-// update the cache at once, so with one warm instance (the usual case for a household) every
-// change is seen on the next poll; another instance's change is seen within `freshMs`.
+// Reads: from the cached copy when it was checked against the store within `maxAgeMs`
+// (default pressure().freshMs) and is at least `minRev`, else get(path, { ifNoneMatch: cached
+// etag }) first ('unchanged' just renews the check). Many concurrent reads share one store call.
+// Writes made on this instance update the cache at once, so with one warm instance (the usual
+// case for a household) every change is seen on the next poll; another instance's change is
+// seen within `freshMs`.
 //
-// Writes: one queue per instance. When a put is not in flight, every write waiting is applied
-// in order, each to the result of the one before, on one deep copy of the latest document (a
-// write that throws is taken out again and rejects alone), and stored with ONE put
-// { ifMatch: the copy's etag } (group commit). Nothing changed (the JSON is the same): no put.
-// Before the put: rev + 1, chatRev + 1 when chatFingerprint() changed, meta.writes gets a fresh
-// id, usage counted, pruneAuth(). On BlobConflictError: re-read the store and, unless its
-// meta.writes holds this put's id (it landed after all), apply the batch again on what is
-// there; WRITE_ATTEMPTS in all, then every write in the batch rejects 'busy'. So two people
-// writing at once never lose a change: each write is applied to the latest document.
+// Reads for any other reason than freshness are rechecks, and the budget gates them: a caller
+// who has seen a newer rev (minRev), a write that failed on a copy that may be behind ('member':
+// at most one per pressure().recheckMs), and a sign-in code or key this copy does not know
+// ('stranger': at most one per STRANGER_RECHECK_MS and strangerRechecksPerDay() a day, since
+// anyone can send those). A recheck that is not allowed answers from the copy (or shares a
+// read already under way). Only a device token signed by this home ({ trusted: true }) or a
+// write conflict reads past the gates.
+//
+// The budget (docs: "Budget"): reads this month (stored in meta.usage, plus this instance's
+// not stored yet) against the read budget give the level: under 60 %, 60 to 85 %, 85 to 90 %,
+// and from READ_CEILING (90 %) on, the ceiling, where the copy is never refreshed except for a
+// trusted read or a write conflict, and browsers poll every 60 s. Reads not stored yet are
+// stored with the next put, and once READ_FLUSH_AT of them have built up, by a put of their own
+// (a 'meta' write: no new rev), so an instance that goes away loses few of them.
+//
+// Writes: one queue per instance. When a put is not in flight, up to MAX_BATCH writes waiting
+// are applied in order, each to the result of the one before, on one copy of the latest
+// document (a write that throws is rolled back: a `pure` write, one that replaces doc.home
+// rather than editing it in place, as all of the handler's do, by putting back the home object
+// it replaced and a copy of auth, which costs next to nothing; any other by a copy of the whole
+// document taken before it), and stored with ONE put { ifMatch: the copy's etag } (group commit). Nothing changed (the JSON is the same):
+// no put. Before the put: rev + 1 when a 'data' write changed something (a 'meta' write, such as
+// marking a device used or storing the read count, keeps the rev, so browsers do not reload
+// for it), chatRev + 1 when chatFingerprint() changed, meta.writes gets a fresh id, usage
+// counted, pruneAuth(). A body over MAX_DOC_BYTES is refused ('too_large'). On
+// BlobConflictError: re-read the store and, unless its meta.writes holds this put's id (it
+// landed after all), wait a little (jittered, longer each time) and apply the batch again on
+// what is there; WRITE_ATTEMPTS in all, then every write in the batch rejects 'busy'. So two
+// people writing at once never lose a change: each write is applied to the latest document.
 // A write that throws is rolled back out of the batch's document; its error stands when the
-// batch is stored (or changes nothing), and it is tried again with the rest after a conflict,
-// since it may have failed only because this instance's copy was behind. A put that fails
-// with BlobUnavailableError is checked the same way (re-read: did any of this batch's ids
-// land?) and otherwise rejects the batch with that error.
+// batch is stored (or changes nothing), and it is tried again with the rest after a conflict or
+// one recheck, since it may have failed only because this instance's copy was behind. A put
+// that fails with BlobUnavailableError is checked the same way (re-read: did any of this
+// batch's ids land?) and otherwise rejects the batch with that error.
 
 import { randomUUID } from 'node:crypto';
 import { BackendError } from '../../src/lib/backend/types';
@@ -32,19 +53,31 @@ import { ApiError } from './errors';
 import { chatFingerprint, parseServerDoc, RECENT_WRITES, serialiseServerDoc, usageMonth, type ServerDoc } from './serverDoc';
 
 /** Tries per batch before 'busy'. */
-export const WRITE_ATTEMPTS = 5;
-/** A write that fails on a copy checked longer ago than this is tried again on a fresh one. */
-export const RECHECK_MS = 1000;
+export const WRITE_ATTEMPTS = 7;
+/** At most this many writes go into one put; the rest wait for the next. */
+export const MAX_BATCH = 25;
+/** The largest body stored (the home's own cap, HOME_MAX_BYTES in runAs.ts, plus room for auth and meta). */
+export const MAX_DOC_BYTES = 5 * 1024 * 1024;
+/** This instance's reads not stored yet: at this many, a put of their own stores them. */
+export const READ_FLUSH_AT = 50;
+/** The share of the read budget from which the instance reads only for trusted callers and its own writes. */
+export const READ_CEILING = 0.9;
+/** A recheck for a stranger (a code or key this copy does not know): at most one this often. */
+export const STRANGER_RECHECK_MS = 60_000;
 
 /**
  * What the Blob budget allows now (docs: "Budget"). Levels by this month's reads against the
- * read budget: under 60 %, 60 to 85 %, over 85 %.
+ * read budget: under 60 %, 60 to 85 %, 85 % to READ_CEILING, and the ceiling.
  */
 export interface Pressure {
-  /** How long a cached copy counts as fresh for reads, auth and version polls: 10 s, 30 s, 120 s. */
+  /** How long a cached copy counts as fresh for reads, auth and version polls: 10 s, 30 s, 120 s; at the ceiling, for good. */
   freshMs: number;
-  /** What VersionResponse.pollMs tells browsers: 3 s, 6 s, 20 s. */
+  /** What VersionResponse.pollMs tells browsers: 3 s, 6 s, 20 s, 60 s. */
   pollMs: number;
+  /** The least time between rechecks for members (minRev, a failed write): 1 s, 5 s, 20 s; none at the ceiling. */
+  recheckMs: number;
+  /** READ_CEILING of the read budget is used: the store is read only for trusted callers and write conflicts. */
+  ceiling: boolean;
   /** This month's puts reached the write budget: writes reject 'read_only' without a put. */
   readOnly: boolean;
 }
@@ -61,6 +94,10 @@ export interface HomeStoreOptions {
   budget?: { writes: number; reads: number };
   /** Fresh random ids for meta.writes. Default crypto.randomUUID(). */
   newId?: () => string;
+  /** The wait between write attempts after a conflict. Default setTimeout. */
+  sleep?: (ms: number) => Promise<void>;
+  /** 0 to 1, for the jitter. Default Math.random. */
+  random?: () => number;
 }
 
 export interface HomeSnapshot {
@@ -70,11 +107,15 @@ export interface HomeSnapshot {
   checkedAt: number;
 }
 
-/** The pressure levels: [read share below which it applies, freshMs, pollMs]. */
+/** What a write is: 'data' changes the home or who is signed in (a new rev); 'meta' is bookkeeping (the same rev). */
+export type WriteKind = 'data' | 'meta';
+
+/** The pressure levels: [read share below which it applies, freshMs, pollMs, recheckMs]. */
 const LEVELS = [
-  { below: 0.6, freshMs: 10_000, pollMs: 3_000 },
-  { below: 0.85, freshMs: 30_000, pollMs: 6_000 },
-  { below: Infinity, freshMs: 120_000, pollMs: 20_000 },
+  { below: 0.6, freshMs: 10_000, pollMs: 3_000, recheckMs: 1_000 },
+  { below: 0.85, freshMs: 30_000, pollMs: 6_000, recheckMs: 5_000 },
+  { below: READ_CEILING, freshMs: 120_000, pollMs: 20_000, recheckMs: 20_000 },
+  { below: Infinity, freshMs: Infinity, pollMs: 60_000, recheckMs: Infinity },
 ] as const;
 
 /** What this instance knows of the store: the document (null: no home online) as of `checkedAt`. */
@@ -90,6 +131,11 @@ interface Waiting {
   change: (doc: ServerDoc) => unknown;
   resolve: (value: { result: unknown; rev: number }) => void;
   reject: (err: unknown) => void;
+  kind: WriteKind;
+  /** Replaces doc.home rather than editing it in place (see the top): rolled back without a copy of the home. */
+  pure: boolean;
+  /** The read-count put (stores even when nothing else changed). */
+  flush?: boolean;
 }
 
 type Outcome = { ok: true; value: unknown } | { ok: false; error: unknown };
@@ -99,7 +145,11 @@ interface Applied {
   outcomes: Outcome[];
   doc: ServerDoc;
   changed: boolean;
+  /** A 'data' write succeeded (the rev goes up when something changed). */
+  data: boolean;
 }
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export class HomeStore {
   private cache: Cached | null = null;
@@ -110,6 +160,14 @@ export class HomeStore {
   private pumping = false;
   /** Blob operations this instance made that the stored usage does not count yet (this month). */
   private uncounted = { month: '', reads: 0, puts: 0 };
+  /** A home has been seen by this instance (it never goes away again: status answers from memory). */
+  private seenHome = false;
+  /** When each kind of recheck last read the store. */
+  private lastRecheck = { member: -Infinity, stranger: -Infinity };
+  /** Stranger rechecks today (UTC). */
+  private strangerDay = { day: '', count: 0 };
+  /** A read-count put is waiting or under way. */
+  private flushQueued = false;
 
   constructor(
     readonly blobs: BlobStore,
@@ -139,25 +197,88 @@ export class HomeStore {
     return c.doc ? { doc: c.doc, etag: c.etag ?? '', checkedAt: c.checkedAt } : null;
   }
 
+  private setCache(next: Cached) {
+    this.cache = next;
+    if (next.doc) this.seenHome = true;
+  }
+
+  /** Whether this instance has seen a home online (status needs no read then: a home never goes away). */
+  knowsHome(): boolean {
+    return this.seenHome;
+  }
+
+  /** When this instance's copy (of the home, or of there being none) was last checked against the store; null before any. */
+  checkedAt(): number | null {
+    return this.cache ? this.cache.checkedAt : null;
+  }
+
   /**
    * The home, or null when none is online. `maxAgeMs` (default pressure().freshMs): how old
-   * the last check may be. `minRev`: re-check the store when the cached rev is lower.
+   * the last check may be. `minRev`: the caller has seen this rev; a copy behind it is
+   * rechecked (gated, see the top). `trusted`: a device token signed by this home says the
+   * store holds `minRev`: read until the copy is there, even at the ceiling.
    * Throws BlobUnavailableError. The document returned is shared: never change it.
    */
-  async read(opts: { maxAgeMs?: number; minRev?: number } = {}): Promise<HomeSnapshot | null> {
+  async read(opts: { maxAgeMs?: number; minRev?: number; trusted?: boolean } = {}): Promise<HomeSnapshot | null> {
     return HomeStore.snapshot(await this.readCached(opts));
   }
 
-  private async readCached(opts: { maxAgeMs?: number; minRev?: number } = {}): Promise<Cached> {
-    const maxAge = opts.maxAgeMs ?? this.pressure().freshMs;
-    const enough = (c: Cached) => opts.minRev === undefined || (c.doc?.rev ?? 0) >= opts.minRev;
+  private async readCached(opts: { maxAgeMs?: number; minRev?: number; trusted?: boolean } = {}): Promise<Cached> {
+    const p = this.pressure();
     const c = this.cache;
-    if (c && this.clock() - c.checkedAt < maxAge && enough(c)) return c;
-    let fresh = await this.refresh();
-    // A refresh that was already under way may have started before the caller's rev was
-    // stored: one more, started now. Still lower after that (a store that was reset): as it is.
-    if (!enough(fresh)) fresh = await this.refresh(true);
-    return fresh;
+    // At the ceiling, only a trusted read (or a write conflict) goes to the store.
+    if (c && p.ceiling && !opts.trusted) return c;
+    const maxAge = opts.maxAgeMs ?? p.freshMs;
+    const enough = (x: Cached) => opts.minRev === undefined || (x.doc?.rev ?? 0) >= opts.minRev;
+    let fresh: Cached;
+    if (c && this.clock() - c.checkedAt < maxAge) {
+      if (enough(c)) return c;
+      fresh = c;
+    } else {
+      fresh = await this.refresh();
+    }
+    if (enough(fresh)) return fresh;
+    // Behind what the caller has seen.
+    if (opts.trusted) {
+      if (fresh === c) fresh = await this.refresh();
+      // A refresh that was already under way may have started before that rev was stored: one more.
+      if (!enough(fresh)) fresh = await this.refresh(true);
+      return fresh;
+    }
+    return (await this.recheckCached('member')) ?? fresh;
+  }
+
+  /** Stranger rechecks allowed a day: a three-hundredth of the read budget, at least 10 (no limit without a budget). */
+  private strangerRechecksPerDay(): number {
+    const reads = this.budget().reads;
+    return reads > 0 ? Math.max(10, Math.floor(reads / 300)) : Infinity;
+  }
+
+  /** One read now for a reason other than freshness, when the gate allows (see the top); else a read under way, or null. */
+  private async recheckCached(kind: 'member' | 'stranger'): Promise<Cached | null> {
+    const p = this.pressure();
+    const now = this.clock();
+    const gap = kind === 'member' ? p.recheckMs : Math.max(p.recheckMs, STRANGER_RECHECK_MS);
+    let allowed = !p.ceiling && now - this.lastRecheck[kind] >= gap;
+    if (allowed && kind === 'stranger') {
+      const day = new Date(now).toISOString().slice(0, 10);
+      if (this.strangerDay.day !== day) this.strangerDay = { day, count: 0 };
+      allowed = this.strangerDay.count < this.strangerRechecksPerDay();
+      if (allowed) this.strangerDay.count += 1;
+    }
+    if (!allowed) return this.refreshing ? this.refreshing : null;
+    this.lastRecheck[kind] = now;
+    return this.refresh(true);
+  }
+
+  /**
+   * A copy read for this caller just now (or by a read under way), when the budget allows a
+   * recheck of this kind (see the top); 'skipped' when it does not, so the caller can't tell
+   * more than its copy says.
+   */
+  async recheck(kind: 'member' | 'stranger'): Promise<HomeSnapshot | null | 'skipped'> {
+    const c = await this.recheckCached(kind);
+    return c === null ? 'skipped' : HomeStore.snapshot(c);
   }
 
   /** One get (shared by everyone asking meanwhile); `force`: one that starts after any under way. */
@@ -180,7 +301,8 @@ export class HomeStore {
       if (generation !== this.generation) return next;
       // A write on this instance landed meanwhile: it is at least as new as what this read saw.
       if (this.cache !== prev && this.cache) return this.cache;
-      this.cache = next;
+      this.setCache(next);
+      this.maybeFlush();
       return next;
     })();
     this.refreshing = run;
@@ -191,23 +313,39 @@ export class HomeStore {
     return run;
   }
 
+  /** READ_FLUSH_AT reads built up: a 'meta' put stores the count (see the top). */
+  private maybeFlush() {
+    if (this.flushQueued || !this.cache?.doc || this.counts().reads < READ_FLUSH_AT || this.pressure().readOnly) return;
+    this.flushQueued = true;
+    const done = () => {
+      this.flushQueued = false;
+    };
+    this.queue.push({ change: () => undefined, resolve: done, reject: done, kind: 'meta', pure: true, flush: true });
+    void this.pump();
+  }
+
   /** After a put of ours: the cache is that document, unless a newer one is known already. */
   private stored(next: Cached) {
     const current = this.cache?.doc;
     if (current && next.doc && current.rev > next.doc.rev) return;
-    this.cache = next;
+    this.setCache(next);
   }
 
   /**
    * Queues `change` (see the top of this file): it gets a mutable copy of the latest document,
    * may be run more than once (after a conflict) and must depend on nothing but the document,
    * and resolves to its result once stored, with the rev it was stored as (the current rev
-   * when nothing changed). Rejects with what `change` threw, BackendError('not_found') when no
-   * home is online, ApiError 'busy' or 'read_only', or BlobUnavailableError.
+   * when nothing changed). `kind` (default 'data'): see WriteKind. `pure` (default false): it
+   * replaces doc.home and never edits it (or anything in it) in place, so rolling it back needs
+   * no copy of the home. Rejects with what `change` threw, BackendError('not_found') when no
+   * home is online, ApiError 'busy', 'read_only' or 'too_large', or BlobUnavailableError.
    */
-  write<T>(change: (doc: ServerDoc) => T | Promise<T>): Promise<{ result: T; rev: number }> {
+  write<T>(
+    change: (doc: ServerDoc) => T | Promise<T>,
+    opts: { kind?: WriteKind; pure?: boolean } = {},
+  ): Promise<{ result: T; rev: number }> {
     return new Promise<{ result: T; rev: number }>((resolve, reject) => {
-      this.queue.push({ change, resolve: resolve as Waiting['resolve'], reject });
+      this.queue.push({ change, resolve: resolve as Waiting['resolve'], reject, kind: opts.kind ?? 'data', pure: opts.pure ?? false });
       void this.pump();
     });
   }
@@ -219,7 +357,7 @@ export class HomeStore {
       // Writes queued in the same tick share the first put too.
       await Promise.resolve();
       while (this.queue.length) {
-        const batch = this.queue.splice(0);
+        const batch = this.queue.splice(0, MAX_BATCH);
         try {
           await this.commit(batch);
         } catch (err) {
@@ -231,21 +369,35 @@ export class HomeStore {
     }
   }
 
-  /** Runs every write of `batch` in order on a copy of `base`; a write that throws is rolled back. */
+  /**
+   * Runs every write of `batch` in order on a copy of `base`. A write that throws is rolled
+   * back (see the top): a pure one by putting back the home object it replaced and a copy of
+   * auth taken before it (no copy of the whole home per write); any other from a copy of the
+   * whole document taken before it (none needed for the first: that is `base`).
+   */
   private async apply(batch: Waiting[], base: Cached & { doc: ServerDoc }): Promise<Applied> {
-    const baseJson = serialiseServerDoc(base.doc);
+    const baseJson = base.body || serialiseServerDoc(base.doc);
     let doc = JSON.parse(baseJson) as ServerDoc;
     const outcomes: Outcome[] = [];
-    for (const w of batch) {
-      const before = batch.length > 1 ? serialiseServerDoc(doc) : null;
+    let data = false;
+    for (const [i, w] of batch.entries()) {
+      const home = doc.home;
+      const auth = w.pure ? JSON.stringify(doc.auth) : '';
+      const whole = !w.pure && i > 0 ? serialiseServerDoc(doc) : null;
       try {
         outcomes.push({ ok: true, value: await w.change(doc) });
+        if (w.kind === 'data') data = true;
       } catch (error) {
         outcomes.push({ ok: false, error });
-        doc = before === null ? (JSON.parse(baseJson) as ServerDoc) : (JSON.parse(before) as ServerDoc);
+        if (w.pure) {
+          doc.home = home;
+          doc.auth = JSON.parse(auth) as ServerDoc['auth'];
+        } else {
+          doc = JSON.parse(whole ?? baseJson) as ServerDoc;
+        }
       }
     }
-    return { outcomes, doc, changed: serialiseServerDoc(doc) !== baseJson };
+    return { outcomes, doc, changed: serialiseServerDoc(doc) !== baseJson, data };
   }
 
   private static settle(batch: Waiting[], outcomes: Outcome[], rev: number, failAll?: unknown) {
@@ -258,11 +410,11 @@ export class HomeStore {
   }
 
   /** The put's bookkeeping (see the top of this file). Returns the operations it counts. */
-  private prepare(doc: ServerDoc, base: ServerDoc, writeId: string): { reads: number; puts: number } {
+  private prepare(doc: ServerDoc, base: ServerDoc, writeId: string, bump: boolean): { reads: number; puts: number } {
     const now = new Date(this.clock());
     const month = usageMonth(now);
-    doc.rev = base.rev + 1;
-    if (chatFingerprint(doc.home) !== chatFingerprint(base.home)) doc.chatRev = base.chatRev + 1;
+    doc.rev = bump ? base.rev + 1 : base.rev;
+    doc.chatRev = bump && chatFingerprint(doc.home) !== chatFingerprint(base.home) ? base.chatRev + 1 : base.chatRev;
     pruneAuth(doc, now);
     doc.meta.writes = [...doc.meta.writes, writeId].slice(-RECENT_WRITES);
     const pending = this.counts();
@@ -279,13 +431,19 @@ export class HomeStore {
     pending.puts = Math.max(0, pending.puts - counted.puts);
   }
 
+  /** The wait before attempt `attempt` + 1 after a conflict: 50 to 300 ms times `attempt`. */
+  private pause(attempt: number): Promise<void> {
+    const ms = Math.round((50 + (this.options.random ?? Math.random)() * 250) * attempt);
+    return (this.options.sleep ?? defaultSleep)(ms);
+  }
+
   private async commit(batch: Waiting[]) {
     /** Every put this batch sent: its id → what that try gave and the document it stored. */
     const tries = new Map<string, Applied>();
     const landed = (doc: ServerDoc | null) => doc?.meta.writes.find((id) => tries.has(id));
     // The first try goes on this instance's copy when it is fresh enough; a conflict corrects it.
     let base: Cached = await this.readCached();
-    /** `base` came from the store during this batch (not only from the cache). */
+    /** One recheck of a failed write was made (or is not needed: `base` came from the store during this batch). */
     let verified = false;
     let attempts = 0;
     while (attempts < WRITE_ATTEMPTS) {
@@ -297,16 +455,17 @@ export class HomeStore {
       const applied = await this.apply(batch, current);
       // A write that failed on a copy that may be behind (a code, a person or an item made on
       // another instance a moment ago) is tried once more on what the store holds now.
-      if (!verified && applied.outcomes.some((o) => !o.ok) && this.mayRecheck(current)) {
+      if (!verified && applied.outcomes.some((o) => !o.ok)) {
         verified = true;
-        const fresh = await this.refresh(true).catch(() => null);
+        const fresh = await this.recheckCached('member').catch(() => null);
         if (fresh && fresh.etag !== current.etag) {
           base = fresh;
           continue;
         }
       }
       attempts += 1;
-      if (!applied.changed) {
+      const flush = batch.some((w) => w.flush) && this.counts().reads > 0;
+      if (!applied.changed && !flush) {
         HomeStore.settle(batch, applied.outcomes, current.doc.rev);
         return;
       }
@@ -315,9 +474,13 @@ export class HomeStore {
         return;
       }
       const writeId = this.newId();
-      const counted = this.prepare(applied.doc, current.doc, writeId);
-      tries.set(writeId, applied);
+      const counted = this.prepare(applied.doc, current.doc, writeId, applied.data && applied.changed);
       const body = serialiseServerDoc(applied.doc);
+      if (body.length > MAX_DOC_BYTES) {
+        HomeStore.settle(batch, applied.outcomes, current.doc.rev, new ApiError('too_large', 'The home is full'));
+        return;
+      }
+      tries.set(writeId, applied);
       this.counts().puts += 1;
       try {
         const { etag } = await this.blobs.put(this.options.path, body, { ifMatch: current.etag ?? '' });
@@ -344,17 +507,11 @@ export class HomeStore {
         if (err instanceof BlobUnavailableError) throw err;
         base = fresh;
         verified = true;
+        // Several instances writing at once: let them go first for a moment.
+        if (attempts < WRITE_ATTEMPTS) await this.pause(attempts);
       }
     }
     for (const w of batch) w.reject(new ApiError('busy', 'The home is busy; try again'));
-  }
-
-  /**
-   * Whether a failed write is worth a fresh read: the copy was checked more than RECHECK_MS
-   * ago and reads are not under budget pressure (a wrong code never costs more than that).
-   */
-  private mayRecheck(copy: Cached): boolean {
-    return this.clock() - copy.checkedAt > RECHECK_MS && this.pressure().freshMs <= LEVELS[0].freshMs;
   }
 
   /**
@@ -375,7 +532,7 @@ export class HomeStore {
       const { etag } = await this.blobs.put(this.options.path, body, { create: true });
       this.counted(counted);
       const next: Cached = { doc: fresh, body, etag, checkedAt: this.clock() };
-      this.cache = next;
+      this.setCache(next);
       return HomeStore.snapshot(next)!;
     } catch (err) {
       if (!(err instanceof BlobConflictError) && !(err instanceof BlobUnavailableError)) throw err;
@@ -401,8 +558,15 @@ export class HomeStore {
     const puts = stored.puts + pending.puts;
     const budget = this.budget();
     const share = budget.reads > 0 ? reads / budget.reads : 0;
-    const level = LEVELS.find((l) => share < l.below) ?? LEVELS[LEVELS.length - 1];
-    return { freshMs: level.freshMs, pollMs: level.pollMs, readOnly: budget.writes > 0 && puts >= budget.writes };
+    const at = LEVELS.findIndex((l) => share < l.below);
+    const level = LEVELS[at < 0 ? LEVELS.length - 1 : at];
+    return {
+      freshMs: level.freshMs,
+      pollMs: level.pollMs,
+      recheckMs: level.recheckMs,
+      ceiling: level.below === Infinity,
+      readOnly: budget.writes > 0 && puts >= budget.writes,
+    };
   }
 
   /** Dev and tests (POST /__homeos/reset): forget the cached copy and the counters. */
@@ -410,6 +574,10 @@ export class HomeStore {
     this.generation += 1;
     this.cache = null;
     this.refreshing = null;
+    this.seenHome = false;
     this.uncounted = { month: '', reads: 0, puts: 0 };
+    this.lastRecheck = { member: -Infinity, stranger: -Infinity };
+    this.strangerDay = { day: '', count: 0 };
+    this.flushQueued = false;
   }
 }

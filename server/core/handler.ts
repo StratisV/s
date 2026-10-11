@@ -8,36 +8,37 @@
 // 3. Body within its limit (SETUP_BODY_MAX for setup, RPC_BODY_MAX for rpc, SMALL_BODY_MAX
 //    otherwise; the entry already refused anything over SETUP_BODY_MAX) → else 413 'too_large';
 //    JSON with a known `op` (GET: ?op=) → else 400 'invalid_input' / 'unknown_op'.
-// 4. The device: `Authorization: Bearer <key>` if present, else the KEY_COOKIE cookie; looked
-//    up with findDevice() on store.read() (fresh within pressure().freshMs). Ops that need
-//    sign-in answer 401 'not_signed_in' without one (and clear the cookie).
+// 4. The device: `Authorization: Bearer <token or key>` if present, else the KEY_COOKIE cookie
+//    (a device token, ./auth.ts); see signedIn() below. Ops that need sign-in answer 401
+//    'not_signed_in' (clearing the cookie) only when a copy of the home that is new enough
+//    says the device is not there; when this instance can't tell yet, 503 'unavailable'
+//    (the browser tries again; its cookie stays).
 // 5. The op:
-//    status   read() → { home: snapshot !== null }
-//    session  { user, entry: member, device, rev } and Set-Cookie renewing the same key
+//    status   { home }: true for good once this instance has seen a home (no read); else
+//             read() with "no home" kept NO_HOME_FRESH_MS
+//    session  { user, entry: member, device, rev } and Set-Cookie renewing the token
 //    version  { rev, chatRev, pollMs: pressure().pollMs, readOnly: pressure().readOnly }
 //    devices  { devices: deviceInfos(doc, device.id) }
-//    setup    setupHome()
-//    redeem   limiter.blockedFor(ip) → 429; not isSignInCode → fail(ip), 'invalid_code';
-//             store.write(doc => redeemCode(doc, …)): null → fail(ip), 'invalid_code' (the
-//             write stores nothing then); else { user, entry, device, rev } + Set-Cookie
+//    setup    setupHome() (./setup.ts)
+//    redeem   limiter.begin(ip) (429 while blocked; the attempt counts as failed until it
+//             works); not isSignInCode → 'invalid_code'; codeWorks() on this instance's copy,
+//             else one 'stranger' recheck when the budget allows → 'invalid_code' without a
+//             write; store.write(doc => redeemCode(…)) → { user, entry, device, rev } + the cookie
 //    rpc      isRpcMethod (else 'unknown_op'); validateArgs; RPC_METHODS[method] 'read':
 //             read({ minRev }) then runAs(kind 'read'); 'write': store.write(doc => runAs
 //             (doc.home, caller, …) and doc.home = home); { result: result ?? null, rev }
 //    createCode store.write(doc => issueCode(doc, memberId, caller.memberId, deps)) → CodeResponse
+//             (403 'forbidden' for someone joined and signed in elsewhere: only they add devices)
 //    removeDevice store.write(doc => removeDevice(doc, id) || throw not_found); clears the
 //             cookie when it was this device
 //    signOut  removes this device when the key is valid (a write), always 200, clears the cookie
 //    release  store.write(doc => runAs(doc.home, caller, b => b.releaseClaim(), 'write')),
 //             pruneAuth then drops their devices; clears the cookie
+//    Every signed-in request marks its device as used (DeviceRow.seenAt) once: inside the
+//    write for a write, else with a 'meta' write of its own (one put per device, ever).
 // 6. Errors: toApiError(err) → { error: { code, message } } with API_ERROR_STATUS[code]
 //    (Retry-After for too_many_attempts). A 5xx logs the error (never a key, code or body).
 // Every response: Content-Type application/json; charset=utf-8, Cache-Control no-store.
-//
-// A key this instance's copy does not know may be one another instance signed in moments ago
-// (one function, but sometimes more than one instance): the store is read once more before
-// answering 401, unless that address is being limited, the copy was checked within the last
-// RECHECK_MS, or reads are under budget pressure. A key that is still unknown counts as a
-// failed attempt (AttemptLimiter), so made-up keys can't run up the Blob read budget.
 
 import {
   API_ERROR_STATUS,
@@ -64,12 +65,18 @@ import {
 import { BackendError } from '../../src/lib/backend/types';
 import type { DeviceInfo } from '../../src/lib/types';
 import {
+  codeWorks,
   deviceInfos,
+  deviceToken,
   findDevice,
   issueCode,
+  markSeen,
+  parseDeviceToken,
   redeemCode,
   removeDevice,
+  tokenVerifies,
   type AuthDeps,
+  type PresentedToken,
 } from './auth';
 import type { ServerConfig } from './config';
 import { deviceLabel } from './deviceLabel';
@@ -81,8 +88,10 @@ import { runAs, type Caller } from './runAs';
 import type { DeviceRow, ServerDoc } from './serverDoc';
 import { setupHome } from './setup';
 
-/** An unknown key is checked against the store again only when the copy is older than this. */
+/** A copy checked within this long counts as up to date for a bare key it does not hold. */
 export const RECHECK_MS = 2000;
+/** How long status keeps "no home online" before asking the store again. */
+export const NO_HOME_FRESH_MS = 30_000;
 
 /** A request as both entries hand it over. Header names lower case. */
 export interface ApiRequest {
@@ -112,7 +121,10 @@ export interface RequestInfo {
 export interface ServerContext {
   store: HomeStore;
   config: ServerConfig;
+  /** Wrong sign-in and setup codes. */
   limiter: AttemptLimiter;
+  /** Device keys this instance did not know (counted apart: they never hold up anyone's code). */
+  keyMisses: AttemptLimiter;
   deps: AuthDeps;
 }
 
@@ -134,7 +146,8 @@ function errorBody(code: ApiError['code'], message: string): ApiErrorBody {
 export function errorResponse(err: unknown): ApiResponse {
   const api = toApiError(err);
   const status = API_ERROR_STATUS[api.code];
-  if (status >= 500) {
+  // "Try again in a moment" (an instance that can't tell yet) is expected, not a failure.
+  if (status >= 500 && !(err instanceof ApiError && api.code === 'unavailable')) {
     // The error itself, never the request (no key, code or body is in it).
     const what = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
     console.error(`home.os api: ${api.code}: ${what}`);
@@ -146,22 +159,32 @@ export function errorResponse(err: unknown): ApiResponse {
 }
 
 /**
- * The key cookie: `homeos_key=<key>; Path=/api; HttpOnly; SameSite=Lax; Max-Age=34560000`
- * (+ `; Secure` when config.secureCookies), or, with key null, the same with an empty value and
+ * The key cookie: `homeos_key=<token>; Path=/api; HttpOnly; SameSite=Lax; Max-Age=34560000`
+ * (+ `; Secure` when config.secureCookies), or, with null, the same with an empty value and
  * Max-Age=0 (signed out).
  */
-export function keyCookie(key: string | null, secure: boolean): string {
-  const value = key === null ? '' : key;
-  const maxAge = key === null ? 0 : 34_560_000;
+export function keyCookie(token: string | null, secure: boolean): string {
+  const value = token === null ? '' : token;
+  const maxAge = token === null ? 0 : 34_560_000;
   return `${KEY_COOKIE}=${value}; Path=/api; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
 }
 
-/** The device key the request carries: Authorization: Bearer first, else the cookie. */
-function presentedKey(headers: ApiRequest['headers']): { key: string; fromCookie: boolean } | null {
+interface Presented {
+  /** As sent. */
+  value: string;
+  token: PresentedToken;
+  fromCookie: boolean;
+}
+
+/** The device token or key the request carries: Authorization: Bearer first, else the cookie. Null: none, or not one. */
+function presentedKey(headers: ApiRequest['headers']): Presented | null {
   const auth = headers.authorization;
   if (typeof auth === 'string') {
     const m = /^Bearer\s+(\S+)\s*$/i.exec(auth);
-    if (m) return { key: m[1], fromCookie: false };
+    if (m) {
+      const token = parseDeviceToken(m[1]);
+      return token ? { value: m[1], token, fromCookie: false } : null;
+    }
   }
   const cookie = headers.cookie;
   if (typeof cookie === 'string') {
@@ -170,7 +193,9 @@ function presentedKey(headers: ApiRequest['headers']): { key: string; fromCookie
       if (eq < 0) continue;
       if (part.slice(0, eq).trim() !== KEY_COOKIE) continue;
       const value = part.slice(eq + 1).trim();
-      if (value) return { key: value, fromCookie: true };
+      if (!value) continue;
+      const token = parseDeviceToken(value);
+      return token ? { value, token, fromCookie: true } : null;
     }
   }
   return null;
@@ -180,42 +205,133 @@ interface SignedIn {
   snapshot: HomeSnapshot;
   device: DeviceRow;
   caller: Caller;
-  key: string;
-  fromCookie: boolean;
+  presented: Presented;
+}
+
+type Verdict =
+  | { kind: 'in'; device: DeviceRow; caller: Caller }
+  /** A copy new enough to know says no: a made-up, foreign or removed device. */
+  | { kind: 'out' }
+  /** A token this home signed for a rev newer than the copy: a device signed in elsewhere a moment ago. */
+  | { kind: 'behind'; rev: number }
+  /** A bare key (or no copy of the home here): only a fresh read can tell. */
+  | { kind: 'unknown' };
+
+function judge(snapshot: HomeSnapshot | null, token: PresentedToken): Verdict {
+  if (!snapshot) return { kind: 'unknown' };
+  const found = findDevice(snapshot.doc, token.key);
+  if (found) return { kind: 'in', ...found };
+  if (token.mac === undefined || !snapshot.doc.auth.secret) return { kind: 'unknown' };
+  if (!tokenVerifies(snapshot.doc, token)) return { kind: 'out' };
+  return token.rev! > snapshot.doc.rev ? { kind: 'behind', rev: token.rev! } : { kind: 'out' };
+}
+
+const unsure = () => new ApiError('unavailable', 'Try again in a moment');
+
+/** Devices a 'meta' write is marking as used now (per instance), so one request at a time asks. */
+const marking = new WeakMap<HomeStore, Set<string>>();
+
+/**
+ * Marks the device as used (once, ever) with a 'meta' write of its own. The device's first
+ * request waits for it (work left running after a reply may be frozen on Vercel); requests
+ * that arrive meanwhile do not. A failure (read-only, the store down) is left for a later request.
+ */
+async function noteSeen(ctx: ServerContext, device: DeviceRow): Promise<void> {
+  if (device.seenAt) return;
+  let set = marking.get(ctx.store);
+  if (!set) {
+    set = new Set();
+    marking.set(ctx.store, set);
+  }
+  if (set.has(device.id)) return;
+  const pending = set;
+  pending.add(device.id);
+  const now = ctx.deps.now();
+  try {
+    await ctx.store.write((doc) => void markSeen(doc, device.id, now), { kind: 'meta', pure: true });
+  } catch {
+    /* a later request marks it */
+  } finally {
+    pending.delete(device.id);
+  }
 }
 
 /**
- * Who the request is signed in as, or null. `minRev`: the copy is at least that new (only once
- * the key is known, so nobody signed out can make the server read the store).
+ * Who the request is signed in as, or null when it is definitely not signed in (401, and the
+ * cookie goes). Throws ApiError 'unavailable' when this instance can't tell yet (503; the
+ * browser keeps its cookie and asks again):
+ * - the key is in the copy: signed in;
+ * - a token this home signed, for a rev newer than the copy (a device another instance signed
+ *   in a moment ago): the copy is read until it holds that rev, past every budget gate (only
+ *   real devices can ask for it, once each), then judged again;
+ * - a token signed by this home whose rev the copy holds, without the device: removed (or its
+ *   person released); a token not signed by this home: made up. Both definitely out;
+ * - a bare key, or no copy of the home here: out when the copy was checked within RECHECK_MS;
+ *   else one 'stranger' recheck when the budget and keyMisses allow (else unsure), and a key
+ *   still unknown counts in keyMisses.
+ * `minRev` (an RPC read's): the copy is at least that new when the budget allows (a member
+ * recheck); a newer copy without the device means it was removed. `markUsed` (default true):
+ * note the device as used (writes do it inside their own write instead).
  */
-async function signedIn(ctx: ServerContext, request: ApiRequest, minRev?: number): Promise<SignedIn | null> {
+async function signedIn(
+  ctx: ServerContext,
+  request: ApiRequest,
+  opts: { minRev?: number; markUsed?: boolean } = {},
+): Promise<SignedIn | null> {
   const presented = presentedKey(request.headers);
   if (!presented) return null;
+  const { token } = presented;
   let snapshot = await ctx.store.read();
-  let found = snapshot ? findDevice(snapshot.doc, presented.key) : null;
-  if (!found) {
-    const stale = !snapshot || ctx.deps.now().getTime() - snapshot.checkedAt > RECHECK_MS;
-    if (!stale || ctx.limiter.blockedFor(request.ip) > 0 || ctx.store.pressure().freshMs > 10_000) return null;
-    snapshot = await ctx.store.read({ maxAgeMs: RECHECK_MS });
-    found = snapshot ? findDevice(snapshot.doc, presented.key) : null;
-    if (!found) {
-      ctx.limiter.fail(request.ip);
+  let verdict = judge(snapshot, token);
+
+  if (verdict.kind === 'unknown') {
+    const checked = ctx.store.checkedAt();
+    const age = checked === null ? Infinity : ctx.deps.now().getTime() - checked;
+    if (age <= RECHECK_MS) {
+      // A copy checked a moment ago does not hold this key. Unless there is no home here at
+      // all and the token says there is one (brought online elsewhere this very moment).
+      if (!snapshot && token.rev !== undefined) throw unsure();
+      return null;
+    }
+    if (ctx.keyMisses.blockedFor(request.ip) > 0) throw unsure();
+    const again = await ctx.store.recheck('stranger');
+    if (again === 'skipped') throw unsure();
+    snapshot = again;
+    verdict = judge(snapshot, token);
+    if (verdict.kind === 'unknown' || verdict.kind === 'out') {
+      ctx.keyMisses.fail(request.ip);
       return null;
     }
   }
-  if (minRev !== undefined && snapshot!.doc.rev < minRev) {
-    snapshot = await ctx.store.read({ minRev });
-    found = snapshot ? findDevice(snapshot.doc, presented.key) : null;
-    if (!found) return null;
+  if (verdict.kind === 'behind') {
+    snapshot = await ctx.store.read({ minRev: verdict.rev, trusted: true });
+    verdict = judge(snapshot, token);
+    if (verdict.kind === 'behind' || verdict.kind === 'unknown') throw unsure();
   }
-  return { snapshot: snapshot!, device: found.device, caller: found.caller, key: presented.key, fromCookie: presented.fromCookie };
+  if (verdict.kind === 'out') return null;
+  let { device, caller } = verdict;
+  let current = snapshot!;
+
+  if (opts.minRev !== undefined && current.doc.rev < opts.minRev) {
+    const newer = await ctx.store.read({ minRev: opts.minRev });
+    if (newer && newer.doc.rev > current.doc.rev) {
+      const found = findDevice(newer.doc, token.key);
+      // Removed in the newer copy.
+      if (!found) return null;
+      current = newer;
+      ({ device, caller } = found);
+    }
+  }
+  if (opts.markUsed !== false) await noteSeen(ctx, device);
+  return { snapshot: current, device, caller, presented };
 }
 
-/** The caller as the document being written knows them (signed out meanwhile: not_signed_in). */
-function callerIn(doc: ServerDoc, deviceId: string): Caller {
+/** The caller as the document being written knows them (signed out meanwhile: not_signed_in); marks the device used. */
+function callerIn(doc: ServerDoc, deviceId: string, now: Date): Caller {
   const device = doc.auth.devices.find((d) => d.id === deviceId);
   const member = device ? doc.home.members.find((m) => m.user_id !== null && m.user_id === device.userId) : undefined;
   if (!device || !member) throw new ApiError('not_signed_in');
+  markSeen(doc, deviceId, now);
   return { userId: device.userId, memberId: member.id, name: member.name };
 }
 
@@ -287,7 +403,9 @@ async function route(request: ApiRequest, ctx: ServerContext): Promise<ApiRespon
 async function get(op: GetOp, request: ApiRequest, ctx: ServerContext): Promise<ApiResponse> {
   const secure = ctx.config.secureCookies;
   if (op === 'status') {
-    const snapshot = await ctx.store.read();
+    // A home never goes away: once seen, no read is needed to say so.
+    if (ctx.store.knowsHome()) return json(200, { home: true } satisfies StatusResponse);
+    const snapshot = await ctx.store.read({ maxAgeMs: NO_HOME_FRESH_MS });
     return json(200, { home: snapshot !== null } satisfies StatusResponse);
   }
   const me = await signedIn(ctx, request);
@@ -302,7 +420,11 @@ async function get(op: GetOp, request: ApiRequest, ctx: ServerContext): Promise<
         device: deviceInfo(me.device, member.id, true),
         rev: doc.rev,
       };
-      return json(200, response, me.fromCookie ? { 'Set-Cookie': keyCookie(me.key, secure) } : {});
+      if (!me.presented.fromCookie) return json(200, response);
+      // The same token again, or (a bare key from before tokens) one for the copy that holds it.
+      const { token } = me.presented;
+      const renewed = token.mac !== undefined ? me.presented.value : deviceToken(doc, me.device, token.key, doc.rev);
+      return json(200, response, { 'Set-Cookie': keyCookie(renewed, secure) });
     }
     case 'version': {
       const pressure = ctx.store.pressure();
@@ -327,53 +449,62 @@ async function post(
   switch (op) {
     case 'setup': {
       if (typeof body.code !== 'string' || typeof body.phone !== 'string') throw new ApiError('invalid_input', 'invalid_input: body');
-      const { response, key } = await setupHome(ctx, body as unknown as SetupRequest, info);
-      return json(200, response, { 'Set-Cookie': keyCookie(key, secure) });
+      const { response, token } = await setupHome(ctx, body as unknown as SetupRequest, info);
+      return json(200, response, { 'Set-Cookie': keyCookie(token, secure) });
     }
 
     case 'redeem': {
-      const wait = ctx.limiter.blockedFor(info.ip);
-      if (wait > 0) throw new ApiError('too_many_attempts', 'Too many tries', wait);
+      // Counted as a failed attempt from here until it works, with no await before: a burst of
+      // codes sent at once is limited exactly like the same codes one after another.
+      const attempt = ctx.limiter.begin(info.ip);
+      if (!attempt.ticket) throw new ApiError('too_many_attempts', 'Too many tries', attempt.wait);
       const code = typeof body.code === 'string' ? normaliseCode(body.code) : '';
-      if (!isSignInCode(code)) {
-        ctx.limiter.fail(info.ip);
-        throw new ApiError('invalid_code', 'That code did not work');
+      if (!isSignInCode(code)) throw new ApiError('invalid_code', 'That code did not work');
+      // Checked on this instance's copy first, so a wrong code never queues a write; a code
+      // made on another instance a moment ago is found by one recheck when the budget allows.
+      let snapshot = await ctx.store.read();
+      if (!snapshot || !codeWorks(snapshot.doc, code, now())) {
+        const again = await ctx.store.recheck('stranger');
+        snapshot = again === 'skipped' ? null : again;
+        if (!snapshot || !codeWorks(snapshot.doc, code, now())) throw new ApiError('invalid_code', 'That code did not work');
       }
-      const label = deviceLabel(info.userAgent);
+      const label = deviceLabel(info.userAgent, body.app);
       let done;
       try {
-        done = await ctx.store.write((doc) => {
-          const redeemed = redeemCode(doc, code, label, ctx.deps);
-          // Nothing changed: no put. The error counts as a failed attempt below.
-          if (!redeemed) throw new ApiError('invalid_code', 'That code did not work');
-          return redeemed;
-        });
+        done = await ctx.store.write(
+          (doc) => {
+            const redeemed = redeemCode(doc, code, label, ctx.deps);
+            if (!redeemed) throw new ApiError('invalid_code', 'That code did not work');
+            return redeemed;
+          },
+          { pure: true },
+        );
       } catch (err) {
-        if (err instanceof ApiError && err.code === 'invalid_code') ctx.limiter.fail(info.ip);
         // No home online: the same answer as any code that does not work.
-        if (err instanceof BackendError && err.code === 'not_found') {
-          ctx.limiter.fail(info.ip);
-          throw new ApiError('invalid_code', 'That code did not work');
-        }
+        if (err instanceof BackendError && err.code === 'not_found') throw new ApiError('invalid_code', 'That code did not work');
         throw err;
       }
-      const { key, device, caller, entry } = done.result;
+      attempt.ticket.succeeded();
+      const { token, device, caller, entry } = done.result;
       const response: SessionResponse = {
         user: { id: caller.userId, email: '', name: caller.name },
         entry,
         device: deviceInfo(device, caller.memberId, true),
         rev: done.rev,
       };
-      return json(200, response, { 'Set-Cookie': keyCookie(key, secure) });
+      return json(200, response, { 'Set-Cookie': keyCookie(token, secure) });
     }
 
     case 'signOut': {
-      const me = await signedIn(ctx, request).catch(() => null);
+      const me = await signedIn(ctx, request, { markUsed: false }).catch(() => null);
       if (me) {
         await ctx.store
-          .write((doc) => {
-            removeDevice(doc, me.device.id);
-          })
+          .write(
+            (doc) => {
+              removeDevice(doc, me.device.id);
+            },
+            { pure: true },
+          )
           .catch((err) => {
             // Signing out always works here; the device may stay listed until removed.
             console.error(`home.os api: signOut could not revoke the device: ${toApiError(err).code}`);
@@ -386,7 +517,8 @@ async function post(
       const method = body.method;
       const minRev =
         typeof body.minRev === 'number' && Number.isSafeInteger(body.minRev) && body.minRev >= 0 ? body.minRev : undefined;
-      const me = await signedIn(ctx, request, minRev);
+      const write = isRpcMethod(method) && RPC_METHODS[method] === 'write';
+      const me = await signedIn(ctx, request, { minRev: write ? undefined : minRev, markUsed: !write });
       if (!me) throw new ApiError('not_signed_in');
       if (!isRpcMethod(method)) throw new ApiError('unknown_op', 'Unknown method');
       const args = validateArgs(method, body.args);
@@ -394,50 +526,62 @@ async function post(
         const { result } = await runAs(me.snapshot.doc.home, me.caller, (b) => runRpc(b, method, args), { now, kind: 'read' });
         return json(200, { result: result ?? null, rev: me.snapshot.doc.rev } as RpcResponse);
       }
-      const done = await ctx.store.write(async (doc) => {
-        const caller = callerIn(doc, me.device.id);
-        const ran = await runAs(doc.home, caller, (b) => runRpc(b, method, args), { now, kind: 'write' });
-        doc.home = ran.home!;
-        return ran.result;
-      });
+      const done = await ctx.store.write(
+        async (doc) => {
+          const caller = callerIn(doc, me.device.id, now());
+          const ran = await runAs(doc.home, caller, (b) => runRpc(b, method, args), { now, kind: 'write' });
+          doc.home = ran.home!;
+          return ran.result;
+        },
+        { pure: true },
+      );
       return json(200, { result: done.result ?? null, rev: done.rev } as RpcResponse);
     }
 
     case 'createCode': {
-      const me = await signedIn(ctx, request);
+      const me = await signedIn(ctx, request, { markUsed: false });
       if (!me) throw new ApiError('not_signed_in');
       if (!isId(body.memberId)) throw new ApiError('invalid_input', 'invalid_input: memberId');
       const memberId = body.memberId;
-      const done = await ctx.store.write((doc) => {
-        const caller = callerIn(doc, me.device.id);
-        const { code, row } = issueCode(doc, memberId, caller.memberId, ctx.deps);
-        return { code, memberId: row.memberId, expiresAt: row.expiresAt } satisfies CodeResponse;
-      });
+      const done = await ctx.store.write(
+        (doc) => {
+          const caller = callerIn(doc, me.device.id, now());
+          const { code, row } = issueCode(doc, memberId, caller.memberId, ctx.deps);
+          return { code, memberId: row.memberId, expiresAt: row.expiresAt } satisfies CodeResponse;
+        },
+        { pure: true },
+      );
       return json(200, done.result);
     }
 
     case 'removeDevice': {
-      const me = await signedIn(ctx, request);
+      const me = await signedIn(ctx, request, { markUsed: false });
       if (!me) throw new ApiError('not_signed_in');
       if (!isId(body.deviceId)) throw new ApiError('invalid_input', 'invalid_input: deviceId');
       const deviceId = body.deviceId;
-      await ctx.store.write((doc) => {
-        callerIn(doc, me.device.id);
-        if (!removeDevice(doc, deviceId)) throw new BackendError('not_found', 'No such device');
-      });
+      await ctx.store.write(
+        (doc) => {
+          callerIn(doc, me.device.id, now());
+          if (!removeDevice(doc, deviceId)) throw new BackendError('not_found', 'No such device');
+        },
+        { pure: true },
+      );
       const mine = deviceId === me.device.id;
       return json(200, { ok: true } satisfies OkResponse, mine ? { 'Set-Cookie': keyCookie(null, secure) } : {});
     }
 
     case 'release': {
-      const me = await signedIn(ctx, request);
+      const me = await signedIn(ctx, request, { markUsed: false });
       if (!me) throw new ApiError('not_signed_in');
-      await ctx.store.write(async (doc) => {
-        const caller = callerIn(doc, me.device.id);
-        const ran = await runAs(doc.home, caller, (b) => b.releaseClaim(), { now, kind: 'write' });
-        // The person is not joined any more: pruneAuth() signs them out everywhere before the put.
-        doc.home = ran.home!;
-      });
+      await ctx.store.write(
+        async (doc) => {
+          const caller = callerIn(doc, me.device.id, now());
+          const ran = await runAs(doc.home, caller, (b) => b.releaseClaim(), { now, kind: 'write' });
+          // The person is not joined any more: pruneAuth() signs them out everywhere before the put.
+          doc.home = ran.home!;
+        },
+        { pure: true },
+      );
       return json(200, { ok: true } satisfies OkResponse, { 'Set-Cookie': keyCookie(null, secure) });
     }
   }

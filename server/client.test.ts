@@ -69,7 +69,8 @@ describe('ServerBackend: signing in', () => {
     expect(await stratis.backend.enterHome()).toEqual(entry);
     expect(await stratis.backend.getUser()).toEqual(heard[0]);
     expect(await stratis.backend.homeOnline()).toBe(true);
-    expect(stratis.browser.key()).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    // The cookie holds a device token: the key, the device, the rev that first holds it, the signature.
+    expect(stratis.browser.key()).toMatch(/^[A-Za-z0-9_-]{43}\.[0-9a-f-]{36}\.1\.[A-Za-z0-9_-]{22}$/);
   });
 
   it("gives a claim's welcome once: 'claimed' from the redeem, then 'member'", async () => {
@@ -399,7 +400,8 @@ describe('ServerBackend: polling', () => {
 
   it('says when saving is paused, at once and with each change', async () => {
     vi.useFakeTimers();
-    const h = createHarness({ env: { HOMEOS_BLOB_WRITES_PER_MONTH: '2' } });
+    // Setup and the phone's first use of its key are two puts; the third uses the month up.
+    const h = createHarness({ env: { HOMEOS_BLOB_WRITES_PER_MONTH: '3' } });
     const stratis = phone(h);
     const entry = (await settle(stratis.backend.bringOnline(TEST_SETUP_CODE, PHONE))) as { householdId: string };
     const statuses: boolean[] = [];

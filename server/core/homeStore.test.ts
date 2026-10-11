@@ -4,7 +4,7 @@ import { emptyDoc } from '../../src/lib/backend/demo';
 import { MemoryBlobStore } from '../store/memory';
 import { BlobConflictError, BlobUnavailableError, type BlobStore, type StoredBlob } from '../store/types';
 import { ApiError } from './errors';
-import { HomeStore, WRITE_ATTEMPTS, type HomeStoreOptions } from './homeStore';
+import { HomeStore, MAX_BATCH, MAX_DOC_BYTES, READ_FLUSH_AT, WRITE_ATTEMPTS, type HomeStoreOptions } from './homeStore';
 import { newServerDoc, parseServerDoc, type ServerDoc } from './serverDoc';
 
 const PATH = 'homeos/test/home.json';
@@ -174,7 +174,7 @@ describe('HomeStore: writing', () => {
 
   it('never loses a change with many writers on many instances', async () => {
     const blobs = new MemoryBlobStore(() => Math.floor(Math.random() * 3));
-    const { make } = setUp({}, blobs);
+    const { make } = setUp({ sleep: async () => {} }, blobs);
     const instances = [make(), make(), make()];
     await instances[0].create(seedDoc());
     await Promise.all(instances.map((s) => s.read()));
@@ -270,10 +270,88 @@ describe('HomeStore: writing', () => {
         return blobs.put(p, body, opts);
       },
     };
-    const store = new HomeStore(contested, { path: PATH, now: () => START });
+    const waits: number[] = [];
+    const sleep = async (ms: number) => {
+      waits.push(ms);
+    };
+    const store = new HomeStore(contested, { path: PATH, now: () => START, sleep, random: () => 0.5 });
     await store.create(seedDoc());
     await expect(store.write(bump)).rejects.toMatchObject({ code: 'busy' });
     expect(puts).toBe(WRITE_ATTEMPTS);
+    // Between attempts it waits a jittered while, longer each time (50 to 300 ms times the attempt).
+    expect(waits).toEqual([175, 350, 525, 700, 875, 1050]);
+  });
+
+  it('waits a random while before trying again, so instances writing at once spread out', async () => {
+    const waits: number[] = [];
+    const { a, b, blobs } = setUp({ sleep: async (ms) => void waits.push(ms) }, new MemoryBlobStore(2));
+    await a.create(seedDoc());
+    await b.read();
+    await Promise.all([a.write(bump), b.write(bump)]);
+    expect(stored(blobs).home.households[0].name).toBe('2');
+    expect(waits.length).toBeGreaterThan(0);
+    for (const ms of waits) expect(ms).toBeGreaterThanOrEqual(50);
+  });
+
+  it('puts at most MAX_BATCH writes in one put', async () => {
+    const { a, blobs } = setUp();
+    await a.create(seedDoc());
+    const puts = blobs.calls.put;
+    const results = await Promise.all(Array.from({ length: MAX_BATCH * 2 + 1 }, () => a.write(bump)));
+    expect(results.at(-1)!.result).toBe(String(MAX_BATCH * 2 + 1));
+    expect(blobs.calls.put - puts).toBe(3);
+  });
+
+  it("keeps the rev for a 'meta' write (browsers do not reload for it); a 'data' write moves it on", async () => {
+    const { a, blobs } = setUp();
+    await a.create(seedDoc());
+    const meta = await a.write(
+      (doc) => {
+        doc.meta.createdAt = doc.meta.createdAt;
+        doc.auth.codes = [...doc.auth.codes];
+        doc.auth.devices = [{ id: 'd1', keyHash: 'x', userId: 'u', label: 'x', createdAt: new Date(START).toISOString() }];
+      },
+      { kind: 'meta' },
+    );
+    expect(meta.rev).toBe(1);
+    expect(stored(blobs).rev).toBe(1);
+    expect((await a.write(bump)).rev).toBe(2);
+  });
+
+  it('rolls a pure write back without copying the home, and any other write from a copy', async () => {
+    const { a, blobs } = setUp();
+    await a.create(seedDoc());
+    const [one, pureBad, inPlaceBad, two] = await Promise.allSettled([
+      a.write(bump),
+      a.write(
+        (doc) => {
+          doc.home = { ...doc.home, areas: [] };
+          doc.auth.codes = [{ id: 'c', codeHash: 'h', memberId: 'm', createdBy: null, createdAt: '', expiresAt: '' }];
+          throw new BackendError('not_found');
+        },
+        { pure: true },
+      ),
+      a.write((doc) => {
+        doc.home.households[0].name = 'broken';
+        throw new BackendError('not_found');
+      }),
+      a.write(bump),
+    ]);
+    expect([one.status, pureBad.status, inPlaceBad.status, two.status]).toEqual(['fulfilled', 'rejected', 'rejected', 'fulfilled']);
+    expect(stored(blobs).home.households[0].name).toBe('2');
+    expect(stored(blobs).auth.codes).toEqual([]);
+  });
+
+  it("refuses a body over MAX_DOC_BYTES ('too_large'), storing nothing", async () => {
+    const { a, blobs } = setUp();
+    await a.create(seedDoc());
+    const puts = blobs.calls.put;
+    await expect(
+      a.write((doc) => {
+        doc.home.households[0].address = 'x'.repeat(MAX_DOC_BYTES);
+      }),
+    ).rejects.toMatchObject({ code: 'too_large' });
+    expect(blobs.calls.put).toBe(puts);
   });
 
   it("rejects 'not_found' when no home is online", async () => {
@@ -283,20 +361,34 @@ describe('HomeStore: writing', () => {
 });
 
 describe('HomeStore: the Blob budget', () => {
-  it('raises freshness and the poll interval as reads near the budget', async () => {
-    const { a, clock } = setUp({ budget: { writes: 1900, reads: 10 } });
+  it('raises freshness and the poll interval as reads near the budget, up to a ceiling', async () => {
+    const { a, clock, blobs } = setUp({ budget: { writes: 1900, reads: 20 } });
     await a.create(seedDoc());
-    expect(a.pressure()).toMatchObject({ freshMs: 10_000, pollMs: 3_000 });
-    for (let i = 0; i < 6; i++) await a.read({ maxAgeMs: 0 });
-    expect(a.pressure()).toMatchObject({ freshMs: 30_000, pollMs: 6_000 });
-    for (let i = 0; i < 3; i++) await a.read({ maxAgeMs: 0 });
-    expect(a.pressure()).toMatchObject({ freshMs: 120_000, pollMs: 20_000 });
+    expect(a.pressure()).toMatchObject({ freshMs: 10_000, pollMs: 3_000, recheckMs: 1_000, ceiling: false });
+    for (let i = 0; i < 12; i++) await a.read({ maxAgeMs: 0 });
+    expect(a.pressure()).toMatchObject({ freshMs: 30_000, pollMs: 6_000, recheckMs: 5_000, ceiling: false });
+    for (let i = 0; i < 5; i++) await a.read({ maxAgeMs: 0 });
+    expect(a.pressure()).toMatchObject({ freshMs: 120_000, pollMs: 20_000, recheckMs: 20_000, ceiling: false });
     // Reads are added to the stored count with the next put.
     await a.write(bump);
-    expect((await a.read())!.doc.meta.usage.reads).toBe(9);
+    expect(stored(blobs).meta.usage.reads).toBe(17);
+    await a.read({ maxAgeMs: 0 });
+    // 90 % of the budget: the ceiling. Browsers poll every minute, and nothing reads the store
+    // any more (not even a caller who asks for a fresh copy or a newer rev) but a trusted
+    // caller and a write that meets a conflict.
+    expect(a.pressure()).toMatchObject({ pollMs: 60_000, ceiling: true });
+    const gets = blobs.calls.get;
+    clock.now += 3_600_000;
+    await a.read({ maxAgeMs: 0 });
+    await a.read({ minRev: 99 });
+    expect(await a.recheck('member')).toBe('skipped');
+    expect(await a.recheck('stranger')).toBe('skipped');
+    expect(blobs.calls.get).toBe(gets);
+    await a.read({ minRev: 99, trusted: true });
+    expect(blobs.calls.get).toBeGreaterThan(gets);
     // A new month starts from nothing.
     clock.now = Date.parse('2026-11-01T00:00:00.000Z');
-    expect(a.pressure()).toMatchObject({ freshMs: 10_000, pollMs: 3_000, readOnly: false });
+    expect(a.pressure()).toMatchObject({ freshMs: 10_000, pollMs: 3_000, readOnly: false, ceiling: false });
   });
 
   it('pauses saving at the write budget, without a put, and reading goes on', async () => {
@@ -317,12 +409,23 @@ describe('HomeStore: the Blob budget', () => {
     expect((await a.write(bump)).result).toBe('3');
   });
 
+  it(`stores its own read count with a put of its own once ${READ_FLUSH_AT} reads have built up`, async () => {
+    const { a, b, blobs } = setUp();
+    await a.create(seedDoc());
+    for (let i = 0; i < READ_FLUSH_AT; i++) await b.read({ maxAgeMs: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await b.read();
+    const doc = stored(blobs);
+    expect(doc.meta.usage.reads).toBe(READ_FLUSH_AT);
+    expect(doc.rev).toBe(1);
+  });
+
   it('has no limits with budgets of 0 (the Pro plan)', async () => {
     const { a } = setUp({ budget: { writes: 0, reads: 0 } });
     await a.create(seedDoc());
     for (let i = 0; i < 20; i++) await a.read({ maxAgeMs: 0 });
     for (let i = 0; i < 5; i++) await a.write(bump);
-    expect(a.pressure()).toEqual({ freshMs: 10_000, pollMs: 3_000, readOnly: false });
+    expect(a.pressure()).toEqual({ freshMs: 10_000, pollMs: 3_000, recheckMs: 1_000, ceiling: false, readOnly: false });
   });
 
   it('forgets its copy and counters on reset', async () => {

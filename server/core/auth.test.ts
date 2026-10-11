@@ -5,17 +5,26 @@ import { BackendError } from '../../src/lib/backend/types';
 import { USER_DEMO_DOC } from '../../src/lib/logic/importHome.fixture';
 import { buildServerHome } from '../../src/lib/logic/serverImport';
 import {
+  CODE_REPLAY_MS,
   DEVICE_LIMITS,
+  MAX_LIVE_CODES,
   addDevice,
+  codeWorks,
   deviceInfos,
+  deviceToken,
   findDevice,
   hashCode,
   hashKey,
   issueCode,
+  markSeen,
+  parseDeviceToken,
   pruneAuth,
+  recoverOwner,
   redeemCode,
   removeDevice,
   setupCodeMatches,
+  setupHashOf,
+  tokenVerifies,
   type AuthDeps,
 } from './auth';
 import { newServerDoc } from './serverDoc';
@@ -65,13 +74,38 @@ describe('keys and codes', () => {
     expect(JSON.stringify(doc)).not.toContain(normaliseCode(code));
   });
 
-  it('keeps one live code per person: a new one replaces it', () => {
+  it('keeps a new code from cancelling the one sent before: up to 5 live a person, the oldest going past that', () => {
     const { doc, deps, shea, owner } = setUp();
-    const first = issueCode(doc, shea.id, owner.id, deps);
-    const second = issueCode(doc, shea.id, owner.id, deps);
-    expect(doc.auth.codes).toHaveLength(1);
-    expect(redeemCode(doc, normaliseCode(first.code), 'x', deps)).toBeNull();
-    expect(redeemCode(doc, normaliseCode(second.code), 'x', deps)).not.toBeNull();
+    const codes = Array.from({ length: MAX_LIVE_CODES + 1 }, () => issueCode(doc, shea.id, owner.id, deps).code);
+    expect(doc.auth.codes).toHaveLength(MAX_LIVE_CODES);
+    // The oldest went; the first of the rest still works.
+    expect(codeWorks(doc, normaliseCode(codes[0]), deps.now())).toBe(false);
+    expect(redeemCode(doc, normaliseCode(codes[1]), 'x', deps)).not.toBeNull();
+    // Shea has joined: the other codes someone else made for her go with it.
+    expect(codes.slice(2).some((c) => codeWorks(doc, normaliseCode(c), deps.now()))).toBe(false);
+  });
+
+  it('keeps every "Add another device" code someone made for themselves', () => {
+    const { doc, deps, owner } = setUp();
+    const ipad = issueCode(doc, owner.id, owner.id, deps).code;
+    const app = issueCode(doc, owner.id, owner.id, deps).code;
+    expect(redeemCode(doc, normaliseCode(ipad), 'iPad · Safari', deps)).not.toBeNull();
+    expect(redeemCode(doc, normaliseCode(app), 'iPhone · Home Screen app', deps)).not.toBeNull();
+  });
+
+  it('lets nobody make a code for someone who has joined and is signed in somewhere, but themselves', () => {
+    const { doc, deps, owner, person } = setUp();
+    const shea = person('Shea');
+    const joined = redeemCode(doc, normaliseCode(issueCode(doc, shea.id, owner.id, deps).code), 'x', deps)!;
+    // Stratis can't make one for Shea (it would sign him in as her) ...
+    expect(() => issueCode(doc, shea.id, owner.id, deps)).toThrow(expect.objectContaining({ code: 'forbidden' }));
+    // ... nor Shea for Stratis, the owner; each can for themselves.
+    addDevice(doc, 'u-owner', 'iPhone · Safari', deps);
+    expect(() => issueCode(doc, owner.id, shea.id, deps)).toThrow(expect.objectContaining({ code: 'forbidden' }));
+    expect(issueCode(doc, shea.id, shea.id, deps).code).toBeTruthy();
+    // Once every device of hers is gone (a lost phone, removed from her page), someone at home may.
+    removeDevice(doc, joined.device.id);
+    expect(issueCode(doc, shea.id, owner.id, deps).code).toBeTruthy();
   });
 
   it('refuses a code for someone who is not in the home', () => {
@@ -82,17 +116,71 @@ describe('keys and codes', () => {
 
 describe('redeeming a code', () => {
   it('makes someone not joined yet join, once', () => {
-    const { doc, deps, shea, owner } = setUp();
-    expect(shea.user_id).toBeNull();
-    const { code } = issueCode(doc, shea.id, owner.id, deps);
+    const { doc, deps, shea: before, owner, person } = setUp();
+    expect(before.user_id).toBeNull();
+    const homeBefore = doc.home;
+    const { code } = issueCode(doc, before.id, owner.id, deps);
     const redeemed = redeemCode(doc, normaliseCode(code), 'iPhone · Safari', deps)!;
+    // The home is replaced, never edited in place (HomeStore rolls writes back that way).
+    expect(doc.home).not.toBe(homeBefore);
+    expect(before.user_id).toBeNull();
+    const shea = person('Shea');
     expect(redeemed.entry).toEqual({ status: 'claimed', householdId: shea.household_id, memberId: shea.id, canImport: false });
     expect(shea.user_id).toMatch(/^u-/);
     expect(shea.claimed_at).toBe(new Date(START).toISOString());
     expect(redeemed.caller).toEqual({ userId: shea.user_id, memberId: shea.id, name: 'Shea' });
     expect(findDevice(doc, redeemed.key)?.caller.memberId).toBe(shea.id);
-    // Single use.
+    // Single use, once the phone has used its key.
+    markSeen(doc, redeemed.device.id, deps.now());
     expect(redeemCode(doc, normaliseCode(code), 'x', deps)).toBeNull();
+    expect(codeWorks(doc, normaliseCode(code), deps.now())).toBe(false);
+  });
+
+  it('gives the same code a second go when the reply to the first was lost (its device never used its key)', () => {
+    const { doc, deps, owner, person, advance } = setUp();
+    const { code } = issueCode(doc, person('Shea').id, owner.id, deps);
+    const lost = redeemCode(doc, normaliseCode(code), 'iPhone · Safari', deps)!;
+    advance(60_000);
+    expect(codeWorks(doc, normaliseCode(code), deps.now())).toBe(true);
+    const again = redeemCode(doc, normaliseCode(code), 'iPhone · Safari', deps)!;
+    // The same person, the same welcome; the lost device is gone, the new one is in.
+    expect(again.entry).toEqual(lost.entry);
+    expect(again.caller).toEqual(lost.caller);
+    expect(findDevice(doc, lost.key)).toBeNull();
+    expect(findDevice(doc, again.key)?.caller.memberId).toBe(person('Shea').id);
+    expect(doc.auth.devices.filter((d) => d.userId === lost.caller.userId)).toHaveLength(1);
+    // Not once that device has used its key, nor after CODE_REPLAY_MS.
+    markSeen(doc, again.device.id, deps.now());
+    expect(redeemCode(doc, normaliseCode(code), 'x', deps)).toBeNull();
+    const late = setUp();
+    const other = issueCode(late.doc, late.person('Shea').id, late.owner.id, late.deps);
+    redeemCode(late.doc, normaliseCode(other.code), 'x', late.deps);
+    late.advance(CODE_REPLAY_MS + 1);
+    expect(redeemCode(late.doc, normaliseCode(other.code), 'x', late.deps)).toBeNull();
+  });
+
+  it('signs a device token with the home’s secret, and knows a made-up one', () => {
+    const { deps, owner } = setUp();
+    const built = buildServerHome(JSON.stringify(USER_DEMO_DOC), { now: new Date(START), ownerUserId: 'u-owner' })!;
+    const doc = newServerDoc(built.home, new Date(START), { secret: Buffer.from(randomBytes(32)).toString('base64url') });
+    const { key, device } = addDevice(doc, 'u-owner', 'x', deps);
+    const token = deviceToken(doc, device, key, 7);
+    const parsed = parseDeviceToken(token)!;
+    expect(parsed).toMatchObject({ key, deviceId: device.id, rev: 7 });
+    expect(tokenVerifies(doc, parsed)).toBe(true);
+    expect(tokenVerifies(doc, { ...parsed, rev: 8 })).toBe(false);
+    expect(tokenVerifies(doc, { ...parsed, key: key.replace(/^./, (c) => (c === 'A' ? 'B' : 'A')) })).toBe(false);
+    const other = newServerDoc(built.home, new Date(START), { secret: Buffer.from(randomBytes(32)).toString('base64url') });
+    expect(tokenVerifies(other, parsed)).toBe(false);
+    // A bare key still reads as one; anything else is not a key at all.
+    expect(parseDeviceToken(key)).toEqual({ key });
+    expect(parseDeviceToken('x.y')).toBeNull();
+    expect(parseDeviceToken('')).toBeNull();
+    // Without a secret (a home from before tokens), the cookie is the bare key.
+    const plain = setUp();
+    const bare = addDevice(plain.doc, 'u-owner', 'x', deps);
+    expect(deviceToken(plain.doc, bare.device, bare.key, 2)).toBe(bare.key);
+    expect(owner.id).toBeTruthy();
   });
 
   it('adds another device for someone who has joined', () => {
@@ -120,6 +208,23 @@ describe('redeeming a code', () => {
     expect(redeemCode(doc, 'ABCDEFGH', 'x', deps)).toBeNull();
     expect(redeemCode(doc, 'not a code', 'x', deps)).toBeNull();
     expect(redeemCode(doc, '', 'x', deps)).toBeNull();
+  });
+});
+
+describe('setup again with a home online (recoverOwner)', () => {
+  it('signs this browser in as the owner while none of the owner’s devices was ever used, with the code that brought it online', () => {
+    const { doc, deps, owner } = setUp();
+    doc.auth.setupHash = setupHashOf('TEST-SETU-PCDE');
+    const lost = addDevice(doc, 'u-owner', 'iPhone · Safari', deps);
+    expect(recoverOwner(doc, 'WRON-GCOD-EXXX', 'x', deps)).toBeNull();
+    const again = recoverOwner(doc, 'test setu pcde', 'iPhone · Safari', deps)!;
+    expect(again.caller).toEqual({ userId: 'u-owner', memberId: owner.id, name: 'Stratis' });
+    expect(again.entry.status).toBe('member');
+    expect(findDevice(doc, lost.key)).toBeNull();
+    expect(findDevice(doc, again.key)).not.toBeNull();
+    // Once the owner has used the home, the setup code does nothing.
+    markSeen(doc, again.device.id, deps.now());
+    expect(recoverOwner(doc, 'TEST-SETU-PCDE', 'x', deps)).toBeNull();
   });
 });
 

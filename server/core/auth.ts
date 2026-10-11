@@ -2,21 +2,35 @@
 // ServerDoc (the caller stores it through HomeStore.write) with the clock and randomness passed
 // in. docs/ARCHITECTURE.md "Server mode (no setup)", "Signing in".
 //
-// - Device key: 32 random bytes, base64url (43 characters), made on setup or redeem, sent to the
-//   browser only in the Set-Cookie header. Stored as DeviceRow.keyHash = base64url(SHA-256(key)).
+// - Device key: 32 random bytes, base64url (43 characters), made on setup or redeem. Stored as
+//   DeviceRow.keyHash = base64url(SHA-256(key)). The browser gets it inside a device token,
+//   only in the Set-Cookie header: `<key>.<device id>.<rev>.<mac>`, where rev is the home's rev
+//   that first holds the device and mac = HMAC-SHA256(auth.secret, "<device id>.<rev>.<key
+//   hash>") (16 bytes, base64url). The token lets an instance whose copy is older than `rev`
+//   tell a device another instance signed in a moment ago (worth one read, and only real ones
+//   can ask for it) from a made-up key, and a removed device (its copy is at `rev` or newer
+//   and has no such key) from both. A bare key (Authorization: Bearer, tools) still works.
 // - Sign-in code: 8 letters of CODE_ALPHABET from random bytes (byte & 31), stored as
-//   CodeRow.codeHash = hex(SHA-256(normalised code)), returned once as formatCode().
+//   CodeRow.codeHash = hex(SHA-256(normalised code)), returned once as formatCode(). Up to
+//   MAX_LIVE_CODES live per person; each single use.
+// - Who may make a code (issueCode): anyone in the home, for someone not joined yet, for
+//   themselves ("Add another device"), or for someone joined who has no device signed in any
+//   more (a lost phone, once someone removed it from their page). Never for someone joined
+//   who is signed in somewhere: only they can add a device of their own.
 // - Every comparison of a presented secret with stored hashes hashes the presented value and
 //   compares it with EVERY stored hash using crypto.timingSafeEqual, without stopping at a
-//   match; the setup code is compared the same way (both hashed, timingSafeEqual).
+//   match; the setup code and device token MACs are compared the same way.
 // - Failed attempts (a wrong code or setup code) are counted by AttemptLimiter (./limits.ts) and
 //   never cause a Blob write.
+// - Changes never edit doc.home in place: a member that changes is replaced (HomeStore rolls a
+//   failed write back by putting the previous objects back).
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { CODE_ALPHABET, CODE_LENGTH, CODE_TTL_MS, formatCode, isSignInCode, normaliseCode } from '../../src/lib/backend/serverApi';
 import { BackendError } from '../../src/lib/backend/types';
 import type { HomeEntry, DeviceInfo } from '../../src/lib/types';
 import { DEVICE_LABEL_MAX } from './deviceLabel';
+import { ApiError } from './errors';
 import type { Caller } from './runAs';
 import type { CodeRow, DeviceRow, ServerDoc } from './serverDoc';
 
@@ -26,6 +40,11 @@ export const DEVICE_LIMITS = {
   /** The home's oldest device is signed out when one more signs in. */
   perHome: 50,
 } as const;
+
+/** Live codes a person may have at once; a new one past this replaces their oldest. */
+export const MAX_LIVE_CODES = 5;
+/** How long a used code is kept so that the same code again can replace a device whose reply was lost. */
+export const CODE_REPLAY_MS = 15 * 60_000;
 
 export interface AuthDeps {
   now: () => Date;
@@ -43,17 +62,26 @@ export function hashCode(normalisedCode: string): string {
   return createHash('sha256').update(normalisedCode, 'utf8').digest('hex');
 }
 
+/** hex SHA-256 of a setup code, normalised (ServerAuth.setupHash). */
+export function setupHashOf(code: string): string {
+  return createHash('sha256').update(normaliseCode(code), 'utf8').digest('hex');
+}
+
+/** Whether two strings are the same, in time that does not depend on where they differ. */
+function sameText(a: string, b: string): boolean {
+  const x = Buffer.from(a, 'utf8');
+  const y = Buffer.from(b, 'utf8');
+  return x.length === y.length ? timingSafeEqual(x, y) : !timingSafeEqual(x, x);
+}
+
 /**
  * Whether `presented` equals one of `stored` (both the same kind of hash), comparing with every
  * one in constant time without stopping at a match. Returns the index of the match, or -1.
  */
 function matchHash(presented: string, stored: readonly string[]): number {
-  const given = Buffer.from(presented, 'utf8');
   let found = -1;
   stored.forEach((hash, i) => {
-    const other = Buffer.from(typeof hash === 'string' ? hash : '', 'utf8');
-    // Different lengths can't match; compare with itself so the time is the same.
-    const same = other.length === given.length ? timingSafeEqual(other, given) : !timingSafeEqual(given, given);
+    const same = sameText(typeof hash === 'string' ? hash : '', presented);
     if (same && found === -1) found = i;
   });
   return found;
@@ -70,6 +98,53 @@ export function setupCodeMatches(given: string, expected: string | null): boolea
 /** The member a signed-in user id is, in the home. */
 function memberFor(doc: ServerDoc, userId: string) {
   return doc.home.members.find((m) => m.user_id !== null && m.user_id === userId);
+}
+
+// ── Device tokens ────────────────────────────────────────
+
+/** A cookie (or Bearer) value taken apart: the key, and the token's claims when it is one. */
+export interface PresentedToken {
+  key: string;
+  deviceId?: string;
+  rev?: number;
+  mac?: string;
+}
+
+const KEY_RE = /^[A-Za-z0-9_-]{43}$/;
+
+/** `value` as a device token or a bare key; null when it is neither. */
+export function parseDeviceToken(value: string): PresentedToken | null {
+  if (typeof value !== 'string' || value.length > 300) return null;
+  const parts = value.split('.');
+  if (parts.length === 1) return KEY_RE.test(parts[0]) ? { key: parts[0] } : null;
+  if (parts.length !== 4) return null;
+  const [key, deviceId, rev, mac] = parts;
+  if (!KEY_RE.test(key) || !/^[A-Za-z0-9-]{1,100}$/.test(deviceId) || !/^[1-9]\d{0,14}$/.test(rev) || !/^[A-Za-z0-9_-]{22}$/.test(mac)) {
+    return null;
+  }
+  return { key, deviceId, rev: Number(rev), mac };
+}
+
+function tokenMac(secret: string, deviceId: string, rev: number, key: string): string {
+  return createHmac('sha256', Buffer.from(secret, 'base64url'))
+    .update(`${deviceId}.${rev}.${hashKey(key)}`, 'utf8')
+    .digest()
+    .subarray(0, 16)
+    .toString('base64url');
+}
+
+/** The token for a device first held at `rev` (see the top), or the bare key when the home has no secret. */
+export function deviceToken(doc: ServerDoc, device: DeviceRow, key: string, rev: number): string {
+  const secret = doc.auth.secret;
+  if (!secret) return key;
+  return `${key}.${device.id}.${rev}.${tokenMac(secret, device.id, rev, key)}`;
+}
+
+/** Whether `token` was made by this home (its MAC matches the home's secret). */
+export function tokenVerifies(doc: ServerDoc, token: PresentedToken): boolean {
+  const secret = doc.auth.secret;
+  if (!secret || token.deviceId === undefined || token.rev === undefined || token.mac === undefined) return false;
+  return sameText(tokenMac(secret, token.deviceId, token.rev, token.key), token.mac);
 }
 
 /**
@@ -116,6 +191,18 @@ export function addDevice(doc: ServerDoc, userId: string, label: string, deps: A
   return { key, device };
 }
 
+/** Marks a device as used (DeviceRow.seenAt), once. False when it was already, or is gone. */
+export function markSeen(doc: ServerDoc, deviceId: string, now: Date): boolean {
+  const at = doc.auth.devices.findIndex((d) => d.id === deviceId);
+  if (at < 0 || doc.auth.devices[at].seenAt) return false;
+  const devices = [...doc.auth.devices];
+  devices[at] = { ...devices[at], seenAt: now.toISOString() };
+  doc.auth.devices = devices;
+  return true;
+}
+
+// ── Codes ────────────────────────────────────────────────
+
 /** CODE_LENGTH letters of CODE_ALPHABET from random bytes (byte & 31: 32 letters, no bias). */
 function newCode(deps: AuthDeps): string {
   const bytes = deps.randomBytes(CODE_LENGTH);
@@ -124,14 +211,24 @@ function newCode(deps: AuthDeps): string {
   return code;
 }
 
+/** Whether the person with `userId` has a device signed in. */
+function hasDevice(doc: ServerDoc, userId: string): boolean {
+  return doc.auth.devices.some((d) => d.userId === userId);
+}
+
 /**
- * A new code for `memberId` (anyone in the home; 'not_found' otherwise), replacing their
- * previous one; expires after CODE_TTL_MS. Returns the code formatted ("ABCD-EFGH").
+ * A new code for `memberId`, made by the member `createdBy` (see the top for who may:
+ * 'not_found' for nobody in the home, ApiError 'forbidden' for someone joined and signed in
+ * somewhere who is not `createdBy`). Their earlier codes keep working (at most MAX_LIVE_CODES:
+ * past that, their oldest goes). Expires after CODE_TTL_MS. Returns the code formatted ("ABCD-EFGH").
  */
 export function issueCode(doc: ServerDoc, memberId: string, createdBy: string, deps: AuthDeps): { code: string; row: CodeRow } {
   const member = doc.home.members.find((m) => m.id === memberId);
   if (!member) throw new BackendError('not_found', 'No such person');
-  // Never one that is live already (40 bits: in practice the first one).
+  if (member.user_id !== null && member.id !== createdBy && hasDevice(doc, member.user_id)) {
+    throw new ApiError('forbidden', `${member.name} is signed in already: only they can add a device`);
+  }
+  // Never one that is in the list already (40 bits: in practice the first one).
   const taken = new Set(doc.auth.codes.map((c) => c.codeHash));
   let code = newCode(deps);
   for (let i = 0; i < 10 && taken.has(hashCode(code)); i++) code = newCode(deps);
@@ -145,50 +242,135 @@ export function issueCode(doc: ServerDoc, memberId: string, createdBy: string, d
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + CODE_TTL_MS).toISOString(),
   };
-  doc.auth.codes = [...doc.auth.codes.filter((c) => c.memberId !== memberId), row];
+  let codes = [...doc.auth.codes, row];
+  // Past MAX_LIVE_CODES live codes for them, their oldest goes.
+  const live = codes.filter((c) => c.memberId === memberId && !c.usedAt);
+  if (live.length > MAX_LIVE_CODES) {
+    const drop = new Set(live.slice(0, live.length - MAX_LIVE_CODES));
+    codes = codes.filter((c) => !drop.has(c));
+  }
+  doc.auth.codes = codes;
   return { code: formatCode(code), row };
 }
 
-/**
- * Uses up `code` (normalised; must be isSignInCode) when a live code matches: removes the
- * code; when its person has not joined yet, they join: user_id = 'u-' + newId(), claimed_at =
- * now (so "Not Shea?" works for a day, as DemoBackend.releaseClaim checks); then addDevice()
- * for them. The entry is 'claimed' for a person who joined just now, else 'member'.
- * Null when no live code matches (the caller counts a failed attempt).
- */
-export function redeemCode(
-  doc: ServerDoc,
-  code: string,
-  label: string,
-  deps: AuthDeps,
-): { key: string; device: DeviceRow; caller: Caller; entry: HomeEntry } | null {
-  const normalised = normaliseCode(code);
+/** The row `normalised` matches (constant time over every row), or null. */
+function codeRow(doc: ServerDoc, normalised: string): CodeRow | null {
   const at = matchHash(
     hashCode(normalised),
     doc.auth.codes.map((c) => c.codeHash),
   );
-  if (!isSignInCode(normalised) || at < 0) return null;
-  const row = doc.auth.codes[at];
+  return isSignInCode(normalised) && at >= 0 ? doc.auth.codes[at] : null;
+}
+
+/** A used row whose device never used its key, within CODE_REPLAY_MS: the same code again may replace that device. */
+function replayable(doc: ServerDoc, row: CodeRow, now: Date): boolean {
+  if (!row.usedAt || !row.usedBy) return false;
+  if (!(now.getTime() - Date.parse(row.usedAt) <= CODE_REPLAY_MS)) return false;
+  const device = doc.auth.devices.find((d) => d.id === row.usedBy);
+  return !!device && !device.seenAt;
+}
+
+/**
+ * Whether `normalised` would sign someone in on `doc` (a live code, or a replay; see
+ * redeemCode), without changing anything: the handler checks this on its cached copy first,
+ * so a wrong code never reaches the write queue.
+ */
+export function codeWorks(doc: ServerDoc, normalised: string, now: Date): boolean {
+  const row = codeRow(doc, normaliseCode(normalised));
+  if (!row || !(Date.parse(row.expiresAt) > now.getTime())) return false;
+  if (!doc.home.members.some((m) => m.id === row.memberId)) return false;
+  return row.usedAt ? replayable(doc, row, now) : true;
+}
+
+export interface SignedInDevice {
+  key: string;
+  /** What the cookie holds (deviceToken()). */
+  token: string;
+  device: DeviceRow;
+  caller: Caller;
+  entry: HomeEntry;
+}
+
+/**
+ * Uses up `code` (normalised; must be isSignInCode) when a live code matches. When its person
+ * has not joined yet, they join: user_id = 'u-' + newId(), claimed_at = now (so "Not Shea?"
+ * works for a day, as DemoBackend.releaseClaim checks); then addDevice() for them. The code
+ * is kept as used (usedAt, usedBy) for CODE_REPLAY_MS, and the person's other live codes made
+ * by someone else go (they have joined: only they make codes for themselves now). The entry
+ * is 'claimed' for a person who joined just now, else 'member'.
+ * The same code again within CODE_REPLAY_MS, while the device it signed in has never been
+ * used (the reply was lost), replaces that device with a new one and gives the same entry.
+ * Null when nothing matches (the caller counts a failed attempt).
+ */
+export function redeemCode(doc: ServerDoc, code: string, label: string, deps: AuthDeps): SignedInDevice | null {
+  const normalised = normaliseCode(code);
+  const row = codeRow(doc, normalised);
   const now = deps.now();
-  if (!(Date.parse(row.expiresAt) > now.getTime())) return null;
-  const member = doc.home.members.find((m) => m.id === row.memberId);
+  if (!row || !(Date.parse(row.expiresAt) > now.getTime())) return null;
+  let member = doc.home.members.find((m) => m.id === row.memberId);
   if (!member) return null;
-  doc.auth.codes = doc.auth.codes.filter((c) => c !== row);
+  // The next put stores this as rev + 1 (HomeStore), which is where the device first is.
+  const rev = doc.rev + 1;
+
+  if (row.usedAt) {
+    if (!replayable(doc, row, now) || member.user_id === null) return null;
+    doc.auth.devices = doc.auth.devices.filter((d) => d.id !== row.usedBy);
+    const { key, device } = addDevice(doc, member.user_id, label, deps);
+    doc.auth.codes = doc.auth.codes.map((c) => (c === row ? { ...c, usedBy: device.id } : c));
+    const status = row.usedClaimed ? 'claimed' : 'member';
+    return {
+      key,
+      token: deviceToken(doc, device, key, rev),
+      device,
+      caller: { userId: member.user_id, memberId: member.id, name: member.name },
+      entry: { status, householdId: member.household_id, memberId: member.id, canImport: false },
+    };
+  }
+
   let status: 'member' | 'claimed' = 'member';
   if (member.user_id === null) {
-    member.user_id = `u-${deps.newId()}`;
-    member.claimed_at = now.toISOString();
-    member.email = '';
-    member.push_enabled = false;
+    const joined = { ...member, user_id: `u-${deps.newId()}`, claimed_at: now.toISOString(), email: '', push_enabled: false };
+    doc.home = { ...doc.home, members: doc.home.members.map((m) => (m === member ? joined : m)) };
+    member = joined;
     status = 'claimed';
   }
-  const userId = member.user_id;
+  const userId = member.user_id!;
+  const { key, device } = addDevice(doc, userId, label, deps);
+  const memberId = member.id;
+  doc.auth.codes = doc.auth.codes
+    // Their other codes from someone else go: they are signed in now.
+    .filter((c) => c === row || c.usedAt || c.memberId !== memberId || c.createdBy === memberId)
+    .map((c) => (c === row ? { ...c, usedAt: now.toISOString(), usedBy: device.id, usedClaimed: status === 'claimed' } : c));
+  return {
+    key,
+    token: deviceToken(doc, device, key, rev),
+    device,
+    caller: { userId, memberId, name: member.name },
+    entry: { status, householdId: member.household_id, memberId, canImport: false },
+  };
+}
+
+/**
+ * Setup's second chance (the home is online already and the setup code `code` checked out):
+ * when the owner has no device that was ever used (the reply to "Bring It Online" was lost,
+ * or every device of theirs was signed out or removed), their unused devices go and this
+ * browser becomes theirs. The code must be the one that brought the home online (setupHash).
+ * Null when that does not apply (the caller answers 'home_exists').
+ */
+export function recoverOwner(doc: ServerDoc, code: string, label: string, deps: AuthDeps): SignedInDevice | null {
+  if (doc.auth.setupHash && !sameText(doc.auth.setupHash, setupHashOf(code))) return null;
+  const owner = doc.home.members.find((m) => m.role === 'owner' && m.user_id !== null);
+  if (!owner || owner.user_id === null) return null;
+  const userId = owner.user_id;
+  if (doc.auth.devices.some((d) => d.userId === userId && d.seenAt)) return null;
+  doc.auth.devices = doc.auth.devices.filter((d) => d.userId !== userId);
   const { key, device } = addDevice(doc, userId, label, deps);
   return {
     key,
+    token: deviceToken(doc, device, key, doc.rev + 1),
     device,
-    caller: { userId, memberId: member.id, name: member.name },
-    entry: { status, householdId: member.household_id, memberId: member.id, canImport: false },
+    caller: { userId, memberId: owner.id, name: owner.name },
+    entry: { status: 'member', householdId: owner.household_id, memberId: owner.id, canImport: false },
   };
 }
 
@@ -211,14 +393,20 @@ export function removeDevice(doc: ServerDoc, deviceId: string): boolean {
 }
 
 /**
- * Run before every put: removes expired codes, codes for people who are gone, and devices whose
- * user id no member has any more (a person released with "Not Shea?" is signed out everywhere).
+ * Run before every put: removes expired codes, used ones older than CODE_REPLAY_MS, codes for
+ * people who are gone, and devices whose user id no member has any more (a person released
+ * with "Not Shea?" is signed out everywhere).
  */
 export function pruneAuth(doc: ServerDoc, now: Date): void {
   const members = new Set(doc.home.members.map((m) => m.id));
   const users = new Set(doc.home.members.flatMap((m) => (m.user_id ? [m.user_id] : [])));
   doc.auth.codes = doc.auth.codes
-    .filter((c) => members.has(c.memberId) && Date.parse(c.expiresAt) > now.getTime())
+    .filter(
+      (c) =>
+        members.has(c.memberId) &&
+        Date.parse(c.expiresAt) > now.getTime() &&
+        !(c.usedAt && !(now.getTime() - Date.parse(c.usedAt) <= CODE_REPLAY_MS)),
+    )
     .map((c) => (c.createdBy !== null && !members.has(c.createdBy) ? { ...c, createdBy: null } : c));
   doc.auth.devices = doc.auth.devices.filter((d) => users.has(d.userId));
 }

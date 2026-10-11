@@ -116,7 +116,9 @@ describe('bringing the home online (setup)', () => {
     const h = createHarness();
     const res = await h.request({ method: 'POST', json: { op: 'setup', code: 'test-setu-pcde', phone: PHONE } });
     expect(res.status).toBe(200);
-    expect(res.headers['Set-Cookie']).toMatch(/^homeos_key=[A-Za-z0-9_-]{43}; Path=\/api; HttpOnly; SameSite=Lax; Max-Age=34560000; Secure$/);
+    expect(res.headers['Set-Cookie']).toMatch(
+      /^homeos_key=[A-Za-z0-9_-]{43}\.[0-9a-f-]{36}\.1\.[A-Za-z0-9_-]{22}; Path=\/api; HttpOnly; SameSite=Lax; Max-Age=34560000; Secure$/,
+    );
     const body = JSON.parse(res.body);
     expect(body).toMatchObject({ user: { email: '', name: 'Stratis' }, entry: { status: 'member', canImport: false }, rev: 1 });
     expect(body.device).toMatchObject({ label: 'Device · Browser', current: true });
@@ -206,7 +208,10 @@ describe('signing in with a code', () => {
     expect(made).toMatchObject({ code: expect.stringMatching(/^[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}$/), memberId: home.person('Shea').id });
     expect(Date.parse(made.expiresAt) - h.clock.now).toBe(CODE_TTL_MS);
     const typed = ` ${made.code.toLowerCase().replace('-', ' ')} `;
-    expect((await call(h.browser(), 'redeem', { code: typed })).status).toBe(200);
+    const first = h.browser();
+    expect((await call(first, 'redeem', { code: typed })).status).toBe(200);
+    // The phone that used it is in (its first request marks its key used): the code is spent.
+    expect((await call(first, 'session')).status).toBe(200);
     const twice = await call(h.browser(), 'redeem', { code: made.code });
     expect([twice.status, twice.json.error.code]).toEqual([400, 'invalid_code']);
 
@@ -230,7 +235,7 @@ describe('signing in with a code', () => {
     ]);
   });
 
-  it('turns guessing away: wrong codes are counted per address and in all, then refused without being tried', async () => {
+  it('turns guessing away: wrong codes are counted per address, then refused without being tried', async () => {
     const h = createHarness({ attempts: { perIp: 3, global: 5, windowMs: 60_000 } });
     const home = await online(h);
     const code = (await call(home.stratis, 'createCode', { memberId: home.person('Shea').id })).json.code;
@@ -245,12 +250,10 @@ describe('signing in with a code', () => {
     expect(blocked.headers.get('Retry-After')).toBe('60');
     // Wrong codes never write to the Blob store.
     expect((h.blobs as MemoryBlobStore).calls.put).toBe(puts);
-    // Two more wrong codes from elsewhere: now everyone waits.
-    await call(h.browser(), 'redeem', { code: 'CCCC-CCCC' });
-    await call(h.browser(), 'redeem', { code: 'DDDD-DDDD' });
-    expect((await call(h.browser(), 'redeem', { code })).status).toBe(429);
-    h.clock.advance(60_001);
+    // Someone else, with no failures of their own, is not held up by the guesser.
     expect((await call(h.browser(), 'redeem', { code })).status).toBe(200);
+    h.clock.advance(60_001);
+    expect((await call(guesser, 'redeem', { code: 'EEEE-EEEE' })).json.error.code).toBe('invalid_code');
   });
 
   it('turns a stranger away', async () => {
@@ -410,7 +413,8 @@ describe('signed in', () => {
 
   it('pauses saving at the write budget (read-only), and says so', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    const h = createHarness({ env: { HOMEOS_BLOB_WRITES_PER_MONTH: '2' } });
+    // Setup and Stratis's first use of his key are two puts; the third uses the month up.
+    const h = createHarness({ env: { HOMEOS_BLOB_WRITES_PER_MONTH: '3' } });
     const home = await online(h);
     expect((await rpc(home.stratis, 'createArea', [home.hid, 'Garage'])).status).toBe(200);
     const paused = await rpc(home.stratis, 'createArea', [home.hid, 'Shed']);
@@ -443,11 +447,16 @@ describe('secrets', () => {
     await call(shea, 'session');
     await rpc(home.stratis, 'load', [home.hid]);
     const doc = parseServerDoc((h.blobs as MemoryBlobStore).peek('homeos/test/home.json')!.body);
+    expect(doc.auth.secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const secrets = [
       ...doc.auth.devices.map((d) => d.keyHash),
       ...doc.auth.codes.map((c) => c.codeHash),
+      doc.auth.secret!,
+      doc.auth.setupHash!,
       home.stratis.key()!,
+      home.stratis.key()!.split('.')[0],
       shea.key()!,
+      shea.key()!.split('.')[0],
     ];
     const everything = [...home.stratis.bodies, ...shea.bodies];
     expect(everything.length).toBeGreaterThan(5);
@@ -455,11 +464,415 @@ describe('secrets', () => {
       for (const secret of secrets) expect(body).not.toContain(secret);
       expect(body).not.toContain('keyHash');
       expect(body).not.toContain('codeHash');
+      expect(body).not.toContain('setupHash');
+      expect(body).not.toContain('"secret"');
     }
     // The only place a code appears is the createCode answer that made it.
     expect(everything.filter((b) => b.includes(code))).toHaveLength(1);
     // And the stored home holds no session.
     expect(doc.home.session).toBeNull();
     expect(doc.home.users).toEqual([]);
+  });
+});
+
+// ── The review's findings (docs/ARCHITECTURE.md "Server mode (no setup)": "Signing in",
+// "Budget", "Storage, reads and writes") ─────────────────────────────────────────────────
+
+const cookieOf = (res: { headers: Record<string, string | string[]> }) => {
+  const v = res.headers['Set-Cookie'];
+  return (Array.isArray(v) ? v[0] : v) ?? '';
+};
+const tokenOf = (res: { headers: Record<string, string | string[]> }) => /homeos_key=([^;]*)/.exec(cookieOf(res))?.[1] ?? '';
+const getsOf = (h: Harness) => (h.blobs as MemoryBlobStore).calls.get;
+const putsOf = (h: Harness) => (h.blobs as MemoryBlobStore).calls.put;
+const storedDoc = (h: Harness) => parseServerDoc((h.blobs as MemoryBlobStore).peek('homeos/test/home.json')!.body);
+
+describe('who may make a code', () => {
+  it('never for someone who has joined and is signed in elsewhere: Shea can’t sign in as Stratis, nor he as her', async () => {
+    const h = createHarness();
+    const home = await online(h);
+    const { shea } = await sheaJoins(h, home);
+    const forStratis = await call(shea, 'createCode', { memberId: home.person('Stratis').id });
+    expect([forStratis.status, forStratis.json.error.code]).toEqual([403, 'forbidden']);
+    const forShea = await call(home.stratis, 'createCode', { memberId: home.person('Shea').id });
+    expect([forShea.status, forShea.json.error.code]).toEqual([403, 'forbidden']);
+    // Each may add a device of their own, and anyone may invite someone who has not joined.
+    expect((await call(shea, 'createCode', { memberId: home.person('Shea').id })).status).toBe(200);
+    expect((await call(home.stratis, 'createCode', { memberId: home.person('Stratis').id })).status).toBe(200);
+    const added = (await rpc(shea, 'addPerson', [home.hid, { name: 'Robin', emoji: '🦉', email: '' }])).json.result;
+    expect((await call(shea, 'createCode', { memberId: added.id })).status).toBe(200);
+    // Shea lost her phone: once Stratis removes it from her page, he can send her a new code.
+    const devices = (await call(home.stratis, 'devices')).json.devices as { id: string; memberId: string }[];
+    const hers = devices.filter((d) => d.memberId === home.person('Shea').id);
+    for (const d of hers) expect((await call(home.stratis, 'removeDevice', { deviceId: d.id })).status).toBe(200);
+    const fresh = (await call(home.stratis, 'createCode', { memberId: home.person('Shea').id })).json.code;
+    const newPhone = h.browser();
+    const back = await call(newPhone, 'redeem', { code: fresh });
+    expect([back.status, back.json.user.name, back.json.entry.status]).toEqual([200, 'Shea', 'member']);
+  });
+
+  it('keeps a code working when another is made for the same person (Invite tapped twice)', async () => {
+    const h = createHarness();
+    const home = await online(h);
+    const first = (await call(home.stratis, 'createCode', { memberId: home.person('Shea').id })).json.code;
+    const second = (await call(home.stratis, 'createCode', { memberId: home.person('Shea').id })).json.code;
+    expect(second).not.toBe(first);
+    const shea = h.browser();
+    expect((await call(shea, 'redeem', { code: first })).json.user.name).toBe('Shea');
+    expect((await call(shea, 'session')).status).toBe(200);
+    // She has joined: the other code Stratis made for her goes, so nobody else can be her.
+    expect((await call(h.browser(), 'redeem', { code: second })).json.error.code).toBe('invalid_code');
+    // "Add another device" twice: both codes work.
+    const ipad = (await call(home.stratis, 'createCode', { memberId: home.person('Stratis').id })).json.code;
+    const app = (await call(home.stratis, 'createCode', { memberId: home.person('Stratis').id })).json.code;
+    expect((await call(h.browser(), 'redeem', { code: ipad })).status).toBe(200);
+    expect((await call(h.browser(), 'redeem', { code: app })).status).toBe(200);
+  });
+});
+
+describe('guessing codes', () => {
+  it('limits a burst of codes sent all at once from one address like the same codes one after another, without a write', async () => {
+    const h = createHarness();
+    const home = await online(h);
+    const live = (await call(home.stratis, 'createCode', { memberId: home.person('Shea').id })).json.code as string;
+    h.clock.advance(5000);
+    const A = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+    const guesses = Array.from({ length: 200 }, (_, i) => {
+      let s = '';
+      let n = i + 1;
+      for (let k = 0; k < 8; k++) {
+        s += A[n & 31];
+        n >>= 5;
+      }
+      return s;
+    });
+    guesses[150] = live;
+    const writes = vi.spyOn(h.ctx.store, 'write');
+    const puts = putsOf(h);
+    const results = await Promise.all(guesses.map((code) => h.request({ method: 'POST', json: { op: 'redeem', code }, ip: '203.0.113.7' })));
+    const codes = results.map((r) => JSON.parse(r.body).error?.code ?? 'signed in');
+    // perIp (10) were looked at; everything else waited without being tried.
+    expect(codes.filter((c) => c === 'invalid_code')).toHaveLength(10);
+    expect(codes.filter((c) => c === 'too_many_attempts')).toHaveLength(190);
+    expect(codes[150]).toBe('too_many_attempts');
+    // A wrong code never reaches the write queue, so it can't hold up anyone's change.
+    expect(writes).not.toHaveBeenCalled();
+    expect(putsOf(h)).toBe(puts);
+  });
+
+  it('never locks the household out because a stranger is guessing from many addresses', async () => {
+    const h = createHarness();
+    const home = await online(h);
+    for (let ip = 0; ip < 10; ip++) {
+      for (let i = 0; i < 10; i++) await h.request({ method: 'POST', json: { op: 'redeem', code: 'ZZZZ-ZZZZ' }, ip: `198.51.100.${ip}` });
+    }
+    const code = (await call(home.stratis, 'createCode', { memberId: home.person('Shea').id })).json.code;
+    const shea = h.browser({ ip: '192.0.2.10' });
+    expect((await call(shea, 'redeem', { code })).status).toBe(200);
+  });
+
+  it('counts an IPv6 guesser by its /64', async () => {
+    const h = createHarness();
+    await online(h);
+    for (let i = 1; i <= 10; i++) {
+      await h.request({ method: 'POST', json: { op: 'redeem', code: 'ZZZZ-ZZZZ' }, ip: `2001:db8:5:6::${i.toString(16)}` });
+    }
+    const next = await h.request({ method: 'POST', json: { op: 'redeem', code: 'ZZZZ-ZZZZ' }, ip: '2001:db8:5:6:ffff::1' });
+    expect(JSON.parse(next.body).error.code).toBe('too_many_attempts');
+  });
+
+  it('does not count a phone’s old key against codes from the same Wi-Fi', async () => {
+    const h = createHarness();
+    const home = await online(h);
+    for (let i = 0; i < 20; i++) {
+      h.clock.advance(61_000);
+      await h.request({ method: 'GET', url: `${API_PATH}?op=version`, headers: { authorization: `Bearer ${'B'.repeat(43)}` }, ip: '192.0.2.10' });
+    }
+    const code = (await call(home.stratis, 'createCode', { memberId: home.person('Shea').id })).json.code;
+    expect((await h.request({ method: 'POST', json: { op: 'redeem', code }, ip: '192.0.2.10' })).status).toBe(200);
+  });
+});
+
+describe('a device another instance signed in a moment ago', () => {
+  async function twoInstances(opts: Parameters<typeof createHarness>[0] = {}) {
+    const h = createHarness(opts);
+    const home = await online(h); // instance A: h.ctx
+    const B = h.instance();
+    const code = (await call(home.stratis, 'createCode', { memberId: home.person('Shea').id })).json.code as string;
+    return { h, home, B, code };
+  }
+
+  it('is signed in on the other instance at once, even when that one checked its copy just now', async () => {
+    const { h, B, code } = await twoInstances();
+    h.clock.advance(11_000);
+    await h.request({ method: 'GET', url: `${API_PATH}?op=status` });
+    await h.request({ method: 'POST', json: { op: 'rpc', method: 'getMyHouseholdId', args: [] }, headers: { authorization: 'Bearer x' } });
+    h.clock.advance(500);
+    const redeemed = await h.request({ method: 'POST', json: { op: 'redeem', code } }, B);
+    expect(redeemed.status).toBe(200);
+    const token = tokenOf(redeemed);
+    h.clock.advance(300);
+    for (const req of [
+      { method: 'GET', url: `${API_PATH}?op=session` },
+      { method: 'POST', json: { op: 'rpc', method: 'getMyHouseholdId', args: [], minRev: JSON.parse(redeemed.body).rev } },
+    ]) {
+      const res = await h.request({ ...req, headers: { cookie: `homeos_key=${token}` } });
+      expect(res.status).toBe(200);
+      expect(cookieOf(res)).not.toMatch(/Max-Age=0/);
+    }
+  });
+
+  it('is signed in on the other instance while a stranger has tripped its limits', async () => {
+    const { h, B, code } = await twoInstances();
+    for (let ip = 0; ip < 5; ip++) {
+      for (let i = 0; i < 10; i++) await h.request({ method: 'POST', json: { op: 'redeem', code: 'ZZZZ-ZZZZ' }, ip: `198.51.100.${ip}` });
+    }
+    const redeemed = await h.request({ method: 'POST', json: { op: 'redeem', code } }, B);
+    const res = await h.request({ method: 'GET', url: `${API_PATH}?op=version`, headers: { cookie: `homeos_key=${tokenOf(redeemed)}` } });
+    expect(res.status).toBe(200);
+  });
+
+  it('is signed in on the other instance when reads are under budget pressure, even at the ceiling', async () => {
+    for (const reads of ['60', '30', '24']) {
+      const { h, B, code } = await twoInstances({ env: { HOMEOS_BLOB_READS_PER_MONTH: reads, HOMEOS_BLOB_WRITES_PER_MONTH: '0' } });
+      // Instance A has read enough to be at level 1 or 2, or at the ceiling.
+      for (let i = 0; i < 20; i++) await h.ctx.store.read({ maxAgeMs: 0 });
+      const redeemed = await h.request({ method: 'POST', json: { op: 'redeem', code } }, B);
+      expect(redeemed.status).toBe(200);
+      const res = await h.request({ method: 'GET', url: `${API_PATH}?op=version`, headers: { cookie: `homeos_key=${tokenOf(redeemed)}` } });
+      expect([reads, res.status]).toEqual([reads, 200]);
+    }
+  });
+
+  it('finds a code made on another instance a moment ago, under budget pressure too', async () => {
+    const h = createHarness({ env: { HOMEOS_BLOB_READS_PER_MONTH: '60' } });
+    const home = await online(h);
+    const B = h.instance();
+    for (let i = 0; i < 40; i++) await B.store.read({ maxAgeMs: 0 });
+    expect(B.store.pressure().freshMs).toBeGreaterThan(10_000);
+    h.clock.advance(1000);
+    const code = (await call(home.stratis, 'createCode', { memberId: home.person('Shea').id })).json.code;
+    const res = await h.request({ method: 'POST', json: { op: 'redeem', code } }, B);
+    expect(res.status).toBe(200);
+  });
+
+  it('signs out (and clears the cookie) only when a copy new enough says so', async () => {
+    const h = createHarness();
+    const home = await online(h);
+    const { shea } = await sheaJoins(h, home);
+    const token = shea.key()!;
+    // A token this home never signed: out, with no read of the store.
+    const gets = getsOf(h);
+    // A made-up key with Shea's device id, a later rev and a made-up signature.
+    const [, deviceId] = token.split('.');
+    const forged = `${'K'.repeat(43)}.${deviceId}.999.${'A'.repeat(22)}`;
+    const res = await h.request({ method: 'GET', url: `${API_PATH}?op=version`, headers: { cookie: `homeos_key=${forged}` } });
+    expect([res.status, cookieOf(res)]).toEqual([401, 'homeos_key=; Path=/api; HttpOnly; SameSite=Lax; Max-Age=0; Secure']);
+    expect(getsOf(h)).toBe(gets);
+    // Removed on another instance whose change this one has not read yet: out once its copy has it.
+    const B = h.instance();
+    const sheas = ((await call(home.stratis, 'devices')).json.devices as { id: string; memberId: string }[]).find(
+      (d) => d.memberId === home.person('Shea').id,
+    )!;
+    expect((await h.request({ method: 'POST', json: { op: 'removeDevice', deviceId: sheas.id }, headers: { authorization: `Bearer ${home.stratis.key()}` } }, B)).status).toBe(200);
+    h.clock.advance(10_001);
+    const gone = await h.request({ method: 'GET', url: `${API_PATH}?op=version`, headers: { cookie: `homeos_key=${token}` } });
+    expect([gone.status, cookieOf(gone)]).toEqual([401, 'homeos_key=; Path=/api; HttpOnly; SameSite=Lax; Max-Age=0; Secure']);
+  });
+
+  it('says “try again” instead of signing out when it can’t tell (no copy of the home yet)', async () => {
+    const h = createHarness();
+    const A = h.ctx;
+    // Instance A looked a moment ago: no home online.
+    await h.request({ method: 'GET', url: `${API_PATH}?op=status` });
+    // The home comes online on instance B; the owner's next request reaches A.
+    const B = h.instance();
+    const setup = await h.request({ method: 'POST', json: { op: 'setup', code: TEST_SETUP_CODE, phone: PHONE } }, B);
+    const token = tokenOf(setup);
+    const res = await h.request({ method: 'GET', url: `${API_PATH}?op=session`, headers: { cookie: `homeos_key=${token}` } }, A);
+    expect([res.status, JSON.parse(res.body).error.code]).toEqual([503, 'unavailable']);
+    expect(cookieOf(res)).toBe('');
+    h.clock.advance(2001);
+    expect((await h.request({ method: 'GET', url: `${API_PATH}?op=session`, headers: { cookie: `homeos_key=${token}` } }, A)).status).toBe(200);
+  });
+
+  it('removes a device another instance signed in a moment ago (not a 404)', async () => {
+    const { h, home, B, code } = await twoInstances();
+    await h.request({ method: 'GET', url: `${API_PATH}?op=status` });
+    const redeemed = await h.request({ method: 'POST', json: { op: 'redeem', code } }, B);
+    const deviceId = JSON.parse(redeemed.body).device.id;
+    expect((await call(home.stratis, 'removeDevice', { deviceId })).status).toBe(200);
+  });
+
+  it('lets a removed device read on an instance that has not seen the removal for at most freshMs (a known limit)', async () => {
+    const { h, home, B, code } = await twoInstances();
+    const shea = h.browser({ ctx: B });
+    const sheaId = (await call(shea, 'redeem', { code })).json.device.id;
+    await call(shea, 'session');
+    await call(home.stratis, 'removeDevice', { deviceId: sheaId });
+    h.clock.advance(5000);
+    expect((await call(shea, 'version')).status).toBe(200);
+    h.clock.advance(5001);
+    expect((await call(shea, 'version')).status).toBe(401);
+  });
+});
+
+describe('the Blob read budget', () => {
+  it('answers status from memory once a home is known: a stranger polling it costs no reads', async () => {
+    const h = createHarness();
+    await online(h);
+    const other = h.instance();
+    const gets = getsOf(h);
+    for (let i = 0; i < 1000; i++) {
+      h.clock.advance(20_000);
+      const res = await h.request({ method: 'GET', url: `${API_PATH}?op=status` }, other);
+      expect(JSON.parse(res.body)).toEqual({ home: true });
+    }
+    expect(getsOf(h) - gets).toBe(1);
+  });
+
+  it('before setup, asks the store at most every 30 s for status', async () => {
+    const h = createHarness();
+    for (let i = 0; i < 60; i++) {
+      h.clock.advance(1000);
+      await h.request({ method: 'GET', url: `${API_PATH}?op=status` });
+    }
+    expect(getsOf(h)).toBeLessThanOrEqual(2);
+  });
+
+  it('reads at most once a second for a rev nobody stored (minRev), never twice a request', async () => {
+    const h = createHarness();
+    const home = await online(h);
+    h.clock.advance(1000);
+    const gets = getsOf(h);
+    for (let i = 0; i < 10; i++) await rpc(home.stratis, 'getMyHouseholdId', [], 999);
+    expect(getsOf(h) - gets).toBe(1);
+    h.clock.advance(1000);
+    await rpc(home.stratis, 'getMyHouseholdId', [], 999);
+    expect(getsOf(h) - gets).toBe(2);
+  });
+
+  it('stores its read count every 50 reads, so an instance that goes away loses few (no new rev)', async () => {
+    const h = createHarness();
+    const home = await online(h);
+    const before = storedDoc(h);
+    const other = h.instance();
+    for (let i = 0; i < 60; i++) {
+      h.clock.advance(10_001);
+      await h.request({ method: 'GET', url: `${API_PATH}?op=version`, headers: { authorization: `Bearer ${home.stratis.key()}` } }, other);
+    }
+    const after = storedDoc(h);
+    expect(after.meta.usage.reads - before.meta.usage.reads).toBeGreaterThanOrEqual(50);
+    expect(after.rev).toBe(before.rev);
+  });
+
+  it('stops reading at the ceiling: polls, sign-in checks and status come from the copy', async () => {
+    const h = createHarness({ env: { HOMEOS_BLOB_READS_PER_MONTH: '20' } });
+    const home = await online(h);
+    for (let i = 0; i < 20; i++) await h.ctx.store.read({ maxAgeMs: 0 });
+    expect(h.ctx.store.pressure().ceiling).toBe(true);
+    const gets = getsOf(h);
+    for (let i = 0; i < 100; i++) {
+      h.clock.advance(60_000);
+      expect((await call(home.stratis, 'version')).json.pollMs).toBe(60_000);
+      await h.request({ method: 'GET', url: `${API_PATH}?op=status` });
+      await h.request({ method: 'POST', json: { op: 'redeem', code: 'ZZZZ-ZZZZ' }, ip: `198.51.100.${i}` });
+      await h.request({ method: 'GET', url: `${API_PATH}?op=version`, headers: { authorization: `Bearer ${'C'.repeat(43)}` }, ip: `198.51.100.${i}` });
+    }
+    expect(getsOf(h)).toBe(gets);
+    // Writes still work (and still check for conflicts).
+    expect((await rpc(home.stratis, 'createArea', [home.hid, 'Garage'])).status).toBe(200);
+  });
+});
+
+describe('a reply that was lost', () => {
+  it('lets “Bring It Online” be tapped again: the owner gets in, and the home is not built twice', async () => {
+    const h = createHarness();
+    const lost = await h.request({ method: 'POST', json: { op: 'setup', code: TEST_SETUP_CODE, phone: PHONE } });
+    expect(lost.status).toBe(200);
+    const built = storedDoc(h);
+    // The phone never saw that reply, so it never used the key; it taps again.
+    const stratis = h.browser();
+    const again = await call(stratis, 'setup', { code: TEST_SETUP_CODE, phone: PHONE });
+    expect(again.status).toBe(200);
+    expect(again.json).toMatchObject({ user: { name: 'Stratis' }, entry: { status: 'member', householdId: JSON.parse(lost.body).entry.householdId } });
+    const after = storedDoc(h);
+    expect(after.home.items.map((i) => i.id)).toEqual(built.home.items.map((i) => i.id));
+    expect(after.auth.devices).toHaveLength(1);
+    // The lost key is no good any more; the new one is.
+    expect((await h.request({ method: 'GET', url: `${API_PATH}?op=session`, headers: { cookie: `homeos_key=${tokenOf(lost)}` } })).status).toBe(401);
+    expect((await call(stratis, 'session')).status).toBe(200);
+    // Once the owner has used the home, the setup code does nothing.
+    const late = await call(h.browser(), 'setup', { code: TEST_SETUP_CODE, phone: PHONE });
+    expect([late.status, late.json.error.code]).toEqual([409, 'home_exists']);
+  });
+
+  it('lets a code be entered again when the first reply was lost: same person, same welcome', async () => {
+    const h = createHarness();
+    const home = await online(h);
+    const code = (await call(home.stratis, 'createCode', { memberId: home.person('Shea').id })).json.code;
+    const lost = await h.request({ method: 'POST', json: { op: 'redeem', code } });
+    expect(JSON.parse(lost.body).entry.status).toBe('claimed');
+    const shea = h.browser();
+    const again = await call(shea, 'redeem', { code });
+    expect([again.status, again.json.entry.status, again.json.user.name]).toEqual([200, 'claimed', 'Shea']);
+    expect((await call(shea, 'session')).status).toBe(200);
+    expect((await call(h.browser(), 'redeem', { code })).json.error.code).toBe('invalid_code');
+  });
+});
+
+describe('the size of the home', () => {
+  it('puts at most 25 writes in one put', async () => {
+    const h = createHarness();
+    const home = await online(h);
+    const puts = putsOf(h);
+    const results = await Promise.all(Array.from({ length: 60 }, (_, i) => rpc(home.stratis, 'createArea', [home.hid, `Room ${i}`])));
+    expect(results.every((r) => r.status === 200)).toBe(true);
+    expect(putsOf(h) - puts).toBeGreaterThanOrEqual(3);
+  });
+
+  it('refuses a change that grows the home past its size or row limits; one that shrinks it still works', async () => {
+    const h = createHarness();
+    const home = await online(h);
+    // A home already holding the most areas it may.
+    await h.ctx.store.write((doc) => {
+      const base = doc.home.areas[0];
+      const more = Array.from({ length: 200 - doc.home.areas.length }, (_, i) => ({ ...base, id: `extra-${i}`, name: `Extra ${i}`, position: 100 + i }));
+      doc.home = { ...doc.home, areas: [...doc.home.areas, ...more] };
+    });
+    const full = await rpc(home.stratis, 'createArea', [home.hid, 'One more']);
+    expect([full.status, full.json.error.code]).toEqual([413, 'too_large']);
+    expect((await rpc(home.stratis, 'deleteArea', ['extra-0'])).status).toBe(200);
+    // A home near its size: a long message that would take it past the limit is refused.
+    await h.ctx.store.write((doc) => {
+      const filler = { id: 'filler', household_id: home.hid, member_id: home.person('Stratis').id, body: 'x'.repeat(4 * 1024 * 1024 - 60_000), created_at: new Date(h.clock.now).toISOString() };
+      doc.home = { ...doc.home, messages: [...doc.home.messages, filler as never] };
+    });
+    const big = await rpc(home.stratis, 'sendMessage', [home.hid, 'y'.repeat(3900)]);
+    const sent = await rpc(home.stratis, 'sendMessage', [home.hid, 'Hello']);
+    expect(sent.status).toBe(200);
+    for (let i = 0; i < 20 && big.status === 200; i++) {
+      const more = await rpc(home.stratis, 'sendMessage', [home.hid, 'y'.repeat(3900)]);
+      if (more.status !== 200) {
+        expect([more.status, more.json.error.code]).toEqual([413, 'too_large']);
+        return;
+      }
+    }
+    expect([big.status, big.json.error?.code]).toEqual([413, 'too_large']);
+  });
+});
+
+describe('device labels', () => {
+  it('tells the Home Screen app from Safari on the same iPhone', async () => {
+    const h = createHarness();
+    const home = await online(h);
+    const code = (await call(home.stratis, 'createCode', { memberId: home.person('Stratis').id })).json.code;
+    const app = h.browser();
+    const res = await call(app, 'redeem', { code, app: 'standalone' });
+    expect(res.json.device.label).toBe('iPhone · Home Screen app');
+    expect(((await call(home.stratis, 'devices')).json.devices as { label: string }[]).map((d) => d.label)).toEqual([
+      'iPhone · Safari',
+      'iPhone · Home Screen app',
+    ]);
   });
 });

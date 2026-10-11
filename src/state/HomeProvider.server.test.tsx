@@ -249,8 +249,9 @@ describe('signed in', () => {
 
   it('says when saving is paused until next month', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    // Setup and Shea's code are two puts; the third uses the month up.
-    const h = createHarness({ env: { HOMEOS_BLOB_WRITES_PER_MONTH: '3' } });
+    // Setup, the phone's first use of its key (one put per device, ever) and Shea's code are
+    // three puts; the fourth uses the month up.
+    const h = createHarness({ env: { HOMEOS_BLOB_WRITES_PER_MONTH: '4' } });
     const { other } = await homeElsewhere(h);
     const home = mount(other.backend);
     await waitFor(() => expect(home().phase.kind).toBe('ready'));
