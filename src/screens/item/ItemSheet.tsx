@@ -371,12 +371,15 @@ export function ItemSheet({ target, open, onClose, onExited, onSaved }: ItemShee
                   options={REPEAT_OPTIONS}
                   onChange={(repeat) => update({ repeat })}
                 />
-                <SelectRow<Notify>
-                  label="Notify"
-                  value={draft.notify}
-                  options={NOTIFY_OPTIONS}
-                  onChange={(notify) => update({ notify })}
-                />
+                {/* Server mode sends no notifications, so it doesn't offer them. */}
+                {home.backend.kind === 'server' ? null : (
+                  <SelectRow<Notify>
+                    label="Notify"
+                    value={draft.notify}
+                    options={NOTIFY_OPTIONS}
+                    onChange={(notify) => update({ notify })}
+                  />
+                )}
               </>
             )}
           </DetailsCard>

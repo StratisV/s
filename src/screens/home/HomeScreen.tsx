@@ -120,7 +120,7 @@ export function HomeScreen({
   linkedArea,
   onLinkedAreaShown,
 }: HomeScreenProps) {
-  const { data, me, today, completeItem } = useHousehold();
+  const { data, me, today, completeItem, readOnly } = useHousehold();
   const share = useShare();
   const sections = useMemo(() => itemsByArea(data.areas, data.items), [data.areas, data.items]);
   const areaIds = useMemo(() => sections.map((s) => s.area.id), [sections]);
@@ -228,6 +228,7 @@ export function HomeScreen({
       {sections.length ? (
         <>
           <PersonFilter members={data.members} meId={me.id} value={who} counts={counts} onChange={setWho} />
+          {readOnly ? <ReadOnlyLine /> : null}
           {shown.length ? (
             <div className={styles.toolbar}>
               <button
@@ -264,9 +265,23 @@ export function HomeScreen({
           ))}
         </>
       ) : (
-        <NoAreas onOpenProfile={onOpenProfile} />
+        <>
+          {readOnly ? <ReadOnlyLine /> : null}
+          <NoAreas onOpenProfile={onOpenProfile} />
+        </>
       )}
     </Screen>
+  );
+}
+
+/** Server mode, when the month's free storage writes are used up (docs/ARCHITECTURE.md "Budget"). */
+export const READ_ONLY_LINE = 'Saving is paused until next month: the free storage limit is used up.';
+
+function ReadOnlyLine() {
+  return (
+    <p className={styles.readOnly} role="status">
+      {READ_ONLY_LINE}
+    </p>
   );
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type Ref } from 'react';
 import { TEXT_LIMITS } from '../../lib/constants';
 import { emailTaken, firstFreeEmoji, isValidEmail, normaliseEmail } from '../../lib/logic/people';
-import { useHousehold } from '../../state/HomeProvider';
+import { notSavedMessage, useHousehold } from '../../state/HomeProvider';
 import { Avatar } from '../../ui/Avatar';
 import { EmojiGrid } from './EmojiGrid';
 import { EMAIL_INVALID, EMAIL_TAKEN, GoogleEmailField, personErrorMessage } from './GoogleEmailField';
@@ -9,6 +9,9 @@ import { BackButton, NavPage } from './NavPage';
 import list from './List.module.css';
 import people from './People.module.css';
 import styles from './ProfilePage.module.css';
+
+/** Add Person's footnote in server mode (docs/ARCHITECTURE.md "Server mode (no setup)", "Screens"). */
+export const ADD_PERSON_CODE_NOTE = 'Then send them a code from their page.';
 
 interface AddPersonPageProps {
   onBack(): void;
@@ -25,9 +28,12 @@ interface AddPersonPageProps {
  * can be given items straight away; when they sign in with that email they become this person.
  * Add (in the bar) is off while the name is blank or the email isn't one. On failure the page
  * keeps everything typed and says why under the email.
+ *
+ * Server mode: name and emoji only (no Google); they join with a code from their page.
  */
 export function AddPersonPage({ onBack, onAdded, backRef, nameRef }: AddPersonPageProps) {
-  const { data, addPerson } = useHousehold();
+  const { backend, data, addPerson, showToast } = useHousehold();
+  const server = backend.kind === 'server';
   const emojiHeadingId = useId();
   const [name, setName] = useState('');
   // The first emoji nobody at home has, so people stay easy to tell apart.
@@ -70,15 +76,20 @@ export function AddPersonPage({ onBack, onAdded, backRef, nameRef }: AddPersonPa
     } catch (err) {
       if (!alive.current) return;
       setBusy(false);
-      setChecked(true);
-      setFailure(personErrorMessage(err, wanted));
+      // No email field to say it under (server mode): a toast says why.
+      if (server) showToast(notSavedMessage(err));
+      else {
+        setChecked(true);
+        setFailure(personErrorMessage(err, wanted));
+      }
     }
   };
 
   const onNameKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
     e.preventDefault();
-    emailRef.current?.focus();
+    if (server) void add();
+    else emailRef.current?.focus();
   };
 
   return (
@@ -125,7 +136,7 @@ export function AddPersonPage({ onBack, onAdded, backRef, nameRef }: AddPersonPa
           autoComplete="off"
           autoCorrect="off"
           spellCheck={false}
-          enterKeyHint="next"
+          enterKeyHint={server ? 'done' : 'next'}
         />
       </div>
 
@@ -135,21 +146,25 @@ export function AddPersonPage({ onBack, onAdded, backRef, nameRef }: AddPersonPa
       <EmojiGrid value={emoji} labelledBy={emojiHeadingId} onChange={setEmoji} />
       <p className={list.caption}>Shown next to their name on items and in Stats.</p>
 
-      <GoogleEmailField
-        inputRef={emailRef}
-        value={email}
-        onChange={(value) => {
-          setEmail(value);
-          setFailure(null);
-        }}
-        onBlur={() => setChecked(true)}
-        onEnter={() => {
-          setChecked(true);
-          void add();
-        }}
-        error={error}
-        enterKeyHint="go"
-      />
+      {server ? (
+        <p className={`${list.caption} ${people.codeNote}`}>{ADD_PERSON_CODE_NOTE}</p>
+      ) : (
+        <GoogleEmailField
+          inputRef={emailRef}
+          value={email}
+          onChange={(value) => {
+            setEmail(value);
+            setFailure(null);
+          }}
+          onBlur={() => setChecked(true)}
+          onEnter={() => {
+            setChecked(true);
+            void add();
+          }}
+          error={error}
+          enterKeyHint="go"
+        />
+      )}
     </NavPage>
   );
 }

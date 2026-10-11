@@ -1,0 +1,148 @@
+/* The code sheet: a bottom sheet over everything (like the action sheets), holding one code. */
+
+.root {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  font-family: var(--font-text);
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.root[data-shown] .backdrop {
+  opacity: 1;
+}
+
+.sheet {
+  position: relative;
+  width: 100%;
+  max-width: 600px;
+  max-height: calc(100% - var(--sheet-top));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 16px max(22px, calc(var(--bottom-inset) + 8px));
+  border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  outline: none;
+  transform: translateY(105%);
+  transition: transform var(--sheet-duration) var(--sheet-ease);
+}
+
+.root[data-shown] .sheet {
+  transform: translateY(0);
+}
+
+.grabber {
+  flex: none;
+  align-self: center;
+  width: 36px;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(60, 60, 67, 0.3);
+}
+
+.title {
+  margin: 18px 4px 0;
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* The code, large on a white card; a tap selects all of it. */
+.code {
+  margin: 20px 0 0;
+  padding: 22px 12px;
+  border-radius: var(--r-card);
+  background: var(--card);
+  text-align: center;
+}
+
+.letters {
+  display: inline-block;
+  max-width: 100%;
+  font-size: 34px;
+  line-height: 41px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: all;
+  -webkit-user-select: all;
+  cursor: text;
+}
+
+.note {
+  margin: 14px 8px 0;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  text-align: center;
+  color: var(--label-secondary);
+  text-wrap: balance;
+}
+
+.actions {
+  margin-top: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.shareLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* "Copied to share" (no share sheet here), under Share; takes no room while empty. */
+.status {
+  margin: 8px 0 0;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  text-align: center;
+  color: var(--label-secondary);
+}
+
+.status:empty {
+  margin: 0;
+}
+
+.done {
+  align-self: center;
+  min-height: 44px;
+  margin-top: 4px;
+  padding: 0 16px;
+  border-radius: 12px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  color: var(--tint);
+  transition: opacity 0.15s ease;
+}
+
+.done:active {
+  opacity: 0.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet,
+  .backdrop {
+    transition-duration: 1ms;
+  }
+}

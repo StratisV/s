@@ -4,11 +4,13 @@ import { errorMessage, useHousehold } from '../../state/HomeProvider';
 import { ActionSheet } from '../../ui/ActionSheet';
 import { Avatar } from '../../ui/Avatar';
 import { ChevronRightIcon } from '../../ui/icons';
+import { useIssueCode } from './CodeSheet';
 import { EmojiGrid } from './EmojiGrid';
 import { InlineText } from './InlineText';
 import { cachedInvite, INVITE_TITLE, inviteUrl, rememberInvite, shareLink } from './invite';
 import { NavPage } from './NavPage';
 import { NotificationsSection } from './NotificationsSection';
+import { isLastDevice, useDevices } from './useDevices';
 import list from './List.module.css';
 import styles from './ProfilePage.module.css';
 
@@ -18,14 +20,23 @@ interface ProfilePageProps {
   householdRowRef?: Ref<HTMLButtonElement>;
 }
 
-/** Profile (README "4. Profile"): avatar, name, emoji, notifications, household, sign out. */
+/**
+ * Profile (README "4. Profile"): avatar, name, emoji, notifications, household, sign out.
+ * Server mode (docs/ARCHITECTURE.md "Server mode (no setup)", "Screens"): the account line is
+ * this device, Add another device makes a code for yourself, and push, the weekly email and
+ * Invite someone are not there (people are invited from their page in People).
+ */
 export function ProfilePage({ onDone, onOpenHousehold, householdRowRef }: ProfilePageProps) {
   const { backend, data, me, updateMember, createInvite, showToast, dismissToast, signOut } = useHousehold();
+  const server = backend.kind === 'server';
   const emojiHeadingId = useId();
   const householdHeadingId = useId();
   const [inviting, setInviting] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const householdId = data.household.id;
+  const { devices } = useDevices(server);
+  const thisDevice = devices?.find((d) => d.current) ?? null;
+  const codes = useIssueCode();
 
   const share = async (url: string) => {
     const outcome = await shareLink(url, INVITE_TITLE);
@@ -77,7 +88,15 @@ export function ProfilePage({ onDone, onOpenHousehold, householdRowRef }: Profil
           autoCapitalize="words"
           maxLength={TEXT_LIMITS.memberName}
         />
-        <span className={styles.account}>{backend.kind === 'demo' ? 'Demo account' : 'Signed in with Google'}</span>
+        <span className={styles.account}>
+          {server
+            ? thisDevice
+              ? `This device · ${thisDevice.label}`
+              : 'This device'
+            : backend.kind === 'demo'
+              ? 'Demo account'
+              : 'Signed in with Google'}
+        </span>
       </div>
 
       <h2 id={emojiHeadingId} className={list.header}>
@@ -90,31 +109,48 @@ export function ProfilePage({ onDone, onOpenHousehold, householdRowRef }: Profil
       />
       <p className={list.caption}>Shown next to your name on items and in Stats.</p>
 
-      <NotificationsSection />
+      {server ? null : <NotificationsSection />}
 
       <section aria-labelledby={householdHeadingId}>
         <h2 id={householdHeadingId} className={list.header}>
           Household
         </h2>
         <div className={list.card}>
-          <button
-            type="button"
-            className={`${list.row} ${list.action}`}
-            onClick={() => void invite()}
-            aria-busy={inviting || undefined}
-          >
-            Invite someone
-          </button>
+          {server ? null : (
+            <button
+              type="button"
+              className={`${list.row} ${list.action}`}
+              onClick={() => void invite()}
+              aria-busy={inviting || undefined}
+            >
+              Invite someone
+            </button>
+          )}
           <button ref={householdRowRef} type="button" className={list.row} onClick={onOpenHousehold}>
             <span className={list.label}>Household</span>
             <span className={list.value}>{data.household.name}</span>
             <ChevronRightIcon className={list.chevron} />
           </button>
         </div>
-        <p className={list.caption}>
-          Someone already in People? Add their Google email there instead, and they join as themselves.
-        </p>
+        {server ? null : (
+          <p className={list.caption}>
+            Someone already in People? Add their Google email there instead, and they join as themselves.
+          </p>
+        )}
       </section>
+
+      {server ? (
+        <div className={`${list.card} ${list.lone}`}>
+          <button
+            type="button"
+            className={`${list.row} ${list.action}`}
+            onClick={() => void codes.issue(me.id, null)}
+            aria-busy={codes.busy ? true : undefined}
+          >
+            Add another device
+          </button>
+        </div>
+      ) : null}
 
       <div className={`${list.card} ${list.lone}`}>
         <button type="button" className={`${list.row} ${list.destructive}`} onClick={() => setConfirmSignOut(true)}>
@@ -125,6 +161,7 @@ export function ProfilePage({ onDone, onOpenHousehold, householdRowRef }: Profil
       <ActionSheet
         open={confirmSignOut}
         title={`Sign out of ${APP_NAME}?`}
+        message={server ? signOutMessage(isLastDevice(devices, thisDevice?.id ?? ''), data.household.name) : undefined}
         actions={[
           {
             label: 'Sign Out',
@@ -137,6 +174,17 @@ export function ProfilePage({ onDone, onOpenHousehold, householdRowRef }: Profil
         ]}
         onCancel={() => setConfirmSignOut(false)}
       />
+      {codes.sheet}
     </NavPage>
   );
+}
+
+/**
+ * Signing out in server mode needs a new code to get back in, which only someone signed in can
+ * make: said first, more strongly when this is the home's only signed-in device.
+ */
+export function signOutMessage(lastDevice: boolean, home: string): string {
+  return lastDevice
+    ? `This is the only device signed in to ${home}. Add another device first, or nobody can make a code to get back in.`
+    : 'To sign in again, you’ll need a new code from someone at home.';
 }

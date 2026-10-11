@@ -1,9 +1,10 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { TEXT_LIMITS } from '../../lib/constants';
+import { APP_NAME, TEXT_LIMITS } from '../../lib/constants';
 import { emailTaken, hasJoined, isValidEmail, normaliseEmail } from '../../lib/logic/people';
 import type { Member } from '../../lib/types';
 import { useHome } from '../../state/HomeProvider';
 import { Avatar } from '../../ui/Avatar';
+import { useIssueCode } from '../profile/CodeSheet';
 import { EMAIL_INVALID, EMAIL_TAKEN, personErrorMessage } from '../profile/GoogleEmailField';
 import shared from './Onboarding.module.css';
 import styles from './OneHome.module.css';
@@ -172,5 +173,62 @@ function PersonEmailCard({
         </p>
       ) : null}
     </>
+  );
+}
+
+/**
+ * Server mode's version, right after bringing the home online (docs/ARCHITECTURE.md "Server
+ * mode (no setup)", "Screens"): nobody has an email to add, so each person who came along gets
+ * a code instead. Invite makes one and shows it in the code sheet (Share sends it); Continue
+ * opens the home. Anyone left can be invited later from People.
+ */
+export function InvitePeopleStep({ enter }: { enter: Enter }) {
+  const { data, doneInvitingPeople } = useHome();
+  const codes = useIssueCode();
+  // The people as the step opened; someone who joins meanwhile drops out of the list.
+  const [ids] = useState(() => (data?.members ?? []).filter((m) => !hasJoined(m)).map((m) => m.id));
+  const people = ids
+    .map((id) => data?.members.find((m) => m.id === id))
+    .filter((m): m is Member => !!m && !hasJoined(m));
+  const names = people.map((p) => p.name);
+  const title = names.length ? waitingTitle(names) : 'Everyone has joined';
+
+  return (
+    <StepPage label={title} enter={enter} nav={null}>
+      <div className={shared.titleBlock}>
+        <h1 className={shared.title}>{title}</h1>
+        <p className={`${shared.subtitle} ${styles.lead}`}>
+          Send each of them a code. They type it in {APP_NAME}, or open the link.
+        </p>
+      </div>
+
+      {people.length ? (
+        <ul className={`${shared.card} ${styles.inviteCard}`} aria-label="People">
+          {people.map((person) => (
+            <li key={person.id} className={styles.inviteRow}>
+              <Avatar emoji={person.emoji} size={32} emojiSize={19} background="var(--bg)" />
+              <span className={styles.inviteName}>{person.name}</span>
+              <button
+                type="button"
+                className={styles.inviteButton}
+                onClick={() => void codes.issue(person.id, person.name)}
+                aria-label={`Invite ${person.name}`}
+                aria-busy={codes.busy === person.id || undefined}
+                disabled={!!codes.busy && codes.busy !== person.id}
+              >
+                Invite
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className={shared.caption}>You can invite them later in {PEOPLE_PATH}.</p>
+
+      <div className={shared.spacer} />
+      <div className={shared.footer}>
+        <PrimaryButton onClick={doneInvitingPeople}>Continue</PrimaryButton>
+      </div>
+      {codes.sheet}
+    </StepPage>
   );
 }

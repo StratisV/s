@@ -113,6 +113,24 @@
   color: var(--label-secondary);
 }
 
+/* ── Bring this home online (server mode) ──────────────── */
+
+.codeCard {
+  flex: none;
+}
+
+/* The setup code reads from the left, spaced so its groups are easy to check. */
+.setupCode {
+  text-align: left;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+}
+
+.setupCode::placeholder {
+  letter-spacing: 0.08em;
+}
+
 /* ── The people who came along ─────────────────────────── */
 
 /* The subtitle wraps here (two lines or more), unlike a one-line address. */
@@ -136,6 +154,81 @@
   font-size: 13px;
   line-height: 16px;
   color: var(--destructive);
+}
+
+/* Server mode: one row per person, with Invite on the right. */
+.inviteCard {
+  flex: none;
+  margin-top: 16px;
+  margin-bottom: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inviteRow {
+  position: relative;
+  min-height: 56px;
+  padding: 0 14px 0 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Hairline from the name to the right padding, as in the other grouped lists. */
+.inviteRow + .inviteRow::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 62px;
+  right: 14px;
+  border-top: 0.5px solid var(--separator);
+  pointer-events: none;
+}
+
+.inviteName {
+  flex: 1;
+  min-width: 0;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  overflow-wrap: anywhere;
+}
+
+/* A small tinted capsule, like the App Store's Get. */
+.inviteButton {
+  flex: none;
+  position: relative;
+  height: 32px;
+  padding: 0 16px;
+  border-radius: 16px;
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--tint-text);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  transition: opacity 0.15s ease;
+}
+
+/* A 44px tap target around the 32px capsule. */
+.inviteButton::before {
+  content: '';
+  position: absolute;
+  inset: -6px -4px;
+}
+
+.inviteButton:active:not(:disabled) {
+  opacity: 0.5;
+}
+
+.inviteButton:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.inviteButton[aria-busy='true'] {
+  opacity: 0.5;
+  cursor: progress;
 }
 
 /* ── Welcome home ──────────────────────────────────────── */

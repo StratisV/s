@@ -25,6 +25,16 @@
   opacity: 0.5;
 }
 
+/* Server mode: saving is paused until next month. One quiet line under the person filter. */
+.readOnly {
+  margin: 0;
+  padding: 8px 20px 0;
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.08px;
+  color: var(--label-secondary);
+}
+
 /* The filter picked someone with nothing open. */
 .nobody {
   margin: 16px 16px 0;

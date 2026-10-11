@@ -14,9 +14,11 @@ import { PrimaryButton, StepPage, type Enter } from './StepPage';
  * the name, emoji and colour already set; this step lets them confirm or change the emoji,
  * then the notifications step follows. "Not Shea?" (asked first) gives the person back, without
  * the email that matched, and signs out, for when someone at home put the wrong email on them.
+ * Server mode: the same step after a code made someone join (the code was the wrong person's),
+ * and no notifications step after it.
  */
 export function ClaimWelcome({ enter }: { enter: Enter }) {
-  const { me, data, confirmClaimed, releaseClaim } = useHome();
+  const { backend, me, data, confirmClaimed, releaseClaim } = useHome();
   const [emoji, setEmoji] = useState(() => me?.emoji || DEFAULT_EMOJI);
   const [busy, setBusy] = useState(false);
   const [confirmNotMe, setConfirmNotMe] = useState(false);
@@ -95,7 +97,9 @@ export function ClaimWelcome({ enter }: { enter: Enter }) {
       <ActionSheet
         open={confirmNotMe}
         title={`Not ${name}?`}
-        message={`You’ll be signed out and ${name} goes back to waiting to join. Ask someone at home to check the email they added for you.`}
+        message={`You’ll be signed out and ${name} goes back to waiting to join. ${
+          backend.kind === 'server' ? 'Ask someone at home for a new code.' : 'Ask someone at home to check the email they added for you.'
+        }`}
         actions={[{ label: 'Sign Out', destructive: true, onSelect: () => void notMe() }]}
         onCancel={() => setConfirmNotMe(false)}
       />

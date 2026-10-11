@@ -153,3 +153,70 @@
 .remove {
   margin-top: 36px;
 }
+
+/* ── Server mode: devices ──────────────────────────────── */
+
+/* Under a device's name: "This device · Signed in Sat 10 Oct" (wraps on a narrow screen). */
+.deviceDetail {
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* Remove, a small red capsule at the end of the row (44px tap target). */
+.deviceRemove {
+  flex: none;
+  position: relative;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 16px;
+  background: rgba(255, 59, 48, 0.1);
+  color: var(--destructive);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  transition: opacity 0.15s ease;
+}
+
+.deviceRemove::before {
+  content: '';
+  position: absolute;
+  inset: -6px -4px;
+}
+
+.deviceRemove:active:not(:disabled) {
+  opacity: 0.5;
+}
+
+.deviceRemove:disabled {
+  opacity: 0.4;
+  cursor: progress;
+}
+
+/* Loading, nothing there, or why it failed: quiet text in the row. */
+.deviceNote {
+  justify-content: flex-start;
+  color: var(--label-secondary);
+}
+
+.deviceRetry {
+  margin-left: auto;
+  flex: none;
+  min-height: 44px;
+  padding: 0 4px;
+  color: var(--tint);
+  font-size: 17px;
+  letter-spacing: -0.4px;
+}
+
+.deviceRetry:active {
+  opacity: 0.4;
+}
+
+/* Under Add Person's emoji: what happens after Add. */
+.codeNote {
+  padding-top: 24px;
+}
