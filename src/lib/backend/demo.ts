@@ -4,12 +4,14 @@
 //
 // URL switches (read once at start-up, the URL is left alone):
 //   ?demo-seed=1   wipe, sign in as Stratis, and recreate the prototype household
+//                  (SEED_ITEMS plus DEMO_CALENDAR_ITEMS)
 //   ?demo-reset=1  wipe everything (signed out, no household)
 
 import {
   CHAT_PAGE_SIZE,
   DEFAULT_ADDRESS,
   DEFAULT_AREAS,
+  DEMO_CALENDAR_ITEMS,
   HOUSEKEEPING_DEMO_NOTE,
   HOUSEKEEPING_DEMO_VISITS,
   HOUSEKEEPING_PRICE_MAX_PENCE,
@@ -1203,7 +1205,8 @@ export class DemoBackend implements Backend {
       memberName: user.name,
       memberEmoji: '🦔',
       areas: [...DEFAULT_AREAS],
-      items: SEED_ITEMS,
+      // The household's list, and a few more so Home's calendar has a lively month.
+      items: [...SEED_ITEMS, ...DEMO_CALENDAR_ITEMS],
     });
     this.write(doc);
   }

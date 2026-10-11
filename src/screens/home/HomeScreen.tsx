@@ -9,6 +9,7 @@ import { useHousehold } from '../../state/HomeProvider';
 import { ChevronRightIcon, PlusIcon, ShareIcon } from '../../ui/icons';
 import { Screen } from '../../ui/Screen';
 import { useShare } from '../share/useShare';
+import { HomeCalendar } from './HomeCalendar';
 import { ItemRow } from './ItemRow';
 import { PersonFilter } from './PersonFilter';
 import { countsFor, isFor, personFilterKey, validFilter, type PersonFilter as Who } from './personFilter';
@@ -33,6 +34,8 @@ interface HomeScreenProps {
    */
   linkedArea?: string | null;
   onLinkedAreaShown?(): void;
+  /** A housekeeping visit under the calendar: shows that day in the Housekeeping tab. */
+  onOpenHousekeeping?(date: ISODate): void;
 }
 
 /** Where this device remembers which areas are collapsed: a JSON list of area ids. */
@@ -119,6 +122,7 @@ export function HomeScreen({
   onRevealed,
   linkedArea,
   onLinkedAreaShown,
+  onOpenHousekeeping,
 }: HomeScreenProps) {
   const { data, me, today, completeItem } = useHousehold();
   const share = useShare();
@@ -139,6 +143,8 @@ export function HomeScreen({
     [sections, who],
   );
   const shownIds = shown.map((s) => s.area.id);
+  // What the calendar marks: the items shown, in Home's order.
+  const shownItems = useMemo(() => shown.flatMap((s) => s.items), [shown]);
   const allCollapsed = shownIds.length > 0 && shownIds.every((id) => collapsed.has(id));
 
   // An item was saved into a collapsed area: open it so the item shows (the sheet closes over it).
@@ -228,6 +234,18 @@ export function HomeScreen({
       {sections.length ? (
         <>
           <PersonFilter members={data.members} meId={me.id} value={who} counts={counts} onChange={setWho} />
+          <HomeCalendar
+            householdId={data.household.id}
+            items={shownItems}
+            visits={data.housekeeping.visits}
+            members={data.members}
+            today={today}
+            timeZone={data.household.timezone}
+            who={who}
+            onOpenItem={onOpenItem}
+            onComplete={completeItem}
+            onOpenHousekeeping={onOpenHousekeeping}
+          />
           {shown.length ? (
             <div className={styles.toolbar}>
               <button
