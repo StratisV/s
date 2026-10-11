@@ -4,8 +4,9 @@ import '@fontsource-variable/figtree';
 import '@fontsource/nunito/700.css';
 import './styles/global.css';
 import App from './App';
-import { createBackend } from './lib/backend';
+import { BACKEND_MODE, createBackend } from './lib/backend';
 import { applyPreviewInset } from './lib/preview';
+import { captureServerLinks } from './lib/serverLinks';
 import { captureSharedLink } from './lib/sharedLink';
 import { registerServiceWorker } from './lib/sw-register';
 import { watchForUpdates } from './lib/update';
@@ -15,6 +16,8 @@ import { ConfettiProvider } from './ui/Confetti';
 applyPreviewInset();
 // A shared ?item= or ?area= link: kept until the household has loaded (through sign-in if need be).
 captureSharedLink();
+// Server mode: a ?setup= or ?code= link is kept until the Welcome screen uses it.
+if (BACKEND_MODE === 'server') captureServerLinks();
 
 const root = createRoot(document.getElementById('root')!);
 

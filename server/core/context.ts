@@ -2,12 +2,13 @@
 // new HomeStore(blobs, { path: config.blobPath, budget: config.budget }), an AttemptLimiter, and
 // node:crypto for randomness (randomBytes, randomUUID). One per function instance (module
 // scope), so its HomeStore cache and limiter live as long as the instance.
-//
-// SKELETON: not implemented yet.
 
+import { randomBytes, randomUUID } from 'node:crypto';
 import type { BlobStore } from '../store/types';
-import type { AttemptLimits } from './limits';
+import { configFromEnv } from './config';
 import type { ServerContext } from './handler';
+import { HomeStore } from './homeStore';
+import { AttemptLimiter, type AttemptLimits } from './limits';
 
 export interface ContextOptions {
   blobs: BlobStore;
@@ -18,6 +19,17 @@ export interface ContextOptions {
   attempts?: AttemptLimits;
 }
 
-export function createServerContext(_opts: ContextOptions): ServerContext {
-  throw new Error('createServerContext: not implemented yet');
+export function createServerContext(opts: ContextOptions): ServerContext {
+  const config = { ...configFromEnv(opts.env), secureCookies: opts.secureCookies };
+  if (opts.attempts) config.attempts = { ...opts.attempts };
+  return {
+    config,
+    store: new HomeStore(opts.blobs, { path: config.blobPath, budget: config.budget }),
+    limiter: new AttemptLimiter(config.attempts),
+    deps: {
+      now: () => new Date(),
+      randomBytes: (n) => new Uint8Array(randomBytes(n)),
+      newId: () => randomUUID(),
+    },
+  };
 }

@@ -21,16 +21,19 @@ import {
   withTasksReordered,
 } from '../lib/logic/housekeeping';
 import { disablePush } from '../lib/push';
+import { forgetServerLinks, pendingSetupCode, takeSignInCode } from '../lib/serverLinks';
 import { forgetSharedLink } from '../lib/sharedLink';
 import { applyKindRules, nextDueDate } from '../lib/logic/items';
 import {
   buildImportPayload,
+  DEMO_DOC_KEY,
   demoHomeMatches,
   demoHomeSummary,
   markDemoDeclined,
   markDemoImported,
   readDemoDoc,
 } from '../lib/logic/importHome';
+import { serverSetupSummary } from '../lib/logic/serverImport';
 import { normaliseEmail } from '../lib/logic/people';
 import type {
   Area,
@@ -493,9 +496,18 @@ export function notSavedMessage(err: unknown, verb: 'save' | 'undo' = 'save'): s
   return `${lead} Try again.`;
 }
 
-/** TODO(zero-data): a server-mode action that is not built yet. */
-function notYet(what: string): Promise<never> {
+/** A server-mode action outside server mode. */
+function notSupported(what: string): Promise<never> {
   return Promise.reject(new BackendError('unknown', `not supported: ${what}`));
+}
+
+/** The raw demo document this browser kept (homeos.demo.v1), or null. */
+function readRawDemoDoc(): string | null {
+  try {
+    return localStore()?.getItem(DEMO_DOC_KEY) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Optimistic changes ───────────────────────────────────
@@ -799,6 +811,16 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
   /** The tail is only there for the offer (a member signing in): turning it down opens the home. */
   const tailForOffer = useRef(false);
   const [invitePeople, setInvitePeople] = useState(false);
+  // Server mode (docs/ARCHITECTURE.md "Server mode (no setup)", "HomeProvider in server mode").
+  const access = useMemo(() => serverAccess(backend), [backend]);
+  const [serverWelcome, setServerWelcome] = useState<ServerWelcome | null>(() => (access ? { kind: 'checking' } : null));
+  /** The Welcome screen's last working-out (a later one wins). */
+  const welcomeSeq = useRef(0);
+  /** The epoch serverWelcome was last worked out for (React may run an effect twice). */
+  const welcomeEpoch = useRef(-1);
+  const [readOnly, setReadOnly] = useState(false);
+  /** The bootstrap the auth listener started last (a sign-in by code waits for it). */
+  const lastBoot = useRef<Promise<Phase['kind'] | null>>(Promise.resolve(null));
   /** A retry() is running (phase 'error'). */
   const retrying = useRef(false);
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -1119,7 +1141,7 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       const id = u?.id ?? null;
       if (id === lastUserId) return;
       lastUserId = id;
-      void bootstrap(u);
+      lastBoot.current = bootstrap(u);
     };
     backend
       .getUser()
@@ -1252,6 +1274,126 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
     }
   }, [ready, pendingInvite, onboardingTail]);
 
+  // ── Server mode ─────────────────────────────────────────
+
+  /** "Have a code?" (or a ?code= link): signs this browser in by code, then waits for the home to open. */
+  const signInByCode = useCallback(
+    async (code: string) => {
+      if (!access) throw new BackendError('unknown', 'not supported: redeemCode');
+      await access.redeemCode(code);
+      forgetServerLinks('code');
+      // The sign-in moved the auth listener on: the home opens (after a claim, the welcome step).
+      await lastBoot.current;
+    },
+    [access],
+  );
+
+  /** A working-out of serverWelcome that is not in the background is under way. */
+  const welcomeBusy = useRef(false);
+
+  /**
+   * What the signed-out Welcome screen shows (see ServerWelcome). `quiet`: a look in the
+   * background (back in view or online), which leaves the screen as it is unless the answer
+   * changed, and never tries a ?code= link.
+   */
+  const workOutWelcome = useCallback(
+    async (quiet: boolean) => {
+      if (!access || (quiet && welcomeBusy.current)) return;
+      const seq = ++welcomeSeq.current;
+      const current = () => seq === welcomeSeq.current && userRef.current === null;
+      if (!quiet) welcomeBusy.current = true;
+      try {
+        if (!quiet) {
+          setServerWelcome({ kind: 'checking' });
+          const link = takeSignInCode();
+          if (link) {
+            try {
+              await signInByCode(link);
+              return;
+            } catch (err) {
+              if (!current()) return;
+              const code = err instanceof BackendError ? err.code : null;
+              const notice: ServerWelcomeNotice | null =
+                code === 'too_many_attempts' ? 'tooManyAttempts' : code === 'invalid_code' ? 'codeInvalid' : null;
+              setServerWelcome({ kind: 'private', homeOnline: true, code: link, notice });
+              return;
+            }
+          }
+        }
+        let online: boolean | null;
+        try {
+          online = await access.homeOnline();
+        } catch {
+          online = null;
+        }
+        if (!current() || (quiet && online === null)) return;
+        const setupLink = pendingSetupCode();
+        let next: ServerWelcome;
+        if (online === false) {
+          const summary = serverSetupSummary(readRawDemoDoc());
+          next = summary
+            ? { kind: 'setup', summary, setupCode: setupLink ?? '' }
+            : { kind: 'private', homeOnline: false, code: '', notice: null };
+        } else {
+          let notice: ServerWelcomeNotice | null = null;
+          if (online === true && setupLink) {
+            // The home is online already: that setup link is no use any more.
+            forgetServerLinks('setup');
+            notice = 'setupUsed';
+          }
+          next = { kind: 'private', homeOnline: online ?? true, code: '', notice };
+        }
+        setServerWelcome((prev) => {
+          if (!quiet || !prev || prev.kind !== next.kind) return next;
+          // In the background: keep what is on the screen (the code field, a notice) unless it changed.
+          if (prev.kind === 'private' && next.kind === 'private' && prev.homeOnline !== next.homeOnline) {
+            return { ...prev, homeOnline: next.homeOnline, notice: next.notice ?? prev.notice };
+          }
+          return prev;
+        });
+      } finally {
+        if (!quiet) welcomeBusy.current = false;
+      }
+    },
+    [access, signInByCode],
+  );
+
+  // Signed out in server mode: work out the Welcome screen once per sign-out (and at start-up).
+  const signedOut = phase.kind === 'signedOut';
+  useEffect(() => {
+    if (!access) return;
+    if (!signedOut) {
+      welcomeEpoch.current = -1;
+      setServerWelcome((prev) => (prev?.kind === 'checking' ? prev : { kind: 'checking' }));
+      return;
+    }
+    if (welcomeEpoch.current === epoch.current) return;
+    welcomeEpoch.current = epoch.current;
+    void workOutWelcome(false);
+  }, [access, signedOut, workOutWelcome]);
+
+  // ...and look again when the app comes back into view or online (the home may have come
+  // online on another phone meanwhile, or this one was offline).
+  useEffect(() => {
+    if (!access || !signedOut) return;
+    const again = () => void workOutWelcome(true);
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') again();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('online', again);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('online', again);
+    };
+  }, [access, signedOut, workOutWelcome]);
+
+  // Saving paused until next month (the Blob store's write budget), as polling says.
+  useEffect(() => {
+    if (!access || !ready) return;
+    return access.onStatus((status) => setReadOnly(status.readOnly));
+  }, [access, ready]);
+
   /**
    * Applies an optimistic change, runs the backend call, then reloads.
    * On failure: takes back just this change, says it was not saved, reloads
@@ -1283,6 +1425,8 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
           const now = dataRef.current;
           if (revert && now) commitData(revert(now));
           if (!quiet) showToast(notSavedMessage(err, verb));
+          // Server mode: the month's saving is used up (polling says so too).
+          if (err instanceof BackendError && err.code === 'read_only') setReadOnly(true);
         }
         throw err;
       } finally {
@@ -1302,6 +1446,15 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
   }, []);
 
   const me = useMemo(() => (data && user ? (data.members.find((m) => m.user_id === user.id) ?? null) : null), [data, user]);
+
+  // Server mode, signed in: a ?setup= link is no use any more, and a ?code= link opened now is
+  // not tried (this phone is someone already).
+  const meName = me?.name ?? null;
+  useEffect(() => {
+    if (!access || !ready || meName === null) return;
+    forgetServerLinks('setup');
+    if (takeSignInCode()) showToast(`This phone is already signed in as ${meName}.`);
+  }, [access, ready, meName, showToast]);
 
   const value = useMemo<HomeContextValue>(() => {
     const completeItem = async (id: string) => {
@@ -1387,6 +1540,7 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       clearStoredInvite();
       setPendingInvite(null);
       forgetSharedLink();
+      if (access) forgetServerLinks('code');
       await backend.signOut();
     };
 
@@ -1830,15 +1984,46 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         );
       },
 
-      // Server mode: TODO(zero-data) HomeProvider's server-mode state and actions
-      // (docs/ARCHITECTURE.md "Server mode (no setup)", "HomeProvider").
-      serverWelcome: serverAccess(backend) ? { kind: 'checking' } : null,
-      bringHomeOnline: () => notYet('bringHomeOnline'),
-      redeemCode: () => notYet('redeemCode'),
-      createCode: () => notYet('createCode'),
-      listDevices: () => notYet('listDevices'),
-      removeDevice: () => notYet('removeDevice'),
-      readOnly: false,
+      // Server mode (docs/ARCHITECTURE.md "Server mode (no setup)", "HomeProvider in server mode").
+      serverWelcome: access ? serverWelcome : null,
+      bringHomeOnline: async (setupCode) => {
+        if (!access) return notSupported('bringHomeOnline');
+        // Read again: what comes along is what this browser holds now.
+        const raw = readRawDemoDoc();
+        if (!raw || !serverSetupSummary(raw)) throw new BackendError('unknown', 'invalid_input: phone');
+        try {
+          await access.bringOnline(setupCode, raw);
+        } catch (err) {
+          if (err instanceof BackendError && err.code === 'home_exists' && userRef.current === null) {
+            // Someone brought a home online first: this one can't come along now.
+            welcomeSeq.current += 1;
+            forgetServerLinks('setup');
+            setServerWelcome({ kind: 'private', homeOnline: true, code: '', notice: 'setupUsed' });
+          }
+          throw err;
+        }
+        forgetServerLinks('setup');
+        // Next: "{Names} haven't joined yet" with an Invite for each, then the home.
+        setInvitePeople(true);
+        setTail(true);
+        await lastBoot.current;
+      },
+      redeemCode: (code) => (access ? signInByCode(code) : notSupported('redeemCode')),
+      createCode: (memberId) => (access ? access.createCode(memberId) : notSupported('createCode')),
+      listDevices: () => (access ? access.listDevices() : notSupported('listDevices')),
+      removeDevice: async (deviceId) => {
+        if (!access) return notSupported('removeDevice');
+        await access.removeDevice(deviceId);
+        if (userRef.current === null) {
+          // This browser's own: it is signed out now. What Sign Out also forgets goes too.
+          dismissToast();
+          clearStoredInvite();
+          setPendingInvite(null);
+          forgetSharedLink();
+          forgetServerLinks('code');
+        }
+      },
+      readOnly: access ? readOnly : false,
 
       toast,
       showToast,
@@ -1859,6 +2044,10 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
     demoImportMode,
     canReopenImport,
     invitePeople,
+    access,
+    serverWelcome,
+    readOnly,
+    signInByCode,
     setTail,
     retry,
     refresh,
