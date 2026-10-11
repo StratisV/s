@@ -1,7 +1,5 @@
 // The one blob the server keeps: the home (DemoBackend's document), the sign-in data, and a
 // little bookkeeping. docs/ARCHITECTURE.md "Server mode (no setup)", "The stored document".
-//
-// SKELETON: the types and constants are the contract; the functions are not implemented yet.
 
 import type { DemoDoc } from '../../src/lib/backend/demo';
 import type { ISOTimestamp } from '../../src/lib/types';
@@ -82,22 +80,76 @@ export interface ServerMeta {
   usage: { month: string; puts: number; reads: number };
 }
 
-/** A new document for a home that is coming online (setup): rev 1, chatRev 1, no devices or codes yet. */
-export function newServerDoc(_home: DemoDoc, _now: Date): ServerDoc {
-  throw new Error('newServerDoc: not implemented yet');
+/** The UTC month of `at`, as ServerMeta.usage.month: "2026-10". */
+export function usageMonth(at: Date): string {
+  return at.toISOString().slice(0, 7);
 }
 
+/** A new document for a home that is coming online (setup): rev 1, chatRev 1, no devices or codes yet. */
+export function newServerDoc(home: DemoDoc, now: Date): ServerDoc {
+  return {
+    format: SERVER_DOC_FORMAT,
+    rev: 1,
+    chatRev: 1,
+    home: { ...home, session: null, users: [], invites: [], push_subs: [] },
+    auth: { devices: [], codes: [] },
+    meta: { createdAt: now.toISOString(), writes: [], usage: { month: usageMonth(now), puts: 0, reads: 0 } },
+  };
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+/** The DemoDoc lists the server relies on (DemoBackend fills in the rest as it reads). */
+const HOME_LISTS = [
+  'users',
+  'households',
+  'members',
+  'areas',
+  'items',
+  'completions',
+  'invites',
+  'push_subs',
+  'messages',
+  'message_reactions',
+  'housekeeping_notes',
+  'housekeeping_tasks',
+  'housekeeping_visits',
+  'housekeeping_visit_tasks',
+] as const;
+
 /** The stored body as a ServerDoc; throws when it is not one (wrong format or shape). */
-export function parseServerDoc(_body: string): ServerDoc {
-  throw new Error('parseServerDoc: not implemented yet');
+export function parseServerDoc(body: string): ServerDoc {
+  const doc: unknown = JSON.parse(body);
+  if (!isRecord(doc) || doc.format !== SERVER_DOC_FORMAT) throw new Error('not a home.os server document');
+  if (!isCount(doc.rev) || doc.rev < 1 || !isCount(doc.chatRev)) throw new Error('server document: bad rev');
+  const home = doc.home;
+  if (!isRecord(home) || home.version !== 1 || !HOME_LISTS.every((key) => Array.isArray(home[key]))) {
+    throw new Error('server document: bad home');
+  }
+  const auth = doc.auth;
+  if (!isRecord(auth) || !Array.isArray(auth.devices) || !Array.isArray(auth.codes)) throw new Error('server document: bad auth');
+  const meta = doc.meta;
+  if (
+    !isRecord(meta) ||
+    typeof meta.createdAt !== 'string' ||
+    !Array.isArray(meta.writes) ||
+    !isRecord(meta.usage) ||
+    typeof meta.usage.month !== 'string' ||
+    !isCount(meta.usage.puts) ||
+    !isCount(meta.usage.reads)
+  ) {
+    throw new Error('server document: bad meta');
+  }
+  return doc as unknown as ServerDoc;
 }
 
 /** The body to store (JSON). */
-export function serialiseServerDoc(_doc: ServerDoc): string {
-  throw new Error('serialiseServerDoc: not implemented yet');
+export function serialiseServerDoc(doc: ServerDoc): string {
+  return JSON.stringify(doc);
 }
 
 /** The chat part of the home, as a string to compare before and after a write (chatRev). */
-export function chatFingerprint(_home: DemoDoc): string {
-  throw new Error('chatFingerprint: not implemented yet');
+export function chatFingerprint(home: DemoDoc): string {
+  return JSON.stringify([home.messages ?? [], home.message_reactions ?? []]);
 }

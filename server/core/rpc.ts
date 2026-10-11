@@ -10,9 +10,8 @@
 // 'invalid_input: <path>'), e.g. 'invalid_input: args[1].rag'; objects are rebuilt with only
 // their listed keys and any other key is refused; strings are never trimmed or changed here.
 //
-// SKELETON: the table is the contract; validateArgs() and runRpc() are not implemented yet.
-
 import { HOUSEKEEPING_PRICE_MAX_PENCE } from '../../src/lib/constants';
+import { BackendError } from '../../src/lib/backend/types';
 import type { DemoBackend } from '../../src/lib/backend/demo';
 import type { RpcMethod } from '../../src/lib/backend/serverApi';
 
@@ -146,12 +145,115 @@ export function isRpcMethod(method: unknown): method is RpcMethod {
   return typeof method === 'string' && Object.prototype.hasOwnProperty.call(RPC_ARGS, method);
 }
 
+function refuse(path: string): BackendError {
+  return new BackendError('unknown', `invalid_input: ${path}`);
+}
+
+const isLeapYear = (y: number) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+
+/** A real calendar day, YYYY-MM-DD. */
+function isDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [y, m, d] = value.split('-').map(Number);
+  if (y < 1 || m < 1 || m > 12 || d < 1) return false;
+  return d <= [31, isLeapYear(y) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
+}
+
+/** An ISO 8601 timestamp with a zone (as Postgres and DemoBackend read them). */
+const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}(:?\d{2})?)$/;
+
+/** A plain object as JSON.parse makes them (not an array, not null). */
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
+
+/** `value` checked against `spec` and rebuilt; throws refuse(path). Never called with spec 'optional' for a missing value. */
+function check(spec: ArgSpec, value: unknown, path: string): unknown {
+  switch (spec.t) {
+    case 'id':
+      if (typeof value !== 'string' || value.length < 1 || value.length > ID_MAX) throw refuse(path);
+      return value;
+    case 'text':
+      if (typeof value !== 'string' || value.length > TEXT_CAP) throw refuse(path);
+      return value;
+    case 'bool':
+      if (typeof value !== 'boolean') throw refuse(path);
+      return value;
+    case 'date':
+      if (!isDate(value)) throw refuse(path);
+      return value;
+    case 'timestamp':
+      if (typeof value !== 'string' || !TIMESTAMP.test(value) || Number.isNaN(Date.parse(value))) throw refuse(path);
+      return value;
+    case 'int':
+      if (typeof value !== 'number' || !Number.isInteger(value) || value < spec.min || value > spec.max) throw refuse(path);
+      return value;
+    case 'enum':
+      if (typeof value !== 'string' || !spec.of.includes(value)) throw refuse(path);
+      return value;
+    case 'ids':
+      if (!Array.isArray(value) || value.length > spec.max) throw refuse(path);
+      return value.map((v, i) => check({ t: 'id' }, v, `${path}[${i}]`));
+    case 'nullable':
+      return value === null ? null : check(spec.of, value, path);
+    case 'optional':
+      return value === undefined ? undefined : check(spec.of, value, path);
+    case 'literal':
+      if (value !== spec.value) throw refuse(path);
+      return value;
+    case 'object': {
+      if (!isPlainObject(value)) throw refuse(path);
+      for (const key of Object.keys(value)) {
+        if (!own(spec.keys, key)) throw refuse(`${path}.${key}`);
+      }
+      const out: Record<string, unknown> = {};
+      for (const [key, keySpec] of Object.entries(spec.keys)) {
+        const present = own(value, key) && value[key] !== undefined;
+        if (!present) {
+          if (keySpec.t === 'optional') continue;
+          throw refuse(`${path}.${key}`);
+        }
+        out[key] = check(keySpec, value[key], `${path}.${key}`);
+      }
+      return out;
+    }
+    case 'oneOf': {
+      const matches: unknown[] = [];
+      for (const option of spec.of) {
+        try {
+          matches.push(check(option, value, path));
+        } catch {
+          /* not this one */
+        }
+      }
+      if (matches.length !== 1) throw refuse(path);
+      return matches[0];
+    }
+  }
+}
+
 /** `args` checked against RPC_ARGS[method] and rebuilt (see the top of this file). Throws BackendError('unknown', 'invalid_input: …'). */
-export function validateArgs(_method: RpcMethod, _args: unknown): unknown[] {
-  throw new Error('validateArgs: not implemented yet');
+export function validateArgs(method: RpcMethod, args: unknown): unknown[] {
+  if (!isRpcMethod(method)) throw refuse('method');
+  const specs = RPC_ARGS[method];
+  if (!Array.isArray(args) || args.length > specs.length) throw refuse('args');
+  const out: unknown[] = [];
+  specs.forEach((spec, i) => {
+    const value = i < args.length ? args[i] : undefined;
+    if (value === undefined) {
+      if (spec.t !== 'optional') throw refuse(`args[${i}]`);
+      return;
+    }
+    out[i] = check(spec, value, `args[${i}]`);
+  });
+  // No holes: a missing optional argument in the middle is passed as undefined.
+  return Array.from({ length: out.length }, (_, i) => out[i]);
 }
 
 /** Calls the DemoBackend method `method` with the checked `args`. */
-export function runRpc(_backend: DemoBackend, _method: RpcMethod, _args: unknown[]): Promise<unknown> {
-  throw new Error('runRpc: not implemented yet');
+export function runRpc(backend: DemoBackend, method: RpcMethod, args: unknown[]): Promise<unknown> {
+  if (!isRpcMethod(method)) return Promise.reject(refuse('method'));
+  const fn = backend[method] as unknown as (...a: unknown[]) => Promise<unknown>;
+  return fn.apply(backend, args);
 }

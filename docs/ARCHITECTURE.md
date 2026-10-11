@@ -811,6 +811,12 @@ One private blob, `ServerDoc` in `server/core/serverDoc.ts`, format `homeos.serv
   - A write made on an instance is in its cache at once, so with one warm instance (the usual
     case for a household) everyone's next poll sees it; a write on another instance is seen
     within `freshMs`.
+  - **A copy that is behind** (another instance stored a change within `freshMs`): a write that
+    fails on this instance's copy (a code, a person or an item made elsewhere a moment ago) is
+    tried once more on a fresh read before its error stands, when the copy is older than
+    `RECHECK_MS` (1 s) and reads are not under budget pressure. A put that fails with
+    `BlobUnavailableError` is checked the same way as a conflict (did one of this batch's ids
+    land?), else the batch rejects `unavailable`.
 
 ### Budget (Vercel Blob on the Hobby plan)
 
@@ -950,6 +956,11 @@ else the session's), `subscribe`, `subscribeChat` and `reconnect` (polling), `cr
   (`AttemptLimiter`: 10 per IP and 50 in all per 15 minutes per instance; the IP from `x-real-ip`,
   else the first `x-forwarded-for`, which Vercel sets), then 429 with Retry-After without trying
   the code. A wrong code never writes to the Blob store.
+- **A key this instance does not know** may be one another instance signed in moments ago: the
+  store is read once more (at most every 2 s, `RECHECK_MS` in `handler.ts`) before answering 401,
+  unless that address is being limited or reads are under budget pressure; a key that is still
+  unknown counts as a failed attempt, so made-up keys can't run up the read budget. `minRev` on
+  an RPC is applied only once the key is known.
 - **Devices** (`DeviceInfo`): id, the person, a label from the user agent ("iPhone · Safari",
   `deviceLabel()`), when it signed in, and `current`. Anyone in the home can remove any device.
   Sign Out revokes this one. "Not Shea?" (`release`) runs DemoBackend's `releaseClaim` as the

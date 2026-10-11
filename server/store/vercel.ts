@@ -17,10 +17,8 @@
 // Set process.env.VERCEL_BLOB_RETRIES = '2' at start-up (the SDK retries 10 times by default,
 // which can outlast the function); a put whose reply was lost is recognised by
 // ServerDoc.meta.writes (server/core/homeStore.ts).
-//
-// SKELETON: not implemented yet.
 
-import type { BlobStore, StoredBlob } from './types';
+import { BlobConflictError, BlobUnavailableError, type BlobStore, type StoredBlob } from './types';
 
 /** The part of @vercel/blob this store uses (the real module satisfies it). */
 export interface VercelBlobSdk {
@@ -47,14 +45,67 @@ export interface VercelBlobSdk {
   BlobPreconditionFailedError: abstract new (...args: never[]) => Error;
 }
 
+/** A stream's bytes as UTF-8 text. */
+async function readText(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let text = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
 export class VercelBlobStore implements BlobStore {
   constructor(readonly sdk: VercelBlobSdk) {}
 
-  get(_path: string, _opts?: { ifNoneMatch?: string }): Promise<StoredBlob | 'unchanged' | null> {
-    throw new Error('VercelBlobStore.get: not implemented yet');
+  /** The SDK's error as the store's. */
+  private failure(err: unknown): Error {
+    if (err instanceof BlobConflictError || err instanceof BlobUnavailableError) return err;
+    if (err instanceof this.sdk.BlobPreconditionFailedError) return new BlobConflictError();
+    return new BlobUnavailableError('blob store unavailable', { cause: err });
   }
 
-  put(_path: string, _body: string, _opts: { ifMatch: string } | { create: true }): Promise<{ etag: string }> {
-    throw new Error('VercelBlobStore.put: not implemented yet');
+  async get(path: string, opts: { ifNoneMatch?: string } = {}): Promise<StoredBlob | 'unchanged' | null> {
+    try {
+      const got = await this.sdk.get(path, {
+        access: 'private',
+        useCache: false,
+        ...(opts.ifNoneMatch ? { ifNoneMatch: opts.ifNoneMatch } : {}),
+      });
+      if (got === null) return null;
+      if (got.statusCode === 304) return 'unchanged';
+      return { body: await readText(got.stream), etag: got.blob.etag };
+    } catch (err) {
+      throw this.failure(err);
+    }
+  }
+
+  async put(path: string, body: string, opts: { ifMatch: string } | { create: true }): Promise<{ etag: string }> {
+    const common = {
+      access: 'private' as const,
+      contentType: 'application/json',
+      addRandomSuffix: false,
+      cacheControlMaxAge: 60,
+    };
+    if ('create' in opts) {
+      try {
+        const { etag } = await this.sdk.put(path, body, { ...common, allowOverwrite: false });
+        return { etag };
+      } catch (err) {
+        // The SDK refuses an existing blob without a code of its own: look.
+        const there = await this.get(path).catch(() => undefined);
+        if (there) throw new BlobConflictError('blob exists');
+        throw this.failure(err);
+      }
+    }
+    try {
+      const { etag } = await this.sdk.put(path, body, { ...common, allowOverwrite: true, ifMatch: opts.ifMatch });
+      return { etag };
+    } catch (err) {
+      throw this.failure(err);
+    }
   }
 }
