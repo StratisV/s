@@ -3,13 +3,14 @@ import { BackendError } from '../../lib/backend/types';
 import { firstFreeEmoji, hasJoined } from '../../lib/logic/people';
 import type { AuthUser } from '../../lib/types';
 import { errorMessage, useHome, type Phase } from '../../state/HomeProvider';
+import { BringOnline } from './BringOnline';
 import { ClaimWelcome } from './ClaimWelcome';
 import { CreateHome } from './CreateHome';
 import { ImportBlocked, ImportHome } from './ImportHome';
 import { InviteInvalid } from './InviteInvalid';
 import { JoinHome, type InviteCheck } from './JoinHome';
 import { NotificationsStep } from './NotificationsStep';
-import { PeopleStep } from './PeopleStep';
+import { InvitePeopleStep, PeopleStep } from './PeopleStep';
 import { PrivateHome } from './PrivateHome';
 import { ProfileStep, type ProfileDraft } from './ProfileStep';
 import { DEFAULT_EMOJI, initialHomeDraft, suggestedName, type HomeDraft } from './setup';
@@ -18,6 +19,7 @@ import { Welcome } from './Welcome';
 
 type View =
   | 'welcome'
+  | 'serverSetup'
   | 'private'
   | 'import'
   | 'inviteInvalid'
@@ -29,6 +31,7 @@ type View =
   | 'notifications';
 const ORDER: Record<View, number> = {
   welcome: 0,
+  serverSetup: 1,
   private: 1,
   import: 1,
   inviteInvalid: 1,
@@ -58,9 +61,26 @@ export const INVITE_EXPIRED = 'That invite link has expired.';
  * - 'ready' with onboardingTail: "Welcome home" after a claim; the phone's own home, offered
  *   while the home is untouched or else said once; after bringing a home over, the emails of
  *   the people who came along; then the notifications step.
+ *
+ * Server mode (docs/ARCHITECTURE.md "Server mode (no setup)"): signed out is the Welcome
+ * screen with "Have a code?" (serverWelcome 'checking' or 'private'), or "Bring this home
+ * online" ('setup'). After bringing it online, a code for each person who came along; after a
+ * code made someone join, "Welcome home". No notifications step: it finishes instead.
  */
 export function Onboarding() {
-  const { phase, pendingInvite, demoImport, demoImportMode, claimed, invitePeople, data } = useHome();
+  const {
+    backend,
+    phase,
+    pendingInvite,
+    demoImport,
+    demoImportMode,
+    claimed,
+    invitePeople,
+    data,
+    serverWelcome,
+    finishOnboarding,
+  } = useHome();
+  const server = backend.kind === 'server';
   const setupUser = phase.kind === 'onboarding' || phase.kind === 'private' ? phase.user : null;
   const setup = useSetupState(setupUser, pendingInvite, phase.kind);
   const inviting = !!pendingInvite && !setup.inviteDeclined;
@@ -68,7 +88,7 @@ export function Onboarding() {
   const waiting = data ? data.members.filter((m) => !hasJoined(m) && !m.email) : [];
 
   let view: View;
-  if (phase.kind === 'signedOut') view = 'welcome';
+  if (phase.kind === 'signedOut') view = serverWelcome?.kind === 'setup' ? 'serverSetup' : 'welcome';
   else if (phase.kind === 'onboarding') {
     if (demoImport && demoImportMode === 'create') view = 'import';
     else if (invalidInvite) view = 'inviteInvalid';
@@ -81,9 +101,19 @@ export function Onboarding() {
 
   const enter = useEnterDirection(view);
 
+  // Server mode has no push notifications: the home opens instead of asking.
+  const skipNotifications = server && view === 'notifications';
+  useEffect(() => {
+    if (skipNotifications) finishOnboarding();
+  }, [skipNotifications, finishOnboarding]);
+
   switch (view) {
     case 'welcome':
       return <Welcome key={view} enter={enter} />;
+    case 'serverSetup':
+      return serverWelcome?.kind === 'setup' ? (
+        <BringOnline key={view} enter={enter} summary={serverWelcome.summary} setupCode={serverWelcome.setupCode} />
+      ) : null;
     case 'private':
       return (
         <PrivateHome
@@ -164,9 +194,9 @@ export function Onboarding() {
         )
       ) : null;
     case 'people':
-      return <PeopleStep key={view} enter={enter} />;
+      return server ? <InvitePeopleStep key={view} enter={enter} /> : <PeopleStep key={view} enter={enter} />;
     case 'notifications':
-      return <NotificationsStep key={view} enter={enter} />;
+      return skipNotifications ? null : <NotificationsStep key={view} enter={enter} />;
   }
 }
 

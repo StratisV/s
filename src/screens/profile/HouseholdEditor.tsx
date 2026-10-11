@@ -25,7 +25,7 @@ interface HouseholdEditorProps {
 
 /** Household details, people and areas, pushed inside Profile. Every member can edit all of it. */
 export function HouseholdEditor({ onBack, onOpenPerson, onAddPerson, backRef }: HouseholdEditorProps) {
-  const { data, me, updateHousehold } = useHousehold();
+  const { backend, data, me, updateHousehold } = useHousehold();
   const scrollRef = useRef<HTMLDivElement>(null);
   const peopleHeadingId = useId();
   const areasHeadingId = useId();
@@ -72,7 +72,13 @@ export function HouseholdEditor({ onBack, onOpenPerson, onAddPerson, backRef }: 
         </h2>
         <div className={list.card}>
           {data.members.map((member) => (
-            <PersonRow key={member.id} member={member} isMe={member.id === me.id} onOpen={onOpenPerson} />
+            <PersonRow
+              key={member.id}
+              member={member}
+              isMe={member.id === me.id}
+              onOpen={onOpenPerson}
+              withEmail={backend.kind !== 'server'}
+            />
           ))}
           <button type="button" className={`${list.row} ${people.addRow}`} data-add-person="" onClick={onAddPerson}>
             <span className={people.addIcon} aria-hidden="true">
@@ -95,9 +101,20 @@ export function HouseholdEditor({ onBack, onOpenPerson, onAddPerson, backRef }: 
 
 /**
  * A member, as in the Stats legend, opening their page. Someone who has not joined yet has a
- * quiet second line: "Not joined yet · shea@gmail.com" (or "· No email yet").
+ * quiet second line: "Not joined yet · shea@gmail.com" (or "· No email yet"); in server mode,
+ * where nobody has an email, just "Not joined yet".
  */
-function PersonRow({ member, isMe, onOpen }: { member: Member; isMe: boolean; onOpen(memberId: string): void }) {
+function PersonRow({
+  member,
+  isMe,
+  onOpen,
+  withEmail,
+}: {
+  member: Member;
+  isMe: boolean;
+  onOpen(memberId: string): void;
+  withEmail: boolean;
+}) {
   const joined = hasJoined(member);
   return (
     <button type="button" className={list.row} data-member-row={member.id} onClick={() => onOpen(member.id)}>
@@ -113,13 +130,15 @@ function PersonRow({ member, isMe, onOpen }: { member: Member; isMe: boolean; on
               {NOT_JOINED}
             </span>
             {/* On its own line when it doesn't fit beside "Not joined yet" (the dot then hides). */}
-            <span className={people.address}>
-              <span className={people.dot} aria-hidden="true">
-                {' · '}
+            {withEmail ? (
+              <span className={people.address}>
+                <span className={people.dot} aria-hidden="true">
+                  {' · '}
+                </span>
+                <span className="visually-hidden">, </span>
+                <span className={people.addressText}>{member.email || 'No email yet'}</span>
               </span>
-              <span className="visually-hidden">, </span>
-              <span className={people.addressText}>{member.email || 'No email yet'}</span>
-            </span>
+            ) : null}
           </span>
         </span>
       )}

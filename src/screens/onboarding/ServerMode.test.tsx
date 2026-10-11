@@ -1,0 +1,472 @@
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { StrictMode } from 'react';
+import { BackendError } from '../../lib/backend/types';
+import type { IssuedCode, Member, ServerSetupSummary } from '../../lib/types';
+import type { HomeContextValue, ServerWelcome } from '../../state/HomeProvider';
+import { fakeBackend, makeHome, MockHome, person, sampleData, setHome, USER } from '../testing/mockHome';
+import { Onboarding } from './Onboarding';
+
+vi.mock('../../state/HomeProvider', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../state/HomeProvider')>();
+  const { useMockHome } = await import('../testing/mockHome');
+  return { ...actual, useHome: useMockHome, useHousehold: useMockHome };
+});
+
+// push.ts talks to the browser; the notifications step (never shown here) only needs its answers.
+vi.mock('../../lib/push', () => ({
+  PUSH_CONFIGURED: true,
+  isIOS: () => false,
+  isStandalone: () => false,
+  pushState: () => 'default',
+  enablePush: vi.fn(async () => false),
+  disablePush: vi.fn(async () => {}),
+}));
+
+/** The household's phone home, as serverSetupSummary() gives it. */
+const SUMMARY: ServerSetupSummary = {
+  householdName: 'Our home',
+  address: '21 Alderbrook Road',
+  areas: 6,
+  items: 19,
+  done: 3,
+  messages: 4,
+  visits: 2,
+  people: [
+    { name: 'Stratis', emoji: '🦆', me: true },
+    { name: 'Shea', emoji: '🦔', me: false },
+  ],
+};
+
+const server = () => fakeBackend({ kind: 'server' } as never);
+
+function show(home: HomeContextValue) {
+  // StrictMode as in main.tsx: effects run twice on mount.
+  render(
+    <StrictMode>
+      <MockHome initial={home}>
+        <Onboarding />
+      </MockHome>
+    </StrictMode>,
+  );
+  return home;
+}
+
+/** Signed out, in server mode, with the Welcome screen showing `welcome`. */
+function signedOut(welcome: ServerWelcome | null, over: Partial<HomeContextValue> = {}) {
+  return makeHome({ backend: server(), user: null, data: null, serverWelcome: welcome, ...over });
+}
+
+const privateHome = (over: Partial<Extract<ServerWelcome, { kind: 'private' }>> = {}): ServerWelcome => ({
+  kind: 'private',
+  homeOnline: true,
+  code: '',
+  notice: null,
+  ...over,
+});
+
+/** A promise the test settles by hand. */
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  let reject!: (err: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+const codeField = () => screen.getByRole('textbox', { name: 'Have a code?' }) as HTMLInputElement;
+const joinButton = () => screen.getByRole('button', { name: 'Join' }) as HTMLButtonElement;
+
+afterEach(() => {
+  cleanup();
+  delete (navigator as { share?: unknown }).share;
+  delete (navigator as { clipboard?: unknown }).clipboard;
+});
+
+describe('Welcome in server mode', () => {
+  it('says the home is private and asks for a code, with no Google and no demo note', () => {
+    show(signedOut(privateHome()));
+    expect(screen.getByRole('heading', { level: 1, name: 'home.os' })).toBeTruthy();
+    expect(screen.getByText('This home is private.')).toBeTruthy();
+    expect(screen.getByText('Ask someone at home for a code.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Google/ })).toBeNull();
+    expect(screen.queryByText(/Demo mode/)).toBeNull();
+
+    const field = codeField();
+    expect(field.getAttribute('autocapitalize')).toBe('characters');
+    expect(field.getAttribute('autocomplete')).toBe('one-time-code');
+    expect(field.getAttribute('inputmode')).toBe('text');
+    expect(field.getAttribute('spellcheck')).toBe('false');
+    expect(field.maxLength).toBe(12);
+    expect(field.placeholder).toBe('ABCD-EFGH');
+    // Off until there are 8 letters.
+    expect(joinButton().disabled).toBe(true);
+  });
+
+  it('says when no home is online yet', () => {
+    show(signedOut(privateHome({ homeOnline: false })));
+    expect(screen.getByText('This home is private.')).toBeTruthy();
+    expect(screen.getByText('home.os isn’t set up here yet.')).toBeTruthy();
+    expect(screen.queryByText('Ask someone at home for a code.')).toBeNull();
+  });
+
+  it('shows a spinner while it checks, and never Google, even before the provider has said', () => {
+    show(signedOut({ kind: 'checking' }));
+    expect(screen.getByRole('status').textContent).toBe('Checking');
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Google/ })).toBeNull();
+    cleanup();
+
+    show(signedOut(null));
+    expect(screen.getByRole('status').textContent).toBe('Checking');
+    expect(screen.queryByRole('button', { name: /Google/ })).toBeNull();
+  });
+
+  it('groups the code as it is typed, and Join sends it', async () => {
+    const redeem = deferred();
+    const home = show(signedOut(privateHome(), { redeemCode: vi.fn(() => redeem.promise) }));
+    fireEvent.change(codeField(), { target: { value: 'abcdefg' } });
+    expect(codeField().value).toBe('ABCD-EFG');
+    expect(joinButton().disabled).toBe(true);
+    fireEvent.change(codeField(), { target: { value: 'ABCD-EFGh' } });
+    expect(codeField().value).toBe('ABCD-EFGH');
+    expect(joinButton().disabled).toBe(false);
+
+    fireEvent.click(joinButton());
+    expect(home.redeemCode).toHaveBeenCalledWith('ABCD-EFGH');
+    const busy = screen.getByRole('button', { name: 'Joining' });
+    expect(busy.getAttribute('aria-busy')).toBe('true');
+    // A second tap while it runs does nothing.
+    fireEvent.click(busy);
+    expect(home.redeemCode).toHaveBeenCalledTimes(1);
+    await act(async () => redeem.resolve());
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('joins from the keyboard (Go)', async () => {
+    const home = show(signedOut(privateHome()));
+    fireEvent.change(codeField(), { target: { value: 'k7qm 3xrp' } });
+    fireEvent.submit(codeField().closest('form')!);
+    expect(home.redeemCode).toHaveBeenCalledWith('K7QM-3XRP');
+    await act(async () => {});
+  });
+
+  it('says why a code did not work, keeps it, and forgets the error once it is changed', async () => {
+    show(
+      signedOut(privateHome(), {
+        redeemCode: vi.fn(async () => {
+          throw new BackendError('invalid_code', 'invalid_code');
+        }),
+      }),
+    );
+    fireEvent.change(codeField(), { target: { value: 'ABCDEFGH' } });
+    fireEvent.click(joinButton());
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('That code didn’t work. Check it, or ask for a new one.');
+    expect(codeField().value).toBe('ABCD-EFGH');
+    expect(codeField().getAttribute('aria-invalid')).toBe('true');
+    expect(codeField().getAttribute('aria-describedby')).toBe(alert.id);
+    expect(joinButton().disabled).toBe(false);
+
+    fireEvent.change(codeField(), { target: { value: 'ABCD-EFGJ' } });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(codeField().getAttribute('aria-invalid')).toBeNull();
+  });
+
+  it('says to wait after too many tries', async () => {
+    show(
+      signedOut(privateHome(), {
+        redeemCode: vi.fn(async () => {
+          throw new BackendError('too_many_attempts', 'too_many_attempts');
+        }),
+      }),
+    );
+    fireEvent.change(codeField(), { target: { value: 'ABCDEFGH' } });
+    fireEvent.click(joinButton());
+    expect((await screen.findByRole('alert')).textContent).toBe('Too many tries. Wait 15 minutes, then try again.');
+  });
+
+  it('says why a link did not work, with its code in the field, until a code is tried', async () => {
+    const home = show(signedOut(privateHome({ code: 'ABCDEFGH', notice: 'codeInvalid' })));
+    expect(screen.getByText('That link’s code didn’t work. Ask for a new one.')).toBeTruthy();
+    expect(codeField().value).toBe('ABCD-EFGH');
+    fireEvent.change(codeField(), { target: { value: 'ABCD-EFGJ' } });
+    fireEvent.click(joinButton());
+    await act(async () => {});
+    expect(home.redeemCode).toHaveBeenCalledWith('ABCD-EFGJ');
+    expect(screen.queryByText('That link’s code didn’t work. Ask for a new one.')).toBeNull();
+  });
+
+  it('says so when the setup link came after the home went online, and after too many tries', () => {
+    show(signedOut(privateHome({ notice: 'setupUsed' })));
+    expect(screen.getByText('This home is already online. Ask someone at home for a code.')).toBeTruthy();
+    cleanup();
+    show(signedOut(privateHome({ notice: 'tooManyAttempts', code: 'ABCDEFGH' })));
+    expect(screen.getByText('Too many tries. Wait 15 minutes, then try again.')).toBeTruthy();
+  });
+
+  it('takes the code out of a pasted message', () => {
+    show(signedOut(privateHome()));
+    const text = 'Join our home on home.os: https://home-os-orpin.vercel.app/?code=WXYZ-2345\nCode: WXYZ-2345';
+    fireEvent.paste(codeField(), { clipboardData: { getData: () => text } });
+    expect(codeField().value).toBe('WXYZ-2345');
+    expect(joinButton().disabled).toBe(false);
+  });
+
+  it('deleting a hyphen deletes the letter beside it, so the hyphen does not just come back', () => {
+    show(signedOut(privateHome()));
+    fireEvent.change(codeField(), { target: { value: 'ABCDE' } });
+    expect(codeField().value).toBe('ABCD-E');
+
+    /** What the browser does: the text without the hyphen, the caret where it was, then input. */
+    const edit = (value: string, caret: number, inputType: string) => {
+      const field = codeField();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, value);
+      field.setSelectionRange(caret, caret);
+      act(() => {
+        field.dispatchEvent(new InputEvent('input', { bubbles: true, inputType }));
+      });
+    };
+    act(() => codeField().focus());
+    // Backspace in "ABCD-|E".
+    edit('ABCDE', 4, 'deleteContentBackward');
+    expect(codeField().value).toBe('ABCE');
+    expect(codeField().selectionStart).toBe(3);
+
+    // Delete (forward) in "ABCD|-EF".
+    fireEvent.change(codeField(), { target: { value: 'ABCDEF' } });
+    expect(codeField().value).toBe('ABCD-EF');
+    edit('ABCDEF', 4, 'deleteContentForward');
+    expect(codeField().value).toBe('ABCD-F');
+
+    // Typing in the middle keeps the caret after the new letter: "AB|CD-F" + X.
+    edit('ABXCD-F', 3, 'insertText');
+    expect(codeField().value).toBe('ABXC-DF');
+    expect(codeField().selectionStart).toBe(3);
+  });
+});
+
+describe('Bring this home online', () => {
+  const setup = (code = 'k7qm3xrpwn9d', over: Partial<HomeContextValue> = {}) =>
+    show(signedOut({ kind: 'setup', summary: SUMMARY, setupCode: code }, over));
+
+  it('shows what comes along and the setup code from the link, and nothing else', () => {
+    setup();
+    expect(screen.getByRole('heading', { level: 1, name: 'Bring this home online' })).toBeTruthy();
+    expect(screen.getByText('Our home')).toBeTruthy();
+    expect(screen.getByText('21 Alderbrook Road')).toBeTruthy();
+    expect(screen.getByText('6 areas · 19 items · 3 done · 4 messages')).toBeTruthy();
+    const people = within(screen.getByRole('list', { name: 'People' })).getAllByRole('listitem');
+    expect(people.map((p) => p.textContent)).toEqual(['🦆Stratis (you)', '🦔Shea']);
+
+    const field = screen.getByRole('textbox', { name: 'Setup code' }) as HTMLInputElement;
+    expect(field.value).toBe('K7QM-3XRP-WN9D');
+    expect(field.maxLength).toBe(20);
+    expect(field.placeholder).toBe('XXXX-XXXX-XXXX');
+    expect(field.getAttribute('autocapitalize')).toBe('characters');
+    expect(field.getAttribute('autocomplete')).toBe('one-time-code');
+    expect(screen.getByText('Everyone else joins with a code you send them from Profile.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Bring It Online' }) as HTMLButtonElement).disabled).toBe(false);
+    // No Start Fresh, no Sign Out, no Google.
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+  });
+
+  it('counts one message as one, and leaves out none', () => {
+    show(signedOut({ kind: 'setup', summary: { ...SUMMARY, messages: 1, done: 0 }, setupCode: '' }));
+    expect(screen.getByText('6 areas · 19 items · 1 message')).toBeTruthy();
+    cleanup();
+    show(signedOut({ kind: 'setup', summary: { ...SUMMARY, messages: 0 }, setupCode: '' }));
+    expect(screen.getByText('6 areas · 19 items · 3 done')).toBeTruthy();
+  });
+
+  it('takes a typed code when there was no link, and is off until it is long enough', async () => {
+    const home = setup('');
+    const field = screen.getByRole('textbox', { name: 'Setup code' }) as HTMLInputElement;
+    const bring = screen.getByRole('button', { name: 'Bring It Online' }) as HTMLButtonElement;
+    expect(field.value).toBe('');
+    expect(bring.disabled).toBe(true);
+    fireEvent.change(field, { target: { value: 'k7qm 3xrp wn9' } });
+    expect(field.value).toBe('K7QM-3XRP-WN9');
+    expect(bring.disabled).toBe(true);
+    fireEvent.change(field, { target: { value: 'k7qm 3xrp wn9d' } });
+    expect(bring.disabled).toBe(false);
+    fireEvent.click(bring);
+    expect(home.bringHomeOnline).toHaveBeenCalledWith('K7QM-3XRP-WN9D');
+    await act(async () => {});
+  });
+
+  it('is busy while it brings the home online, and says why when it could not', async () => {
+    const bring = deferred();
+    const home = setup('k7qm3xrpwn9d', { bringHomeOnline: vi.fn(() => bring.promise) });
+    fireEvent.click(screen.getByRole('button', { name: 'Bring It Online' }));
+    expect(home.bringHomeOnline).toHaveBeenCalledTimes(1);
+    const busy = screen.getByRole('button', { name: 'Bringing It Online' });
+    expect(busy.getAttribute('aria-busy')).toBe('true');
+    fireEvent.click(busy);
+    expect(home.bringHomeOnline).toHaveBeenCalledTimes(1);
+    await act(async () => bring.reject(new BackendError('invalid_code', 'invalid_code')));
+    expect(screen.getByRole('alert').textContent).toBe('That code didn’t work. Check it, or ask for a new one.');
+    expect(screen.getByRole('button', { name: 'Bring It Online' }).getAttribute('aria-busy')).toBeNull();
+  });
+
+  it('goes to "This home is private" when someone else brought one online first', async () => {
+    setup('k7qm3xrpwn9d', {
+      bringHomeOnline: vi.fn(async () => {
+        setHome({ serverWelcome: privateHome({ notice: 'setupUsed' }) });
+        throw new BackendError('home_exists', 'home_exists');
+      }),
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Bring It Online' }));
+    expect(await screen.findByText('This home is already online. Ask someone at home for a code.')).toBeTruthy();
+    expect(codeField()).toBeTruthy();
+  });
+});
+
+/** The home as it is online: emails are always '' in server mode. */
+function serverData(members?: Member[]) {
+  const data = sampleData();
+  data.members = (members ?? data.members).map((m) => ({ ...m, email: '' }));
+  return data;
+}
+
+describe('after signing in with a code', () => {
+  it('welcomes someone a code made join, and "Not Shea?" says to ask for a new code', async () => {
+    const shea = { id: 'u-shea', email: '', name: 'Shea' };
+    const data = serverData([
+      person({ id: 'm-stratis', name: 'Stratis', user_id: USER.id, emoji: '🦆', role: 'owner' }),
+      person({ id: 'm-shea', name: 'Shea', user_id: shea.id, emoji: '🦔' }),
+    ]);
+    const home = show(
+      makeHome({
+        backend: server(),
+        user: shea,
+        data,
+        phase: { kind: 'ready', user: shea },
+        onboardingTail: true,
+        claimed: true,
+      }),
+    );
+    expect(screen.getByRole('heading', { level: 1, name: 'Welcome home, Shea' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Not Shea? Sign Out' }));
+    const sheet = await screen.findByRole('alertdialog', { name: 'Not Shea?' });
+    expect(within(sheet).getByText(/^You’ll be signed out/).textContent).toBe(
+      'You’ll be signed out and Shea goes back to waiting to join. Ask someone at home for a new code.',
+    );
+    // Continue: the emoji, then (no notifications in server mode) the home.
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(home.confirmClaimed).toHaveBeenCalledWith('🦔');
+  });
+
+  it('never asks about notifications: the home opens', async () => {
+    const home = show(
+      makeHome({ backend: server(), data: serverData(), onboardingTail: true, claimed: false, invitePeople: false }),
+    );
+    await waitFor(() => expect(home.finishOnboarding).toHaveBeenCalled());
+    expect(screen.queryByRole('heading', { name: /Notifications|Add to Home Screen/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Turn On/ })).toBeNull();
+  });
+});
+
+describe('inviting the people who came along', () => {
+  const CODE: IssuedCode = {
+    code: 'ABCD-EFGH',
+    link: 'https://home-os-orpin.vercel.app/?code=ABCD-EFGH',
+    memberId: 'm-shea',
+    expiresAt: '2026-10-15T09:00:00.000Z',
+  };
+
+  function inviting(over: Partial<HomeContextValue> = {}) {
+    return show(
+      makeHome({
+        backend: server(),
+        data: serverData(),
+        onboardingTail: true,
+        invitePeople: true,
+        createCode: vi.fn(async (memberId: string) => ({ ...CODE, memberId })),
+        ...over,
+      }),
+    );
+  }
+
+  it('lists everyone who has not joined, each with Invite', () => {
+    inviting();
+    expect(screen.getByRole('heading', { level: 1, name: 'Shea and Pat haven’t joined yet' })).toBeTruthy();
+    expect(screen.getByText('Send each of them a code. They type it in home.os, or open the link.')).toBeTruthy();
+    const rows = within(screen.getByRole('list', { name: 'People' })).getAllByRole('listitem');
+    expect(rows.map((r) => r.textContent)).toEqual(['🦔SheaInvite', '🐻PatInvite']);
+    expect(screen.getByRole('button', { name: 'Invite Shea' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Invite Pat' })).toBeTruthy();
+    expect(screen.getByText(/^You can invite them later in Profile/).textContent).toBe(
+      'You can invite them later in Profile > Household > People.',
+    );
+    // No email fields here.
+    expect(screen.queryByRole('textbox')).toBeNull();
+  });
+
+  it('Invite makes a code and shows it, Share sends the link and the code, Done goes back', async () => {
+    const home = inviting();
+    const share = vi.fn(async (_data: ShareData) => {});
+    Object.defineProperty(navigator, 'share', { value: share, configurable: true });
+    const invite = screen.getByRole('button', { name: 'Invite Shea' });
+    invite.focus();
+    fireEvent.click(invite);
+    expect(home.createCode).toHaveBeenCalledWith('m-shea');
+
+    const sheet = await screen.findByRole('dialog', { name: 'Code for Shea' });
+    expect(within(sheet).getByText('ABCD-EFGH')).toBeTruthy();
+    // Read out a letter at a time.
+    expect(within(sheet).getByText('A B C D, E F G H')).toBeTruthy();
+    expect(sheet.getAttribute('aria-describedby')).toBeTruthy();
+    expect(document.getElementById(sheet.getAttribute('aria-describedby')!)!.textContent).toBe(
+      'Works once, for 7 days. On Shea’s phone, open home.os and enter it, or open the link.',
+    );
+    await waitFor(() => expect(document.activeElement).toBe(sheet));
+
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Share' }));
+    expect(share).toHaveBeenCalledWith({
+      title: 'Join our home on home.os',
+      text: 'Join our home on home.os: https://home-os-orpin.vercel.app/?code=ABCD-EFGH\nCode: ABCD-EFGH',
+    });
+    await act(async () => {});
+
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // Back to the button that asked for it.
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Invite Shea' }));
+  });
+
+  it('copies the message where there is no share sheet, and says so in the sheet', async () => {
+    inviting();
+    const writeText = vi.fn(async (_text: string) => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Invite Pat' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Code for Pat' });
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Share' }));
+    await waitFor(() => expect(within(sheet).getByRole('status').textContent).toBe('Copied to share'));
+    expect(writeText).toHaveBeenCalledWith(
+      'Join our home on home.os: https://home-os-orpin.vercel.app/?code=ABCD-EFGH\nCode: ABCD-EFGH',
+    );
+    // Escape closes it.
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('says why when a code could not be made', async () => {
+    const home = inviting({
+      createCode: vi.fn(async () => {
+        throw new BackendError('network', 'offline');
+      }),
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Invite Shea' }));
+    await waitFor(() => expect(home.showToast).toHaveBeenCalledWith('No connection. Try again in a moment.'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('Continue opens the home', () => {
+    const home = inviting();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(home.doneInvitingPeople).toHaveBeenCalled();
+  });
+});

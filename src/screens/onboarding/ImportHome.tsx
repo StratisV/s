@@ -10,11 +10,56 @@ import { HeroIcon, PrimaryButton, StepPage, type Enter } from './StepPage';
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-/** "6 areas · 19 items" (open items: the ones that show on Home), plus "· 3 done" when history comes along. */
-export function summaryCounts(summary: Pick<DemoHomeSummary, 'areas' | 'items' | 'done'>): string {
+/**
+ * "6 areas · 19 items" (open items: the ones that show on Home), plus "· 3 done" when history
+ * comes along, and (server mode's setup) "· 12 messages" when the chat does.
+ */
+export function summaryCounts(
+  summary: Pick<DemoHomeSummary, 'areas' | 'items' | 'done'> & { messages?: number },
+): string {
   const counts = [plural(summary.areas, 'area', 'areas'), plural(summary.items, 'item', 'items')];
   if (summary.done > 0) counts.push(`${summary.done} done`);
+  if (summary.messages) counts.push(plural(summary.messages, 'message', 'messages'));
   return counts.join(' · ');
+}
+
+/**
+ * The home this phone kept in demo mode, as a white card: its name, address and counts, then
+ * each person with "(you)" after the one signed in on the phone. "Bring over the home from
+ * this phone" and, in server mode, "Bring this home online".
+ */
+export function HomeSummaryCard({
+  summary,
+  busy = false,
+}: {
+  summary: DemoHomeSummary & { messages?: number };
+  busy?: boolean;
+}) {
+  const peopleId = useId();
+  return (
+    <div className={`${shared.card} ${styles.summary}`} aria-busy={busy || undefined}>
+      <div className={styles.home}>
+        <p className={styles.homeName}>{summary.householdName}</p>
+        {summary.address ? <p className={styles.detail}>{summary.address}</p> : null}
+        {/* Each count stays whole ("12 messages") when the line wraps. */}
+        <p className={styles.detail}>{summaryCounts(summary).replace(/(\d) /g, '$1\u00a0')}</p>
+      </div>
+      <span id={peopleId} className="visually-hidden">
+        People
+      </span>
+      <ul className={styles.people} aria-labelledby={peopleId}>
+        {summary.people.map((p, i) => (
+          <li key={`${i}-${p.name}`} className={styles.person}>
+            <Avatar emoji={p.emoji} size={32} emojiSize={19} background="var(--bg)" />
+            <span className={styles.personName}>
+              {p.name}
+              {p.me ? <span className={styles.you}> (you)</span> : null}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 interface ImportHomeProps {
@@ -41,7 +86,6 @@ export function ImportHome({ enter, summary, mode, onSignOut, signingOut = false
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
-  const peopleId = useId();
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -97,27 +141,7 @@ export function ImportHome({ enter, summary, mode, onSignOut, signingOut = false
         <h1 className={shared.title}>Bring over the home from this phone</h1>
       </div>
 
-      <div className={`${shared.card} ${styles.summary}`} aria-busy={busy || undefined}>
-        <div className={styles.home}>
-          <p className={styles.homeName}>{summary.householdName}</p>
-          {summary.address ? <p className={styles.detail}>{summary.address}</p> : null}
-          <p className={styles.detail}>{summaryCounts(summary)}</p>
-        </div>
-        <span id={peopleId} className="visually-hidden">
-          People
-        </span>
-        <ul className={styles.people} aria-labelledby={peopleId}>
-          {summary.people.map((p, i) => (
-            <li key={`${i}-${p.name}`} className={styles.person}>
-              <Avatar emoji={p.emoji} size={32} emojiSize={19} background="var(--bg)" />
-              <span className={styles.personName}>
-                {p.name}
-                {p.me ? <span className={styles.you}> (you)</span> : null}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </div>
+      <HomeSummaryCard summary={summary} busy={busy} />
       <p className={shared.caption}>
         {mode === 'replace'
           ? `It takes the place of ${current}, which has nothing in it yet. Everyone already in ${current} stays.`
