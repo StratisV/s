@@ -277,8 +277,9 @@
   padding: 18px 12px;
   border-radius: var(--r-card);
   background: var(--card);
-  font-size: 28px;
-  line-height: 34px;
+  /* A 12-letter code fits on one line on the smallest phone; a longer one wraps at a hyphen. */
+  font-size: clamp(20px, 7vw, 28px);
+  line-height: 1.25;
   font-weight: 600;
   letter-spacing: 0.08em;
   font-variant-numeric: tabular-nums;

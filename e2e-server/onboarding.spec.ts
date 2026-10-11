@@ -420,7 +420,7 @@ test('a setup link opened where the home is not says where to use it, with the c
     localStorage: { [DEMO_DOC_KEY]: JSON.stringify(doc) },
   });
   const there = welcome(withCopy.page);
-  await expect(there.getByText(/^This browser has a copy too: Our home, 6 areas · 19 items · 3 done, last changed /)).toBeVisible();
+  await expect(there.getByText(/^This browser has a copy too: Our home, 6\sareas · 19\sitems · 3\sdone, last changed /)).toBeVisible();
   await there.getByRole('button', { name: 'Use This Copy Instead' }).click();
   const step = withCopy.page.getByRole('region', { name: 'Bring this home online' });
   await expect(step.getByRole('textbox', { name: 'Setup code' })).toHaveValue(SETUP_CODE);

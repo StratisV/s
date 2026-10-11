@@ -255,7 +255,7 @@ describe('Welcome in server mode', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy Code' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('K7QM-XRPW-N9D3'));
     // This browser's own copy, with its age, can still come online instead.
-    expect(screen.getByText(/This browser has a copy too: Our home, 6 areas · 19 items · 3 done · 4 messages, last changed Wed 2 Sep( 2026)?\./)).toBeTruthy();
+    expect(screen.getByText(/This browser has a copy too: Our home, 6\sareas · 19\sitems · 3\sdone · 4\smessages, last changed Wed 2 Sep( 2026)?\./)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Use This Copy Instead' }));
     expect(home.chooseSetupHere).toHaveBeenCalled();
     cleanup();

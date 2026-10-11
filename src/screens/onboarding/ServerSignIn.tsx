@@ -215,7 +215,9 @@ function SetupElsewhere({ welcome }: { welcome: Extract<ServerWelcome, { kind: '
       {welcome.summary ? (
         <div className={styles.thisCopy}>
           <p className={styles.thisCopyText}>
-            This browser has a copy too: {welcome.summary.householdName}, {summaryCounts(welcome.summary)}
+            {/* Each count stays whole ("19 items") when the line wraps. */}
+            This browser has a copy too: {welcome.summary.householdName},{' '}
+            {summaryCounts(welcome.summary).replace(/(\d) /g, '$1\u00a0')}
             {changed ? `, ${changed.charAt(0).toLowerCase()}${changed.slice(1)}` : ''}.
           </p>
           <button type="button" className={shared.textButton} onClick={chooseSetupHere}>
