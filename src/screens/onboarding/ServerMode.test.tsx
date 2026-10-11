@@ -99,7 +99,8 @@ describe('Welcome in server mode', () => {
     expect(field.getAttribute('inputmode')).toBe('text');
     expect(field.getAttribute('spellcheck')).toBe('false');
     // Room for a setup code typed here by mistake (it then says where that goes).
-    expect(field.maxLength).toBe(20);
+    // The longest setup code, grouped (24 letters), goes in whole.
+    expect(field.maxLength).toBe(29);
     expect(field.placeholder).toBe('ABCD-EFGH');
     // Off until there are 8 letters.
     expect(joinButton().disabled).toBe(true);
@@ -232,12 +233,36 @@ describe('Welcome in server mode', () => {
     expect((await screen.findByRole('alert')).textContent).toBe(
       'That’s a setup code, and this home is already online. Ask someone at home for a code.',
     );
+    expect(home.startSetup).not.toHaveBeenCalled();
     cleanup();
-    show(signedOut(privateHome({ homeOnline: false })));
+    // No home online yet: on to Bring this home online with it (HomeProvider.startSetup) ...
+    const notYet = show(signedOut(privateHome({ homeOnline: false }), { startSetup: vi.fn(() => true) }));
+    fireEvent.change(codeField(), { target: { value: 'kq27 jrmb nvbu 4nay 6f76' } });
+    expect(codeField().value).toBe('KQ27-JRMB-NVBU-4NAY-6F76');
+    fireEvent.click(joinButton());
+    expect(notYet.startSetup).toHaveBeenCalledWith('KQ27-JRMB-NVBU-4NAY-6F76');
+    expect(screen.queryByRole('alert')).toBeNull();
+    cleanup();
+    // ... and where that can't happen (no saved copy), it says where the code goes.
+    const none = show(signedOut(privateHome({ homeOnline: false })));
     fireEvent.change(codeField(), { target: { value: 'test-setu-pcde' } });
     fireEvent.click(joinButton());
     expect((await screen.findByRole('alert')).textContent).toBe('That’s the setup code. Enter it in home.os where your home is.');
+    expect(none.startSetup).toHaveBeenCalledWith('TEST-SETU-PCDE');
     expect(home.redeemCode).not.toHaveBeenCalled();
+    expect(none.redeemCode).not.toHaveBeenCalled();
+  });
+
+  it('takes a pasted setup code whole in "Have a code?", and in the setup code field', () => {
+    show(signedOut(privateHome({ homeOnline: false })));
+    fireEvent.paste(codeField(), { clipboardData: { getData: () => 'KQ27-JRMB-NVBU-4NAY-6F76' } });
+    expect(codeField().value).toBe('KQ27-JRMB-NVBU-4NAY-6F76');
+    cleanup();
+    show(signedOut({ kind: 'setup', summary: SUMMARY, setupCode: '' }));
+    const field = screen.getByRole('textbox', { name: 'Setup code' }) as HTMLInputElement;
+    fireEvent.paste(field, { clipboardData: { getData: () => 'https://home-os-orpin.vercel.app/?setup=KQ27-JRMB-NVBU-4NAY-6F76' } });
+    expect(field.value).toBe('KQ27-JRMB-NVBU-4NAY-6F76');
+    expect((screen.getByRole('button', { name: 'Bring It Online' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('points a setup link opened in Safari on an iPhone at the Home Screen app, with the code to copy', async () => {
@@ -335,7 +360,8 @@ describe('Bring this home online', () => {
 
     const field = screen.getByRole('textbox', { name: 'Setup code' }) as HTMLInputElement;
     expect(field.value).toBe('K7QM-3XRP-WN9D');
-    expect(field.maxLength).toBe(20);
+    // The longest setup code, grouped (24 letters), goes in whole.
+    expect(field.maxLength).toBe(29);
     expect(field.placeholder).toBe('XXXX-XXXX-XXXX');
     expect(field.getAttribute('autocapitalize')).toBe('characters');
     expect(field.getAttribute('autocomplete')).toBe('one-time-code');

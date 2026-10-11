@@ -4,7 +4,7 @@ import { copyText } from '../../lib/clipboard';
 import { APP_NAME } from '../../lib/constants';
 import { errorMessage, useHome, type ServerWelcome, type ServerWelcomeNotice } from '../../state/HomeProvider';
 import { CodeField } from './CodeField';
-import { codeLetters, groupCode } from './codeText';
+import { CODE_FIELD_LENGTH, codeFromPaste, codeLetters, groupCode } from './codeText';
 import { summaryCounts } from './ImportHome';
 import { lastChangedLine } from './BringOnline';
 import { PrimaryButton, Spinner } from './StepPage';
@@ -84,7 +84,7 @@ function HaveACode({
   code: string;
   notice: ServerWelcomeNotice | null;
 }) {
-  const { redeemCode } = useHome();
+  const { redeemCode, startSetup } = useHome();
   const fieldId = useId();
   const errorId = useId();
   const [code, setCode] = useState(() => groupCode(linked));
@@ -117,8 +117,10 @@ function HaveACode({
     e.preventDefault();
     if (busy || !ready) return;
     setTried(true);
-    // The setup code, typed where a sign-in code goes: say where it belongs, without asking.
+    // The setup code, typed where a sign-in code goes. No home online yet: on to "Bring this
+    // home online" with it (the saved copy, as this browser has none). Else say where it belongs.
     if (codeLetters(code).length >= SETUP_CODE_MIN_LENGTH) {
+      if (!homeOnline && startSetup(code)) return;
       setError(homeOnline ? SETUP_CODE_HERE.online : SETUP_CODE_HERE.notOnline);
       return;
     }
@@ -155,11 +157,11 @@ function HaveACode({
             setCode(next);
             setError(null);
           }}
-          maxLength={20}
+          maxLength={CODE_FIELD_LENGTH}
           placeholder="ABCD-EFGH"
           invalid={!!error}
           describedBy={error ? errorId : undefined}
-          takeCodeFromPaste
+          fromPaste={codeFromPaste}
         />
         {error ? (
           <p id={errorId} className={styles.codeError} role="alert">

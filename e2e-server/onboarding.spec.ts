@@ -223,6 +223,56 @@ test('the setup code can be typed (a Home Screen app keeps its own storage); a w
   await phone.context.close();
 });
 
+test('the whole setup code goes in when pasted, from the keyboard or as its link', async ({ browser, baseURL }) => {
+  // The Home Screen app with the home in it, the code copied from a message (24 characters grouped).
+  const phone = await openDevice(browser, baseURL!, { localStorage: { [DEMO_DOC_KEY]: JSON.stringify(doc) } });
+  await phone.context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const page = phone.page;
+  const step = page.getByRole('region', { name: 'Bring this home online' });
+  const field = step.getByRole('textbox', { name: 'Setup code' });
+  await page.evaluate((text) => navigator.clipboard.writeText(text), `https://home-os-orpin.vercel.app/?setup=${SETUP_CODE}`);
+  await field.click();
+  await page.keyboard.press('ControlOrMeta+V');
+  await expect(field).toHaveValue(SETUP_CODE);
+  await field.fill('');
+  await page.evaluate((text) => navigator.clipboard.writeText(text), SETUP_CODE);
+  await field.click();
+  await page.keyboard.press('ControlOrMeta+V');
+  await expect(field).toHaveValue(SETUP_CODE);
+  await step.getByRole('button', { name: 'Bring It Online' }).click();
+  await page.getByRole('region', { name: 'Shea hasn’t joined yet' }).getByRole('button', { name: 'Continue' }).click();
+  await expect(homeHeading(page)).toBeVisible();
+  await expect(areaHeadings(page)).toHaveText(doc.areas.map((a) => a.name));
+  await expectNoReload(phone);
+  await phone.context.close();
+});
+
+test('the setup code pasted in “Have a code?” before the home is online brings the saved copy online', async ({ browser, baseURL }) => {
+  // A phone with no home in it: "This home is private." and "Have a code?".
+  const phone = await openDevice(browser, baseURL!);
+  await phone.context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const page = phone.page;
+  const field = codeField(page);
+  await page.evaluate((text) => navigator.clipboard.writeText(text), SETUP_CODE);
+  await field.click();
+  await page.keyboard.press('ControlOrMeta+V');
+  // Whole, not two of its groups taken for a sign-in code.
+  await expect(field).toHaveValue(SETUP_CODE);
+  await welcome(page).getByRole('button', { name: 'Join' }).click();
+
+  const step = page.getByRole('region', { name: 'Bring this home online' });
+  await expect(step.getByText('This is your saved copy of the home.')).toBeVisible();
+  await expect(step).toContainText('11 areas · 21 items');
+  await expect(step.getByRole('textbox', { name: 'Setup code' })).toHaveValue(SETUP_CODE);
+  await step.getByRole('button', { name: 'Bring It Online' }).click();
+  await page.getByRole('region', { name: 'Shea hasn’t joined yet' }).getByRole('button', { name: 'Continue' }).click();
+  await expect(homeHeading(page)).toBeVisible();
+  await expect(areas(page).locator('[data-item-open]')).toHaveCount(21);
+  await expect(rowFor(page, 'Heaters not working', 'Hallway')).toBeVisible();
+  await expectNoReload(phone);
+  await phone.context.close();
+});
+
 test('a code also works as a link, and a link whose code does not work says so', async ({ browser, baseURL }) => {
   const stratis = await openDevice(browser, baseURL!, {
     localStorage: { [DEMO_DOC_KEY]: JSON.stringify(doc) },

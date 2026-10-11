@@ -130,6 +130,42 @@ describe('the Welcome screen in server mode', () => {
     expect(localStorage.getItem(DEMO_DOC_KEY)).toBeNull();
   });
 
+  it('takes the setup code typed in "Have a code?" on a phone with no home to Bring this home online with the saved copy', async () => {
+    const h = createHarness();
+    const home = mount(phone(h).backend);
+    await waitFor(() => expect(home().serverWelcome).toEqual({ kind: 'private', homeOnline: false, code: '', notice: null }));
+    let moved = false;
+    act(() => {
+      moved = home().startSetup('TEST-SETU-PCDE');
+    });
+    expect(moved).toBe(true);
+    expect(home().serverWelcome).toMatchObject({ kind: 'setup', setupCode: 'TEST-SETU-PCDE', saved: true, summary: { areas: 11, items: 21 } });
+    // Only from that screen.
+    let again = true;
+    act(() => {
+      again = home().startSetup('TEST-SETU-PCDE');
+    });
+    expect(again).toBe(false);
+    await act(async () => {
+      await home().bringHomeOnline('TEST-SETU-PCDE');
+    });
+    await waitFor(() => expect(home().phase.kind).toBe('ready'));
+    expect(home().data!.items).toHaveLength(21);
+  });
+
+  it('does not start setup from "Have a code?" once a home is online', async () => {
+    const h = createHarness();
+    await homeElsewhere(h);
+    const home = mount(phone(h).backend);
+    await waitFor(() => expect(home().serverWelcome).toMatchObject({ kind: 'private', homeOnline: true }));
+    let moved = true;
+    act(() => {
+      moved = home().startSetup('TEST-SETU-PCDE');
+    });
+    expect(moved).toBe(false);
+    expect(home().serverWelcome).toMatchObject({ kind: 'private', homeOnline: true });
+  });
+
   it("can bring the saved copy online instead of this browser's", async () => {
     localStorage.setItem(DEMO_DOC_KEY, PHONE);
     const home = mount(phone(createHarness()).backend);

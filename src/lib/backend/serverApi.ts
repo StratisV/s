@@ -57,6 +57,11 @@ export const CODE_TTL_MS = 7 * 86_400_000;
  * normalised (60 bits), e.g. "K7QM-3XRP-WN9D", so it is never mistaken for a sign-in code.
  */
 export const SETUP_CODE_MIN_LENGTH = 12;
+/**
+ * The longest setup code the code fields take whole: 24 letters (the live one has 20, shown as
+ * "ABCD-EFGH-JKLM-NPQR-STUV"). A longer HOMEOS_SETUP_CODE still works from a ?setup= link.
+ */
+export const SETUP_CODE_MAX_LENGTH = 24;
 
 /**
  * A code as typed or linked, normalised: upper case, with spaces, hyphens and dots taken out.

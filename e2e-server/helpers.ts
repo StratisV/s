@@ -9,7 +9,7 @@ import type { HouseholdData } from '../src/lib/types';
 // test quickly) by the same API calls through the context's own cookie jar.
 
 /** HOMEOS_SETUP_CODE of the local server the suite runs (playwright.server.config.ts). */
-export const SETUP_CODE = 'TEST-SETU-PCDE';
+export const SETUP_CODE = 'TEST-SETU-PCDE-2345-6789';
 
 /** How long a change on one phone may take to show on another (a 3 s poll, the debounce, the load). */
 export const SYNC_MS = 5_000;

@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type ChangeEvent, type ClipboardEvent } from 'react';
-import { caretAfter, codeFromPaste, codeLetters, groupCode } from './codeText';
+import { caretAfter, codeLetters, groupCode } from './codeText';
 
 interface CodeFieldProps {
   id: string;
@@ -15,8 +15,11 @@ interface CodeFieldProps {
   invalid?: boolean;
   /** Ids of what describes the field (an error under it). */
   describedBy?: string;
-  /** A pasted message or link gives its sign-in code (the "Have a code?" field). */
-  takeCodeFromPaste?: boolean;
+  /**
+   * The code in pasted text that is more than a code (a shared message, a link), grouped, or
+   * null to paste it as it is: codeFromPaste ("Have a code?") or setupCodeFromText (the setup code).
+   */
+  fromPaste?: (text: string) => string | null;
   enterKeyHint?: 'go' | 'done';
 }
 
@@ -36,7 +39,7 @@ export function CodeField({
   disabled,
   invalid,
   describedBy,
-  takeCodeFromPaste = false,
+  fromPaste,
   enterKeyHint = 'go',
 }: CodeFieldProps) {
   const ref = useRef<HTMLInputElement>(null);
@@ -77,8 +80,8 @@ export function CodeField({
   };
 
   const onPaste = (e: ClipboardEvent<HTMLInputElement>) => {
-    if (!takeCodeFromPaste) return;
-    const code = codeFromPaste(e.clipboardData.getData('text'));
+    if (!fromPaste) return;
+    const code = fromPaste(e.clipboardData.getData('text'));
     if (!code) return;
     e.preventDefault();
     caret.current = code.length;

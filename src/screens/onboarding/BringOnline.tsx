@@ -5,7 +5,7 @@ import { deviceTimeZone, formatDay, todayIn } from '../../lib/logic/dates';
 import type { ISOTimestamp, ServerSetupSummary } from '../../lib/types';
 import { errorMessage, useHome } from '../../state/HomeProvider';
 import { CodeField } from './CodeField';
-import { codeLetters, groupCode, setupCodeFromText } from './codeText';
+import { CODE_FIELD_LENGTH, codeLetters, groupCode, setupCodeFromText } from './codeText';
 import { HomeSummaryCard } from './ImportHome';
 import shared from './Onboarding.module.css';
 import styles from './OneHome.module.css';
@@ -136,10 +136,11 @@ export function BringOnline({ enter, summary, setupCode, elsewhere = false, save
                 setCode(next);
                 setError(null);
               }}
-              maxLength={20}
+              maxLength={CODE_FIELD_LENGTH}
               placeholder="XXXX-XXXX-XXXX"
               disabled={busy}
               describedBy={error ? errorId : undefined}
+              fromPaste={setupCodeFromText}
             />
             {canPaste() ? (
               <button type="button" className={styles.paste} onClick={() => void paste()} disabled={busy}>

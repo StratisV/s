@@ -402,6 +402,12 @@ export interface HomeContextValue {
    * serverWelcome becomes 'setup' with `saved` and the code.
    */
   chooseSavedCopy(): void;
+  /**
+   * The setup code typed in "Have a code?" while no home is online and this browser has no
+   * copy (serverWelcome 'private', homeOnline false): 'setup' with the saved copy and the code.
+   * False (nothing changes) when it is not that screen or there is no saved copy.
+   */
+  startSetup(setupCode: string): boolean;
   /** Saving is paused until next month (ServerStatus.readOnly): Home shows one line saying so. */
   readOnly: boolean;
 
@@ -850,6 +856,9 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
   // Server mode (docs/ARCHITECTURE.md "Server mode (no setup)", "HomeProvider in server mode").
   const access = useMemo(() => serverAccess(backend), [backend]);
   const [serverWelcome, setServerWelcome] = useState<ServerWelcome | null>(() => (access ? { kind: 'checking' } : null));
+  /** serverWelcome as last rendered, for actions that check the screen before acting (startSetup). */
+  const serverWelcomeRef = useRef(serverWelcome);
+  serverWelcomeRef.current = serverWelcome;
   /** The Welcome screen's last working-out (a later one wins). */
   const welcomeSeq = useRef(0);
   /** The epoch serverWelcome was last worked out for (React may run an effect twice). */
@@ -2112,6 +2121,15 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
           }
           return prev;
         });
+      },
+      startSetup: (setupCode) => {
+        const saved = savedSummary.current;
+        if (!access || !saved || serverWelcomeRef.current?.kind !== 'private' || serverWelcomeRef.current.homeOnline) return false;
+        savedChosen.current = true;
+        welcomeSeq.current += 1;
+        const tab = isIos() && !isStandalone();
+        setServerWelcome({ kind: 'setup', summary: saved, setupCode, saved: true, ...(tab ? { elsewhere: true } : {}) });
+        return true;
       },
       readOnly: access ? readOnly : false,
 

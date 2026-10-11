@@ -55,7 +55,7 @@ export default defineConfig({
         VITE_FORCE_DEMO: '',
         VITE_VAPID_PUBLIC_KEY: '',
         // The setup code the tests use (e2e-server/helpers.ts SETUP_CODE); never a real one.
-        HOMEOS_SETUP_CODE: 'TEST-SETU-PCDE',
+        HOMEOS_SETUP_CODE: 'TEST-SETU-PCDE-2345-6789',
       },
       url: `http://localhost:${PORT}/index.html`,
       // Never a server built for something else (demo mode, another checkout).
@@ -67,7 +67,7 @@ export default defineConfig({
       // the home online, the phone's first use of its key, and two changes; e2e-server/readonly.spec.ts).
       // Started after the first, so the build is there.
       command: `node dist-server/local.mjs --port ${PORT + 1} --static dist-server/app --memory --allow-reset`,
-      env: { HOMEOS_SETUP_CODE: 'TEST-SETU-PCDE', HOMEOS_BLOB_WRITES_PER_MONTH: '4' },
+      env: { HOMEOS_SETUP_CODE: 'TEST-SETU-PCDE-2345-6789', HOMEOS_BLOB_WRITES_PER_MONTH: '4' },
       url: `http://localhost:${PORT + 1}/index.html`,
       reuseExistingServer: false,
       timeout: 30_000,

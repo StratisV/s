@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { codeLink } from '../../lib/backend/serverApi';
-import { caretAfter, codeFromPaste, codeLetters, groupCode } from './codeText';
+import { CODE_FIELD_LENGTH, caretAfter, codeFromPaste, codeLetters, groupCode, setupCodeFromText } from './codeText';
 
 describe('code fields', () => {
   it('keep letters and digits, in capitals', () => {
@@ -38,5 +38,28 @@ describe('code fields', () => {
     expect(codeFromPaste('ABCD')).toBeNull();
     // Nothing shaped like a code (O and I are not in codes): as it is.
     expect(codeFromPaste('Hello from home, see you soon')).toBeNull();
+  });
+
+  it('keep a pasted setup code whole, never two of its groups as a sign-in code', () => {
+    expect(codeFromPaste('KQ27-JRMB-NVBU-4NAY-6F76')).toBe('KQ27-JRMB-NVBU-4NAY-6F76');
+    expect(codeFromPaste('kq27jrmbnvbu4nay6f76\n')).toBe('KQ27-JRMB-NVBU-4NAY-6F76');
+    expect(codeFromPaste('https://home-os-orpin.vercel.app/?setup=KQ27-JRMB-NVBU-4NAY-6F76')).toBe('KQ27-JRMB-NVBU-4NAY-6F76');
+    expect(codeFromPaste('K7QM-3XRP-WN9D')).toBe('K7QM-3XRP-WN9D');
+    // Words are not a setup code (O and I are not in codes).
+    expect(codeFromPaste('Hello from our home')).toBeNull();
+  });
+
+  it('find the setup code in pasted text, up to 24 letters', () => {
+    expect(setupCodeFromText('KQ27-JRMB-NVBU-4NAY-6F76')).toBe('KQ27-JRMB-NVBU-4NAY-6F76');
+    expect(setupCodeFromText('Open https://home-os-orpin.vercel.app/?setup=kq27-jrmb-nvbu-4nay-6f76 on your phone')).toBe(
+      'KQ27-JRMB-NVBU-4NAY-6F76',
+    );
+    expect(setupCodeFromText('K7QM3XRPWN9D')).toBe('K7QM-3XRP-WN9D');
+    expect(setupCodeFromText('ABCD-EFGH-JKLM-NPQR-STUV-WXYZ')).toBe('ABCD-EFGH-JKLM-NPQR-STUV-WXYZ');
+    expect(setupCodeFromText('ABCD-EFGH-JKLM-NPQR-STUV-WXYZ-2')).toBeNull();
+    expect(setupCodeFromText('ABCD-EFGH')).toBeNull();
+    expect(setupCodeFromText('HELLO-WORLD-FROM')).toBeNull();
+    // The field takes the longest one grouped.
+    expect(CODE_FIELD_LENGTH).toBe('ABCD-EFGH-JKLM-NPQR-STUV-WXYZ'.length);
   });
 });
