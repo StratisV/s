@@ -117,16 +117,24 @@ export type ServerWelcome =
    * No home is online yet and this browser kept one in demo mode: "Bring this home online",
    * with what comes along and the setup code field (pre-filled from a ?setup= link, else '').
    * `elsewhere`: this is a browser tab on an iPhone or iPad, where the home is usually kept in
-   * the Home Screen app instead (the step says so).
+   * the Home Screen app instead (the step says so). `saved`: what comes along is the household's
+   * saved copy (lib/logic/savedHome.ts, "Use the Saved Copy"), not this browser's.
    */
-  | { kind: 'setup'; summary: ServerSetupSummary; setupCode: string; elsewhere?: boolean }
+  | { kind: 'setup'; summary: ServerSetupSummary; setupCode: string; elsewhere?: boolean; saved?: boolean }
   /**
    * A ?setup= link opened where the home is not (no demo home here, or Safari on an iPhone,
    * whose Home Screen app keeps its own): "Open home.os from your Home Screen" with the setup
    * code large and Copy. `summary`: this browser has a copy too, which can come online
-   * instead ("Use This Copy Instead"). `ios`: the copy for an iPhone or iPad.
+   * instead ("Use This Copy Instead"). `saved`: the household's saved copy, which can come
+   * online from here ("Use the Saved Copy"). `ios`: the copy for an iPhone or iPad.
    */
-  | { kind: 'setupElsewhere'; setupCode: string; summary: ServerSetupSummary | null; ios: boolean }
+  | {
+      kind: 'setupElsewhere';
+      setupCode: string;
+      summary: ServerSetupSummary | null;
+      saved: ServerSetupSummary | null;
+      ios: boolean;
+    }
   /**
    * "This home is private. Ask someone at home for a code." and "Have a code?" (pre-filled
    * with a ?code= link's code, else ''). `homeOnline` false: no home is online yet and this
@@ -359,8 +367,8 @@ export interface HomeContextValue {
   /** What the signed-out Welcome screen shows (see ServerWelcome); null outside server mode. */
   serverWelcome: ServerWelcome | null;
   /**
-   * "Bring It Online": reads homeos.demo.v1 again and calls ServerAccess.bringOnline(setupCode,
-   * raw). On success this browser is signed in as the owner; the home opens with
+   * "Bring It Online": reads homeos.demo.v1 again (or, after "Use the Saved Copy", takes the
+   * saved copy) and calls ServerAccess.bringOnline(setupCode, raw). On success this browser is signed in as the owner; the home opens with
    * onboardingTail and invitePeople set ("{Names} haven't joined yet" with Invite buttons),
    * then the home (no notifications step in server mode). The demo document is left as it is.
    * 'home_exists': serverWelcome becomes private with notice 'setupUsed', and it rejects.
@@ -388,6 +396,12 @@ export interface HomeContextValue {
    * own copy is the one to bring online after all; serverWelcome becomes 'setup' with the code.
    */
   chooseSetupHere(): void;
+  /**
+   * "Use the Saved Copy" (serverWelcome 'setupElsewhere', or 'setup' with this browser's copy):
+   * the household's saved copy (lib/logic/savedHome.ts) is the one to bring online;
+   * serverWelcome becomes 'setup' with `saved` and the code.
+   */
+  chooseSavedCopy(): void;
   /** Saving is paused until next month (ServerStatus.readOnly): Home shows one line saying so. */
   readOnly: boolean;
 
@@ -1314,6 +1328,10 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
   const welcomeBusy = useRef(false);
   /** "Use This Copy Instead" on setupElsewhere: this browser's copy comes online after all. */
   const setupHereChosen = useRef(false);
+  /** "Use the Saved Copy": the household's saved copy comes online instead of this browser's. */
+  const savedChosen = useRef(false);
+  /** The saved copy's summary, once the Welcome screen worked it out (no home online yet). */
+  const savedSummary = useRef<ServerSetupSummary | null>(null);
 
   /**
    * What the signed-out Welcome screen shows (see ServerWelcome). `quiet`: a look in the
@@ -1362,13 +1380,20 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         if (online === false) {
           // Loaded here only (server mode, signed out, no home online): it brings DemoBackend's
           // code along, which would otherwise sit in every mode's first chunk.
-          const { serverSetupSummary } = await import('../lib/logic/serverImport');
+          const [{ serverSetupSummary }, { SAVED_HOME_DOC }] = await Promise.all([
+            import('../lib/logic/serverImport'),
+            import('../lib/logic/savedHome'),
+          ]);
           if (!current()) return;
           const summary = serverSetupSummary(readRawDemoDoc());
+          const saved = serverSetupSummary(SAVED_HOME_DOC);
+          savedSummary.current = saved;
           const tab = isIos() && !isStandalone();
-          if (setupLink && (!summary || tab) && !setupHereChosen.current) {
+          if (savedChosen.current && saved) {
+            next = { kind: 'setup', summary: saved, setupCode: setupLink ?? '', saved: true, ...(tab ? { elsewhere: true } : {}) };
+          } else if (setupLink && (!summary || tab) && !setupHereChosen.current) {
             // The setup link opened where the home is not kept (or likely not): say where to use it.
-            next = { kind: 'setupElsewhere', setupCode: setupLink, summary, ios: isIos() };
+            next = { kind: 'setupElsewhere', setupCode: setupLink, summary, saved, ios: isIos() };
           } else if (summary) {
             next = { kind: 'setup', summary, setupCode: setupLink ?? '', ...(tab ? { elsewhere: true } : {}) };
           } else {
@@ -2028,8 +2053,8 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       serverWelcome: access ? serverWelcome : null,
       bringHomeOnline: async (setupCode) => {
         if (!access) return notSupported('bringHomeOnline');
-        // Read again: what comes along is what this browser holds now.
-        const raw = readRawDemoDoc();
+        // Read again: what comes along is what this browser holds now (or the saved copy, if chosen).
+        const raw = savedChosen.current ? (await import('../lib/logic/savedHome')).SAVED_HOME_DOC : readRawDemoDoc();
         const { serverSetupSummary } = await import('../lib/logic/serverImport');
         if (!raw || !serverSetupSummary(raw)) throw new BackendError('unknown', 'invalid_input: phone');
         try {
@@ -2068,8 +2093,24 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         setServerWelcome((prev) => {
           if (prev?.kind !== 'setupElsewhere' || !prev.summary) return prev;
           setupHereChosen.current = true;
+          savedChosen.current = false;
           welcomeSeq.current += 1;
           return { kind: 'setup', summary: prev.summary, setupCode: prev.setupCode, ...(prev.ios ? { elsewhere: true } : {}) };
+        });
+      },
+      chooseSavedCopy: () => {
+        setServerWelcome((prev) => {
+          if (prev?.kind === 'setupElsewhere' && prev.saved) {
+            savedChosen.current = true;
+            welcomeSeq.current += 1;
+            return { kind: 'setup', summary: prev.saved, setupCode: prev.setupCode, saved: true, ...(prev.ios ? { elsewhere: true } : {}) };
+          }
+          if (prev?.kind === 'setup' && !prev.saved && savedSummary.current) {
+            savedChosen.current = true;
+            welcomeSeq.current += 1;
+            return { ...prev, summary: savedSummary.current, saved: true };
+          }
+          return prev;
         });
       },
       readOnly: access ? readOnly : false,

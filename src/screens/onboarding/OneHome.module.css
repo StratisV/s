@@ -281,3 +281,10 @@
     animation: none;
   }
 }
+
+/* "Use the Saved Copy Instead" under what comes along (Bring this home online). */
+.useSaved {
+  display: flex;
+  justify-content: center;
+  margin-top: -4px;
+}

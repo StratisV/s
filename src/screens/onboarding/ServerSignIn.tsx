@@ -193,14 +193,21 @@ export const SETUP_ELSEWHERE = {
   line: `This browser doesn’t have your home. Open ${APP_NAME} where you use it, and enter this setup code.`,
 };
 
+/** The household's saved copy (lib/logic/savedHome.ts), offered where the home is not. */
+export const SAVED_COPY = {
+  line: 'Or bring your saved copy online from here:',
+  orLine: 'Or bring your saved copy online:',
+};
+
 /**
  * A ?setup= link opened where the home is not (no demo home in this browser, or Safari on an
  * iPhone, whose Home Screen app keeps its own storage): where to use the setup code instead,
  * the code large with Copy, and, when this browser has a copy of a home too, "Use This Copy
- * Instead" with when it last changed, so an old copy is not brought online by mistake.
+ * Instead" with when it last changed, so an old copy is not brought online by mistake. Last,
+ * "Use the Saved Copy": the household's saved copy can come online from here.
  */
 function SetupElsewhere({ welcome }: { welcome: Extract<ServerWelcome, { kind: 'setupElsewhere' }> }) {
-  const { chooseSetupHere } = useHome();
+  const { chooseSetupHere, chooseSavedCopy } = useHome();
   const code = groupCode(welcome.setupCode);
   const changed = welcome.summary ? lastChangedLine(welcome.summary.lastChanged) : null;
   return (
@@ -222,6 +229,17 @@ function SetupElsewhere({ welcome }: { welcome: Extract<ServerWelcome, { kind: '
           </p>
           <button type="button" className={shared.textButton} onClick={chooseSetupHere}>
             Use This Copy Instead
+          </button>
+        </div>
+      ) : null}
+      {welcome.saved ? (
+        <div className={styles.thisCopy}>
+          <p className={styles.thisCopyText}>
+            {welcome.summary ? SAVED_COPY.orLine : SAVED_COPY.line} {welcome.saved.householdName},{' '}
+            {summaryCounts(welcome.saved).replace(/(\d) /g, '$1\u00a0')}.
+          </p>
+          <button type="button" className={shared.textButton} onClick={chooseSavedCopy}>
+            Use the Saved Copy
           </button>
         </div>
       ) : null}

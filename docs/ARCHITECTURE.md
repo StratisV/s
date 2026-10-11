@@ -1118,6 +1118,10 @@ claim). New in `HomeContextValue`:
   - else `private` (`homeOnline` from status; notice `setupUsed` when a `?setup=` link was waiting
     and a home is online, and that link is forgotten).
 - `chooseSetupHere()`: "Use This Copy Instead" on `setupElsewhere`: `setup` with this browser's copy.
+- `chooseSavedCopy()`: "Use the Saved Copy" on `setupElsewhere`, or "Use the Saved Copy Instead"
+  on `setup`: `setup` with `saved` and the household's saved copy (`lib/logic/savedHome.ts`, the
+  home as it was on Stratis's phone on 11 Oct 2026, built by `scripts/build-saved-home.ts`).
+  `bringHomeOnline` then sends that document instead of `homeos.demo.v1`.
 - `bringHomeOnline(setupCode)`, `redeemCode(code)`, `createCode(memberId)`, `listDevices()`,
   `removeDevice(deviceId)`: see their doc comments. After bringing the home online:
   `onboardingTail` and `invitePeople` (the server variant of "haven't joined yet", below), then
@@ -1154,11 +1158,15 @@ claim). New in `HomeContextValue`:
   home.os where your home is." and "This browser doesn't have your home. Open home.os where you
   use it, and enter this setup code."; the setup code large on a card (28/600, selectable, read
   out a letter at a time), **Copy Code**; when this browser has a copy too, "This browser has a
-  copy too: {name}, {counts}, last changed {day}." and **Use This Copy Instead** (text button).
+  copy too: {name}, {counts}, last changed {day}." and **Use This Copy Instead** (text button);
+  last, "Or bring your saved copy online from here: {name}, {counts}." ("Or bring your saved copy
+  online:" after a copy of this browser's) and **Use the Saved Copy** (text button).
 - **Bring this home online** (`setup`): title "Bring this home online"; the card of "Bring over
   the home from this phone" (name, address, "{n} areas · {m} items" plus " · {d} done" and
   " · {k} messages" when there are any, the people with "(you)"); "Last changed {day}." under it;
   on an iPhone browser tab also "Use home.os from your Home Screen? Bring it online from there.";
+  then **Use the Saved Copy Instead** (text button). With the saved copy (`saved`): "This is your
+  saved copy of the home." in place of those lines, and no such button;
   a **Setup code** field (pre-filled from the link; same input attributes, `maxLength` 20,
   placeholder "XXXX-XXXX-XXXX") with **Paste** at its end where the clipboard can be read (the
   code from the link or on its own; else "There's no setup code to paste. Copy it from the link
@@ -1242,6 +1250,8 @@ resolve as soon as they are stored, and the writer reloads at once (with `minRev
   and reading still working); Bring It Online tapped again after its reply (and cookie) was lost,
   opening the home with one device; a setup link opened in an iPhone's Safari with no home there
   (where to use it, the code, Copy Code) and with a copy there (its age, Use This Copy Instead);
+  the saved copy brought online from an iPhone's Safari with no home there (its 11 areas and 21
+  items on Home, nothing kept in Safari);
   a code link opened in an iPhone's Safari not used up, then typed in the Home Screen app, which
   People lists as "iPhone · Home Screen app", with no Sign in on a new phone for Stratis to tap;
   and Sign Out while offline staying signed out after a reload online, with its device gone.

@@ -16,6 +16,8 @@ export const BRING_ONLINE_NOTE = 'Everyone else joins with a code you send them 
 /** On an iPhone or iPad in a browser tab: the home is usually kept in the Home Screen app. */
 export const USE_HOME_SCREEN = `Use ${APP_NAME} from your Home Screen? Bring it online from there.`;
 export const NOTHING_TO_PASTE = 'There’s no setup code to paste. Copy it from the link first.';
+/** What comes along is the household's saved copy (lib/logic/savedHome.ts). */
+export const SAVED_COPY_NOTE = 'This is your saved copy of the home.';
 
 /** "Last changed Sat 10 Oct" for the copy's newest change (this browser's day), or null. */
 export function lastChangedLine(at: ISOTimestamp | null | undefined, now: Date = new Date()): string | null {
@@ -41,6 +43,8 @@ interface BringOnlineProps {
   setupCode: string;
   /** A browser tab on an iPhone or iPad: say the home may be kept in the Home Screen app. */
   elsewhere?: boolean;
+  /** What comes along is the household's saved copy ("Use the Saved Copy"), not this browser's. */
+  saved?: boolean;
 }
 
 /**
@@ -51,8 +55,8 @@ interface BringOnlineProps {
  * storage, so the link may have opened in Safari), and Bring It Online. Once it is online this
  * browser is signed in as the owner and HomeProvider moves on. Nothing else: no Start Fresh.
  */
-export function BringOnline({ enter, summary, setupCode, elsewhere = false }: BringOnlineProps) {
-  const { bringHomeOnline } = useHome();
+export function BringOnline({ enter, summary, setupCode, elsewhere = false, saved = false }: BringOnlineProps) {
+  const { bringHomeOnline, chooseSavedCopy } = useHome();
   const fieldId = useId();
   const errorId = useId();
   const [code, setCode] = useState(() => groupCode(setupCode));
@@ -109,8 +113,15 @@ export function BringOnline({ enter, summary, setupCode, elsewhere = false }: Br
         </div>
 
         <HomeSummaryCard summary={summary} busy={busy} />
-        {changed ? <p className={shared.caption}>{changed}.</p> : null}
-        {elsewhere ? <p className={`${shared.caption} ${styles.elsewhere}`}>{USE_HOME_SCREEN}</p> : null}
+        {saved ? <p className={shared.caption}>{SAVED_COPY_NOTE}</p> : changed ? <p className={shared.caption}>{changed}.</p> : null}
+        {elsewhere && !saved ? <p className={`${shared.caption} ${styles.elsewhere}`}>{USE_HOME_SCREEN}</p> : null}
+        {saved ? null : (
+          <div className={styles.useSaved}>
+            <button type="button" className={shared.textButton} onClick={chooseSavedCopy} disabled={busy}>
+              Use the Saved Copy Instead
+            </button>
+          </div>
+        )}
 
         <h2 className={shared.sectionHeader}>
           <label htmlFor={fieldId}>Setup code</label>

@@ -118,6 +118,7 @@ export function Onboarding() {
           summary={serverWelcome.summary}
           setupCode={serverWelcome.setupCode}
           elsewhere={serverWelcome.elsewhere === true}
+          saved={serverWelcome.saved === true}
         />
       ) : null;
     case 'private':

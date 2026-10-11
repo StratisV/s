@@ -244,7 +244,13 @@ describe('Welcome in server mode', () => {
     const writeText = vi.fn(async (_text: string) => {});
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     const home = show(
-      signedOut({ kind: 'setupElsewhere', setupCode: 'K7QMXRPWN9D3', summary: { ...SUMMARY, lastChanged: '2026-09-02T09:00:00.000Z' }, ios: true }),
+      signedOut({
+        kind: 'setupElsewhere',
+        setupCode: 'K7QMXRPWN9D3',
+        summary: { ...SUMMARY, lastChanged: '2026-09-02T09:00:00.000Z' },
+        saved: { ...SUMMARY, areas: 11, items: 21, done: 0, messages: 0 },
+        ios: true,
+      }),
     );
     expect(screen.getByText('Open home.os from your Home Screen.')).toBeTruthy();
     expect(
@@ -258,11 +264,19 @@ describe('Welcome in server mode', () => {
     expect(screen.getByText(/This browser has a copy too: Our home, 6\sareas · 19\sitems · 3\sdone · 4\smessages, last changed Wed 2 Sep( 2026)?\./)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Use This Copy Instead' }));
     expect(home.chooseSetupHere).toHaveBeenCalled();
+    // The household's saved copy can come online from here too.
+    expect(screen.getByText(/^Or bring your saved copy online: Our home, 11\sareas · 21\sitems\.$/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Use the Saved Copy' }));
+    expect(home.chooseSavedCopy).toHaveBeenCalled();
     cleanup();
-    show(signedOut({ kind: 'setupElsewhere', setupCode: 'K7QMXRPWN9D3', summary: null, ios: false }));
+    show(signedOut({ kind: 'setupElsewhere', setupCode: 'K7QMXRPWN9D3', summary: null, saved: null, ios: false }));
     expect(screen.getByText('Open home.os where your home is.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Use This Copy Instead' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Use the Saved Copy' })).toBeNull();
     expect(screen.queryByRole('textbox')).toBeNull();
+    cleanup();
+    show(signedOut({ kind: 'setupElsewhere', setupCode: 'K7QMXRPWN9D3', summary: null, saved: { ...SUMMARY, done: 0, messages: 0 }, ios: false }));
+    expect(screen.getByText(/^Or bring your saved copy online from here: Our home, 6\sareas · 19\sitems\.$/)).toBeTruthy();
   });
 
   it('takes the code out of a pasted message', () => {
@@ -327,8 +341,20 @@ describe('Bring this home online', () => {
     expect(field.getAttribute('autocomplete')).toBe('one-time-code');
     expect(screen.getByText('Everyone else joins with a code you send them from Profile.')).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Bring It Online' }) as HTMLButtonElement).disabled).toBe(false);
-    // No Start Fresh, no Sign Out, no Google.
-    expect(screen.getAllByRole('button')).toHaveLength(1);
+    // No Start Fresh, no Sign Out, no Google: only the saved copy as the other choice.
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['Use the Saved Copy Instead', 'Bring It Online']);
+  });
+
+  it('can bring the saved copy online instead, and says when it is the saved copy', () => {
+    const home = setup();
+    fireEvent.click(screen.getByRole('button', { name: 'Use the Saved Copy Instead' }));
+    expect(home.chooseSavedCopy).toHaveBeenCalled();
+    cleanup();
+    show(signedOut({ kind: 'setup', summary: { ...SUMMARY, lastChanged: '2026-09-02T09:00:00.000Z' }, setupCode: '', elsewhere: true, saved: true }));
+    expect(screen.getByText('This is your saved copy of the home.')).toBeTruthy();
+    expect(screen.queryByText(/^Last changed/)).toBeNull();
+    expect(screen.queryByText('Use home.os from your Home Screen? Bring it online from there.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Use the Saved Copy Instead' })).toBeNull();
   });
 
   it('says when the copy last changed, and on an iPhone browser tab that the Home Screen app may hold the home', () => {

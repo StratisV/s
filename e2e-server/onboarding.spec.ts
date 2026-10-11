@@ -112,7 +112,8 @@ test('Stratis brings the home on his phone online with the setup link, invites S
   await expect(step.getByRole('textbox', { name: 'Setup code' })).toHaveValue(SETUP_CODE);
   await expect(step).toContainText('Everyone else joins with a code you send them from Profile.');
   // Paste is there where the browser lets the page read the clipboard.
-  await expect(step.getByRole('button')).toHaveText(['Paste', 'Bring It Online']);
+  // The household's saved copy is the one other choice.
+  await expect(step.getByRole('button')).toHaveText(['Use the Saved Copy Instead', 'Paste', 'Bring It Online']);
   // The link is gone from the address.
   expect(new URL(a.url()).search).toBe('');
   await step.getByRole('button', { name: 'Bring It Online' }).click();
@@ -430,6 +431,45 @@ test('a setup link opened where the home is not says where to use it, with the c
   await expectNoReload(withCopy);
   await safari.context.close();
   await withCopy.context.close();
+});
+
+test('a setup link opened on a phone without the home can bring the saved copy online', async ({ browser, baseURL }) => {
+  const safari = await openDevice(browser, baseURL!, { path: `/?setup=${SETUP_CODE}`, userAgent: IPHONE_SAFARI_UA });
+  const a = safari.page;
+  const door = welcome(a);
+  await expect(door.getByText(/^Or bring your saved copy online from here: Our home, 11\sareas · 21\sitems\.$/)).toBeVisible();
+  await door.getByRole('button', { name: 'Use the Saved Copy' }).click();
+
+  const step = a.getByRole('region', { name: 'Bring this home online' });
+  await expect(step).toContainText('11 areas · 21 items');
+  await expect(step.getByRole('list', { name: 'People' }).getByRole('listitem')).toHaveText(['🦆Stratis (you)', '🦔Shea']);
+  await expect(step.getByText('This is your saved copy of the home.')).toBeVisible();
+  await expect(step.getByRole('textbox', { name: 'Setup code' })).toHaveValue(SETUP_CODE);
+  await step.getByRole('button', { name: 'Bring It Online' }).click();
+
+  const waiting = a.getByRole('region', { name: 'Shea hasn’t joined yet' });
+  await waiting.getByRole('button', { name: 'Continue' }).click();
+  await expect(homeHeading(a)).toBeVisible();
+  await expect(areaHeadings(a)).toHaveText([
+    'Kitchen',
+    'Living Room',
+    'Bathroom Small',
+    'Bathroom Large',
+    'Bedroom Small',
+    'Bedroom Large',
+    'Garden',
+    'Garden Lounge',
+    'Jacuzzi',
+    'Hallway',
+    'Front garden',
+  ]);
+  await expect(areas(a).locator('[data-item-open]')).toHaveCount(21);
+  await expect(rowFor(a, 'Rubbish fill level', 'Kitchen')).toBeVisible();
+  await expect(rowFor(a, 'Check Chemicals', 'Jacuzzi')).toContainText('Order a new pack.');
+  // Nothing was kept in Safari: the home lives on the server.
+  expect(await a.evaluate((key) => localStorage.getItem(key), DEMO_DOC_KEY)).toBeNull();
+  await expectNoReload(safari);
+  await safari.context.close();
 });
 
 test('a code link opened in Safari on an iPhone is not used up there: typed in the Home Screen app, it works', async ({

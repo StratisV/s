@@ -90,8 +90,58 @@ describe('the Welcome screen in server mode', () => {
     openAt('/?setup=test-setu-pcde');
     const home = mount(phone(createHarness()).backend);
     await waitFor(() =>
-      expect(home().serverWelcome).toEqual({ kind: 'setupElsewhere', setupCode: 'TEST-SETU-PCDE', summary: null, ios: false }),
+      expect(home().serverWelcome).toMatchObject({ kind: 'setupElsewhere', setupCode: 'TEST-SETU-PCDE', summary: null, ios: false }),
     );
+    // The household's saved copy (lib/logic/savedHome.ts) can come online from here.
+    expect(home().serverWelcome).toMatchObject({ saved: { householdName: 'Our home', areas: 11, items: 21, done: 0 } });
+  });
+
+  it('brings the saved copy online from a browser without the home', async () => {
+    openAt('/?setup=test-setu-pcde');
+    const h = createHarness();
+    const home = mount(phone(h).backend);
+    await waitFor(() => expect(home().serverWelcome?.kind).toBe('setupElsewhere'));
+    act(() => home().chooseSavedCopy());
+    expect(home().serverWelcome).toMatchObject({ kind: 'setup', setupCode: 'TEST-SETU-PCDE', saved: true, summary: { areas: 11, items: 21 } });
+    await act(async () => {
+      await home().bringHomeOnline('TEST-SETU-PCDE');
+    });
+    await waitFor(() => expect(home().phase.kind).toBe('ready'));
+    expect(home().me).toMatchObject({ name: 'Stratis', role: 'owner' });
+    expect(home().data!.areas.map((a) => a.name)).toEqual([
+      'Kitchen',
+      'Living Room',
+      'Bathroom Small',
+      'Bathroom Large',
+      'Bedroom Small',
+      'Bedroom Large',
+      'Garden',
+      'Garden Lounge',
+      'Jacuzzi',
+      'Hallway',
+      'Front garden',
+    ]);
+    expect(home().data!.items).toHaveLength(21);
+    expect(home().data!.members.map((m) => [m.name, m.emoji, m.user_id !== null])).toEqual([
+      ['Stratis', '🦆', true],
+      ['Shea', '🦔', false],
+    ]);
+    // Nothing was kept in this browser.
+    expect(localStorage.getItem(DEMO_DOC_KEY)).toBeNull();
+  });
+
+  it("can bring the saved copy online instead of this browser's", async () => {
+    localStorage.setItem(DEMO_DOC_KEY, PHONE);
+    const home = mount(phone(createHarness()).backend);
+    await waitFor(() => expect(home().serverWelcome).toMatchObject({ kind: 'setup', summary: { areas: 6, items: 19 } }));
+    act(() => home().chooseSavedCopy());
+    expect(home().serverWelcome).toMatchObject({ kind: 'setup', saved: true, summary: { areas: 11, items: 21 } });
+    await act(async () => {
+      await home().bringHomeOnline(TEST_SETUP_CODE);
+    });
+    await waitFor(() => expect(home().phase.kind).toBe('ready'));
+    expect(home().data!.items).toHaveLength(21);
+    expect(localStorage.getItem(DEMO_DOC_KEY)).toBe(PHONE);
   });
 
   it('in Safari on an iPhone, points a setup link at the Home Screen app, and can bring this copy online instead', async () => {
