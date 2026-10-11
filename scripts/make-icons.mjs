@@ -1,15 +1,16 @@
 // Renders public/icons/icon.svg to the bitmap icons (npm run icons). Paths are in public/.
 //
 //   icons/icon-192.png, icons/icon-512.png
-//       manifest "any": the rounded tile with transparent corners
+//       manifest "any": the rounded tile (the SVG's #tile clip) with transparent corners
 //   icons/icon-maskable-512.png
-//       manifest "maskable": full-bleed sky and grass, the scene shrunk into the safe zone
-//       (a centred circle, 80% across)
+//       manifest "maskable": full-bleed sky and lawn, with #art (the lawn, the glow, the
+//       cottage and the duck) shrunk into the safe zone, a centred circle 80% across
 //   icons/apple-touch-icon.png
 //       180x180 full-bleed square with no alpha channel (iOS draws its own rounded mask)
 //   favicon.ico
-//       32x32 rounded tile, for browsers without SVG favicons (Safari before 26) and the
-//       automatic /favicon.ico request
+//       16x16 and 32x32 rounded tiles, for browsers without SVG favicons (Safari before 26)
+//       and the automatic /favicon.ico request. At 16 the SVG's own small-size rule leaves
+//       out the duck and the stars, as it does when a browser draws the SVG favicon.
 //
 // Uses Playwright's Chromium, so the PNGs match how browsers draw the SVG.
 import { chromium } from '@playwright/test';
@@ -22,24 +23,37 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const publicDir = path.join(root, 'public');
 
 /**
- * How far the scene shrinks in the maskable icon. Everything that matters sits within
- * 245px of the centre of the 512 canvas; the safe zone is a 204.8px radius.
+ * How far #art shrinks, about the centre of the viewBox, in the maskable icon. The duck
+ * on the lawn reaches about 51% of the width from the centre at its farthest (its tail and
+ * feet, bottom left); the safe zone is a circle of radius 40%.
  */
-const MASKABLE_SCALE = 0.8;
+const MASKABLE_SCALE = 0.76;
 
 const OUTPUTS = [
-  { file: 'icons/icon-192.png', size: 192, variant: 'rounded' },
-  { file: 'icons/icon-512.png', size: 512, variant: 'rounded' },
-  { file: 'icons/icon-maskable-512.png', size: 512, variant: 'maskable' },
-  { file: 'icons/apple-touch-icon.png', size: 180, variant: 'square' },
-  { file: 'favicon.ico', size: 32, variant: 'rounded' },
+  { file: 'icons/icon-192.png', sizes: [192], variant: 'rounded' },
+  { file: 'icons/icon-512.png', sizes: [512], variant: 'rounded' },
+  { file: 'icons/icon-maskable-512.png', sizes: [512], variant: 'maskable' },
+  { file: 'icons/apple-touch-icon.png', sizes: [180], variant: 'square' },
+  { file: 'favicon.ico', sizes: [16, 32], variant: 'rounded' },
 ];
 
 const svg = await readFile(path.join(publicDir, 'icons', 'icon.svg'), 'utf8');
 const browser = await chromium.launch();
 try {
-  for (const { file, size, variant } of OUTPUTS) {
-    const page = await browser.newPage({ viewport: { width: size, height: size }, deviceScaleFactor: 1 });
+  for (const { file, sizes, variant } of OUTPUTS) {
+    const images = [];
+    for (const size of sizes) images.push({ size, png: await render(size, variant) });
+    const data = file.endsWith('.ico') ? pngToIco(images) : images[0].png;
+    await writeFile(path.join(publicDir, file), data);
+    console.log(`public/${file} (${sizes.map((s) => `${s}x${s}`).join(', ')}, ${data.length} bytes)`);
+  }
+} finally {
+  await browser.close();
+}
+
+async function render(size, variant) {
+  const page = await browser.newPage({ viewport: { width: size, height: size }, deviceScaleFactor: 1 });
+  try {
     await page.setContent(
       `<!doctype html><html><head><style>html,body{margin:0;background:transparent}svg{display:block}</style></head><body>${svg}</body></html>`,
     );
@@ -50,41 +64,45 @@ try {
         el.setAttribute('width', String(size));
         el.setAttribute('height', String(size));
         if (variant === 'rounded') return;
-        // Full bleed: drop the rounded tile clip.
-        for (const node of el.querySelectorAll('[clip-path]')) node.removeAttribute('clip-path');
+        // Full bleed: drop the rounded tile clip (and only that one; the art has its own clips).
+        for (const node of el.querySelectorAll('[clip-path="url(#tile)"]')) node.removeAttribute('clip-path');
         if (variant === 'maskable') {
           const art = el.querySelector('#art');
           if (!art) throw new Error('icon.svg has no #art group');
-          art.setAttribute('transform', `translate(256 256) scale(${scale}) translate(-256 -256)`);
+          const { x, y, width, height } = el.viewBox.baseVal;
+          const cx = x + width / 2;
+          const cy = y + height / 2;
+          art.setAttribute('transform', `translate(${cx} ${cy}) scale(${scale}) translate(${-cx} ${-cy})`);
         }
       },
       { size, variant, scale: MASKABLE_SCALE },
     );
-    let data = await page.screenshot({ omitBackground: variant === 'rounded', type: 'png' });
-    if (variant === 'square') data = dropAlpha(data);
-    if (file.endsWith('.ico')) data = pngToIco(data, size);
-    await writeFile(path.join(publicDir, file), data);
+    const png = await page.screenshot({ omitBackground: variant === 'rounded', type: 'png' });
+    return variant === 'square' ? dropAlpha(png) : png;
+  } finally {
     await page.close();
-    console.log(`public/${file} (${size}x${size}, ${data.length} bytes)`);
   }
-} finally {
-  await browser.close();
 }
 
-/** An ICO file holding one PNG image (supported everywhere since Windows Vista). */
-function pngToIco(png, size) {
+/** An ICO file holding PNG images (supported everywhere since Windows Vista). */
+function pngToIco(images) {
   const header = Buffer.alloc(6);
   header.writeUInt16LE(0, 0); // Reserved.
   header.writeUInt16LE(1, 2); // Type: icon.
-  header.writeUInt16LE(1, 4); // One image.
-  const entry = Buffer.alloc(16);
-  entry[0] = size >= 256 ? 0 : size; // Width (0 means 256).
-  entry[1] = size >= 256 ? 0 : size; // Height.
-  entry.writeUInt16LE(1, 4); // Colour planes.
-  entry.writeUInt16LE(32, 6); // Bits per pixel.
-  entry.writeUInt32LE(png.length, 8);
-  entry.writeUInt32LE(header.length + entry.length, 12); // Offset of the PNG.
-  return Buffer.concat([header, entry, png]);
+  header.writeUInt16LE(images.length, 4);
+  let offset = header.length + 16 * images.length;
+  const entries = images.map(({ size, png }) => {
+    const entry = Buffer.alloc(16);
+    entry[0] = size >= 256 ? 0 : size; // Width (0 means 256).
+    entry[1] = size >= 256 ? 0 : size; // Height.
+    entry.writeUInt16LE(1, 4); // Colour planes.
+    entry.writeUInt16LE(32, 6); // Bits per pixel.
+    entry.writeUInt32LE(png.length, 8);
+    entry.writeUInt32LE(offset, 12); // Where this PNG starts.
+    offset += png.length;
+    return entry;
+  });
+  return Buffer.concat([header, ...entries, ...images.map(({ png }) => png)]);
 }
 
 // ── PNG: RGBA to RGB ───────────────────────────────────────────
