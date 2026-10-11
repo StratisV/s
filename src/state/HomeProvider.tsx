@@ -33,7 +33,6 @@ import {
   markDemoImported,
   readDemoDoc,
 } from '../lib/logic/importHome';
-import { serverSetupSummary } from '../lib/logic/serverImport';
 import { normaliseEmail } from '../lib/logic/people';
 import type {
   Area,
@@ -1330,6 +1329,10 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         const setupLink = pendingSetupCode();
         let next: ServerWelcome;
         if (online === false) {
+          // Loaded here only (server mode, signed out, no home online): it brings DemoBackend's
+          // code along, which would otherwise sit in every mode's first chunk.
+          const { serverSetupSummary } = await import('../lib/logic/serverImport');
+          if (!current()) return;
           const summary = serverSetupSummary(readRawDemoDoc());
           next = summary
             ? { kind: 'setup', summary, setupCode: setupLink ?? '' }
@@ -1990,6 +1993,7 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         if (!access) return notSupported('bringHomeOnline');
         // Read again: what comes along is what this browser holds now.
         const raw = readRawDemoDoc();
+        const { serverSetupSummary } = await import('../lib/logic/serverImport');
         if (!raw || !serverSetupSummary(raw)) throw new BackendError('unknown', 'invalid_input: phone');
         try {
           await access.bringOnline(setupCode, raw);
