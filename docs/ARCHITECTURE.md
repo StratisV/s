@@ -1,11 +1,16 @@
 # home.os architecture
 
 home.os is an installable web app (PWA) built with Vite, React and TypeScript on
-top of Supabase. The design spec is `design/README.md` (Turn 3, option 3a in
+top of Supabase, or, with nothing to set up, on the deployment's own server (Vercel Functions
+and a private Blob store; see "Server mode (no setup)"). The design spec is `design/README.md` (Turn 3, option 3a in
 `design/HomeOS Directions.dc.html`; reference renders in `design/reference/`).
 
 ## Product rules that shape the code
 
+- **Server mode** (no Supabase configured, a Blob store connected): the home lives on the
+  deployment's own server and people sign in with codes, not Google; push and the weekly email
+  are hidden. See "Server mode (no setup)". The rules below hold there too, except where that
+  section says otherwise.
 - Sign in with **Google** only. **One home** per deployment (see "One home"), kept by the
   database: after sign-in the server says where the person belongs. Someone already in the home
   goes straight in; someone a housemate added with their Google email (Profile > Household >
@@ -54,7 +59,11 @@ src/
   lib/shareSheet.ts        navigator.share, or the clipboard (lib/clipboard.ts) where there is none
   lib/backend/types.ts     Backend interface (the contract both backends implement)
   lib/backend/supabase.ts  production backend (supabase-js)
-  lib/backend/demo.ts      localStorage backend (no env vars, e2e tests)
+  lib/backend/server.ts    server mode backend (this deployment's /api/home; codes, polling)
+  lib/backend/serverApi.ts the wire contract between server.ts and server/ (both import it)
+  lib/backend/demo.ts      localStorage backend (no env vars, e2e tests); the server runs it too
+  lib/logic/serverImport.ts "Bring this home online": the phone's demo home as the server's home
+  lib/serverLinks.ts       ?setup= and ?code= links (server mode)
   lib/push.ts              Web Push subscribe/unsubscribe + iOS install detection
   lib/sw-register.ts       service worker registration
   ui/                      shared primitives: Screen (+ ScreenHeader), Hero, StatusSky, Sheet, ActionSheet, Toggle,
@@ -83,6 +92,14 @@ supabase/functions/        Edge Functions (scheduler: push reminders, missed ale
 supabase/tests/            database tests (run against a local Postgres 16)
 e2e/                       Playwright tests (demo mode)
 e2e-live/                  Playwright tests on a local Supabase stack: two phones, one home
+e2e-server/                Playwright tests on the local server (server mode): setup, codes, sync
+server/                    server mode's API (bundled by scripts/build-server.mjs, published at /api/home)
+  core/                    handler (ops), homeStore (cache, write queue, budget), runAs (DemoBackend
+                           per call), rpc (allow-list), auth (keys, codes), limits, setup, context
+  store/                   BlobStore: vercel (private Vercel Blob), file (local), memory (tests)
+  entry/                   vercel.ts (the function), local.ts (local server), node.ts (http glue)
+scripts/                   migrate, build-server (Build Output for Vercel, local bundle),
+                           backend-mode (which backend a build is for), build-output, icons, test-db
 ```
 
 ## Styling conventions
@@ -679,6 +696,464 @@ returns `people` and `emojis`; new `join_as_person` (`JoinHouseholdInput.personI
 `offline`; HomeContextValue adds `demoImportMode`, `reopenDemoImport`, `canReopenDemoImport`,
 `invitePeople`, `doneInvitingPeople`, `releaseClaim` and `retry`; importHome.ts adds
 `markDemoDeclined`, `demoHomeMatches` and leaves the demo's made-up history behind.
+
+## Server mode (no setup)
+
+The household wants their home shared across phones with nothing to set up by hand: no
+Supabase project, no Google Cloud console. Server mode keeps the home on the deployment's own
+server: one Vercel Function (`/api/home`) over a **private Vercel Blob store** connected to the
+same Vercel project, and people sign in with **codes** instead of Google. Supabase and Google
+sign-in stay in the code, unused while Supabase is not configured. Push notifications and the
+weekly email need other services, so they are hidden in server mode.
+
+The server holds the same document the demo backend keeps in localStorage and runs the
+**DemoBackend's own code** on it for every call, as the signed-in person, so the data rules
+(lengths, kinds, people, chat, housekeeping) are written once.
+
+### Choosing the backend
+
+`pickBackendMode()` in `src/lib/backend/index.ts` (the browser) and `backendMode()` in
+`scripts/backend-mode.mjs` (the build) apply the same order:
+
+1. `VITE_FORCE_DEMO=1` (the e2e tests): **demo**.
+2. Supabase URL and anon key configured (the names in `supabaseSettings()`): **Supabase**.
+3. The build has a server: `BLOB_READ_WRITE_TOKEN` is set (Vercel sets it when a Blob store is
+   connected to the project) or `HOMEOS_LOCAL_SERVER=1` (local and e2e builds): **server**.
+4. Otherwise: **demo**.
+
+`vite.config.ts` turns 3 into the define `import.meta.env.VITE_HOMEOS_SERVER = '1'` (else `''`).
+Only the presence of the token decides it; its value never goes into the client bundle or a log.
+`createBackend()` constructs `ServerBackend` (`src/lib/backend/server.ts`) in server mode.
+`Backend.kind` is `'server'`; `serverAccess(backend)` gives its sign-in side (`ServerAccess`).
+
+### Deploying (Vercel)
+
+- **One function, published with the Build Output API.** Vercel's build command is
+  `node scripts/migrate.mjs && npm run build && node scripts/build-server.mjs --vercel`.
+  `migrate.mjs` skips without a database, as before. `build-server.mjs --vercel` does nothing
+  unless the build is in server mode; then it writes `.vercel/output`: `static/` (a copy of
+  `dist/`), `functions/api/home.func/` (`server/entry/vercel.ts` bundled by esbuild into one
+  ESM file, `index.mjs`, with `.vc-config.json`: `nodejs22.x`, launcher `Nodejs`, helpers off,
+  `maxDuration` 15, and `regions: [HOMEOS_FUNCTION_REGION]` when that is set) and `config.json`
+  (vercel.json's `headers` as routes, in order, each with `continue`, then
+  `{ "handle": "filesystem" }`; `buildOutputConfig()` in `scripts/build-output.mjs`, tested).
+  Vercel deploys `.vercel/output` instead of `dist/` when the build command leaves one, so the
+  app is served as before and the function answers at `/api/home`. Without a Blob store nothing
+  changes: Vercel deploys `dist/` as today.
+- **Why the source is `server/`, not `api/`.** Vercel compiles each `api/*.ts` file on its own,
+  and Node's ESM loader (the package is `"type": "module"`) cannot resolve the app's
+  extensionless imports (`../lib/logic/dates`), so a function that imports `src/lib/backend/demo.ts`
+  fails at run time. Bundling with esbuild avoids that, and a deployment uses either zero-config
+  `api/` functions or a Build Output, not both. Everything the function needs (the app's
+  `src/lib` code and `@vercel/blob`) is inside `index.mjs`; ESM with a `createRequire` banner
+  (`ESM_REQUIRE_BANNER`) so CommonJS dependencies load.
+- **One endpoint on purpose.** All ops share one function, so the instance that stores a write is
+  the one that answers the next poll from its cache. Separate functions would each keep their
+  own cache and see each other's writes only after a Blob read.
+- **Check after the first deploy** (the integrator or main session, no user step):
+  `GET /api/home?op=status` with header `X-HomeOS: 1` answers `{"home":false}` (JSON, not the
+  app's HTML and not a 404). If Vercel ignored `.vercel/output`, the fallback is a committed
+  `api/home.js` that re-exports a bundle written by a `vercel-build` script; nothing else changes.
+- **Settings** (environment variables; the main session sets them, never the user):
+
+  | variable | what |
+  | --- | --- |
+  | `BLOB_READ_WRITE_TOKEN` | set by Vercel when the private Blob store is connected; build and run time |
+  | `HOMEOS_SETUP_CODE` | the one-time setup code: 12 or more letters of `CODE_ALPHABET` once normalised, e.g. `K7QM-3XRP-WN9D` (60 bits). Unset or malformed: setup always answers `invalid_code` |
+  | `HOMEOS_BLOB_WRITES_PER_MONTH` | write budget (default 1900; `0` = no limit, for the Pro plan) |
+  | `HOMEOS_BLOB_READS_PER_MONTH` | read budget (default 9000; `0` = no limit) |
+  | `HOMEOS_BLOB_PATH` | optional: where the home's blob lives (default `homeos/<VERCEL_ENV>/home.json`, so previews never touch production's home) |
+  | `HOMEOS_FUNCTION_REGION` | optional: the region to pin the function to (the Blob store's) |
+
+### The stored document
+
+One private blob, `ServerDoc` in `server/core/serverDoc.ts`, format `homeos.server/1`:
+
+- `home`: the DemoBackend document (`DemoDoc`, now exported from `src/lib/backend/demo.ts` with its
+  row types). At rest `session` is null and `users`, `invites`, `push_subs` are empty. Members
+  who have joined have a `user_id` the server made (`u-<uuid>`); people not joined yet have null.
+  Emails are always `''` (no Google). This is the only part any browser sees, and only through
+  what DemoBackend's methods return.
+- `auth` (server only, never in a response): `devices` (`DeviceRow`: id, `keyHash`, `userId`,
+  `label`, `createdAt`) and `codes` (`CodeRow`: id, `codeHash`, `memberId`, `createdBy`,
+  `createdAt`, `expiresAt`). Only hashes are stored.
+- `rev` (1 when the home came online, +1 with every stored change), `chatRev` (+1 when the chat
+  changed in a stored change), `meta` (`createdAt`, `writes`: the last 50 put ids, `usage`: Blob
+  operations this UTC month).
+
+### Storage, reads and writes
+
+- **`BlobStore`** (`server/store/types.ts`): `get(path, { ifNoneMatch })` (always the latest, never
+  a CDN copy; `'unchanged'` for a matching ETag; null for none) and `put(path, body, { ifMatch } |
+  { create: true })` (BlobConflictError when the ETag moved, or the blob exists).
+  `VercelBlobStore` (`@vercel/blob` 2.8.1, private: `get(path, { access: 'private', useCache:
+  false, ifNoneMatch })`, `put(path, body, { access: 'private', contentType: 'application/json',
+  addRandomSuffix: false, allowOverwrite: true, ifMatch })`, `BlobPreconditionFailedError` →
+  BlobConflictError; the SDK is passed in by `server/entry/vercel.ts`, the only file that imports
+  the package), `FileBlobStore` (local) and `MemoryBlobStore` (unit tests; implemented).
+- **`HomeStore`** (`server/core/homeStore.ts`), one per function instance:
+  - Reads come from its cached copy when that was checked within `freshMs` and is at least the
+    caller's `minRev`; otherwise one `get` with `ifNoneMatch` refreshes it. Auth, polls and loads
+    all use the cache. Concurrent refreshes share one call.
+  - **Writes** go through one queue per instance and are stored with
+    `put(ifMatch: the ETag they were applied to)`. Whatever is waiting when a put can start goes
+    into one put (group commit), each write applied in order to the result of the one before;
+    a write that throws is taken out and rejects alone. A batch that changes nothing (same JSON)
+    is not stored. Before each put: `rev` + 1, `chatRev` + 1 when `chatFingerprint()` changed,
+    a fresh id appended to `meta.writes`, usage counted, `pruneAuth()`.
+  - **Conflicts**: `BlobConflictError` means another instance stored first: re-read, then, unless
+    `meta.writes` holds this put's id (the put landed and only its reply was lost, which the SDK
+    then retried), apply the whole batch again to what is there. Five attempts, then `busy`.
+    Every write is applied to the latest document, so **two people writing at once never lose
+    a change**: two ticks on one visit, two edits to different fields of one item, a message and
+    a tick, all land. The same field edited by two people at once: the later write wins, as on
+    Supabase.
+  - A write made on an instance is in its cache at once, so with one warm instance (the usual
+    case for a household) everyone's next poll sees it; a write on another instance is seen
+    within `freshMs`.
+
+### Budget (Vercel Blob on the Hobby plan)
+
+The Hobby plan includes **2,000 advanced operations** (`put`) and **10,000 simple operations**
+(`head()`, and `get` cache misses, which all of ours are) a month, and when either is exceeded
+Vercel **blocks the store for 30 days**: the home could not even be read. So the server counts
+and spends carefully:
+
+- No Blob operation per request: auth, polls and reads use the instance's cached copy.
+- No write for a wrong code, a sign-in check or a no-op (unchanged JSON is not stored).
+- `pressure()` from `meta.usage` (reads also counted per instance and added with the next put):
+  under 60 % of the read budget `freshMs` 10 s and `pollMs` 3 s; 60 to 85 %: 30 s and 6 s; over
+  85 %: 120 s and 20 s. Browsers poll at the `pollMs` the server returns.
+- Puts at the write budget: **read-only** until the month turns (UTC). Writes answer 503
+  `read_only` without a put, `VersionResponse.readOnly` is true, and Home says so (see Screens).
+  Reading keeps working, instead of the store going dark for 30 days.
+- The integrator or main session checks the team's plan: on Pro, set both budgets to `0`.
+  Roughly one put per change: a household making 60 changes a day uses the Hobby budget.
+
+### Reusing DemoBackend (`server/core/runAs.ts`)
+
+For each call: a fresh in-memory `StorageLike` holding the home with `session` set to the
+caller's user id and `users: [{ id, email: '', name }]`; `new DemoBackend({ storage, user, now,
+search: '', latency: 0 })`; the method runs; for a write the document is read back from the
+storage and `session` and `users` cleared before it is kept. DemoBackend only stores its
+document when the change succeeded, so a refused call changes nothing, and its BackendError
+goes to the browser as the same code. Nothing else in the server knows the data rules.
+Server-only rules on top: the auth section (codes, devices) and `pruneAuth()` after every write.
+
+### The API (`src/lib/backend/serverApi.ts`, `server/core/handler.ts`)
+
+One path, `/api/home`; JSON both ways; `Cache-Control: no-store`. Every request needs the header
+`X-HomeOS: 1`, and a POST `Content-Type: application/json`, else 403 `forbidden` (CSRF: a page
+on another site can't send either without a CORS preflight, which is never answered). Body
+limits: setup 4 MiB, rpc 256 KiB, else 4 KiB (413 `too_large`).
+
+| op | sign-in | request | response |
+| --- | --- | --- | --- |
+| `GET ?op=status` | no | | `{ home }` (is a home online) |
+| `GET ?op=session` | yes | | `{ user, entry, device, rev }`; renews the cookie |
+| `GET ?op=version` | yes | | `{ rev, chatRev, pollMs, readOnly }` |
+| `GET ?op=devices` | yes | | `{ devices: DeviceInfo[] }` |
+| `POST setup` | no | `{ code, phone }` | `{ user, entry, device, rev }` + cookie |
+| `POST redeem` | no | `{ code }` | `{ user, entry, device, rev }` + cookie |
+| `POST rpc` | yes | `{ method, args, minRev? }` | `{ result, rev }` (`null` for void) |
+| `POST createCode` | yes | `{ memberId }` | `{ code, memberId, expiresAt }` |
+| `POST removeDevice` | yes | `{ deviceId }` | `{ ok }` (clears the cookie when it was this one) |
+| `POST signOut` | either | | `{ ok }` always; revokes this device if signed in; clears the cookie |
+| `POST release` | yes | | `{ ok }` ("Not Shea?"); clears the cookie |
+
+`user` is `{ id: user id, email: '', name }`, `entry` a `HomeEntry` (`member`; `claimed` from a
+redeem that made someone join). Errors are `{ "error": { "code", "message" } }`:
+
+| code | status | browser sees (`toBackendError`) |
+| --- | --- | --- |
+| `not_signed_in` | 401 | `not_signed_in`, and ServerBackend signs this browser out |
+| `forbidden`, `unknown_op`, `too_large`, `busy`, `unknown` | 403, 400, 413, 503, 500 | `unknown` |
+| `invalid_input` | 400 | `unknown` with `invalid_input: …` (DemoBackend's words) |
+| `not_found`, `home_exists`, `invalid_code`, `read_only` | 404, 409, 400, 503 | the same code |
+| `too_many_attempts` | 429 + Retry-After | `too_many_attempts` |
+| `unavailable` (Blob unreachable) | 503 | `network` |
+
+**The device key** is 32 random bytes, base64url, made on setup or redeem and sent only in
+`Set-Cookie: homeos_key=<key>; Path=/api; HttpOnly; SameSite=Lax; Max-Age=34560000; Secure`
+(Secure on https; the local server leaves it off for http://localhost). The browser app never
+sees or stores it. The server also accepts `Authorization: Bearer <key>` (tests, tools). A
+cookie rather than a header on purpose: an HttpOnly key can't be read by script, Safari's 7-day
+limit on script-written storage does not apply to it, and iOS copies Safari's cookies into a
+Home Screen app when it is added, so a phone that signed in in Safari and then adds home.os to
+its Home Screen is still signed in (reported behaviour, not checked on a device yet; otherwise
+"Add another device" covers it).
+
+### The RPC allow-list (`RPC_METHODS`, `server/core/rpc.ts`)
+
+`{op:'rpc'}` runs one of these, as the caller, after checking the arguments' shapes
+(`RPC_ARGS`: ids are strings of 1 to 100 characters; text at most 20,000 characters, then
+DemoBackend applies the real limits after trimming; enums, real dates, whole numbers in range;
+objects with only their listed keys; anything else is `invalid_input: args[i].key`).
+
+| method | kind | arguments checked |
+| --- | --- | --- |
+| `getMyHouseholdId` | read | none |
+| `load` | read | household id |
+| `updateHousehold` | write | id; `{ name?, address?, timezone? }` text |
+| `updateMember` | write | id; `{ name?, emoji? }` (weekly email and push are not in server mode) |
+| `addPerson` | write | household id; `{ name, emoji, email? }`, email only `''` |
+| `removePerson` | write | member id (their code goes too) |
+| `createArea`, `renameArea` | write | id; name text |
+| `deleteArea` | write | id |
+| `reorderAreas` | write | household id; up to 500 ids |
+| `createItem` | write | household id; ItemDraft, every key: `area_id` id, `kind` task/state, `title` `note` `good` text, `rag` red/amber/green, `due_date` date or null, `assignee_id` id or null, `repeat` none/weekly/monthly/quarterly/biannual/yearly, `notify` none/same_day/day_before/week_before |
+| `updateItem` | write | id; any of ItemDraft's keys, same checks |
+| `deleteItem`, `completeItem`, `undoCompletion` | write | id |
+| `listMessages` | read | household id; `{ before?: timestamp or null, limit?: 1 to 999 }` optional |
+| `getMessages` | read | up to 1000 ids |
+| `sendMessage` | write | household id; body text |
+| `deleteMessage` | write | id |
+| `setReaction` | write | message id; emoji text; on boolean |
+| `setHousekeepingNote` | write | household id; body text |
+| `undoClearHousekeepingNote` | write | household id |
+| `createHousekeepingTask`, `renameHousekeepingTask` | write | id; title text |
+| `deleteHousekeepingTask` | write | id |
+| `reorderHousekeepingTasks` | write | household id; up to 500 ids |
+| `setHousekeepingTaskDone` | write | household id; date; exactly one of `{ taskId }`, `{ visitTaskId }`; done boolean |
+| `saveHousekeepingVisit` | write | household id; date; `{ comments?: text, price_pence?: 0 to 1,000,000 or null }` |
+| `addHousekeepingVisit` | write | household id; date |
+| `deleteHousekeepingVisit` | write | id |
+
+Not RPCs (`NOT_RPC`, which with `RPC_METHODS` names every Backend method; a test checks it):
+`getUser` (GET session), `onAuthChange` (local), `signInWithGoogle` (rejects: no Google),
+`signOut` (POST signOut), `takeAuthError` (null), `enterHome` (setup's or redeem's entry once,
+else the session's), `subscribe`, `subscribeChat` and `reconnect` (polling), `createHousehold`
+(rejects `home_exists`: a home comes online only through setup), `joinHousehold` and
+`createInvite` (reject `invalid_invite`: codes replace invite links), `getInvitePreview` (null),
+`releaseClaim` (POST release), `importHousehold` (rejects: setup does it), `setPersonEmail`
+(rejects `invalid_input: email`), `savePushSubscription` (rejects), `deletePushSubscription`
+(resolves).
+
+### Signing in (`server/core/auth.ts`, `server/core/limits.ts`)
+
+- **Codes**: 8 letters of `CODE_ALPHABET` (`23456789ABCDEFGHJKLMNPQRSTUVWXYZ`: no 0, 1, I or O;
+  32 letters, so `byte & 31` is unbiased), 40 bits, shown as `ABCD-EFGH` (`formatCode`), typed in
+  any case with or without spaces or hyphens (`normaliseCode`). Single use, valid 7 days, one live
+  code per person (a new one replaces it). Stored as hex SHA-256 of the normalised code. Also a
+  link: `<app>/?code=ABCD-EFGH` (`codeLink`).
+- **Who gets one**: anyone in the home can make a code for anyone in the home: someone not joined
+  yet ("Invite Shea"), someone joined who needs a new phone, or themselves ("Add another device").
+  Someone new is added first (Add Person: name and emoji), then invited.
+- **Redeem**: the code's person joins if they had not (`user_id = 'u-' + uuid`, `claimed_at` now,
+  entry `claimed`, so the welcome step follows and "Not Shea?" works for a day), else it is one
+  more device for them (entry `member`). The code is used up; a device row is added (at most 10 a
+  person and 50 a home; the oldest goes).
+- **Setup code** (`HOMEOS_SETUP_CODE`): works only while no home is online (afterwards it is
+  ignored for good: setup answers `home_exists`).
+- **Guessing**: every presented secret is hashed and compared with every stored hash using
+  `timingSafeEqual`, without stopping early. Failed code and setup attempts are counted in memory
+  (`AttemptLimiter`: 10 per IP and 50 in all per 15 minutes per instance; the IP from `x-real-ip`,
+  else the first `x-forwarded-for`, which Vercel sets), then 429 with Retry-After without trying
+  the code. A wrong code never writes to the Blob store.
+- **Devices** (`DeviceInfo`): id, the person, a label from the user agent ("iPhone · Safari",
+  `deviceLabel()`), when it signed in, and `current`. Anyone in the home can remove any device.
+  Sign Out revokes this one. "Not Shea?" (`release`) runs DemoBackend's `releaseClaim` as the
+  caller (within a day of joining), and `pruneAuth()` then signs that person out everywhere.
+
+### Setup ("Bring this home online")
+
+`server/core/setup.ts`: limits, setup code (constant time), no home online, then
+`buildServerHome(phone, { now, ownerUserId })` (`src/lib/logic/serverImport.ts`, whose header is
+the full rule list), then `newServerDoc` + the owner's device, stored with `put({ create: true })`
+(a second setup racing loses with `home_exists`). In short, from the phone's `homeos.demo.v1`:
+
+- `buildImportPayloadWithIds()` (`importHome.ts`, now exported; `buildImportPayload()` is it
+  without the ids) does the people, areas, items and completions with its rules unchanged: the
+  phone's signed-in person is `me` and becomes the **owner** (signed in on this browser), the made-up
+  Stats history stays behind, text is cut to the limits.
+- Everyone else comes as **not joined yet** (no email), except a person the demo made up whom
+  nothing that comes along refers to: so Shea (with her items) comes, Ela (nothing of hers) does
+  not. A person can always be added again in People.
+- The household's name, address and time zone, areas, every item with all its fields, real
+  completions, the **chat the household wrote** (messages after the home was set up on the
+  phone, their reactions), and **housekeeping** (the task list as it is, the message if written
+  after set-up, the visits created after set-up with their ticks, comments and prices).
+- Fresh ids for everything. `serverSetupSummary(raw)` is the same rules' summary for the screen
+  (`ServerSetupSummary`: DemoHomeSummary plus `messages` and `visits`).
+
+### ServerBackend (`src/lib/backend/server.ts`)
+
+- Requests send `X-HomeOS: 1` and the cookie (same origin), time out after 15 s
+  (`network`), and map errors with `toBackendError`. Any 401 forgets the session and fires
+  `onAuthChange(null)` once before rejecting `not_signed_in`.
+- `getUser()` is GET session (null on 401); the session is kept 2 s so `enterHome()` right after
+  shares it. `bringOnline` and `redeemCode` keep the entry they get for the next `enterHome()`
+  (once), fire `onAuthChange(user)`, and write `homeos.server.auth` (`AUTH_SIGNAL_KEY`, no secret)
+  so other tabs re-check their session. `signOut()` never rejects.
+- Every read sends `minRev`: the newest rev this browser has seen (from polls and every
+  response), so it never reads older than it has shown.
+- **Polling** (one poller for `subscribe`, `subscribeChat` and `onStatus`): GET version every
+  `pollMs` (3 s until the server says otherwise) while `document.visibilityState` is visible; at
+  once on visible, `focus`, `online` and `reconnect()`; never while hidden; stopped when nothing
+  listens. `subscribe`'s `onChange` fires on the first successful poll, whenever `rev` goes up,
+  and on the first success after a failed poll (the "rejoin" of Sync guarantees).
+  `subscribeChat` gets `{ type: 'resync' }` on the same occasions for `chatRev`, plus the change
+  of each of its own chat writes just before that write resolves (as the demo backend does).
+  `onStatus` gets `{ readOnly }`.
+
+### HomeProvider in server mode
+
+Phases are unchanged: no key is phase `signedOut`; with a key, `enterHome()` gives `member` or,
+right after a redeem that made someone join, `claimed` (the welcome step, as after a Google
+claim). New in `HomeContextValue` (stubs now, `TODO(zero-data)`):
+
+- `serverWelcome: ServerWelcome | null` (null outside server mode), worked out whenever the phase
+  becomes `signedOut`: `checking`, then
+  - a waiting `?code=` link (`takeSignInCode()`): tried once with `redeemCode`; success opens the
+    home; failure is `private` with that code in the field and notice `codeInvalid` or
+    `tooManyAttempts`;
+  - else GET status: no home online and this browser holds a demo home
+    (`serverSetupSummary(localStorage homeos.demo.v1)` not null): `setup` with the summary and
+    `pendingSetupCode()` (or `''`);
+  - else `private` (`homeOnline` from status; notice `setupUsed` when a `?setup=` link was waiting
+    and a home is online, and that link is forgotten).
+- `bringHomeOnline(setupCode)`, `redeemCode(code)`, `createCode(memberId)`, `listDevices()`,
+  `removeDevice(deviceId)`: see their doc comments. After bringing the home online:
+  `onboardingTail` and `invitePeople` (the server variant of "haven't joined yet", below), then
+  the home. **No notifications step in server mode** (Onboarding skips it: `finishOnboarding`).
+- `readOnly` from `onStatus`; a write that fails with `read_only` sets it too.
+- Links: `src/lib/serverLinks.ts` (`captureServerLinks()` from `main.tsx` in server mode only,
+  `pendingSetupCode()`, `takeSignInCode()`, `forgetServerLinks()`), kept in localStorage like
+  shared links; a `?code=` link opened while signed in is forgotten with the toast "This phone
+  is already signed in as {name}."
+- Unchanged: optimistic writes, reload ordering, the retry steps, resume, the safety net.
+  `reconnect()` simply polls.
+
+### Screens (server mode; copy is exact)
+
+- **Welcome, `private`**: the hero and wordmark as now; instead of Continue with Google: "This
+  home is private." (17/600) and "Ask someone at home for a code." With `homeOnline` false, the
+  second line is "home.os isn't set up here yet." Then **Have a code?**: one text field
+  (`autocapitalize=characters`, `autocomplete=one-time-code`, `inputmode=text`, `spellcheck=false`,
+  `maxLength` 12, placeholder "ABCD-EFGH", shown in groups as typed) and **Join** (primary, off
+  until 8 letters; busy while it runs). Errors under the field (`role="alert"`): `invalid_code`
+  "That code didn't work. Check it, or ask for a new one."; `too_many_attempts` "Too many tries.
+  Wait 15 minutes, then try again."; else `errorMessage`. Notices above the field:
+  `codeInvalid` "That link's code didn't work. Ask for a new one."; `tooManyAttempts` as the
+  error; `setupUsed` "This home is already online. Ask someone at home for a code." No Google
+  button and no demo note in server mode.
+- **Bring this home online** (`setup`): title "Bring this home online"; the card of "Bring over
+  the home from this phone" (name, address, "{n} areas · {m} items" plus " · {d} done" and
+  " · {k} messages" when there are any, the people with "(you)"); a **Setup code** field
+  (pre-filled from the link; same input attributes, `maxLength` 20, placeholder
+  "XXXX-XXXX-XXXX"); footnote "Everyone else joins with a code you send them from Profile.";
+  **Bring It Online** (primary; busy; `errorMessage` under it). Nothing else: no Start Fresh.
+- **Welcome home, {name}** (after a redeem that made someone join): the existing ClaimWelcome;
+  the "Not {name}?" sheet's message in server mode: "You'll be signed out and {name} goes back to
+  waiting to join. Ask someone at home for a new code."
+- **{Names} haven't joined yet** (after bringing the home online, `invitePeople`): "Send each of
+  them a code. They type it in home.os, or open the link." One row per person not joined: emoji,
+  name, **Invite** (creates a code and opens the code sheet). **Continue**. "You can invite them
+  later in Profile > Household > People."
+- **Code sheet** (any Invite or Add another device): title "Code for {name}" (or "Code for
+  another device"); the code large (34/600, letter-spaced, selectable); "Works once, for 7 days.
+  On {name}'s phone, open home.os and enter it, or open the link." (another device: "On your
+  other phone or tablet, open home.os and enter it, or open the link."); **Share** (the share
+  helper, text "Join our home on home.os: {link}\nCode: {code}"); **Done**.
+- **Profile**: the account line reads "This device · {label}" instead of "Signed in with
+  Google"; **Add another device** (a code for me); **Sign Out** as now. Push notifications,
+  weekly email and "Invite someone" are hidden.
+- **People > a person**: not joined: no Google Email field; **Invite {name}** (code sheet), and
+  Remove as now. Joined: **Devices**, each "{label} · Signed in {date}" with **Remove** (asks
+  "Remove this device?" / "It will need a new code to get back in." / **Remove**, destructive;
+  removing your own signs you out), and **Sign in on a new phone** (code sheet). Add Person has
+  no email field; its footnote: "Then send them a code from their page."
+- **Read-only**: when `readOnly`, Home shows one line under the person filter (13/18 secondary):
+  "Saving is paused until next month: the free storage limit is used up." A failed save says
+  "Couldn't save. Saving is paused until next month."
+
+### Sync guarantees in server mode
+
+The table in "Sync guarantees" holds, every row heard through polling: within about 5 s while
+both are open and online (a 3 s poll, the 250 ms debounce, the load), and within about 5 s of
+coming back into view or online. A browser polls only while visible. Writes resolve as soon as
+they are stored, and the writer reloads at once (with `minRev`).
+
+### Local server and tests
+
+- `server/entry/local.ts` (bundled by `npm run build:server` into `dist-server/local.mjs`): the
+  built app and `/api/home` on one port, `FileBlobStore` under `.homeos-local/` or `--memory`,
+  `--allow-reset` (`POST /__homeos/reset`), `--attempts`. `npm run dev:server`
+  (`scripts/dev-server.mjs`): the local server on 4300 and Vite's dev server with
+  `HOMEOS_LOCAL_SERVER=1 HOMEOS_API_PROXY=http://localhost:4300`.
+- `playwright.server.config.ts` (`npm run test:e2e:server`, `e2e-server/`): port
+  `E2E_PORT` (default 4316); builds with `HOMEOS_LOCAL_SERVER=1` (Supabase and VAPID variables
+  emptied, `VITE_FORCE_DEMO` empty) into `dist-server/app`, then runs the local server with
+  `--memory --allow-reset --attempts 5,20,60000` and `HOMEOS_SETUP_CODE=TEST-SETU-PCDE`; one
+  worker; each test starts from a reset; `serviceWorkers: 'block'`; timezone Europe/London. Each
+  person is their own browser context. It proves: setup from the user's home fixture
+  (`USER_DEMO_DOC` put in localStorage first) with the summary and everything coming along;
+  Shea joining with her code (typed, and as a link) and seeing her items; a stranger with no code
+  sees "This home is private"; wrong codes are refused and then limited; removing a device signs
+  that browser out; Sign Out; "Not Shea?"; and every kind of change (item create, edit, kind,
+  done and undo, delete; areas; household; people added, edited, removed; chat messages and
+  reactions; housekeeping message, ticks, comments, price, task list, visits) showing on the
+  other context within 5 s without a reload (a mark on the page a reload would lose), including
+  two people ticking different tasks and editing different fields of one item at the same moment
+  (both changes stay), and a browser that was offline catching up when back online.
+- Unit tests (Vitest, `server/**/*.test.ts` and `src`): `rpc` (every method accepts the app's
+  real shapes; wrong types, unknown keys, unknown methods, `constructor` and `__proto__` refused);
+  `runAs` (the session never reaches the stored home); `auth` (format, normalising, one code per
+  person, expiry, single use, claim, device limits); `limits`; `homeStore` with two stores over
+  one `MemoryBlobStore` (concurrent writes never lost, group commit, a lost reply not applied
+  twice, no put for no change, `minRev`, freshness, budget and read-only); `handler` (CSRF,
+  content type, body limits, cookie attributes, 401s, every op, error mapping, no key or hash in
+  any response); `serverImport` (the fixture: Stratis owner, Shea with her items, Ela and the
+  made-up history and chat left behind, the starter task list; `demoCreatedDoc()`: one
+  completion; real chat and visits after set-up come along); `deviceLabel`; and
+  `server/client.test.ts`: ServerBackend against `handleApi` in-process (a fake `fetch`), every
+  RPC round trip, polling with fake timers (visible, hidden, focus, online, first poll, rev and
+  chatRev changes, recovery), 401 signing out, the one-off `claimed` entry. HomeProvider and the
+  screens' server-mode behaviour in `src`.
+
+### The server-mode contract (do not change without the architect)
+
+Fixed: `src/lib/backend/serverApi.ts` (paths, header, cookie name, code alphabet and formats, the
+request and response shapes, error codes and statuses, `RPC_METHODS`, `NOT_RPC`), `ServerAccess`,
+`ServerStatus`, `serverAccess()`, `Backend.kind` and the three new `BackendErrorCode`s
+(`src/lib/backend/types.ts`), `DeviceInfo`, `IssuedCode`, `ServerSetupSummary`
+(`src/lib/types.ts`), `ServerWelcome`, `ServerWelcomeNotice` and the new `HomeContextValue`
+members, `ServerDoc` and its parts, `BlobStore`, `HomeStore`'s methods, `runAs`, `RPC_ARGS`, the
+signatures in `server/core/*.ts` and `src/lib/logic/serverImport.ts`, `buildImportPayloadWithIds`,
+`scripts/backend-mode.mjs` and `scripts/build-output.mjs`, and the copy above. Implemented already:
+the wire helpers and their tests, `MemoryBlobStore`, the mode choice, the build output helpers and
+`scripts/build-server.mjs`. Every other `server/` function and every ServerBackend method throws
+"not implemented yet" until built.
+
+`server/entry/vercel.ts` comes with `@vercel/blob` (the integrator installs it and adds `esbuild`
+as an explicit devDependency at the version Vite already brings):
+
+```ts
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import * as blob from '@vercel/blob';
+import { SETUP_BODY_MAX } from '../../src/lib/backend/serverApi';
+import { createServerContext } from '../core/context';
+import { errorResponse, handleApi, type ApiResponse } from '../core/handler';
+import { VercelBlobStore } from '../store/vercel';
+import { readRequest, writeResponse } from './node';
+
+process.env.VERCEL_BLOB_RETRIES ??= '2';
+const ctx = createServerContext({ blobs: new VercelBlobStore(blob), env: process.env, secureCookies: true });
+
+export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let response: ApiResponse;
+  try {
+    response = await handleApi(await readRequest(req, { maxBytes: SETUP_BODY_MAX, trustProxy: true }), ctx);
+  } catch (err) {
+    response = errorResponse(err);
+  }
+  writeResponse(res, response);
+}
+```
+
+(`createServerContext()` in `server/core/context.ts` builds the `ServerContext`: `configFromEnv(env)`,
+`new HomeStore(blobs, { path, budget })`, a limiter, and `node:crypto` for randomness. The local
+entry builds the same with its own store and `secureCookies: false`.)
 
 ## Home
 
@@ -1524,6 +1999,8 @@ subtitle reads "Last visit Thu 1 Oct", October "1 visit · £60.00", September "
   import) inside one transaction that replaces `home_exists()` for itself and is always rolled
   back: nothing it does is seen by anyone else.
 - `npm run test:e2e`: Playwright against the demo-mode build.
+- `npm run test:e2e:server`: Playwright against the local server in server mode
+  (`playwright.server.config.ts`, `e2e-server/`; see "Server mode (no setup)").
 - `npm run test:e2e:live`: Playwright against a build that uses the local Supabase stack
   (`playwright.live.config.ts`, `e2e-live/`): sessions made with the Auth admin API and the
   password grant are put into the app's auth storage (`sb-<host>-auth-token`) before it loads.

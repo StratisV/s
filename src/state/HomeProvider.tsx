@@ -1,5 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { BackendError, type Backend, type HouseholdPatch, type ItemPatch, type MemberPatch } from '../lib/backend/types';
+import {
+  BackendError,
+  serverAccess,
+  type Backend,
+  type HouseholdPatch,
+  type ItemPatch,
+  type MemberPatch,
+} from '../lib/backend/types';
 import { STATE_FIELDS } from '../lib/constants';
 import { formatDay, todayIn } from '../lib/logic/dates';
 import {
@@ -30,6 +37,7 @@ import type {
   AuthUser,
   CreateHouseholdInput,
   DemoHomeSummary,
+  DeviceInfo,
   HomeEntry,
   HouseholdData,
   HousekeepingData,
@@ -41,11 +49,13 @@ import type {
   HousekeepingVisitTask,
   ISODate,
   ISOTimestamp,
+  IssuedCode,
   Item,
   ItemDraft,
   JoinHouseholdInput,
   Member,
   NewPersonInput,
+  ServerSetupSummary,
 } from '../lib/types';
 
 /**
@@ -89,6 +99,31 @@ export type Phase =
  *   or 'ready' with onboardingTail): it can't come over now, and the screen says so.
  */
 export type DemoImportMode = 'create' | 'replace' | 'blocked';
+
+/**
+ * Server mode only (docs/ARCHITECTURE.md "Server mode (no setup)", "Screens"): what the Welcome
+ * screen shows while this browser is not signed in (phase 'signedOut'). HomeProvider works it
+ * out on sign-out and at start-up: GET ?op=status, this browser's demo home
+ * (serverSetupSummary(localStorage homeos.demo.v1)), and the ?setup= and ?code= links
+ * (lib/serverLinks.ts). A ?code= link is tried once by itself ('checking' meanwhile).
+ */
+export type ServerWelcome =
+  /** Asking the server whether a home is online, or trying a ?code= link. */
+  | { kind: 'checking' }
+  /**
+   * No home is online yet and this browser kept one in demo mode: "Bring this home online",
+   * with what comes along and the setup code field (pre-filled from a ?setup= link, else '').
+   */
+  | { kind: 'setup'; summary: ServerSetupSummary; setupCode: string }
+  /**
+   * "This home is private. Ask someone at home for a code." and "Have a code?" (pre-filled
+   * with a ?code= link's code that did not work, else ''). `homeOnline` false: no home is online
+   * yet and this browser has none to bring. `notice`: why a link did not work.
+   */
+  | { kind: 'private'; homeOnline: boolean; code: string; notice: ServerWelcomeNotice | null };
+
+/** Why a link opened on the Welcome screen did not work (server mode; copy in docs/ARCHITECTURE.md). */
+export type ServerWelcomeNotice = 'codeInvalid' | 'tooManyAttempts' | 'setupUsed';
 
 export interface ToastState {
   id: number;
@@ -304,6 +339,37 @@ export interface HomeContextValue {
    */
   deleteHousekeepingVisit(id: string): Promise<void>;
 
+  // ── Server mode (docs/ARCHITECTURE.md "Server mode (no setup)") ──
+  // backend.kind === 'server'. In the other modes serverWelcome is null, readOnly false, and
+  // the actions reject with BackendError('unknown', 'not supported').
+
+  /** What the signed-out Welcome screen shows (see ServerWelcome); null outside server mode. */
+  serverWelcome: ServerWelcome | null;
+  /**
+   * "Bring It Online": reads homeos.demo.v1 again and calls ServerAccess.bringOnline(setupCode,
+   * raw). On success this browser is signed in as the owner; the home opens with
+   * onboardingTail and invitePeople set ("{Names} haven't joined yet" with Invite buttons),
+   * then the home (no notifications step in server mode). The demo document is left as it is.
+   * 'home_exists': serverWelcome becomes private with notice 'setupUsed', and it rejects.
+   * Other failures ('invalid_code', 'too_many_attempts', network) keep the step and reject:
+   * the screen says why under the button (errorMessage).
+   */
+  bringHomeOnline(setupCode: string): Promise<void>;
+  /**
+   * "Have a code?": ServerAccess.redeemCode(code). On success the home opens: after a claim
+   * the welcome step ("Welcome home, Shea", claimed), else straight in. Rejects with
+   * 'invalid_code' or 'too_many_attempts' (the field says why) or 'network'.
+   */
+  redeemCode(code: string): Promise<void>;
+  /** A fresh code for anyone in the home ("Invite Shea", "Add another device", a new phone for someone). */
+  createCode(memberId: string): Promise<IssuedCode>;
+  /** Every signed-in browser in the home (Profile and People load it when they open). */
+  listDevices(): Promise<DeviceInfo[]>;
+  /** Signs a browser out for good; this browser's own: signs out here (phase 'signedOut'). */
+  removeDevice(deviceId: string): Promise<void>;
+  /** Saving is paused until next month (ServerStatus.readOnly): Home shows one line saying so. */
+  readOnly: boolean;
+
   toast: ToastState | null;
   showToast(message: string, action?: ToastState['action']): void;
   dismissToast(): void;
@@ -387,6 +453,12 @@ export function errorMessage(err: unknown): string {
         return 'Someone at home already has that email.';
       case 'home_exists':
         return 'A home has already been set up. Ask someone there to add you.';
+      case 'invalid_code':
+        return 'That code didn’t work. Check it, or ask for a new one.';
+      case 'too_many_attempts':
+        return 'Too many tries. Wait 15 minutes, then try again.';
+      case 'read_only':
+        return 'Saving is paused until next month.';
       default:
         return 'Something went wrong. Try again.';
     }
@@ -414,9 +486,16 @@ export function notSavedMessage(err: unknown, verb: 'save' | 'undo' = 'save'): s
         return `${lead} Please sign in again.`;
       case 'email_taken':
         return `${lead} Someone at home already has that email.`;
+      case 'read_only':
+        return `${lead} Saving is paused until next month.`;
     }
   }
   return `${lead} Try again.`;
+}
+
+/** TODO(zero-data): a server-mode action that is not built yet. */
+function notYet(what: string): Promise<never> {
+  return Promise.reject(new BackendError('unknown', `not supported: ${what}`));
 }
 
 // ── Optimistic changes ───────────────────────────────────
@@ -1750,6 +1829,16 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
           },
         );
       },
+
+      // Server mode: TODO(zero-data) HomeProvider's server-mode state and actions
+      // (docs/ARCHITECTURE.md "Server mode (no setup)", "HomeProvider").
+      serverWelcome: serverAccess(backend) ? { kind: 'checking' } : null,
+      bringHomeOnline: () => notYet('bringHomeOnline'),
+      redeemCode: () => notYet('redeemCode'),
+      createCode: () => notYet('createCode'),
+      listDevices: () => notYet('listDevices'),
+      removeDevice: () => notYet('removeDevice'),
+      readOnly: false,
 
       toast,
       showToast,

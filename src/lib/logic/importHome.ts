@@ -353,6 +353,27 @@ function seededHistory(c: StoredCompletion, householdCreated: number): boolean {
  * items (oldest first).
  */
 export function buildImportPayload(doc: StoredDemoDoc): ImportPayload | null {
+  return buildImportPayloadWithIds(doc)?.payload ?? null;
+}
+
+/**
+ * Which stored rows the payload's keys came from (buildImportPayloadWithIds): server mode
+ * brings the chat and housekeeping along too (lib/logic/serverImport.ts), and needs to know
+ * who in the document became which person.
+ */
+export interface ImportPayloadIds {
+  /** The stored id of the household the payload brings. */
+  household: string;
+  /** Stored member id → person key, for everyone who comes along. */
+  people: Map<string, string>;
+  /** Stored area id → area key. */
+  areas: Map<string, string>;
+  /** Stored item id → item key, for every item that comes along. */
+  items: Map<string, string>;
+}
+
+/** buildImportPayload(), with the stored ids behind each key. Null when the document holds no home. */
+export function buildImportPayloadWithIds(doc: StoredDemoDoc): { payload: ImportPayload; ids: ImportPayloadIds } | null {
   const picked = pick(doc);
   if (!picked) return null;
   const { household, me } = picked;
@@ -452,7 +473,7 @@ export function buildImportPayload(doc: StoredDemoDoc): ImportPayload | null {
   // Over the limit (never in practice): the most recent ones.
   if (completions.length > IMPORT_LIMITS.completions) completions.splice(0, completions.length - IMPORT_LIMITS.completions);
 
-  return {
+  const payload: ImportPayload = {
     version: 1,
     household: {
       name: text(household.name, TEXT_LIMITS.householdName) || 'Our home',
@@ -464,4 +485,5 @@ export function buildImportPayload(doc: StoredDemoDoc): ImportPayload | null {
     items,
     completions,
   };
+  return { payload, ids: { household: household.id, people: personKey, areas: areaKey, items: itemKey } };
 }

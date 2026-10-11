@@ -5,6 +5,7 @@ import type {
   ChatMessage,
   ChatPage,
   CreateHouseholdInput,
+  DeviceInfo,
   HomeEntry,
   Household,
   HouseholdData,
@@ -15,6 +16,7 @@ import type {
   InvitePreview,
   ISODate,
   ISOTimestamp,
+  IssuedCode,
   Item,
   ItemDraft,
   JoinHouseholdInput,
@@ -42,6 +44,12 @@ export type BackendErrorCode =
   | 'email_taken'
   /** importHousehold: a home exists already, so this one cannot be brought over. */
   | 'home_exists'
+  /** Server mode: a sign-in or setup code that is unknown, used, expired or not a code at all. */
+  | 'invalid_code'
+  /** Server mode: too many wrong codes from this network (or everywhere) lately; try again later. */
+  | 'too_many_attempts'
+  /** Server mode: saving is paused until next month (the free storage's monthly write budget is used up). */
+  | 'read_only'
   | 'network'
   | 'unknown';
 
@@ -56,17 +64,20 @@ export class BackendError extends Error {
 }
 
 /**
- * Everything the app needs from a backend. Two implementations:
- * - SupabaseBackend (src/lib/backend/supabase.ts): production.
- * - DemoBackend (src/lib/backend/demo.ts): localStorage, used when no
- *   Supabase env vars are configured, and by the e2e tests.
+ * Everything the app needs from a backend. Three implementations:
+ * - SupabaseBackend (src/lib/backend/supabase.ts): a Supabase project with Google sign-in.
+ * - ServerBackend (src/lib/backend/server.ts): this deployment's own server (Vercel Functions
+ *   and a private Blob store), sign-in with codes; also implements ServerAccess. See
+ *   docs/ARCHITECTURE.md "Server mode (no setup)".
+ * - DemoBackend (src/lib/backend/demo.ts): localStorage, used when nothing else is
+ *   configured, and by the e2e tests. The server runs the same code over its stored document.
  *
  * Permissions: every member of a household may edit everything in it
  * (household details, areas, items, completions, other members' profiles,
  * and all of housekeeping).
  */
 export interface Backend {
-  readonly kind: 'supabase' | 'demo';
+  readonly kind: 'supabase' | 'demo' | 'server';
 
   // ── Auth ──────────────────────────────────────────────
   /** Current user, or null when signed out. */
@@ -319,4 +330,61 @@ export interface Backend {
   addHousekeepingVisit(householdId: string, date: ISODate): Promise<string>;
   /** Deletes a visit and its tasks, for everyone. Already gone or elsewhere: 'not_found'. */
   deleteHousekeepingVisit(id: string): Promise<void>;
+}
+
+/** Server mode: what polling says about the server besides changes. */
+export interface ServerStatus {
+  /**
+   * Saving is paused until next month: the Blob store's monthly write budget is used up
+   * (docs/ARCHITECTURE.md "Server mode (no setup)", "Budget"). Reads keep working.
+   */
+  readOnly: boolean;
+}
+
+/**
+ * The sign-in side of server mode, which has no Google: ServerBackend implements it next to
+ * Backend. Sign-in is a device key in an HttpOnly cookie the server sets; the app never sees
+ * the key. docs/ARCHITECTURE.md "Server mode (no setup)" is the contract.
+ */
+export interface ServerAccess {
+  /** Whether a home is online on this server yet (GET ?op=status; needs no sign-in). */
+  homeOnline(): Promise<boolean>;
+  /**
+   * "Bring this home online": sends the setup code and this browser's demo document (the raw
+   * localStorage homeos.demo.v1 string) to the server, which makes the home from it while none
+   * is online. This browser is then signed in as the home's owner: onAuthChange fires with the
+   * user, and the next enterHome() resolves to the returned entry ('member').
+   * Throws 'invalid_code' (wrong setup code, or setup not configured), 'home_exists' (a home
+   * is online already), 'too_many_attempts', or BackendError('unknown', 'invalid_input: phone')
+   * when the document holds no home.
+   */
+  bringOnline(setupCode: string, phoneDoc: string): Promise<HomeEntry>;
+  /**
+   * "Have a code?" (or a ?code= link): signs this browser in as the code's person and uses the
+   * code up. A person who had not joined yet joins (the entry is 'claimed', so the welcome step
+   * follows); for someone who has, this is one more device ('member'). onAuthChange fires and
+   * the next enterHome() resolves to the returned entry. Throws 'invalid_code' (malformed,
+   * unknown, used or expired; a malformed one without asking the server) or 'too_many_attempts'.
+   */
+  redeemCode(code: string): Promise<HomeEntry>;
+  /**
+   * A fresh code for anyone in the home: someone who has not joined ("Invite Shea"), someone
+   * who has and needs a new phone, or the caller ("Add another device"). Replaces that person's
+   * previous code. Throws 'not_found' (no such person), 'not_signed_in'.
+   */
+  createCode(memberId: string): Promise<IssuedCode>;
+  /** Every signed-in browser in the home, in sign-in order. */
+  listDevices(): Promise<DeviceInfo[]>;
+  /**
+   * Signs a browser out for good (anyone in the home may). Removing this browser's own device
+   * signs it out here too (onAuthChange(null)). Throws 'not_found' when it is gone already.
+   */
+  removeDevice(deviceId: string): Promise<void>;
+  /** Called with each status the polling brings, and once with the current one. */
+  onStatus(cb: (status: ServerStatus) => void): Unsubscribe;
+}
+
+/** The ServerAccess side of `backend` in server mode, else null. */
+export function serverAccess(backend: Backend): (Backend & ServerAccess) | null {
+  return backend.kind === 'server' ? (backend as Backend & ServerAccess) : null;
 }

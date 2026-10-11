@@ -488,3 +488,43 @@ export interface HousekeepingVisitPatch {
   /** Whole pence, 0 to HOUSEKEEPING_PRICE_MAX_PENCE, or null to clear the price. */
   price_pence?: number | null;
 }
+
+// ── Server mode (docs/ARCHITECTURE.md "Server mode (no setup)") ──
+// The home lives on this deployment's own server (Vercel Functions and a private Blob store);
+// people sign in with codes instead of Google.
+
+/** A browser signed in to the home (server mode), as Profile lists them. */
+export interface DeviceInfo {
+  id: string;
+  /** The person it is signed in as. */
+  memberId: string;
+  /** Made from the browser's user agent when it signed in, e.g. "iPhone · Safari" (at most 60 characters). */
+  label: string;
+  /** When it signed in. */
+  createdAt: ISOTimestamp;
+  /** This browser. */
+  current: boolean;
+}
+
+/**
+ * A fresh sign-in code for one person (server mode). Shown once: the server keeps only its
+ * hash. Single use, valid for 7 days; a newer code for the same person replaces it.
+ */
+export interface IssuedCode {
+  /** As shown and typed: 8 characters in two groups, "ABCD-EFGH" (formatCode()). */
+  code: string;
+  /** The same code as a link that signs in when opened: `<origin><BASE_URL>?code=ABCD-EFGH`. */
+  link: string;
+  memberId: string;
+  expiresAt: ISOTimestamp;
+}
+
+/**
+ * What "Bring this home online" shows (server mode): what comes along from this browser's
+ * demo home. DemoHomeSummary's counts, without the people the demo made up that nobody used
+ * (see serverImport.ts), plus the chat messages and housekeeping visits the household wrote.
+ */
+export interface ServerSetupSummary extends DemoHomeSummary {
+  messages: number;
+  visits: number;
+}

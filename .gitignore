@@ -13,3 +13,6 @@ playwright-report
 .DS_Store
 supabase/.temp
 supabase/.branches
+dist-server
+.vercel
+.homeos-local

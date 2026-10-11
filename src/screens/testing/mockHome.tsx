@@ -226,6 +226,15 @@ export function makeHome(over: Partial<HomeContextValue> = {}): HomeContextValue
     saveHousekeepingVisit: vi.fn(async () => {}),
     addHousekeepingVisit: vi.fn(async () => {}),
     deleteHousekeepingVisit: vi.fn(async () => {}),
+    serverWelcome: null,
+    bringHomeOnline: vi.fn(async () => {}),
+    redeemCode: vi.fn(async () => {}),
+    createCode: vi.fn(async () => {
+      throw new Error('createCode not set up in this test');
+    }),
+    listDevices: vi.fn(async () => []),
+    removeDevice: vi.fn(async () => {}),
+    readOnly: false,
     toast: null,
     showToast: vi.fn(),
     dismissToast: vi.fn(),

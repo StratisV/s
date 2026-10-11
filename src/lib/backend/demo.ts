@@ -185,23 +185,24 @@ const SEED_CHAT: {
 ];
 
 // ── Stored rows (SQL columns, including the ones the UI types leave out) ──
+// Exported for the server (server/), which keeps the same document for the home it holds.
 
-interface HouseholdRow extends Household {
+export interface HouseholdRow extends Household {
   created_at: ISOTimestamp;
   updated_at: ISOTimestamp;
   updated_by: string | null;
 }
-interface AreaRow extends Area {
+export interface AreaRow extends Area {
   created_at: ISOTimestamp;
 }
-interface ItemRow extends Item {
+export interface ItemRow extends Item {
   completed_at: ISOTimestamp | null;
 }
-interface CompletionRow extends Completion {
+export interface CompletionRow extends Completion {
   prev_due_date: ISODate | null;
   prev_status: ItemStatus;
 }
-interface InviteRow {
+export interface InviteRow {
   id: string;
   household_id: string;
   token: string;
@@ -209,7 +210,7 @@ interface InviteRow {
   created_at: ISOTimestamp;
   expires_at: ISOTimestamp;
 }
-interface PushSubRow {
+export interface PushSubRow {
   id: string;
   member_id: string;
   user_id: string;
@@ -219,7 +220,7 @@ interface PushSubRow {
   user_agent: string | null;
   created_at: ISOTimestamp;
 }
-interface MessageRow {
+export interface MessageRow {
   id: string;
   household_id: string;
   /** Null once the sender's member row is gone (on delete set null). */
@@ -228,11 +229,11 @@ interface MessageRow {
   created_at: ISOTimestamp;
 }
 /** Primary key (message_id, member_id, emoji); household_id is copied from the message. */
-interface ReactionRow extends ChatReaction {
+export interface ReactionRow extends ChatReaction {
   household_id: string;
 }
 /** housekeeping_notes: one row per household (primary key household_id); none = never written. */
-interface HousekeepingNoteRow {
+export interface HousekeepingNoteRow {
   household_id: string;
   body: string;
   updated_at: ISOTimestamp;
@@ -242,16 +243,16 @@ interface HousekeepingNoteRow {
   cleared_updated_at?: ISOTimestamp | null;
   cleared_updated_by?: string | null;
 }
-interface HousekeepingTaskRow extends HousekeepingTask {
+export interface HousekeepingTaskRow extends HousekeepingTask {
   created_at: ISOTimestamp;
 }
 /** housekeeping_visits (unique household_id + visit_date); its tasks are separate rows. */
-type HousekeepingVisitRow = Omit<HousekeepingVisit, 'tasks'>;
+export type HousekeepingVisitRow = Omit<HousekeepingVisit, 'tasks'>;
 /** housekeeping_visit_tasks (unique visit_id + task_id); household_id is copied from the visit. */
-type HousekeepingVisitTaskRow = HousekeepingVisitTask;
+export type HousekeepingVisitTaskRow = HousekeepingVisitTask;
 
 /** A member as stored: claimed_at (members.claimed_at) is kept for release_claim only. */
-interface MemberRow extends Member {
+export interface MemberRow extends Member {
   /** When an account became this person by a claim (null or missing otherwise). */
   claimed_at?: ISOTimestamp | null;
 }
@@ -259,7 +260,11 @@ interface MemberRow extends Member {
 /** How long after a claim "Not Shea?" (releaseClaim) may undo it, as release_claim. */
 const RELEASE_MS = 86_400_000;
 
-interface DemoDoc {
+/**
+ * The whole demo database: what DemoBackend stores under DEMO_STORAGE_KEY, and what the server
+ * keeps as ServerDoc.home (with `session` null and `users` empty at rest; server/core/runAs.ts).
+ */
+export interface DemoDoc {
   version: 1;
   /** Signed-in user id, or null. */
   session: string | null;
@@ -318,7 +323,8 @@ const HTTPS_URL = /^https:\/\/\S+$/;
 /** message_reactions.emoji: 1 to 16 characters. */
 const REACTION_EMOJI_MAX = 16;
 
-function emptyDoc(): DemoDoc {
+/** An empty document (nobody signed in, no household). */
+export function emptyDoc(): DemoDoc {
   return {
     version: 1,
     session: null,
