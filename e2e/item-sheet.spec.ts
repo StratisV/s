@@ -313,7 +313,8 @@ test.describe('Item sheet: keyboard', () => {
     await page.keyboard.press('Enter');
     await expect(sheet).toHaveCount(0);
     await expect(ring(page, 'Heaters not working')).toHaveCount(0);
-    await expect(rowButton(page, 'Trim the hedges')).toBeFocused();
+    // The first row of the next area, Front garden.
+    await expect(rowButton(page, 'Put the bins out')).toBeFocused();
   });
 
   test('the delete confirmation starts on Cancel, gives focus back, and ignores a held Enter', async ({ page }) => {

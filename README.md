@@ -15,6 +15,15 @@ never gets done and stays on the list, and says **What good looks like** for it,
   Each item is one slim row: its title, then who, when and its note on one line. Areas fold away with a
   tap (or all at once) and stay that way on that phone. Add an item with the round + at the
   bottom right, or with the small + in an area's header, which starts the item in that area.
+- **Calendar** (on Home, under the row of people): this week as a strip, or the whole month
+  with **Show month** (the phone remembers which). Each day shows what is due as red, amber and
+  green dots (up to three, then "+2"), a missed day's date in red, a repeating job's later
+  rounds as faint hollow dots, and a little broom on the days the housekeeper came. It follows
+  the row of people: pick Shea and only Shea's jobs mark it (the housekeeper's visits stay).
+  Today is chosen at first; tap any day to see underneath what is due that day, ticked off
+  with the ring just like on Home, the repeats coming round that day, and that day's
+  housekeeping visit, which opens it on the Housekeeping tab. To maintain items have no date,
+  so they are never on it. Housekeeping's calendar is the same one.
 - **The hero**: every tab opens on an illustration that runs to the very top of the screen: the
   house in its garden, with a green duck and a brown hedgehog, under the sky as it is in London
   right now (sunrise, daytime, sunset, dusk or a starry night). The Home / Chat / Housekeeping /
@@ -53,7 +62,8 @@ npm run dev
 
 Open http://localhost:5173. Without Supabase settings the app runs in **demo mode**:
 sign-in is simulated and data stays in your browser. Add `?demo-seed=1` to the URL to jump
-straight into a household filled with example data, or `?demo-reset=1` to start over.
+straight into a household filled with example data (with a few extra jobs, so the calendar
+has a lively month), or `?demo-reset=1` to start over.
 
 ## Going live
 

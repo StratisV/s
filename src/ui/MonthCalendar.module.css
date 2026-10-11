@@ -1,4 +1,7 @@
-/* The month of visits (docs/ARCHITECTURE.md "Housekeeping", UI 4). */
+/*
+ * The calendar card Home and Housekeeping share (src/ui/MonthCalendar.tsx; docs/ARCHITECTURE.md
+ * "Housekeeping" UI 4 and "Home: the calendar").
+ */
 
 .card {
   margin: 0 16px;
@@ -145,8 +148,8 @@
   box-shadow: none;
 }
 
-/* A day with a visit: a dot under its number. */
-.day[data-visit] .circle::after {
+/* A dot under its number (Housekeeping: a day with a visit). */
+.day[data-dot] .circle::after {
   content: '';
   position: absolute;
   left: 50%;
@@ -158,7 +161,7 @@
   background: var(--tint);
 }
 
-.day[data-selected][data-visit] .circle::after {
+.day[data-selected][data-dot] .circle::after {
   background: #fff;
 }
 
@@ -167,6 +170,45 @@
   color: var(--label-tertiary);
   opacity: 0.3;
   cursor: default;
+}
+
+/* The week strip: no title row above the weekday letters. */
+.card[data-view='week'] {
+  padding-top: 10px;
+}
+
+/* The number in the alert colour (Home: something missed that day). */
+.day[data-alert]:not([data-selected]) {
+  color: var(--destructive);
+  font-weight: 600;
+}
+
+/*
+ * Marks under the circle (Home): every cell is taller to hold a 10px row under the
+ * number, and the circle sits at the top of the cell.
+ */
+.grid[data-marks] .cell,
+.grid[data-marks] .day {
+  height: 56px;
+}
+
+.grid[data-marks] .day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 2px;
+  padding-top: 2px;
+}
+
+.marks {
+  height: 10px;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  overflow: hidden;
 }
 
 @media (max-width: 359px) {
@@ -180,7 +222,7 @@
     height: 36px;
   }
 
-  .day[data-visit] .circle::after {
+  .day[data-dot] .circle::after {
     bottom: 3px;
   }
 }

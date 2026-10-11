@@ -27,6 +27,12 @@ interface HousekeepingScreenProps {
    * the button pressed: focus goes back to it when the sheet closes.
    */
   onEditTasks(opener: HTMLElement): void;
+  /**
+   * A day to show, from Home's calendar (a visit there): chosen in the calendar as if tapped
+   * here, brought into view and focused (today: the Today section). Then `onDayShown`.
+   */
+  showDay?: ISODate | null;
+  onDayShown?(): void;
 }
 
 /** The calendar's month and chosen day, remembered while the app runs (like Stats' period). */
@@ -51,7 +57,7 @@ const reducedMotion = () => {
  * is recorded), and the calendar of every visit with the chosen day's visit under it.
  * Everything saves itself; a polite live region says what was saved.
  */
-export function HousekeepingScreen({ tabs, onOpenProfile, onEditTasks }: HousekeepingScreenProps) {
+export function HousekeepingScreen({ tabs, onOpenProfile, onEditTasks, showDay, onDayShown }: HousekeepingScreenProps) {
   const { data, me, today, deleteHousekeepingVisit } = useHousehold();
   const { visits } = data.housekeeping;
   const householdId = data.household.id;
@@ -115,6 +121,32 @@ export function HousekeepingScreen({ tabs, onOpenProfile, onEditTasks }: Houseke
     });
     heading.focus({ preventScroll: true });
   };
+
+  // A day from Home's calendar: choose it (in its month), then once it shows, bring its
+  // details into view and put focus on its heading, so VoiceOver carries on from there.
+  const [shownDay, setShownDay] = useState<ISODate | null>(null);
+  const shownDayRef = useRef({ onDayShown, showToday });
+  shownDayRef.current = { onDayShown, showToday };
+  useEffect(() => {
+    if (!showDay) return;
+    update({ month: monthOf(showDay), selected: showDay });
+    setShownDay(showDay);
+    // `update` only sets state.
+  }, [showDay]);
+  useEffect(() => {
+    if (!shownDay || view.selected !== shownDay) return;
+    setShownDay(null);
+    if (shownDay === today) {
+      shownDayRef.current.showToday();
+    } else {
+      const heading = calendarRef.current?.querySelector<HTMLElement>('[data-day-detail] h3');
+      if (heading) {
+        heading.scrollIntoView?.({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });
+        heading.focus({ preventScroll: true });
+      }
+    }
+    shownDayRef.current.onDayShown?.();
+  }, [shownDay, view.selected, today]);
 
   const deleteToday = () => {
     setConfirmToday(false);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChatScreen } from './screens/chat/ChatScreen';
-import { inCollapsedArea } from './screens/home/areaPanel';
+import { inCollapsedArea, rowFallback, rowsBeside } from './screens/home/areaPanel';
 import { HomeScreen } from './screens/home/HomeScreen';
 import { AddButton, TabBar } from './screens/home/TabBar';
 import { HousekeepingScreen } from './screens/housekeeping/HousekeepingScreen';
@@ -12,6 +12,7 @@ import { Onboarding } from './screens/onboarding/Onboarding';
 import { ProfileScreen } from './screens/profile/ProfileScreen';
 import { useSharedLink } from './screens/share/useSharedLink';
 import { StatsScreen } from './screens/stats/StatsScreen';
+import type { ISODate } from './lib/types';
 import type { ItemSheetTarget, Tab } from './screens/types';
 import { ChatProvider, useChat } from './state/ChatProvider';
 import { useHome, useHousehold } from './state/HomeProvider';
@@ -49,7 +50,7 @@ interface FocusReturn {
   target: HTMLElement;
   /** Fallbacks if the target's row is gone (completed or deleted): the rows after it, then before it. */
   nearby: HTMLElement[];
-  /** The target's area, whose name (a disclosure button) is the last fallback on Home. */
+  /** The target's area, whose name (a disclosure button) is the last fallback on Home (the chosen day under the calendar). */
   section: HTMLElement | null;
 }
 
@@ -60,7 +61,8 @@ interface FocusReturn {
 function takeFocusReturn(stage: HTMLElement | null): FocusReturn | null {
   const el = document.activeElement;
   if (!stage || !(el instanceof HTMLElement) || !stage.contains(el) || !isFocusVisible(el)) return null;
-  const rows = Array.from(stage.querySelectorAll<HTMLElement>('[data-item-open]'));
+  // The rows in its own list: the areas', or the chosen day's under Home's calendar.
+  const rows = rowsBeside(el, stage);
   const i = rows.indexOf(el);
   const nearby = i < 0 ? [] : [...rows.slice(i + 1), ...rows.slice(0, i).reverse()];
   return { target: el, nearby, section: el.closest('section') };
@@ -111,7 +113,7 @@ function restoreFocus({ target, nearby, section }: FocusReturn, stage: HTMLEleme
     !!el && el.isConnected && stage.contains(el) && !inCollapsedArea(el);
   const next =
     [target, ...nearby].find(reachable) ??
-    [section?.querySelector<HTMLElement>('button[aria-expanded]')].find(reachable) ??
+    [rowFallback(section)].find(reachable) ??
     stage.querySelector<HTMLElement>('button[aria-label="New item"]');
   next?.focus({ preventScroll: true });
 }
@@ -150,6 +152,9 @@ function MainShell() {
   // The area a shared link (?area=) points at, for Home to open and scroll to.
   const [linkedArea, setLinkedArea] = useState<string | null>(null);
   const clearLinkedArea = useCallback(() => setLinkedArea(null), []);
+  // A day Home's calendar sends to Housekeeping (its visit), for Housekeeping to show.
+  const [housekeepingDay, setHousekeepingDay] = useState<ISODate | null>(null);
+  const clearHousekeepingDay = useCallback(() => setHousekeepingDay(null), []);
   const stageRef = useRef<HTMLDivElement>(null);
 
   // Page-sheet push-back: scale the stage so it sits 18px in from each side.
@@ -222,7 +227,15 @@ function MainShell() {
   const switchTab = useCallback((next: Tab) => {
     setTab(next);
     if (next !== 'home') setLinkedArea(null);
+    if (next !== 'housekeeping') setHousekeepingDay(null);
   }, []);
+  const openHousekeepingDay = useCallback(
+    (date: ISODate) => {
+      switchTab('housekeeping');
+      setHousekeepingDay(date);
+    },
+    [switchTab],
+  );
 
   // The tab switch sits under the hero on every tab.
   const tabs = <TabBar tab={tab} onTab={switchTab} unread={unread} newNote={newNote} />;
@@ -240,6 +253,7 @@ function MainShell() {
             onRevealed={clearReveal}
             linkedArea={linkedArea}
             onLinkedAreaShown={clearLinkedArea}
+            onOpenHousekeeping={openHousekeepingDay}
           />
         ) : tab === 'chat' ? (
           <ChatScreen tabs={tabs} onOpenProfile={() => setProfileOpen(true)} />
@@ -248,6 +262,8 @@ function MainShell() {
             tabs={tabs}
             onOpenProfile={() => setProfileOpen(true)}
             onEditTasks={openTaskList}
+            showDay={housekeepingDay}
+            onDayShown={clearHousekeepingDay}
           />
         ) : (
           <StatsScreen tabs={tabs} onOpenProfile={() => setProfileOpen(true)} />

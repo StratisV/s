@@ -123,6 +123,22 @@ export const SEED_ITEMS: SeedItem[] = [
   { area: 'Front garden', title: 'Trim the hedges', note: '', rag: 'green', due_in_days: 25, repeat: 'quarterly', notify: 'day_before' },
 ];
 
+/**
+ * More To do items for the demo household (`?demo-seed=1` only, after SEED_ITEMS; never a
+ * real household's list), so Home's calendar has a lively month: something due today, three
+ * weekly jobs whose repeats show faint through the month, and a busy day six days on with
+ * four things due (three dots and "+1"). Due offsets are from today, like SEED_ITEMS'.
+ * Garden Lounge keeps one status (green) and Front garden two, so their names still fit
+ * on one line beside the status counts at 320px (e2e/share.spec.ts).
+ */
+export const DEMO_CALENDAR_ITEMS: SeedItem[] = [
+  { area: 'Garden Lounge', title: 'Empty the dehumidifier', note: 'The tank fills in about a week.', rag: 'green', due_in_days: 0, repeat: 'weekly', notify: 'same_day', demo_assignee: 'shea' },
+  { area: 'Garden Lounge', title: 'Water the plants', note: '', rag: 'green', due_in_days: 2, repeat: 'weekly', notify: 'same_day', demo_assignee: 'ela' },
+  { area: 'Garden Lounge', title: 'Cover the garden furniture', note: 'Storm forecast for that night.', rag: 'green', due_in_days: 6, repeat: 'none', notify: 'day_before', demo_assignee: 'shea' },
+  { area: 'Front garden', title: 'Put the bins out', note: 'Collection is early the next morning.', rag: 'green', due_in_days: 6, repeat: 'weekly', notify: 'same_day', demo_assignee: 'me' },
+  { area: 'Front garden', title: 'Clear the gutters', note: 'Overflowing at the back corner.', rag: 'red', due_in_days: 6, repeat: 'biannual', notify: 'day_before' },
+];
+
 /** Hour (household time) after which reminders, missed alerts and the weekly email go out. */
 export const SEND_HOUR = 8;
 

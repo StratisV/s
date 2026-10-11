@@ -1,0 +1,262 @@
+/* Home's calendar (HomeCalendar.tsx): the card is src/ui/MonthCalendar; these are its marks and the day under it. */
+
+.section {
+  /* The chosen day's details come up this far when a day low on the screen is chosen. */
+  --day-room: 40vh;
+}
+
+/* "Calendar", and Show month / Show week on the right. */
+.headerRow {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 14px 20px 8px;
+}
+
+.header {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 20px;
+  line-height: 25px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+}
+
+.headerAction {
+  position: relative;
+  flex: none;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--tint);
+  border-radius: 6px;
+}
+
+/* 44px tap target around the 20px line. */
+.headerAction::before {
+  content: '';
+  position: absolute;
+  inset: -12px -10px;
+}
+
+.headerAction:active {
+  opacity: 0.5;
+}
+
+/* ── Marks under a day's number ────────────────────────── */
+
+/* An item due (or missed): a dot in its status colour. */
+.dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dot);
+}
+
+/* A repeat still to come: hollow and faint. */
+.dot[data-repeat] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--dot);
+  opacity: 0.55;
+}
+
+/* More than three: "+2". */
+.more {
+  flex: none;
+  font-size: 10px;
+  line-height: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * A housekeeping visit: a broom on a small disc at the circle's top right, like a badge, so
+ * it reads on a plain day, on today's ring and on the chosen day's fill.
+ */
+.broom {
+  position: absolute;
+  top: -4px;
+  right: -3px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--card);
+  color: var(--tint);
+  box-shadow: 0 0 0 0.5px rgba(0, 122, 255, 0.25);
+}
+
+/* ── What the marks mean (month view) ──────────────────── */
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 14px;
+  margin: 6px 4px 0;
+  padding-top: 10px;
+  border-top: 0.5px solid var(--separator);
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: 0;
+  color: var(--label-secondary);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.legendDots {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.legendMissed {
+  font-weight: 700;
+  color: var(--destructive);
+  font-variant-numeric: tabular-nums;
+}
+
+.legendBroom {
+  color: var(--tint);
+}
+
+/* ── The chosen day ────────────────────────────────────── */
+
+.day {
+  padding-bottom: 2px;
+}
+
+.dayHeader {
+  margin: 0;
+  padding: 18px 20px 8px;
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  overflow-wrap: anywhere;
+  /* Choosing a day low on the screen scrolls it up until this much is left under it. */
+  scroll-margin-bottom: var(--day-room);
+}
+
+.card {
+  margin: 0 16px;
+  background: var(--card);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+.card + .card {
+  margin-top: 10px;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.empty {
+  margin: 0;
+  padding: 11px 18px;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label-secondary);
+}
+
+/* A repeat's ring: dashed, faint, in its status colour; not a button. */
+.repeatSlot {
+  pointer-events: none;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-top: 8px;
+  display: grid;
+  place-items: center;
+}
+
+.repeatRing {
+  width: 22px;
+  height: 22px;
+  border: 2px dashed var(--ring);
+  border-radius: 50%;
+  opacity: 0.55;
+}
+
+.repeatTitle {
+  color: var(--label-secondary);
+}
+
+.repeatMeta {
+  flex: none;
+}
+
+/* The day's housekeeping visit: opens that day in Housekeeping. */
+.visitRow {
+  position: relative;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 18px 9px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+  scroll-margin: 8px 0 calc(104px + var(--bottom-inset));
+}
+
+.visitRow:active {
+  background: var(--fill-tertiary);
+}
+
+.visitRow:focus-visible {
+  outline: 2px solid var(--tint);
+  outline-offset: -2px;
+  border-radius: 22px;
+}
+
+.visitIcon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  color: var(--tint);
+}
+
+.visitText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.visitTitle {
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label);
+}
+
+.visitMeta {
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: 0;
+  color: var(--label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.visitChevron {
+  flex: none;
+  color: rgba(60, 60, 67, 0.3);
+}

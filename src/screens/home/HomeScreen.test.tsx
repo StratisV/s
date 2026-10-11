@@ -123,7 +123,10 @@ afterEach(() => {
 describe('HomeScreen', () => {
   it('lists the areas and says each row’s status to assistive tech', async () => {
     await setup();
-    expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(11);
+    // The calendar's heading, then the eleven areas'.
+    const headings = screen.getAllByRole('heading', { level: 2 });
+    expect(headings.map((h) => h.closest('[data-area-id]') !== null)).toEqual([false, ...Array(11).fill(true)]);
+    expect(headings[0].textContent).toBe('Calendar');
     expect(screen.queryByText('No areas yet')).toBeNull();
     // jsdom's name computation may put a space before the comma.
     const heaters = screen.getByRole('button', {
@@ -588,5 +591,54 @@ describe('statusCounts', () => {
     });
     expect(statusCounts(items('aa')).label).toBe('2 at risk');
     expect(statusCounts([])).toEqual({ counts: [], label: '' });
+  });
+});
+
+describe('the calendar on Home', () => {
+  const calendar = () => screen.getByRole('region', { name: 'Calendar' });
+  const dayButton = (date: string) => calendar().querySelector<HTMLButtonElement>(`[data-date="${date}"]`);
+
+  it('marks only the items the person filter shows; housekeeping visits stay', async () => {
+    const { home } = await setup();
+    const data = home().data!;
+    const today = home().today;
+    const busy = data.items.find((i) => i.title === 'Put the bins out')!.due_date!;
+    const lastVisit = data.housekeeping.visits.map((v) => v.visit_date).sort().at(-1)!;
+    fireEvent.click(within(calendar()).getByRole('button', { name: 'Show month' }));
+    // The month of the busy day (six days on: it may be next month).
+    if (busy.slice(0, 7) !== today.slice(0, 7)) fireEvent.click(within(calendar()).getByRole('button', { name: 'Next month' }));
+    expect(dayButton(busy)!.getAttribute('aria-label')).toMatch(/, 4 due/);
+
+    const filter = (name: RegExp) => within(screen.getByRole('radiogroup', { name: 'Show tasks for' })).getByRole('radio', { name });
+    fireEvent.click(filter(/^Shea,/));
+    // Shea's two: the shower and the garden furniture.
+    expect(dayButton(busy)!.getAttribute('aria-label')).toMatch(/, 2 due/);
+    fireEvent.click(dayButton(busy)!);
+    const panel = calendar().querySelector<HTMLElement>('[data-calendar-day]')!;
+    expect(within(panel).getAllByRole('button', { name: /^Mark / }).map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Mark Shower draining slowly as done',
+      'Mark Cover the garden furniture as done',
+    ]);
+    fireEvent.click(filter(/^Stratis/));
+    expect(dayButton(busy)!.getAttribute('aria-label')).toMatch(/, 1 due/);
+
+    // The last visit is still marked, whoever is shown.
+    while (!dayButton(lastVisit)) fireEvent.click(within(calendar()).getByRole('button', { name: 'Previous month' }));
+    expect(dayButton(lastVisit)!.getAttribute('aria-label')).toMatch(/, housekeeping visit$/);
+    fireEvent.click(filter(/^Unassigned,/));
+    expect(dayButton(lastVisit)!.getAttribute('aria-label')).toMatch(/, housekeeping visit$/);
+  });
+
+  it('completes an item from the chosen day', async () => {
+    const { home } = await setup();
+    const today = home().today;
+    const panel = () => calendar().querySelector<HTMLElement>('[data-calendar-day]')!;
+    // Today is chosen at first: the dehumidifier is due.
+    expect(panel().getAttribute('data-calendar-day')).toBe(today);
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Mark Empty the dehumidifier as done' }));
+    // A weekly job: due again in a week, so today has nothing left.
+    await waitFor(() => expect(within(panel()).getByText('Nothing due today.')).toBeTruthy());
+    const dehumidifier = home().data!.items.find((i) => i.title === 'Empty the dehumidifier')!;
+    expect(dehumidifier.due_date).not.toBe(today);
   });
 });

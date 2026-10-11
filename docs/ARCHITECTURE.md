@@ -26,9 +26,10 @@ top of Supabase. The design spec is `design/README.md` (Turn 3, option 3a in
   date, repeat and reminder that Mark as Done completes) and **To maintain** (`state`: a thing
   whose condition is kept track of, like the firepit; never done, always on the list, with a
   free-text **What good looks like**).
-- Radical simplicity: no filters, counters, dashboards or settings beyond the spec. The one
-  exception the household asked for: each area header shows how many of its items are red,
-  amber and green (see "Home" below).
+- Radical simplicity: no filters, counters, dashboards or settings beyond the spec. The
+  exceptions the household asked for: each area header shows how many of its items are red,
+  amber and green (see "Home" below), and Home has a calendar of what is due (see "Home: the
+  calendar").
 - **Housekeeping** (see "Housekeeping" below): a tab for the weekly visit by the housekeeper,
   who is a household member like everyone else (no roles). A message for the housekeeper,
   today's checklist from the household's task list, comments and the price for the day, and a
@@ -44,6 +45,8 @@ src/
   lib/types.ts             domain types (match SQL columns)
   lib/constants.ts         emoji set, colours, labels, default areas, seed items
   lib/logic/*.ts           pure logic: dates, items (missed, sort, repeat, kinds), stats (donut),
+                           months (month grids and weeks, Monday first), calendar (what each day
+                           holds on Home's calendar: due, missed, repeats, visits),
                            chat (order, merge, runs, separators, reactions, unread, keyboard),
                            sun (London sun position), sky (time-of-day sky colours),
                            housekeeping (month grid, totals, GBP prices, checklist, optimistic edits),
@@ -59,11 +62,13 @@ src/
   lib/sw-register.ts       service worker registration
   ui/                      shared primitives: Screen (+ ScreenHeader), Hero, StatusSky, Sheet, ActionSheet, Toggle,
                            Avatar, Toast, Confetti, HomeScene (Join), icons, useReorder (drag and arrow-key
-                           reordering for the areas and the housekeeping task list)
+                           reordering for the areas and the housekeeping task list), MonthCalendar
+                           (the calendar card Home and Housekeeping share)
   ui/animals.ts            the drawn green duck and brown hedgehog (SVG) for HomeScene and Confetti
   lib/preview.ts           `?frame` simulates the 54px status bar inset for screenshots
   screens/home/            Home screen (collapsible areas with status counts and an add button),
-                           item rows, tab switch (TabBar) and the floating + (AddButton)
+                           item rows, the calendar (HomeCalendar), tab switch (TabBar) and the
+                           floating + (AddButton)
   screens/chat/            Household group chat with emoji reactions
   screens/housekeeping/    Housekeeping tab: message, today's checklist, comments, price, calendar,
                            task list sheet
@@ -731,6 +736,98 @@ returns `people` and `emojis`; new `join_as_person` (`JoinHouseholdInput.personI
   `ui/animals.ts`) wherever a member's emoji shows, with the character kept in the text for
   copying and screen readers.
 
+### Home: the calendar
+
+`screens/home/HomeCalendar.tsx` (+ `.module.css`, `.test.tsx`), logic in
+`lib/logic/calendar.ts` (+ `.test.ts`) and `lib/logic/months.ts`, on the calendar card
+`ui/MonthCalendar.tsx` that Housekeeping uses too. Nothing new is stored on the server.
+
+- **Where**: a section with the `h2` **Calendar** (20/25/600) between the person filter and
+  the areas (above Collapse All), with **Show month** / **Show week** on the right (15px tint
+  text, a 44px tap target). Shown whenever Home has areas.
+- **Week or month**: the week strip (one row of seven days, Monday first, under the weekday
+  letters; no title, the grid is named "Week of Monday 5 October") is the default; Show month
+  gives the month with its title between Previous month and Next month (no limit either way).
+  The choice is kept on this device (`homeos.calendar` = `month`, nothing for the week; every
+  read and write in try/catch). The month opens on the chosen day's month; the strip shows the
+  chosen day's week (at first this week), and follows the keyboard into the next or previous
+  week.
+- **The chosen day**: today at first. It is remembered while the app runs (per household, like
+  Housekeeping's), and a new day starts on today again. Changing month keeps it (its details
+  stay under the calendar). Choosing a day says what it holds through a polite, visually
+  hidden live region (`calendarDayAnnouncement()`: "Wednesday 14 October: 4 due. Details below
+  the calendar.", "Thursday 8 October, today: nothing due. …") and, when its heading is low on
+  the screen, scrolls it up (`scrollIntoView` `block: 'nearest'`, the heading's
+  `scroll-margin-bottom` 40vh; no smooth scroll with Reduce Motion); focus stays on the day.
+- **What marks a day** (`calendarDays()`, `calendarLookup()`, worked out a month at a time):
+  - **To do items due** that day: open tasks with a due date (`isDated()`), the person
+    filter applied (with Shea chosen, only Shea's). Under the day's number, one 6px dot per
+    item in its RAG colour, red first, then amber, then green, at most three, then "+2"
+    (`dayDots()`). A day before today with something still open is **missed**: its number is
+    red (`--destructive`, 600) and its items count as missed.
+  - **Repeats** (`repeatDates()`): a repeating item's next due date is its own mark; in the
+    days shown (the month, or the week) its later rounds are faint hollow dots (55% opacity),
+    after the solid ones. They are where Mark as Done would move it, one completion after
+    another: `nextDueDate()` from its due date (from today for a missed one, as
+    `complete_item` does), then one interval at a time (weekly, monthly, quarterly, every 6
+    months, yearly; month ends clamp and carry on: 31 Jan, 28 Feb, 28 Mar). ISODate arithmetic
+    only, so the clock changes in London move nothing.
+  - **The housekeeping visit**: a recorded visit (`isRecorded()`, whoever the filter shows) puts
+    a broom (`BroomIcon`) on a small white disc at the circle's top right, so it reads on a
+    plain day, today's ring and the chosen day's fill.
+  - To maintain items have no date and never mark it; nor do done items.
+  - The legend under the month (not the strip, and hidden from assistive tech, as each day's
+    name says it in words): three dots "Due", a red "6" "Missed", a hollow dot "Repeats", the
+    broom "Housekeeping".
+- **Under the calendar** (the chosen day): an `h3` (17/22/600) with the day in full
+  (`fullDay()`, with the year when it isn't this year's), then a card: its items as Home's own
+  rows (`ItemRow`: the ring completes, the row opens the Item sheet), missed ones first, then
+  its repeats (`RepeatRow`: a faint dashed ring that is not a button, the title in secondary
+  grey, "🦆 Shea · Repeats every week · Due Thu 8 Oct" (`repeatMeta()`), read as "<title>,
+  Amber, repeat."; the row opens the Item sheet). Nothing: "Nothing due today." / "Nothing
+  due." ("Nothing due for Shea." with Shea chosen, "Nothing unassigned due." for Unassigned).
+  Then, for a day with a recorded visit, a card with one row: the broom, "Housekeeping visit"
+  and "6 of 7 done · £60.00" (`visitSummary()`), named "Housekeeping visit, 6 of 7 done,
+  £60.00. Show in Housekeeping". It opens that day in Housekeeping: App switches tab and
+  passes the day (`showDay`); Housekeeping chooses it in its calendar (in its month), scrolls
+  its heading to the top and focuses it (`tabIndex={-1}`), or for today scrolls to the Today
+  section and focuses its heading, as Show does.
+- **Two lists of rows**: the chosen day's (inside `section[data-calendar]`) and the areas'.
+  Moving focus to a nearby row (after a completion in `ItemRow`, or when the Item sheet closes
+  on a row that is gone in `App`) stays in the row's own list (`rowsBeside()` in
+  `screens/home/areaPanel.ts`), and falls back to the area's name or, under the calendar, the
+  chosen day's button (`rowFallback()`).
+- **Accessibility**: the grid is a `table` with `role="grid"`, labelled by the month title
+  (`aria-live="polite"`) or the week's name; columns are `th scope="col"` with the full weekday
+  as `abbr`; each day cell is `role="gridcell"` with `aria-selected`, holding the day's button,
+  named by `calendarDayName()` ("Friday 16 October, 3 due, 1 missed, 2 repeats, housekeeping
+  visit"; ", today" after the date, ", selected" last); the marks are `aria-hidden`. One day
+  button is in the tab order (the chosen day, else today, else the first day shown); arrow keys
+  move a day or a week, Home and End go to the start and end of the week, Page Up and Page Down
+  change month, and moving past the edge goes on into the next month or week. Day buttons fill
+  their cells: 56px tall, at least 44px wide from 360px up (about 40 at 320, like
+  Housekeeping's). Nothing relies on colour alone: missed dates are bold too, repeats are
+  hollow, the visit is a broom.
+- **Demo seed**: `?demo-seed=1` adds `DEMO_CALENDAR_ITEMS` (`lib/constants.ts`) to
+  `SEED_ITEMS` (only there: never a real household's list). With the e2e clock (Thu 8 Oct
+  2026): the dehumidifier due today (weekly, Shea), the plants on Sat 10 (weekly, Ela), and on
+  Wed 14 four things due (the gutters red, the shower amber, the garden furniture and the bins
+  (weekly, Stratis) green: three dots and "+1"), with the weekly jobs coming round faint for
+  the rest of the month, Heaters missed on Tue 6 and the visit on Thu 1. Garden Lounge keeps
+  one status and Front garden two, so their names still fit beside the counts at 320px.
+- **Tests**: `lib/logic/calendar.test.ts` (weeks, the clock changes in London, repeats of every
+  interval, month-end clamping, missed repeats, marks, dots, names and announcements),
+  `screens/home/HomeCalendar.test.tsx` (week and month, the marks, the view kept on this device
+  and without storage, choosing a day, completing from it, repeats, the visit link, empty days
+  for each filter, scrolling with Reduce Motion, the day remembered, the keyboard),
+  `HomeScreen.test.tsx` (the filter narrows the marks, completing from the chosen day),
+  `App.test.tsx` (a visit opens its day, and today's the Today section, in Housekeeping) and
+  `e2e/calendar.spec.ts` (the marks, the filter, choosing a day and completing from it, the
+  view remembered after a reload, the link to Housekeeping, the keyboard, Reduce Motion, 320,
+  375 and 402px with no sideways scroll, and the Housekeeping calendar unchanged). The e2e
+  helpers `ring`, `row` and `areaHeadings` look in the areas only (`areas()` in
+  `e2e/fixtures.ts`), since the chosen day lists rows of its own.
+
 ### The hero and the tab switch
 
 Every tab (Home, Chat, Housekeeping, Stats) starts with `ScreenHeader` (`ui/Screen.tsx`): the
@@ -1243,7 +1340,9 @@ rejects). The optimistic copies come from `src/lib/logic/housekeeping.ts`:
 Pure functions; each doc comment is the spec and ends with the unit tests it needs ("Tests:",
 for `src/lib/logic/housekeeping.test.ts`). Calendar: `WEEKDAYS` (Monday first), `monthOf`,
 `shiftMonth`, `monthTitle` ("October 2026"), `monthGrid` (weeks of 7, Monday first, null
-padding), `canHaveVisit`, `longDay` ("Thursday 1 October"), `calendarDayLabel` (", selected"
+padding; these five live in `lib/logic/months.ts`, which Home's calendar shares, and are
+re-exported here), `canHaveVisit`, `longDay` ("Thursday 1 October"; `fullDay()` in
+`months.ts`), `calendarDayLabel` (", selected"
 for the chosen day), `defaultSelectedDay` (today's month, or any month),
 `daySelectedAnnouncement`. Visits: `isRecorded`, `visitOn`, `visitDays`, `monthTotals`,
 `monthSummary` ("4 visits · £180.00", "2 visits", "No visits"), `doneCount`,
@@ -1269,7 +1368,7 @@ Files under `src/screens/housekeeping/` (each with a `.module.css` where it has 
 | `useNewNote.ts` | the Housekeeping tab's dot (a new message from someone else) |
 | `Checklist.tsx` | the tasks as checkboxes |
 | `PriceField.tsx` | the £ field: parse, format, error |
-| `Calendar.tsx` | month header and summary, the month grid |
+| `Calendar.tsx` | the month of visits: `ui/MonthCalendar.tsx` (the card Home's calendar uses too; styles in `ui/MonthCalendar.module.css`) with the month's summary, a dot for each visit (`data-visit`) and `lastDay` today |
 | `DayDetail.tsx` | the selected day under the calendar |
 | `TaskListSheet.tsx` | the page sheet that edits the task list; App mounts it beside the stage, like the Item sheet, so the screen behind is pushed back |
 | `useSavedText.ts` | the message and comments fields: save after a pause and on blur, keep a draft while editing or after a failed save |
@@ -1363,7 +1462,8 @@ pops in when you come back from a tab without it.
    calendar.") and, when its heading is low on the screen, scrolls it up (`scrollIntoView`,
    `block: 'nearest'`, the heading's `scroll-margin-bottom` 45vh; no smooth scroll with Reduce
    Motion); focus stays on the day.
-5. **The selected day** (`DayDetail`, under the calendar card):
+5. **The selected day** (`DayDetail`, under the calendar card; a visit on Home's calendar opens
+   its day here, chosen, with focus on this heading: see "Home: the calendar"):
    - nothing selected: 15/20 secondary "Tap a day to see its visit."
    - a heading (`h3`, 20/25/600): `longDay()` ("Thursday 1 October");
    - today: "Today's visit is above." and a tint **Show** button (`aria-label="Show today's

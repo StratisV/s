@@ -121,20 +121,30 @@ export function area(page: Page, name: string): Locator {
   return homeScreen(page).getByRole('region', { name, exact: true });
 }
 
+/** Home's areas (not the calendar above them, whose chosen day lists rows of its own). */
+export function areas(page: Page): Locator {
+  return homeScreen(page).locator('section[data-area-id]');
+}
+
 /** Area names on Home, top to bottom. */
 export function areaHeadings(page: Page): Locator {
-  return homeScreen(page).getByRole('heading', { level: 2 });
+  return areas(page).getByRole('heading', { level: 2 });
 }
 
-/** The status ring that completes an item. */
+/** The status ring that completes an item, in its area. */
 export function ring(page: Page, title: string): Locator {
-  return homeScreen(page).getByRole('button', { name: `Mark ${title} as done`, exact: true });
+  return areas(page).getByRole('button', { name: `Mark ${title} as done`, exact: true });
 }
 
-/** A Home row (ring + title, note, meta). */
+/** A Home row in its area (ring + title, note, meta). */
 export function row(page: Page, title: string): Locator {
   const ringButton = page.getByRole('button', { name: `Mark ${title} as done`, exact: true });
-  return homeScreen(page).getByRole('listitem').filter({ has: ringButton });
+  return areas(page).getByRole('listitem').filter({ has: ringButton });
+}
+
+/** Home's calendar section (the week strip or the month, and the chosen day under it). */
+export function calendar(page: Page): Locator {
+  return homeScreen(page).getByRole('region', { name: 'Calendar', exact: true });
 }
 
 /** The part of a row that opens the Item sheet. */

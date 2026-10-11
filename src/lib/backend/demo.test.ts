@@ -10,6 +10,7 @@ import {
   MEMBER_COLORS,
   REACTION_EMOJIS,
   SEED_ITEMS,
+  DEMO_CALENDAR_ITEMS,
 } from '../constants';
 import { addDays, deviceTimeZone, monthKey, todayIn, zonedParts } from '../logic/dates';
 import { seedItemsFor } from '../logic/items';
@@ -1012,7 +1013,11 @@ describe('URL switches', () => {
     expect(data.household).toMatchObject({ name: 'Our home', address: DEFAULT_ADDRESS, timezone: deviceTimeZone() });
     expect(data.areas.map((a) => a.name)).toEqual(DEFAULT_AREAS);
     expect(data.members.map((m) => `${m.emoji} ${m.name}`)).toEqual(['🦔 Stratis', '🦆 Shea', '🦊 Ela']);
-    expect(data.items).toHaveLength(SEED_ITEMS.length);
+    expect(data.items).toHaveLength(SEED_ITEMS.length + DEMO_CALENDAR_ITEMS.length);
+    // The calendar's extras: one due today, weekly ones, and four things on one day.
+    const due = (title: string) => data.items.find((i) => i.title === title)!.due_date;
+    expect(due('Empty the dehumidifier')).toBe(todayIn(data.household.timezone, clock));
+    expect(data.items.filter((i) => i.due_date === due('Put the bins out'))).toHaveLength(4);
 
     const today = todayIn(data.household.timezone, clock);
     const heaters = data.items.find((i) => i.title === 'Heaters not working')!;

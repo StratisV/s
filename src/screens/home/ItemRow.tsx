@@ -3,7 +3,7 @@ import { RAG_LABEL } from '../../lib/constants';
 import type { Item } from '../../lib/types';
 import { useConfetti } from '../../ui/Confetti';
 import { EmojiText } from '../../ui/EmojiText';
-import { inCollapsedArea } from './areaPanel';
+import { inCollapsedArea, rowFallback, rowsBeside } from './areaPanel';
 import { StatusDot, StatusRing } from './StatusRing';
 import styles from './ItemRow.module.css';
 
@@ -67,15 +67,14 @@ export function ItemRow({ item, meta, onOpen, onComplete }: ItemRowProps) {
     const keyboard = isFocusVisible(ring);
 
     setTimeout(() => {
-      // A one-off item leaves the list: move keyboard focus to the nearest remaining row
-      // (rows in a collapsed area can't take it), else to the area's name.
+      // A one-off item leaves the list: move keyboard focus to the nearest remaining row in
+      // the same list (the areas', or the chosen day's under the calendar; rows in a collapsed
+      // area can't take it), else to the area's name (under the calendar: the chosen day).
       const own = openRef.current;
       if (item.repeat === 'none' && keyboard && document.activeElement === ring && own) {
-        const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-item-open]')).filter(
-          (el) => el === own || !inCollapsedArea(el),
-        );
+        const rows = rowsBeside(own).filter((el) => el === own || !inCollapsedArea(el));
         const i = rows.indexOf(own);
-        const next = rows[i + 1] ?? rows[i - 1] ?? own.closest('section')?.querySelector<HTMLElement>('button[aria-expanded]');
+        const next = rows[i + 1] ?? rows[i - 1] ?? rowFallback(own.closest('section'));
         next?.focus();
       }
       const pending = completeRef.current(item.id);

@@ -119,3 +119,17 @@ export function GoogleGIcon({ size = 20, ...p }: IconProps) {
     </svg>
   );
 }
+
+/** A broom (housekeeping): a visit on Home's calendar, and its row under the calendar. */
+export function BroomIcon({ size = 16, ...p }: IconProps) {
+  return (
+    <svg {...base(size, p)}>
+      <path d="M12 2.5v6.5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+      <path
+        fill="currentColor"
+        fillRule="evenodd"
+        d="M8.5 9h7a1.5 1.5 0 0 1 1.5 1.5V13H7v-2.5A1.5 1.5 0 0 1 8.5 9zM6.8 14h10.4l2.6 7.2a.6.6 0 0 1-.56.8H4.76a.6.6 0 0 1-.56-.8zM9.1 17.2l-.6 3.8h1.1l.5-3.8zM12.55 17.2h-1.1v3.8h1.1zM14.9 17.2l.5 3.8h1.1l-.6-3.8z"
+      />
+    </svg>
+  );
+}

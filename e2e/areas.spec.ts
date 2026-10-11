@@ -1,5 +1,6 @@
 import {
   area,
+  areas,
   confirmation,
   DEMO_STORAGE_KEY,
   detailValue,
@@ -106,7 +107,8 @@ test.describe('Collapsible areas', () => {
 
     await toggleAll(page, 'Collapse All').click();
     for (const name of names) await expect(disclosure(page, name)).toHaveAttribute('aria-expanded', 'false');
-    await expect(homeScreen(page).getByRole('button', { name: /^Mark .* as done$/ })).toHaveCount(0);
+    // Every area's rows (the calendar's chosen day keeps its own).
+    await expect(areas(page).getByRole('button', { name: /^Mark .* as done$/ })).toHaveCount(0);
     await expect(toggleAll(page, 'Collapse All')).toHaveCount(0);
 
     await toggleAll(page, 'Expand All').click();
