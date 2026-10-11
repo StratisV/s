@@ -359,8 +359,8 @@ to `HomeEntry` (`householdId`, `memberId`, `canImport`, `email`, `emailVerified`
   whose own email is the account's and that Google marked `email_verified`. A confirmed email
   alone is not enough: a project whose Email provider confirms sign-ups by itself would let
   anyone who types a waiting person's address with a password become them. The local
-  `supabase/config.toml` also keeps `enable_confirmations` on, and README "Going live" asks for
-  the Email provider to be off. An email and password account is always `private` (with
+  `supabase/config.toml` also keeps `enable_confirmations` on, and README "Going live with
+  Supabase" asks for the Email provider to be off. An email and password account is always `private` (with
   `email_verified` false), and through an invite joins as someone new without the email.
 - `private` reveals nothing about the home: only the caller's own email and whether it is
   verified.
