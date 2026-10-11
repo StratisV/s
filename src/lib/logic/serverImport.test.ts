@@ -116,6 +116,8 @@ describe("buildServerHome: the user's home", () => {
       ],
       messages: 0,
       visits: 0,
+      // The newest change on the phone (an item edited that morning), so an older copy shows its age.
+      lastChanged: '2026-10-09T08:30:00.000Z',
     });
   });
 

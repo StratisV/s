@@ -527,4 +527,10 @@ export interface IssuedCode {
 export interface ServerSetupSummary extends DemoHomeSummary {
   messages: number;
   visits: number;
+  /**
+   * The newest change in what comes along (an item edited or done, a message, a visit), so an
+   * older copy (Safari's, say, while the home is kept in the Home Screen app) can be told
+   * apart; null when nothing carries a time.
+   */
+  lastChanged?: ISOTimestamp | null;
 }

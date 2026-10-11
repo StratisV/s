@@ -3,7 +3,15 @@
 // (server/testing/harness.ts). docs/ARCHITECTURE.md "Server mode (no setup)", "Local server and tests".
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_POLL_MS, REQUEST_TIMEOUT_MS, ServerBackend } from '../src/lib/backend/server';
+import {
+  DEFAULT_POLL_MS,
+  IDLE_POLL_MS,
+  IDLE_SLOW_MS,
+  IDLE_STOP_MS,
+  PENDING_SIGN_OUT_KEY,
+  REQUEST_TIMEOUT_MS,
+  ServerBackend,
+} from '../src/lib/backend/server';
 import { normaliseCode } from '../src/lib/backend/serverApi';
 import { BackendError } from '../src/lib/backend/types';
 import { USER_DEMO_DOC } from '../src/lib/logic/importHome.fixture';
@@ -20,16 +28,17 @@ interface Phone {
   requests: { method: string; op: string | null; body: Record<string, unknown> | null }[];
 }
 
-function phone(h: Harness, opts: { fetch?: typeof fetch } = {}): Phone {
-  const browser = h.browser();
+function phone(h: Harness, opts: { fetch?: (browser: Browser) => typeof fetch; userAgent?: string } = {}): Phone {
+  const browser = h.browser({ userAgent: opts.userAgent });
   const requests: Phone['requests'] = [];
   const fetchSpy = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost');
     const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null;
     requests.push({ method: init?.method ?? 'GET', op: url.searchParams.get('op') ?? (body?.op as string) ?? null, body });
-    return (opts.fetch ?? browser.fetch)(input, init);
+    return (opts.fetch ? opts.fetch(browser) : browser.fetch)(input, init);
   }) as typeof fetch;
-  return { backend: new ServerBackend({ fetch: fetchSpy, appUrl: APP }), browser, requests };
+  // Retries wait for nothing here (their waits are tested on their own).
+  return { backend: new ServerBackend({ fetch: fetchSpy, appUrl: APP, sleep: async () => {} }), browser, requests };
 }
 
 /** Stratis's phone brings the home online; Shea's phone joins with a code. */
@@ -281,13 +290,16 @@ describe('ServerBackend: polling', () => {
     await flush();
   };
 
-  /** A page that can be hidden, and a window for focus and online. */
+  /** A page that can be hidden, and a window for focus, online and input. */
   function page() {
     const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' as DocumentVisibilityState });
     const win = new EventTarget();
     vi.stubGlobal('document', doc);
     vi.stubGlobal('window', win);
     return {
+      input(name: 'pointerdown' | 'keydown' | 'scroll') {
+        win.dispatchEvent(new Event(name));
+      },
       hide() {
         doc.visibilityState = 'hidden';
         doc.dispatchEvent(new Event('visibilitychange'));
@@ -415,6 +427,56 @@ describe('ServerBackend: polling', () => {
     await expect(settle(stratis.backend.createArea(entry.householdId, 'Shed'))).rejects.toMatchObject({ code: 'read_only' });
   });
 
+  it('slows to a poll a minute when nobody has used the page for 3 minutes, stops after 15, and picks up at once on input', async () => {
+    const view = page();
+    const { stratis, hid, polls } = await setUp();
+    stratis.backend.subscribe(hid, () => {});
+    await flush();
+    await tick(IDLE_SLOW_MS);
+    const busy = polls(stratis);
+    expect(busy).toBeGreaterThanOrEqual(IDLE_SLOW_MS / DEFAULT_POLL_MS);
+    await tick(IDLE_POLL_MS * 4);
+    expect(polls(stratis) - busy).toBeLessThanOrEqual(5);
+    await tick(IDLE_STOP_MS);
+    const parked = polls(stratis);
+    await tick(5 * 3_600_000);
+    expect(polls(stratis)).toBe(parked);
+    // Someone taps: a poll at once, then the usual pace.
+    view.input('pointerdown');
+    await flush();
+    expect(polls(stratis)).toBe(parked + 1);
+    await tick();
+    expect(polls(stratis)).toBe(parked + 2);
+    // Coming back into view, focus and online count too.
+    await tick(IDLE_STOP_MS + IDLE_POLL_MS);
+    const again = polls(stratis);
+    await tick(IDLE_POLL_MS * 3);
+    expect(polls(stratis)).toBe(again);
+    view.fire('focus');
+    await flush();
+    expect(polls(stratis)).toBe(again + 1);
+  });
+
+  it('keeps a tab left open for five days to a handful of reads (the Blob budget)', async () => {
+    page();
+    vi.useFakeTimers();
+    const h = createHarness();
+    const stratis = phone(h);
+    const entry = (await settle(stratis.backend.bringOnline(TEST_SETUP_CODE, PHONE))) as { householdId: string };
+    stratis.backend.subscribe(entry.householdId, () => {});
+    // Five days of an iPad on a stand: the server's clock moves on with the browser's.
+    const gets = (h.blobs as unknown as { calls: { get: number } }).calls.get;
+    for (let hour = 0; hour < 120; hour++) {
+      h.clock.advance(3_600_000);
+      await tick(3_600_000);
+    }
+    expect(polls(stratis)).toBeLessThan(80);
+    expect((h.blobs as unknown as { calls: { get: number } }).calls.get - gets).toBeLessThan(30);
+    function polls(p: Phone) {
+      return p.requests.filter((r) => r.op === 'version').length;
+    }
+  });
+
   it('polls at the interval the server asks for', async () => {
     const { stratis, hid, polls } = await setUp();
     stratis.backend.subscribe(hid, () => {});
@@ -424,5 +486,121 @@ describe('ServerBackend: polling', () => {
     expect(polls(stratis)).toBe(1);
     await tick(1);
     expect(polls(stratis)).toBe(2);
+  });
+});
+
+describe('ServerBackend: when things go wrong', () => {
+  /** A window with storage (the pending sign-out flag) and events. */
+  function windowWithStorage() {
+    const map = new Map<string, string>();
+    const localStorage = {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => void map.set(k, String(v)),
+      removeItem: (k: string) => void map.delete(k),
+    };
+    const win = Object.assign(new EventTarget(), { localStorage });
+    vi.stubGlobal('window', win);
+    return { win, map };
+  }
+
+  it('signs out for good when offline: the sign-out waits, and is sent first once back online', async () => {
+    const { win, map } = windowWithStorage();
+    const h = createHarness();
+    const { stratis, join } = await home(h);
+    const { shea } = await join();
+    shea.browser.offline = true;
+    const heard: (AuthUser | null)[] = [];
+    shea.backend.onAuthChange((u) => heard.push(u));
+    await shea.backend.signOut();
+    expect(heard).toEqual([null]);
+    expect(map.get(PENDING_SIGN_OUT_KEY)).toBe('1');
+    // The key is still in its cookie, but this browser counts as signed out.
+    expect(shea.browser.key()).not.toBeNull();
+    expect(await shea.backend.getUser()).toBeNull();
+    // Back online: the sign-out goes through before anything else.
+    shea.browser.offline = false;
+    const before = shea.requests.length;
+    win.dispatchEvent(new Event('online'));
+    await vi.waitFor(() => expect(map.has(PENDING_SIGN_OUT_KEY)).toBe(false));
+    expect(shea.requests.slice(before).map((r) => r.op)).toEqual(['signOut']);
+    expect(shea.browser.key()).toBeNull();
+    expect((await stratis.backend.listDevices()).map((d) => d.label)).toEqual(['iPhone · Safari']);
+  });
+
+  it('finishes a waiting sign-out at start-up (a reload) before asking who is signed in', async () => {
+    const { map } = windowWithStorage();
+    const h = createHarness();
+    const { join } = await home(h);
+    const { shea } = await join();
+    shea.browser.offline = true;
+    await shea.backend.signOut();
+    shea.browser.offline = false;
+    // The page reloads: a new ServerBackend over the same browser.
+    const reloaded = new ServerBackend({ fetch: shea.browser.fetch, appUrl: APP });
+    expect(await reloaded.getUser()).toBeNull();
+    expect(map.has(PENDING_SIGN_OUT_KEY)).toBe(false);
+    expect(shea.browser.key()).toBeNull();
+    expect(await reloaded.getUser()).toBeNull();
+  });
+
+  it('opens the home when “Bring It Online” says the home exists but this browser is signed in (the first reply was lost)', async () => {
+    const h = createHarness();
+    let lose = true;
+    const stratis = phone(h, {
+      fetch: (browser) =>
+        (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const res = await browser.fetch(input, init);
+          // The reply to the first setup never arrives (the cookie did).
+          if (lose && typeof init?.body === 'string' && init.body.includes('"op":"setup"')) {
+            lose = false;
+            throw new TypeError('Failed to fetch');
+          }
+          return res;
+        }) as typeof fetch,
+    });
+    await expect(stratis.backend.bringOnline(TEST_SETUP_CODE, PHONE)).rejects.toMatchObject({ code: 'network' });
+    // Another tab used the key meanwhile, so the setup code can't hand out a new one.
+    await stratis.browser.fetch('/api/home?op=session', { headers: { 'X-HomeOS': '1' } });
+    const entry = await stratis.backend.bringOnline(TEST_SETUP_CODE, PHONE);
+    expect(entry).toMatchObject({ status: 'member' });
+    expect((await stratis.backend.getUser())?.name).toBe('Stratis');
+  });
+
+  it('asks once more after a 401 just after signing in, and after a busy server, before giving up', async () => {
+    const h = createHarness();
+    const { stratis, hid, sheaId } = await home(h);
+    let failNext: 'unauthorised' | 'busy' | null = null;
+    const issued = await stratis.backend.createCode(sheaId);
+    const shea = phone(h, {
+      fetch: (browser) =>
+        (async (input: RequestInfo | URL, init?: RequestInit) => {
+          if (failNext === 'unauthorised') {
+            failNext = null;
+            return new Response(JSON.stringify({ error: { code: 'not_signed_in', message: 'x' } }), { status: 401 });
+          }
+          if (failNext === 'busy' && typeof init?.body === 'string' && init.body.includes('"op":"rpc"')) {
+            failNext = null;
+            return new Response(JSON.stringify({ error: { code: 'busy', message: 'The home is busy; try again' } }), { status: 503 });
+          }
+          return browser.fetch(input, init);
+        }) as typeof fetch,
+    });
+    const heard: (AuthUser | null)[] = [];
+    shea.backend.onAuthChange((u) => heard.push(u));
+    await shea.backend.redeemCode(issued.code);
+    failNext = 'unauthorised';
+    expect(await shea.backend.load(hid)).toMatchObject({ household: { id: hid } });
+    expect(heard.filter((u) => u === null)).toEqual([]);
+    failNext = 'busy';
+    expect((await shea.backend.createArea(hid, 'Garage')).name).toBe('Garage');
+  });
+
+  it('says when it runs as the Home Screen app, so the device list can tell it from Safari', async () => {
+    vi.stubGlobal('window', Object.assign(new EventTarget(), { navigator: { standalone: true } }));
+    const h = createHarness();
+    const { stratis } = await home(h);
+    const devices = await stratis.backend.listDevices();
+    expect(devices.map((d) => d.label)).toEqual(['iPhone · Home Screen app']);
+    expect(stratis.requests.find((r) => r.op === 'setup')!.body!.app).toBe('standalone');
   });
 });

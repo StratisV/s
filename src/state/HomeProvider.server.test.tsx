@@ -4,7 +4,7 @@
 
 import { act, cleanup, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createHarness, TEST_SETUP_CODE, type Harness } from '../../server/testing/harness';
+import { createHarness, IPHONE_SAFARI, TEST_SETUP_CODE, type Harness } from '../../server/testing/harness';
 import { DemoBackend, type StorageLike } from '../lib/backend/demo';
 import { ServerBackend } from '../lib/backend/server';
 import { BackendError, type Backend } from '../lib/backend/types';
@@ -86,6 +86,25 @@ describe('the Welcome screen in server mode', () => {
     await waitFor(() => expect(home().serverWelcome).toEqual({ kind: 'private', homeOnline: false, code: '', notice: null }));
   });
 
+  it('says where to use a setup link opened where the home is not (no demo home here)', async () => {
+    openAt('/?setup=test-setu-pcde');
+    const home = mount(phone(createHarness()).backend);
+    await waitFor(() =>
+      expect(home().serverWelcome).toEqual({ kind: 'setupElsewhere', setupCode: 'TEST-SETU-PCDE', summary: null, ios: false }),
+    );
+  });
+
+  it('in Safari on an iPhone, points a setup link at the Home Screen app, and can bring this copy online instead', async () => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(IPHONE_SAFARI);
+    localStorage.setItem(DEMO_DOC_KEY, PHONE);
+    openAt('/?setup=test-setu-pcde');
+    const home = mount(phone(createHarness()).backend);
+    await waitFor(() => expect(home().serverWelcome).toMatchObject({ kind: 'setupElsewhere', setupCode: 'TEST-SETU-PCDE', ios: true }));
+    expect(home().serverWelcome).toMatchObject({ summary: expect.objectContaining({ householdName: 'Our home' }) });
+    act(() => home().chooseSetupHere());
+    expect(home().serverWelcome).toMatchObject({ kind: 'setup', setupCode: 'TEST-SETU-PCDE', elsewhere: true });
+  });
+
   it('shows a stranger that the home is private, and a used setup link that it is too late', async () => {
     localStorage.setItem(DEMO_DOC_KEY, PHONE);
     const h = createHarness();
@@ -165,6 +184,19 @@ describe('signing in with a code', () => {
     await waitFor(() => expect(home().phase.kind).toBe('ready'));
     expect(home().me?.name).toBe('Shea');
     expect(home().claimed).toBe(true);
+  });
+
+  it('does not use up a ?code= link in Safari on an iPhone: it waits to be used here or typed in the Home Screen app', async () => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(IPHONE_SAFARI);
+    const h = createHarness();
+    const { sheaCode } = await homeElsewhere(h);
+    openAt(`/?code=${sheaCode}`);
+    const home = mount(phone(h).backend);
+    await waitFor(() => expect(home().serverWelcome).toEqual({ kind: 'private', homeOnline: true, code: sheaCode, notice: 'codeHere' }));
+    expect(home().phase.kind).toBe('signedOut');
+    // Typed in the Home Screen app, it works.
+    const app = phone(h);
+    expect(await app.backend.redeemCode(sheaCode)).toMatchObject({ status: 'claimed' });
   });
 
   it('keeps a ?code= link that did not work in the field, and says why', async () => {
@@ -289,5 +321,13 @@ describe('outside server mode', () => {
     for (const run of [() => home().redeemCode('ABCD-EFGH'), () => home().createCode('x'), () => home().listDevices(), () => home().bringHomeOnline('x')]) {
       await expect(run()).rejects.toBeInstanceOf(BackendError);
     }
+  });
+});
+
+describe('what a failed save says in server mode', () => {
+  it('says the home is full when it reached its size limit', async () => {
+    const { notSavedMessage } = await import('./HomeProvider');
+    expect(notSavedMessage(new BackendError('unknown', 'too_large: The home is full'))).toBe('Couldn’t save. The home is full.');
+    expect(notSavedMessage(new BackendError('unknown', 'busy: The home is busy'))).toBe('Couldn’t save. Try again.');
   });
 });

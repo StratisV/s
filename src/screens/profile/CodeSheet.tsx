@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { APP_NAME } from '../../lib/constants';
 import { shareOrCopy } from '../../lib/shareSheet';
+import { BackendError } from '../../lib/backend/types';
 import type { IssuedCode } from '../../lib/types';
 import { errorMessage, useHome } from '../../state/HomeProvider';
 import { ShareIcon } from '../../ui/icons';
@@ -28,9 +29,21 @@ export function codeNote(name: string | null): string {
   return `Works once, for 7 days. ${where}, open ${APP_NAME} and enter it, or open the link.`;
 }
 
-/** What Share sends: the link, then the code to type. */
+/**
+ * What Share sends: the code to type in home.os first (a link opens in Safari, or in the
+ * messaging app's own browser, which on an iPhone is not where the Home Screen app keeps its
+ * sign-in), then the link.
+ */
 export function codeShareText(code: IssuedCode): string {
-  return `Join our home on ${APP_NAME}: ${code.link}\nCode: ${code.code}`;
+  return `Join our home on ${APP_NAME}. Type this code in ${APP_NAME}: ${code.code}\nOr open ${code.link}`;
+}
+
+/** Why a code could not be made, for the toast. */
+export function codeErrorMessage(err: unknown, name: string | null): string {
+  if (err instanceof BackendError && err.code === 'unknown' && err.message.startsWith('forbidden')) {
+    return `${name ?? 'They'} signed in meanwhile, so only they can add a device now.`;
+  }
+  return errorMessage(err);
 }
 
 /** "ABCD-EFGH" read out a letter at a time ("A B C D, E F G H"), for VoiceOver. */
@@ -200,7 +213,7 @@ export function useIssueCode() {
         const code = await createCode(memberId);
         if (alive.current) setSheet({ shown: { code, name }, open: true });
       } catch (err) {
-        showToast(errorMessage(err));
+        showToast(codeErrorMessage(err, name));
       } finally {
         working.current = false;
         if (alive.current) setBusy(null);

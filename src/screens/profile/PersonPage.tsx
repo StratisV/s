@@ -29,7 +29,9 @@ interface PersonPageProps {
  *
  * Server mode (docs/ARCHITECTURE.md "Server mode (no setup)", "Screens"): no email. Someone
  * who has not joined gets Invite (a code); someone who has, their signed-in devices (each can
- * be removed) and Sign in on a new phone (a code).
+ * be removed) and Sign in on a new phone (a code): on your own page always, on someone else's
+ * only once none of their devices is signed in (a lost phone, removed here), since a code for
+ * someone signed in elsewhere would let whoever has it be them.
  */
 export function PersonPage({ memberId, onBack, backRef }: PersonPageProps) {
   const { backend, data, me, updateMember } = useHousehold();
@@ -254,9 +256,15 @@ export function removeDeviceMessage(lastDevice: boolean, home: string): string {
     : REMOVE_DEVICE_MESSAGE;
 }
 
+/** Under someone else's devices while they are signed in somewhere (only they can add one). */
+export function onlyTheyCanAdd(name: string): string {
+  return `Only ${name} can sign in on another device, from their Profile. If they lost their phone, remove it here, then send them a code.`;
+}
+
 /**
  * Server mode: the browsers someone who has joined is signed in on, each with Remove (asked
- * first; removing this one signs out here), then Sign in on a new phone (a code for them).
+ * first; removing this one signs out here), then Sign in on a new phone (a code for them): for
+ * yourself always, for someone else once none of their devices is signed in.
  */
 function PersonDevices({ member, isMe }: { member: Member; isMe: boolean }) {
   const { data, today, removeDevice, showToast } = useHousehold();
@@ -343,15 +351,18 @@ function PersonDevices({ member, isMe }: { member: Member; isMe: boolean }) {
             );
           })
         )}
-        <button
-          type="button"
-          className={`${list.row} ${list.action}`}
-          onClick={() => void codes.issue(member.id, isMe ? null : member.name)}
-          aria-busy={codes.busy ? true : undefined}
-        >
-          Sign in on a new phone
-        </button>
+        {isMe || theirs?.length === 0 ? (
+          <button
+            type="button"
+            className={`${list.row} ${list.action}`}
+            onClick={() => void codes.issue(member.id, isMe ? null : member.name)}
+            aria-busy={codes.busy ? true : undefined}
+          >
+            Sign in on a new phone
+          </button>
+        ) : null}
       </div>
+      {!isMe && theirs && theirs.length > 0 ? <p className={list.caption}>{onlyTheyCanAdd(member.name)}</p> : null}
       <ActionSheet
         open={confirmOpen}
         title={REMOVE_DEVICE_TITLE}

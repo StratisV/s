@@ -16,7 +16,7 @@ import {
 } from './helpers';
 
 // The month's saving used up (docs/ARCHITECTURE.md "Server mode (no setup)", "Budget"): the
-// second local server of playwright.server.config.ts stores 3 changes a month. Then saving
+// second local server of playwright.server.config.ts makes 4 puts a month. Then saving
 // pauses instead of the store being blocked: Home says so, and a save says why it failed.
 
 /** The second server (E2E_PORT + 1). */
@@ -32,7 +32,7 @@ test('once the month’s saving is used up, Home says so and a save says why it 
   await resetServer(api);
   await api.dispose();
 
-  // Bringing the home online is the first stored change.
+  // Bringing the home online is the first put; the phone's first use of its key the second.
   const phone = await openDevice(browser, base, {
     localStorage: { [DEMO_DOC_KEY]: JSON.stringify(PHONE_DOC) },
     signIn: { setup: SETUP_CODE },

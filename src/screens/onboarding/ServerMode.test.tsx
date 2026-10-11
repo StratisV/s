@@ -98,7 +98,8 @@ describe('Welcome in server mode', () => {
     expect(field.getAttribute('autocomplete')).toBe('one-time-code');
     expect(field.getAttribute('inputmode')).toBe('text');
     expect(field.getAttribute('spellcheck')).toBe('false');
-    expect(field.maxLength).toBe(12);
+    // Room for a setup code typed here by mistake (it then says where that goes).
+    expect(field.maxLength).toBe(20);
     expect(field.placeholder).toBe('ABCD-EFGH');
     // Off until there are 8 letters.
     expect(joinButton().disabled).toBe(true);
@@ -206,6 +207,64 @@ describe('Welcome in server mode', () => {
     expect(screen.getByText('Too many tries. Wait 15 minutes, then try again.')).toBeTruthy();
   });
 
+  it('keeps a link’s code for a choice where home.os may not live: join in this browser, or copy it for the Home Screen app', async () => {
+    const writeText = vi.fn(async (_text: string) => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const home = show(signedOut(privateHome({ code: 'ABCDEFGH', notice: 'codeHere' })));
+    expect(
+      screen.getByText('Using home.os from your Home Screen? Open it there and type this code. Or join in this browser.'),
+    ).toBeTruthy();
+    expect(codeField().value).toBe('ABCD-EFGH');
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Code' }));
+    await waitFor(() => expect(screen.getByText('Copied.')).toBeTruthy());
+    expect(writeText).toHaveBeenCalledWith('ABCD-EFGH');
+    expect(home.redeemCode).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Join in This Browser' }));
+    await act(async () => {});
+    expect(home.redeemCode).toHaveBeenCalledWith('ABCD-EFGH');
+  });
+
+  it('says where a setup code goes when it is typed as a sign-in code, without asking the server', async () => {
+    const home = show(signedOut(privateHome()));
+    fireEvent.change(codeField(), { target: { value: 'test-setu-pcde' } });
+    expect(codeField().value).toBe('TEST-SETU-PCDE');
+    fireEvent.click(joinButton());
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'That’s a setup code, and this home is already online. Ask someone at home for a code.',
+    );
+    cleanup();
+    show(signedOut(privateHome({ homeOnline: false })));
+    fireEvent.change(codeField(), { target: { value: 'test-setu-pcde' } });
+    fireEvent.click(joinButton());
+    expect((await screen.findByRole('alert')).textContent).toBe('That’s the setup code. Enter it in home.os where your home is.');
+    expect(home.redeemCode).not.toHaveBeenCalled();
+  });
+
+  it('points a setup link opened in Safari on an iPhone at the Home Screen app, with the code to copy', async () => {
+    const writeText = vi.fn(async (_text: string) => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const home = show(
+      signedOut({ kind: 'setupElsewhere', setupCode: 'K7QMXRPWN9D3', summary: { ...SUMMARY, lastChanged: '2026-09-02T09:00:00.000Z' }, ios: true }),
+    );
+    expect(screen.getByText('Open home.os from your Home Screen.')).toBeTruthy();
+    expect(
+      screen.getByText('Your home is kept in the home.os app on your Home Screen, not in Safari. Open it there and enter this setup code.'),
+    ).toBeTruthy();
+    expect(screen.getByText('K7QM-XRPW-N9D3')).toBeTruthy();
+    expect(screen.getByText('Setup code K 7 Q M, X R P W, N 9 D 3')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Code' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('K7QM-XRPW-N9D3'));
+    // This browser's own copy, with its age, can still come online instead.
+    expect(screen.getByText(/This browser has a copy too: Our home, 6 areas · 19 items · 3 done · 4 messages, last changed Wed 2 Sep( 2026)?\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Use This Copy Instead' }));
+    expect(home.chooseSetupHere).toHaveBeenCalled();
+    cleanup();
+    show(signedOut({ kind: 'setupElsewhere', setupCode: 'K7QMXRPWN9D3', summary: null, ios: false }));
+    expect(screen.getByText('Open home.os where your home is.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Use This Copy Instead' })).toBeNull();
+    expect(screen.queryByRole('textbox')).toBeNull();
+  });
+
   it('takes the code out of a pasted message', () => {
     show(signedOut(privateHome()));
     const text = 'Join our home on home.os: https://home-os-orpin.vercel.app/?code=WXYZ-2345\nCode: WXYZ-2345';
@@ -270,6 +329,24 @@ describe('Bring this home online', () => {
     expect((screen.getByRole('button', { name: 'Bring It Online' }) as HTMLButtonElement).disabled).toBe(false);
     // No Start Fresh, no Sign Out, no Google.
     expect(screen.getAllByRole('button')).toHaveLength(1);
+  });
+
+  it('says when the copy last changed, and on an iPhone browser tab that the Home Screen app may hold the home', () => {
+    show(signedOut({ kind: 'setup', summary: { ...SUMMARY, lastChanged: '2026-09-02T09:00:00.000Z' }, setupCode: '', elsewhere: true }));
+    expect(screen.getByText(/^Last changed Wed 2 Sep/)).toBeTruthy();
+    expect(screen.getByText('Use home.os from your Home Screen? Bring it online from there.')).toBeTruthy();
+  });
+
+  it('pastes the setup code (from the link or on its own) into the field', async () => {
+    const readText = vi.fn(async () => 'https://home-os-orpin.vercel.app/?setup=K7QM-3XRP-WN9D');
+    Object.defineProperty(navigator, 'clipboard', { value: { readText }, configurable: true });
+    show(signedOut({ kind: 'setup', summary: SUMMARY, setupCode: '' }));
+    const field = screen.getByRole('textbox', { name: 'Setup code' }) as HTMLInputElement;
+    fireEvent.click(screen.getByRole('button', { name: 'Paste' }));
+    await waitFor(() => expect(field.value).toBe('K7QM-3XRP-WN9D'));
+    readText.mockResolvedValueOnce('hello');
+    fireEvent.click(screen.getByRole('button', { name: 'Paste' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('There’s no setup code to paste. Copy it from the link first.');
   });
 
   it('counts one message as one, and leaves out none', () => {
@@ -427,7 +504,7 @@ describe('inviting the people who came along', () => {
     fireEvent.click(within(sheet).getByRole('button', { name: 'Share' }));
     expect(share).toHaveBeenCalledWith({
       title: 'Join our home on home.os',
-      text: 'Join our home on home.os: https://home-os-orpin.vercel.app/?code=ABCD-EFGH\nCode: ABCD-EFGH',
+      text: 'Join our home on home.os. Type this code in home.os: ABCD-EFGH\nOr open https://home-os-orpin.vercel.app/?code=ABCD-EFGH',
     });
     await act(async () => {});
 
@@ -446,7 +523,7 @@ describe('inviting the people who came along', () => {
     fireEvent.click(within(sheet).getByRole('button', { name: 'Share' }));
     await waitFor(() => expect(within(sheet).getByRole('status').textContent).toBe('Copied to share'));
     expect(writeText).toHaveBeenCalledWith(
-      'Join our home on home.os: https://home-os-orpin.vercel.app/?code=ABCD-EFGH\nCode: ABCD-EFGH',
+      'Join our home on home.os. Type this code in home.os: ABCD-EFGH\nOr open https://home-os-orpin.vercel.app/?code=ABCD-EFGH',
     );
     // Escape closes it.
     fireEvent.keyDown(window, { key: 'Escape' });

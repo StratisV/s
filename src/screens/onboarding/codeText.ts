@@ -1,6 +1,6 @@
 // Pure helpers for the code fields (server mode): "Have a code?" on the Welcome screen and the
 // setup code on "Bring this home online". Kept out of the components so they can be unit tested.
-import { CODE_ALPHABET, CODE_LENGTH, formatCode } from '../../lib/backend/serverApi';
+import { CODE_ALPHABET, CODE_LENGTH, SETUP_CODE_MIN_LENGTH, formatCode } from '../../lib/backend/serverApi';
 
 /** What a code field keeps of what was typed: letters and digits, upper case ("ab cd-ef" → "ABCDEF"). */
 export function codeLetters(text: string): string {
@@ -34,4 +34,14 @@ export function codeFromPaste(text: string): string | null {
   let last: string | null = null;
   for (const match of upper.matchAll(CODE_IN_TEXT)) last = `${match[1]}-${match[2]}`;
   return last;
+}
+
+/**
+ * The setup code in pasted text: from a ?setup= link, or text that is only a setup code
+ * (SETUP_CODE_MIN_LENGTH to 20 letters once spaces and hyphens are gone), grouped; else null.
+ */
+export function setupCodeFromText(text: string): string | null {
+  const linked = /[?&]setup=([0-9A-Za-z\-\s.]{12,40})/.exec(text);
+  const letters = codeLetters(linked ? linked[1] : text);
+  return letters.length >= SETUP_CODE_MIN_LENGTH && letters.length <= 20 ? groupCode(letters) : null;
 }

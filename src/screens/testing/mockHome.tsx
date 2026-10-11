@@ -234,6 +234,7 @@ export function makeHome(over: Partial<HomeContextValue> = {}): HomeContextValue
     }),
     listDevices: vi.fn(async () => []),
     removeDevice: vi.fn(async () => {}),
+    chooseSetupHere: vi.fn(),
     readOnly: false,
     toast: null,
     showToast: vi.fn(),

@@ -244,7 +244,10 @@ describe('the Vercel Function bundle with @vercel/blob', () => {
     expect(res.status).toBe(200);
     expect(res.json).toMatchObject({ user: { name: 'Stratis', email: '' }, entry: { status: 'member' }, device: { label: 'iPhone · Safari' } });
     const setCookie = String(res.headers['set-cookie']);
-    expect(setCookie).toMatch(/^homeos_key=[A-Za-z0-9_-]{43}; Path=\/api; HttpOnly; SameSite=Lax; Max-Age=34560000; Secure$/);
+    // The device token: the key, the device, the rev that first holds it, the home's signature.
+    expect(setCookie).toMatch(
+      /^homeos_key=[A-Za-z0-9_-]{43}\.[0-9a-f-]{36}\.1\.[A-Za-z0-9_-]{22}; Path=\/api; HttpOnly; SameSite=Lax; Max-Age=34560000; Secure$/,
+    );
     cookie = setCookie.split(';')[0];
 
     const puts = service.log.filter((r) => r.method === 'PUT');
@@ -262,10 +265,17 @@ describe('the Vercel Function bundle with @vercel/blob', () => {
     // What is stored: the home and the server-only part, with hashes, never the key or the code.
     const stored = service.blobs.get(BLOB_PATH)!.body;
     expect(stored).not.toContain(cookie.split('=')[1]);
+    expect(stored).not.toContain(cookie.split('=')[1].split('.')[0]);
     expect(stored).not.toContain(SETUP.replace(/-/g, ''));
     expect(JSON.parse(stored)).toMatchObject({ format: 'homeos.server/1', rev: 1 });
 
-    // Used once: a second setup finds the home.
+    // The phone uses its key (its first use is stored once: a put that keeps the rev) ...
+    expect((await call('GET', '?op=session')).status).toBe(200);
+    const seen = service.log.filter((r) => r.method === 'PUT');
+    expect(seen).toHaveLength(2);
+    expect(seen[1].headers['x-if-match']).toBe('"etag-1"');
+    expect(JSON.parse(service.blobs.get(BLOB_PATH)!.body)).toMatchObject({ rev: 1 });
+    // ... and from then on the setup code is used up: a second setup finds the home.
     const again = await call('POST', '', { op: 'setup', code: SETUP, phone: JSON.stringify(USER_DEMO_DOC) });
     expect(again.status).toBe(409);
     expect((await call('GET', '?op=status')).json).toEqual({ home: true });
@@ -290,7 +300,7 @@ describe('the Vercel Function bundle with @vercel/blob', () => {
     expect(shed.status).toBe(200);
     expect(shed.json.rev).toBe(2);
     const put = service.log.filter((r) => r.method === 'PUT')[before];
-    expect(put.headers['x-if-match']).toBe('"etag-1"');
+    expect(put.headers['x-if-match']).toBe('"etag-2"');
     expect(put.headers['x-allow-overwrite']).toBe('1');
     expect((await call('GET', '?op=version')).json).toMatchObject({ rev: 2, readOnly: false });
   });
@@ -307,8 +317,8 @@ describe('the Vercel Function bundle with @vercel/blob', () => {
     expect(res.status).toBe(200);
     // The put with the old ETag was refused (412), the blob read again, the area added to it.
     const puts = service.log.filter((r) => r.method === 'PUT');
-    expect(puts.at(-2)!.headers['x-if-match']).toBe('"etag-2"');
-    expect(puts.at(-1)!.headers['x-if-match']).toBe('"etag-3"');
+    expect(puts.at(-2)!.headers['x-if-match']).toBe('"etag-3"');
+    expect(puts.at(-1)!.headers['x-if-match']).toBe('"etag-4"');
     const load = await call('POST', '', { op: 'rpc', method: 'load', args: [id], minRev: res.json.rev });
     const data = load.json.result as { household: { name: string }; areas: { name: string }[] };
     expect(data.household.name).toBe('The Burrow');

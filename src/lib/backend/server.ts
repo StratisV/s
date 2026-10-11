@@ -27,6 +27,7 @@ import type {
   NewPersonInput,
   PushSubscriptionInput,
 } from '../types';
+import { appMode } from '../appMode';
 import {
   API_HEADER,
   API_HEADER_VALUE,
@@ -69,6 +70,22 @@ export const REQUEST_TIMEOUT_MS = 15_000;
 export const AUTH_SIGNAL_KEY = 'homeos.server.auth';
 /** getUser() and enterHome() right after each other share one GET ?op=session within this long. */
 export const SESSION_KEEP_MS = 2000;
+/** No input (a tap, a key, scrolling) for this long: poll at most every IDLE_POLL_MS. */
+export const IDLE_SLOW_MS = 3 * 60_000;
+/** No input for this long: no polls until input, focus, the page coming back into view, back online or reconnect(). */
+export const IDLE_STOP_MS = 15 * 60_000;
+/** The poll interval while idle (IDLE_SLOW_MS). */
+export const IDLE_POLL_MS = 60_000;
+/** A 401 this soon after this browser signed in is asked once more, a second later, before signing out. */
+export const FRESH_SIGN_IN_MS = 30_000;
+/**
+ * localStorage flag: Sign Out could not reach the server (offline), so the key (an HttpOnly
+ * cookie only the server can clear) and its device are still there. Until a POST signOut
+ * succeeds this browser counts as signed out, and it tries again at start-up and when back online.
+ */
+export const PENDING_SIGN_OUT_KEY = 'homeos.server.signout';
+/** Input that counts as someone using the app (see IDLE_SLOW_MS). */
+const INPUT_EVENTS = ['pointerdown', 'keydown', 'touchstart', 'wheel', 'scroll'] as const;
 
 export interface ServerBackendOptions {
   /** The API endpoint. Default API_PATH ('/api/home'). */
@@ -86,9 +103,13 @@ export interface ServerBackendOptions {
    * tsconfig.node.json.
    */
   appUrl?: string;
+  /** Waits before a retry (a 401 just after signing in, 'busy'). Default setTimeout. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 const notSupported = () => new BackendError('unknown', 'not supported in server mode');
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** Whether the page is in view (always, where there is no document: tests, workers). */
 const isVisible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden';
@@ -153,6 +174,10 @@ export class ServerBackend implements Backend, ServerAccess {
   private deviceId: string | null = null;
   /** Who onAuthChange last reported (undefined: nothing yet). */
   private reported: string | null | undefined = undefined;
+  /** When setup or redeem last signed this browser in (null: not since it started). */
+  private signedInAt: number | null = null;
+  /** A POST signOut that finishes a pending sign-out (PENDING_SIGN_OUT_KEY), while one runs. */
+  private finishing: Promise<boolean> | null = null;
   private authListeners = new Set<(user: AuthUser | null) => void>();
   private unwatchSignal: (() => void) | null = null;
 
@@ -166,6 +191,12 @@ export class ServerBackend implements Backend, ServerAccess {
   private polling = false;
   private pollAgain = false;
   private pollFailed = false;
+  /** When someone last used the page (input, focus, back in view, back online). */
+  private lastInput: number;
+  /** Idle for IDLE_STOP_MS: no poll is scheduled until input. */
+  private parked = false;
+  /** The poll scheduled now is an idle one (IDLE_POLL_MS). */
+  private slow = false;
   /** The highest rev and chatRev polls have shown (null: no poll yet). */
   private polledRev: number | null = null;
   private polledChatRev: number | null = null;
@@ -176,6 +207,11 @@ export class ServerBackend implements Backend, ServerAccess {
     this.doFetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
     this.clock = options.now ?? Date.now;
     this.pollMs = options.pollMs ?? DEFAULT_POLL_MS;
+    this.lastInput = this.clock();
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return (this.options.sleep ?? defaultSleep)(ms);
   }
 
   // ── Requests ───────────────────────────────────────────
@@ -184,8 +220,13 @@ export class ServerBackend implements Backend, ServerAccess {
     if (typeof rev === 'number' && Number.isFinite(rev) && rev > this.newestRev) this.newestRev = rev;
   }
 
-  /** One request to the API: its JSON, or BackendError (see the class comment). */
-  private async call<T>(request: { get: ApiGetOp } | { post: ApiPostRequest }): Promise<T> {
+  /**
+   * One request to the API: its JSON, or BackendError (see the class comment). Asked once
+   * more before failing: a 401 within FRESH_SIGN_IN_MS of signing in here (another instance
+   * of the server may not have seen the new device yet), and an RPC the server found 'busy'
+   * (nothing was stored), after a short random wait.
+   */
+  private async call<T>(request: { get: ApiGetOp } | { post: ApiPostRequest }, again = false): Promise<T> {
     const isGet = 'get' in request;
     const url = isGet ? `${this.endpoint}?op=${encodeURIComponent(request.get)}` : this.endpoint;
     const headers: Record<string, string> = { [API_HEADER]: API_HEADER_VALUE };
@@ -221,6 +262,15 @@ export class ServerBackend implements Backend, ServerAccess {
     }
     if (status < 200 || status >= 300) {
       const error = toBackendError(status, body);
+      const op = isGet ? request.get : request.post.op;
+      if (!again && error.code === 'not_signed_in' && op !== 'signOut' && this.signedInAt !== null && this.clock() - this.signedInAt < FRESH_SIGN_IN_MS) {
+        await this.sleep(1000);
+        return this.call<T>(request, true);
+      }
+      if (!again && op === 'rpc' && error.code === 'unknown' && error.message.startsWith('busy')) {
+        await this.sleep(300 + Math.floor(Math.random() * 500));
+        return this.call<T>(request, true);
+      }
       if (error.code === 'not_signed_in') this.signedOutHere(false);
       throw error;
     }
@@ -272,6 +322,7 @@ export class ServerBackend implements Backend, ServerAccess {
     this.sessionLoad = null;
     this.pendingEntry = null;
     this.deviceId = null;
+    this.signedInAt = null;
     if (told) this.signal(null);
     // Said once: only when someone was signed in here.
     if (typeof this.reported === 'string') this.emitAuth(null);
@@ -283,6 +334,9 @@ export class ServerBackend implements Backend, ServerAccess {
     const entry = response.entry;
     this.see(response.rev);
     this.deviceId = response.device.id;
+    this.signedInAt = this.clock();
+    // A sign-out still waiting to reach the server was for the key this sign-in replaced.
+    this.setPendingSignOut(false);
     this.session = {
       user: response.user,
       // Later sessions are plain members; the claim's welcome comes once, from pendingEntry.
@@ -297,7 +351,47 @@ export class ServerBackend implements Backend, ServerAccess {
     return entry;
   }
 
-  /** GET ?op=session (kept SESSION_KEEP_MS; `fresh` asks again): null when signed out. */
+  /** Whether a sign-out is still waiting to reach the server (PENDING_SIGN_OUT_KEY). */
+  private pendingSignOut(): boolean {
+    try {
+      return storage()?.getItem(PENDING_SIGN_OUT_KEY) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  private setPendingSignOut(on: boolean) {
+    try {
+      if (on) storage()?.setItem(PENDING_SIGN_OUT_KEY, '1');
+      else storage()?.removeItem(PENDING_SIGN_OUT_KEY);
+    } catch {
+      /* storage unavailable */
+    }
+  }
+
+  /** Sends the sign-out that could not reach the server before. True when it went through (or none was waiting). */
+  private finishSignOut(): Promise<boolean> {
+    if (!this.pendingSignOut()) return Promise.resolve(true);
+    if (this.finishing) return this.finishing;
+    const run = (async () => {
+      try {
+        await this.call({ post: { op: 'signOut' } });
+        this.setPendingSignOut(false);
+        return true;
+      } catch {
+        return false;
+      } finally {
+        this.finishing = null;
+      }
+    })();
+    this.finishing = run;
+    return run;
+  }
+
+  /**
+   * GET ?op=session (kept SESSION_KEEP_MS; `fresh` asks again): null when signed out. While a
+   * sign-out is waiting to reach the server, it goes first and this browser is signed out.
+   */
   private loadSession(fresh = false): Promise<KeptSession | null> {
     const kept = this.session;
     if (!fresh && kept && this.clock() - kept.at < SESSION_KEEP_MS) return Promise.resolve(kept);
@@ -305,6 +399,10 @@ export class ServerBackend implements Backend, ServerAccess {
     let load!: Promise<KeptSession | null>;
     load = (async (): Promise<KeptSession | null> => {
       try {
+        if (this.pendingSignOut()) {
+          await this.finishSignOut();
+          return null;
+        }
         const s = await this.call<SessionResponse>({ get: 'session' });
         const next: KeptSession = { user: s.user, entry: s.entry, device: s.device, at: this.clock() };
         if (this.sessionLoad === load) this.session = next;
@@ -344,15 +442,24 @@ export class ServerBackend implements Backend, ServerAccess {
     return s?.user ?? null;
   }
 
-  /** Local listeners; fired by bringOnline, redeemCode, signOut, releaseClaim, any 401, and AUTH_SIGNAL_KEY from other tabs. */
+  /**
+   * Local listeners; fired by bringOnline, redeemCode, signOut, releaseClaim, any 401, and
+   * AUTH_SIGNAL_KEY from other tabs. While someone listens, back online also sends a sign-out
+   * that is still waiting (PENDING_SIGN_OUT_KEY).
+   */
   onAuthChange(cb: (user: AuthUser | null) => void): Unsubscribe {
     this.authListeners.add(cb);
     if (!this.unwatchSignal && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
       const onStorage = (e: StorageEvent) => {
         if (e.key === AUTH_SIGNAL_KEY || e.key === null) void this.recheckAuth();
       };
+      const onOnline = () => void this.finishSignOut();
       window.addEventListener('storage', onStorage);
-      this.unwatchSignal = () => window.removeEventListener('storage', onStorage);
+      window.addEventListener('online', onOnline);
+      this.unwatchSignal = () => {
+        window.removeEventListener('storage', onStorage);
+        window.removeEventListener('online', onOnline);
+      };
     }
     return () => {
       this.authListeners.delete(cb);
@@ -368,12 +475,18 @@ export class ServerBackend implements Backend, ServerAccess {
     return Promise.reject(notSupported());
   }
 
-  /** POST {op:'signOut'} (a 401 or a network failure is fine), then forgets the session and fires onAuthChange(null). Never rejects. */
+  /**
+   * POST {op:'signOut'}, then forgets the session and fires onAuthChange(null). Never rejects.
+   * When the server can't be reached (offline), the key is still in its cookie: the sign-out
+   * is kept waiting (PENDING_SIGN_OUT_KEY) and sent at start-up and when back online, and
+   * until then this browser counts as signed out.
+   */
   async signOut(): Promise<void> {
     try {
       await this.call({ post: { op: 'signOut' } });
-    } catch {
-      /* signed out here either way */
+      this.setPendingSignOut(false);
+    } catch (err) {
+      if (err instanceof BackendError && err.code === 'network') this.setPendingSignOut(true);
     }
     this.signedOutHere(true);
   }
@@ -412,9 +525,10 @@ export class ServerBackend implements Backend, ServerAccess {
       this.stopPollingIfIdle();
     };
   }
-  /** Polls at once. Never throws. */
+  /** Polls at once (and counts as someone using the app: see IDLE_SLOW_MS). Never throws. */
   reconnect(): void {
     try {
+      this.used();
       if (this.hasListeners()) void this.poll();
     } catch {
       /* never throws */
@@ -598,16 +712,28 @@ export class ServerBackend implements Backend, ServerAccess {
   async homeOnline(): Promise<boolean> {
     return (await this.call<StatusResponse>({ get: 'status' })).home === true;
   }
-  /** POST {op:'setup', code, phone}; keeps the entry for the next enterHome(), writes AUTH_SIGNAL_KEY, fires onAuthChange(user). */
+  /**
+   * POST {op:'setup', code, phone, app}; keeps the entry for the next enterHome(), writes
+   * AUTH_SIGNAL_KEY, fires onAuthChange(user). 'home_exists' may mean an earlier tap got
+   * through and only its reply was lost after the cookie arrived: when GET ?op=session says
+   * this browser is signed in, that is a success too.
+   */
   async bringOnline(setupCode: string, phoneDoc: string): Promise<HomeEntry> {
-    const response = await this.call<SignedInResponse>({ post: { op: 'setup', code: setupCode, phone: phoneDoc } });
-    return this.signedInHere(response);
+    try {
+      const response = await this.call<SignedInResponse>({ post: { op: 'setup', code: setupCode, phone: phoneDoc, app: appMode() } });
+      return this.signedInHere(response);
+    } catch (err) {
+      if (!(err instanceof BackendError && err.code === 'home_exists')) throw err;
+      const s = await this.loadSession(true).catch(() => null);
+      if (!s) throw err;
+      return this.signedInHere({ user: s.user, entry: s.entry, device: s.device, rev: 0 });
+    }
   }
-  /** Not isSignInCode(normaliseCode(code)): rejects 'invalid_code' without a request. Else POST {op:'redeem'}, then as bringOnline. */
+  /** Not isSignInCode(normaliseCode(code)): rejects 'invalid_code' without a request. Else POST {op:'redeem', code, app}, then as bringOnline. */
   async redeemCode(code: string): Promise<HomeEntry> {
     const normalised = normaliseCode(code);
     if (!isSignInCode(normalised)) throw new BackendError('invalid_code');
-    const response = await this.call<SignedInResponse>({ post: { op: 'redeem', code: normalised } });
+    const response = await this.call<SignedInResponse>({ post: { op: 'redeem', code: normalised, app: appMode() } });
     return this.signedInHere(response);
   }
   /** POST {op:'createCode'}; adds the link (codeLink(appUrl, code)). */
@@ -650,24 +776,46 @@ export class ServerBackend implements Backend, ServerAccess {
     return this.changeListeners.size + this.chatListeners.size + this.statusListeners.size > 0;
   }
 
-  /** The first listener starts the poller (a poll at once, and the page's events). */
+  /** Someone is using the app now (input, focus, back in view or online): polling goes back to its pace. */
+  private used(): boolean {
+    const idle = this.parked || this.slow;
+    this.lastInput = this.clock();
+    this.parked = false;
+    this.slow = false;
+    return idle;
+  }
+
+  /**
+   * The first listener starts the poller (a poll at once, and the page's events). Input on the
+   * page (INPUT_EVENTS) after a quiet spell polls at once and goes back to `pollMs`.
+   */
   private startPolling() {
     if (!this.unwatchPage) {
-      const now = () => void this.poll();
+      const now = () => {
+        this.used();
+        void this.poll();
+      };
       const onVisibility = () => {
         if (isVisible()) now();
         else this.clearTimer();
       };
+      const onInput = () => {
+        if (this.used()) void this.poll();
+      };
       const doc = typeof document !== 'undefined' ? document : null;
       const win = typeof window !== 'undefined' && typeof window.addEventListener === 'function' ? window : null;
+      const listen = { capture: true, passive: true } as const;
       doc?.addEventListener('visibilitychange', onVisibility);
       win?.addEventListener('focus', now);
       win?.addEventListener('online', now);
+      for (const name of INPUT_EVENTS) win?.addEventListener(name, onInput, listen);
       this.unwatchPage = () => {
         doc?.removeEventListener('visibilitychange', onVisibility);
         win?.removeEventListener('focus', now);
         win?.removeEventListener('online', now);
+        for (const name of INPUT_EVENTS) win?.removeEventListener(name, onInput, listen);
       };
+      this.used();
       void this.poll();
     } else if (!this.polling && this.timer === undefined) {
       void this.poll();
@@ -680,6 +828,8 @@ export class ServerBackend implements Backend, ServerAccess {
     this.unwatchPage?.();
     this.unwatchPage = null;
     this.pollAgain = false;
+    this.parked = false;
+    this.slow = false;
     // A later subscription starts again as from a fresh connection.
     this.polledRev = null;
     this.polledChatRev = null;
@@ -691,14 +841,27 @@ export class ServerBackend implements Backend, ServerAccess {
     this.timer = undefined;
   }
 
-  /** The next poll in `pollMs`, while visible and someone listens. */
+  /**
+   * The next poll in `pollMs`, while visible and someone listens; with no input for
+   * IDLE_SLOW_MS in IDLE_POLL_MS (or `pollMs` when longer), and none at all after IDLE_STOP_MS
+   * until input, focus, the page coming back into view, back online or reconnect().
+   */
   private schedule() {
     this.clearTimer();
     if (!this.hasListeners() || !isVisible()) return;
-    this.timer = setTimeout(() => {
-      this.timer = undefined;
-      void this.poll();
-    }, this.pollMs);
+    const idle = this.clock() - this.lastInput;
+    if (idle >= IDLE_STOP_MS) {
+      this.parked = true;
+      return;
+    }
+    this.slow = idle >= IDLE_SLOW_MS;
+    this.timer = setTimeout(
+      () => {
+        this.timer = undefined;
+        void this.poll();
+      },
+      this.slow ? Math.max(this.pollMs, IDLE_POLL_MS) : this.pollMs,
+    );
   }
 
   private async poll(): Promise<void> {

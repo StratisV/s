@@ -45,7 +45,9 @@ export default defineConfig({
       command: [
         'npx vite build --mode e2e-server --outDir dist-server/app',
         'node scripts/build-server.mjs --local',
-        `node dist-server/local.mjs --port ${PORT} --static dist-server/app --memory --allow-reset --attempts 5,20,60000`,
+        // 5 wrong codes per address a minute, also for an address someone signed in from (every
+        // context here is the same address).
+        `node dist-server/local.mjs --port ${PORT} --static dist-server/app --memory --allow-reset --attempts 5,20,60000,5`,
       ].join(' && '),
       env: {
         ...NO_SUPABASE,
@@ -61,10 +63,11 @@ export default defineConfig({
       timeout: 180_000,
     },
     {
-      // The same app on a second server whose month of saving runs out after 3 stored changes
-      // (e2e-server/readonly.spec.ts). Started after the first, so the build is there.
+      // The same app on a second server whose month of saving runs out after 4 puts (bringing
+      // the home online, the phone's first use of its key, and two changes; e2e-server/readonly.spec.ts).
+      // Started after the first, so the build is there.
       command: `node dist-server/local.mjs --port ${PORT + 1} --static dist-server/app --memory --allow-reset`,
-      env: { HOMEOS_SETUP_CODE: 'TEST-SETU-PCDE', HOMEOS_BLOB_WRITES_PER_MONTH: '3' },
+      env: { HOMEOS_SETUP_CODE: 'TEST-SETU-PCDE', HOMEOS_BLOB_WRITES_PER_MONTH: '4' },
       url: `http://localhost:${PORT + 1}/index.html`,
       reuseExistingServer: false,
       timeout: 30_000,

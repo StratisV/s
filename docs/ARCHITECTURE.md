@@ -780,11 +780,14 @@ One private blob, `ServerDoc` in `server/core/serverDoc.ts`, format `homeos.serv
   Emails are always `''` (no Google). This is the only part any browser sees, and only through
   what DemoBackend's methods return.
 - `auth` (server only, never in a response): `devices` (`DeviceRow`: id, `keyHash`, `userId`,
-  `label`, `createdAt`) and `codes` (`CodeRow`: id, `codeHash`, `memberId`, `createdBy`,
-  `createdAt`, `expiresAt`). Only hashes are stored.
-- `rev` (1 when the home came online, +1 with every stored change), `chatRev` (+1 when the chat
-  changed in a stored change), `meta` (`createdAt`, `writes`: the last 50 put ids, `usage`: Blob
-  operations this UTC month).
+  `label`, `createdAt`, and `seenAt`, written once on the device's first signed-in request) and
+  `codes` (`CodeRow`: id, `codeHash`, `memberId`, `createdBy`, `createdAt`, `expiresAt`, and once
+  used `usedAt`, `usedBy` (the device it signed in) and `usedClaimed`, kept `CODE_REPLAY_MS`, 15
+  minutes); `secret` (32 random bytes made at setup: signs device tokens) and `setupHash` (the
+  setup code that brought the home online). Only hashes of keys and codes are stored.
+- `rev` (1 when the home came online, +1 with every stored change of data), `chatRev` (+1 when
+  the chat changed in a stored change), `meta` (`createdAt`, `writes`: the last 50 put ids,
+  `usage`: Blob operations this UTC month).
 
 ### Storage, reads and writes
 
@@ -797,18 +800,32 @@ One private blob, `ServerDoc` in `server/core/serverDoc.ts`, format `homeos.serv
   BlobConflictError; the SDK is passed in by `server/entry/vercel.ts`, the only file that imports
   the package), `FileBlobStore` (local) and `MemoryBlobStore` (unit tests; implemented).
 - **`HomeStore`** (`server/core/homeStore.ts`), one per function instance:
-  - Reads come from its cached copy when that was checked within `freshMs` and is at least the
-    caller's `minRev`; otherwise one `get` with `ifNoneMatch` refreshes it. Auth, polls and loads
-    all use the cache. Concurrent refreshes share one call.
+  - Reads come from its cached copy when that was checked within `freshMs`; otherwise one `get`
+    with `ifNoneMatch` refreshes it. Auth, polls and loads all use the cache. Concurrent
+    refreshes share one call. Status needs no read at all once the instance has seen a home
+    (a home never goes away); before that, "no home" is kept 30 s.
+  - **Rechecks** (a read for any other reason than freshness) are gated by the budget: a
+    caller who has seen a newer rev (`minRev`) or a write that failed on a copy that may be
+    behind ("member": at most one per `recheckMs`, 1 s at first), and a sign-in code or bare
+    key the copy does not know ("stranger": at most one a minute and `reads / 300` a day, since
+    anyone can send those). A recheck that is not allowed answers from the copy. Only a device
+    token signed by this home (`read({ minRev, trusted: true })`, see "Signing in") and a write
+    conflict read past the gates.
   - **Writes** go through one queue per instance and are stored with
-    `put(ifMatch: the ETag they were applied to)`. Whatever is waiting when a put can start goes
-    into one put (group commit), each write applied in order to the result of the one before;
-    a write that throws is taken out and rejects alone. A batch that changes nothing (same JSON)
-    is not stored. Before each put: `rev` + 1, `chatRev` + 1 when `chatFingerprint()` changed,
-    a fresh id appended to `meta.writes`, usage counted, `pruneAuth()`.
+    `put(ifMatch: the ETag they were applied to)`. Up to `MAX_BATCH` (25) writes waiting when a
+    put can start go into one put (group commit), each applied in order to the result of the one
+    before; a write that throws is rolled back and rejects alone (a `pure` write, which replaces
+    `doc.home` instead of editing it, as all the handler's do, by putting the previous home
+    object back and a copy of `auth`; any other from a copy of the whole document). A batch that
+    changes nothing (same JSON) is not stored. Before each put: `rev` + 1 when a `'data'` write
+    changed something (`'meta'` writes, marking a device used or storing the read count, keep
+    the rev, so browsers do not reload), `chatRev` + 1 when `chatFingerprint()` changed, a fresh
+    id appended to `meta.writes`, usage counted, `pruneAuth()`. A body over `MAX_DOC_BYTES`
+    (5 MiB) is refused (`too_large`).
   - **Conflicts**: `BlobConflictError` means another instance stored first: re-read, then, unless
     `meta.writes` holds this put's id (the put landed and only its reply was lost, which the SDK
-    then retried), apply the whole batch again to what is there. Five attempts, then `busy`.
+    then retried), wait a jittered 50 to 300 ms times the attempt and apply the whole batch again
+    to what is there. Seven attempts, then `busy` (nothing stored; ServerBackend asks once more).
     Every write is applied to the latest document, so **two people writing at once never lose
     a change**: two ticks on one visit, two edits to different fields of one item, a message and
     a tick, all land. The same field edited by two people at once: the later write wins, as on
@@ -816,25 +833,32 @@ One private blob, `ServerDoc` in `server/core/serverDoc.ts`, format `homeos.serv
   - A write made on an instance is in its cache at once, so with one warm instance (the usual
     case for a household) everyone's next poll sees it; a write on another instance is seen
     within `freshMs`.
-  - **A copy that is behind** (another instance stored a change within `freshMs`): a write that
-    fails on this instance's copy (a code, a person or an item made elsewhere a moment ago) is
-    tried once more on a fresh read before its error stands, when the copy is older than
-    `RECHECK_MS` (1 s) and reads are not under budget pressure. A put that fails with
-    `BlobUnavailableError` is checked the same way as a conflict (did one of this batch's ids
-    land?), else the batch rejects `unavailable`.
+  - **A copy that is behind**: a write that fails on this instance's copy (a person or an item
+    made elsewhere a moment ago, a device signed in elsewhere) is tried once more after a
+    member recheck. A put that fails with `BlobUnavailableError` is checked the same way as a
+    conflict (did one of this batch's ids land?), else the batch rejects `unavailable`.
 
 ### Budget (Vercel Blob on the Hobby plan)
 
 The Hobby plan includes **2,000 advanced operations** (`put`) and **10,000 simple operations**
 (`head()`, and `get` cache misses, which all of ours are) a month, and when either is exceeded
 Vercel **blocks the store for 30 days**: the home could not even be read. So the server counts
-and spends carefully:
+and spends carefully, and has a hard ceiling:
 
-- No Blob operation per request: auth, polls and reads use the instance's cached copy.
-- No write for a wrong code, a sign-in check or a no-op (unchanged JSON is not stored).
-- `pressure()` from `meta.usage` (reads also counted per instance and added with the next put):
-  under 60 % of the read budget `freshMs` 10 s and `pollMs` 3 s; 60 to 85 %: 30 s and 6 s; over
-  85 %: 120 s and 20 s. Browsers poll at the `pollMs` the server returns.
+- No Blob operation per request: auth, polls, status and reads use the instance's cached copy.
+- No write for a wrong code (it is checked on the copy first), a sign-in check or a no-op
+  (unchanged JSON is not stored). One put per device ever, for its first use (`seenAt`).
+- Reads are counted per instance and stored with the next put, and once 50 have built up
+  (`READ_FLUSH_AT`), by a put of their own that keeps the rev, so an instance that goes away
+  loses few of them.
+- `pressure()` from `meta.usage` plus this instance's reads not stored yet: under 60 % of the
+  read budget `freshMs` 10 s, `pollMs` 3 s, `recheckMs` 1 s; 60 to 85 %: 30 s, 6 s, 5 s; 85 to
+  90 %: 120 s, 20 s, 20 s; from 90 % (`READ_CEILING`): **the ceiling**: the copy is never
+  refreshed except for a trusted device token or a write conflict, `pollMs` is 60 s. With the
+  default read budget of 9,000 that leaves 1,000 reads under Hobby's 10,000 for what the counts
+  missed. At the ceiling another instance's change is seen when this instance next writes.
+- Browsers poll at the `pollMs` the server returns, only while visible and in use: once a minute
+  after 3 minutes without input, not at all after 15 (see ServerBackend).
 - Puts at the write budget: **read-only** until the month turns (UTC). Writes answer 503
   `read_only` without a put, `VersionResponse.readOnly` is true, and Home says so (see Screens).
   Reading keeps working, instead of the store going dark for 30 days.
@@ -849,7 +873,11 @@ search: '', latency: 0 })`; the method runs; for a write the document is read ba
 storage and `session` and `users` cleared before it is kept. DemoBackend only stores its
 document when the change succeeded, so a refused call changes nothing, and its BackendError
 goes to the browser as the same code. Nothing else in the server knows the data rules.
-Server-only rules on top: the auth section (codes, devices) and `pruneAuth()` after every write.
+Server-only rules on top: the auth section (codes, devices), `pruneAuth()` after every write, and
+limits on what one write may grow the home to: `HOME_MAX_BYTES` (4 MiB of JSON, about 16,000 chat
+messages) and `HOME_ROW_LIMITS` (members 50, areas 200, items 2,000, messages 20,000, reactions
+50,000, housekeeping tasks 200, visits 3,000): past them a write that adds is refused with 413
+`too_large` ("Couldn't save. The home is full."); one that keeps or shrinks the home always works.
 
 ### The API (`src/lib/backend/serverApi.ts`, `server/core/handler.ts`)
 
@@ -860,20 +888,21 @@ limits: setup 4 MiB, rpc 256 KiB, else 4 KiB (413 `too_large`).
 
 | op | sign-in | request | response |
 | --- | --- | --- | --- |
-| `GET ?op=status` | no | | `{ home }` (is a home online) |
+| `GET ?op=status` | no | | `{ home }` (is a home online; from memory once this instance has seen one) |
 | `GET ?op=session` | yes | | `{ user, entry, device, rev }`; renews the cookie |
 | `GET ?op=version` | yes | | `{ rev, chatRev, pollMs, readOnly }` |
 | `GET ?op=devices` | yes | | `{ devices: DeviceInfo[] }` |
-| `POST setup` | no | `{ code, phone }` | `{ user, entry, device, rev }` + cookie |
-| `POST redeem` | no | `{ code }` | `{ user, entry, device, rev }` + cookie |
+| `POST setup` | no | `{ code, phone, app? }` | `{ user, entry, device, rev }` + cookie |
+| `POST redeem` | no | `{ code, app? }` | `{ user, entry, device, rev }` + cookie |
 | `POST rpc` | yes | `{ method, args, minRev? }` | `{ result, rev }` (`null` for void) |
-| `POST createCode` | yes | `{ memberId }` | `{ code, memberId, expiresAt }` |
+| `POST createCode` | yes | `{ memberId }` | `{ code, memberId, expiresAt }` (403 `forbidden` for someone joined and signed in elsewhere) |
 | `POST removeDevice` | yes | `{ deviceId }` | `{ ok }` (clears the cookie when it was this one) |
 | `POST signOut` | either | | `{ ok }` always; revokes this device if signed in; clears the cookie |
 | `POST release` | yes | | `{ ok }` ("Not Shea?"); clears the cookie |
 
 `user` is `{ id: user id, email: '', name }`, `entry` a `HomeEntry` (`member`; `claimed` from a
-redeem that made someone join). Errors are `{ "error": { "code", "message" } }`:
+redeem that made someone join). `app` (`AppMode`): `'standalone'` when the page runs as an
+installed app, for the device's label. Errors are `{ "error": { "code", "message" } }`:
 
 | code | status | browser sees (`toBackendError`) |
 | --- | --- | --- |
@@ -882,13 +911,17 @@ redeem that made someone join). Errors are `{ "error": { "code", "message" } }`:
 | `invalid_input` | 400 | `unknown` with `invalid_input: …` (DemoBackend's words) |
 | `not_found`, `home_exists`, `invalid_code`, `read_only` | 404, 409, 400, 503 | the same code |
 | `too_many_attempts` | 429 + Retry-After | `too_many_attempts` |
-| `unavailable` (Blob unreachable) | 503 | `network` |
+| `unavailable` (Blob unreachable, or this instance can't tell yet whether a device is signed in) | 503 | `network` |
 
-**The device key** is 32 random bytes, base64url, made on setup or redeem and sent only in
-`Set-Cookie: homeos_key=<key>; Path=/api; HttpOnly; SameSite=Lax; Max-Age=34560000; Secure`
-(Secure on https; the local server leaves it off for http://localhost). The browser app never
-sees or stores it. The server also accepts `Authorization: Bearer <key>` (tests, tools). A
-cookie rather than a header on purpose: an HttpOnly key can't be read by script, Safari's 7-day
+**The device key** is 32 random bytes, base64url, made on setup or redeem and sent only inside a
+**device token** in `Set-Cookie: homeos_key=<token>; Path=/api; HttpOnly; SameSite=Lax;
+Max-Age=34560000; Secure` (Secure on https; the local server leaves it off for
+http://localhost): `<key>.<device id>.<rev>.<mac>`, where `rev` is the first rev that holds the
+device and `mac` is HMAC-SHA256 of `"<device id>.<rev>.<key hash>"` with the home's `auth.secret`
+(16 bytes, base64url). The key alone is the credential; the token lets any instance tell a device
+signed in elsewhere a moment ago from a made-up or removed one (see "Signing in"). The browser
+app never sees or stores it. The server also accepts `Authorization: Bearer <token or key>`
+(tests, tools). A cookie rather than a header on purpose: an HttpOnly key can't be read by script, Safari's 7-day
 limit on script-written storage does not apply to it, and iOS copies Safari's cookies into a
 Home Screen app when it is added, so a phone that signed in in Safari and then adds home.os to
 its Home Screen is still signed in (reported behaviour, not checked on a device yet; otherwise
@@ -944,39 +977,71 @@ else the session's), `subscribe`, `subscribeChat` and `reconnect` (polling), `cr
 
 - **Codes**: 8 letters of `CODE_ALPHABET` (`23456789ABCDEFGHJKLMNPQRSTUVWXYZ`: no 0, 1, I or O;
   32 letters, so `byte & 31` is unbiased), 40 bits, shown as `ABCD-EFGH` (`formatCode`), typed in
-  any case with or without spaces or hyphens (`normaliseCode`). Single use, valid 7 days, one live
-  code per person (a new one replaces it). Stored as hex SHA-256 of the normalised code. Also a
-  link: `<app>/?code=ABCD-EFGH` (`codeLink`).
-- **Who gets one**: anyone in the home can make a code for anyone in the home: someone not joined
-  yet ("Invite Shea"), someone joined who needs a new phone, or themselves ("Add another device").
-  Someone new is added first (Add Person: name and emoji), then invited.
+  any case with or without spaces or hyphens (`normaliseCode`). Single use, valid 7 days. Up to
+  `MAX_LIVE_CODES` (5) live a person: making another does not cancel the one sent before (past 5,
+  their oldest goes). Stored as hex SHA-256 of the normalised code. Also a link:
+  `<app>/?code=ABCD-EFGH` (`codeLink`).
+- **Who gets one** (`issueCode`): anyone in the home can make a code for someone not joined yet
+  ("Invite Shea"; someone new is added first, Add Person: name and emoji), for themselves ("Add
+  another device"), and for someone who has joined but has **no device signed in** any more (a
+  lost phone, once someone removed it from their page; or after they signed out of their only
+  one). Never for someone joined who is signed in somewhere: a code for them would let whoever
+  has it be them, silently (403 `forbidden`; People shows "Only Shea can sign in on another
+  device…" instead of the button). Recovering a lost phone therefore takes a visible step:
+  removing that person's devices signs them out everywhere.
 - **Redeem**: the code's person joins if they had not (`user_id = 'u-' + uuid`, `claimed_at` now,
   entry `claimed`, so the welcome step follows and "Not Shea?" works for a day), else it is one
-  more device for them (entry `member`). The code is used up; a device row is added (at most 10 a
-  person and 50 a home; the oldest goes).
-- **Setup code** (`HOMEOS_SETUP_CODE`): works only while no home is online (afterwards it is
-  ignored for good: setup answers `home_exists`).
+  more device for them (entry `member`). A device row is added (at most 10 a person and 50 a
+  home; the oldest goes). The code is kept as used for 15 minutes (`CODE_REPLAY_MS`); when the
+  person joins, their other live codes that someone else made go. **A lost reply**: the same code
+  again within those 15 minutes, while the device it signed in has never been used (`seenAt`),
+  replaces that device and gives the same entry; once the device has been used, the code is spent.
+- **Setup code** (`HOMEOS_SETUP_CODE`): brings a home online once (see Setup). With a home online,
+  the same code (also the one in `auth.setupHash`) signs a browser in as the **owner** only while
+  none of the owner's devices has ever been used (the reply to Bring It Online was lost, or every
+  device of theirs was signed out or removed): their unused devices go, the home is not built
+  again. Otherwise setup answers `home_exists`, for good.
 - **Guessing**: every presented secret is hashed and compared with every stored hash using
-  `timingSafeEqual`, without stopping early. Failed code and setup attempts are counted in memory
-  (`AttemptLimiter`: 10 per IP and 50 in all per 15 minutes per instance; the IP from `x-real-ip`,
-  else the first `x-forwarded-for`, which Vercel sets), then 429 with Retry-After without trying
-  the code. A wrong code never writes to the Blob store.
-- **A key this instance does not know** may be one another instance signed in moments ago: the
-  store is read once more (at most every 2 s, `RECHECK_MS` in `handler.ts`) before answering 401,
-  unless that address is being limited or reads are under budget pressure; a key that is still
-  unknown counts as a failed attempt, so made-up keys can't run up the read budget. `minRev` on
-  an RPC is applied only once the key is known.
-- **Devices** (`DeviceInfo`): id, the person, a label from the user agent ("iPhone · Safari",
-  `deviceLabel()`), when it signed in, and `current`. Anyone in the home can remove any device.
-  Sign Out revokes this one. "Not Shea?" (`release`) runs DemoBackend's `releaseClaim` as the
-  caller (within a day of joining), and `pruneAuth()` then signs that person out everywhere.
+  `timingSafeEqual`, without stopping early. Code and setup attempts are limited in memory per
+  instance (`AttemptLimiter`; the address from `x-real-ip`, else the first `x-forwarded-for`, which
+  Vercel sets; an IPv6 address counts by its /64, an IPv4 address written as IPv6 as itself):
+  `begin(ip)` checks and counts in one synchronous step, so an attempt counts as failed from the
+  moment it starts (a burst sent at once is limited exactly like the same codes one after another)
+  until it works; 10 failures per address in 15 minutes, 20 for an address someone signed in from
+  in that time (the home's Wi-Fi), then 429 with Retry-After without trying the code. While 50
+  different addresses are failing, an address that has failed itself is held until its failures
+  leave the window; an address with no failures of its own is never held up by anyone else.
+  A wrong code is checked on the instance's copy (and at most one stranger recheck) and never
+  reaches the write queue or the Blob store.
+- **A device this instance does not know** (`signedIn()` in `handler.ts`): a device token signed by
+  this home for a rev newer than the copy is a device another instance signed in a moment ago:
+  the copy is read until it holds that rev (past every budget gate: only real devices can ask, once
+  each), then judged again. A token this home did not sign, or one whose rev the copy holds without
+  the device (removed, or its person released), is definitely out: 401, and only then is the cookie
+  cleared. A bare key (tools), or no copy of the home here: out when the copy was checked within
+  2 s, else one stranger recheck when the budget and `keyMisses` (unknown keys, counted apart from
+  codes, so a phone with an old key never holds up a code on the same Wi-Fi) allow, else 503
+  `unavailable`, which the browser treats as a dropped connection and asks again. `minRev` on a
+  read RPC is honoured with a member recheck.
+- **Devices** (`DeviceInfo`): id, the person, a label ("iPhone · Safari", `deviceLabel()`; "iPhone ·
+  Home Screen app" when setup or redeem said `app: 'standalone'`, since Safari and the Home Screen
+  app send the same user agent and keep separate sign-ins), when it signed in, and `current`.
+  Anyone in the home can remove any device. Sign Out revokes this one. "Not Shea?" (`release`)
+  runs DemoBackend's `releaseClaim` as the caller (within a day of joining), and `pruneAuth()` then
+  signs that person out everywhere.
+- **Known limit**: a removed device can still read the home through an instance whose copy has not
+  seen the removal yet, for up to `freshMs` (10 s, longer under budget pressure; at the ceiling,
+  until that instance next writes). Its writes are refused at once (each write checks the caller on
+  the document it writes).
 
 ### Setup ("Bring this home online")
 
-`server/core/setup.ts`: limits, setup code (constant time), no home online, then
+`server/core/setup.ts`: limits, setup code (constant time); a home online already: the owner's
+second chance (see "Signing in"), else `home_exists`; otherwise
 `buildServerHome(phone, { now, ownerUserId })` (`src/lib/logic/serverImport.ts`, whose header is
-the full rule list), then `newServerDoc` + the owner's device, stored with `put({ create: true })`
-(a second setup racing loses with `home_exists`). In short, from the phone's `homeos.demo.v1`:
+the full rule list), then `newServerDoc` (with `auth.secret` and `auth.setupHash`) + the owner's
+device, stored with `put({ create: true })` (a second setup racing finds the home and gets the
+second chance, or `home_exists`). In short, from the phone's `homeos.demo.v1`:
 
 - `buildImportPayloadWithIds()` (`importHome.ts`, now exported; `buildImportPayload()` is it
   without the ids) does the people, areas, items and completions with its rules unchanged: the
@@ -990,44 +1055,62 @@ the full rule list), then `newServerDoc` + the owner's device, stored with `put(
   phone, their reactions), and **housekeeping** (the task list as it is, the message if written
   after set-up, the visits created after set-up with their ticks, comments and prices).
 - Fresh ids for everything. `serverSetupSummary(raw)` is the same rules' summary for the screen
-  (`ServerSetupSummary`: DemoHomeSummary plus `messages` and `visits`).
+  (`ServerSetupSummary`: DemoHomeSummary plus `messages`, `visits` and `lastChanged`, the newest
+  change that comes along, so an older copy is recognisable).
 
 ### ServerBackend (`src/lib/backend/server.ts`)
 
 - Requests send `X-HomeOS: 1` and the cookie (same origin), time out after 15 s
   (`network`), and map errors with `toBackendError`. Any 401 forgets the session and fires
-  `onAuthChange(null)` once before rejecting `not_signed_in`.
+  `onAuthChange(null)` once before rejecting `not_signed_in`; within 30 s of signing in here
+  (`FRESH_SIGN_IN_MS`), a 401 is asked once more a second later first. An RPC the server found
+  `busy` (nothing was stored) is sent once more after 0.3 to 0.8 s.
 - `getUser()` is GET session (null on 401); the session is kept 2 s so `enterHome()` right after
-  shares it. `bringOnline` and `redeemCode` keep the entry they get for the next `enterHome()`
-  (once), fire `onAuthChange(user)`, and write `homeos.server.auth` (`AUTH_SIGNAL_KEY`, no secret)
-  so other tabs re-check their session. `signOut()` never rejects.
+  shares it. `bringOnline` and `redeemCode` send `app` (`appMode()`, `src/lib/appMode.ts`), keep
+  the entry they get for the next `enterHome()` (once), fire `onAuthChange(user)`, and write
+  `homeos.server.auth` (`AUTH_SIGNAL_KEY`, no secret) so other tabs re-check their session.
+  `bringOnline` that meets `home_exists` asks GET session: when this browser is signed in (an
+  earlier tap got through and only its reply was lost), that is a success.
+- `signOut()` never rejects. When the server can't be reached (offline), the key is still in its
+  HttpOnly cookie, which only the server can clear: `homeos.server.signout`
+  (`PENDING_SIGN_OUT_KEY`) is set, this browser counts as signed out, and the sign-out is sent
+  before anything else at start-up (`getUser()`) and on `online`; a new sign-in drops it.
 - Every read sends `minRev`: the newest rev this browser has seen (from polls and every
   response), so it never reads older than it has shown.
 - **Polling** (one poller for `subscribe`, `subscribeChat` and `onStatus`): GET version every
-  `pollMs` (3 s until the server says otherwise) while `document.visibilityState` is visible; at
-  once on visible, `focus`, `online` and `reconnect()`; never while hidden; stopped when nothing
-  listens. `subscribe`'s `onChange` fires on the first successful poll, whenever `rev` goes up,
-  and on the first success after a failed poll (the "rejoin" of Sync guarantees).
-  `subscribeChat` gets `{ type: 'resync' }` on the same occasions for `chatRev`, plus the change
-  of each of its own chat writes just before that write resolves (as the demo backend does).
-  `onStatus` gets `{ readOnly }`.
+  `pollMs` (3 s until the server says otherwise) while `document.visibilityState` is visible and
+  someone is using the page: after 3 minutes without input (`pointerdown`, `keydown`,
+  `touchstart`, `wheel`, `scroll`) once a minute (`IDLE_POLL_MS`), after 15 minutes not at all
+  until input, which polls at once; at once on visible, `focus`, `online` and `reconnect()` (which
+  also count as someone being back); never while hidden; stopped when nothing listens. A tablet
+  on a stand left on Home asks about 70 times and then nothing. `subscribe`'s `onChange` fires on
+  the first successful poll, whenever `rev` goes up, and on the first success after a failed poll
+  (the "rejoin" of Sync guarantees). `subscribeChat` gets `{ type: 'resync' }` on the same
+  occasions for `chatRev`, plus the change of each of its own chat writes just before that write
+  resolves (as the demo backend does). `onStatus` gets `{ readOnly }`.
 
 ### HomeProvider in server mode
 
 Phases are unchanged: no key is phase `signedOut`; with a key, `enterHome()` gives `member` or,
 right after a redeem that made someone join, `claimed` (the welcome step, as after a Google
-claim). New in `HomeContextValue` (stubs now, `TODO(zero-data)`):
+claim). New in `HomeContextValue`:
 
 - `serverWelcome: ServerWelcome | null` (null outside server mode), worked out whenever the phase
   becomes `signedOut`: `checking`, then
-  - a waiting `?code=` link (`takeSignInCode()`): tried once with `redeemCode`; success opens the
-    home; failure is `private` with that code in the field and notice `codeInvalid` or
-    `tooManyAttempts`;
-  - else GET status: no home online and this browser holds a demo home
-    (`serverSetupSummary(localStorage homeos.demo.v1)` not null): `setup` with the summary and
-    `pendingSetupCode()` (or `''`);
+  - a waiting `?code=` link (`takeSignInCode()`): where home.os may not live (`linkNeedsChoice()`:
+    Safari on an iPhone or iPad outside the Home Screen app, or a browser inside another app,
+    such as WhatsApp's or Instagram's), it is **not** used up: `private` with the code in the
+    field and notice `codeHere` (join in this browser, or type it in the Home Screen app);
+    elsewhere it is tried once with `redeemCode`; success opens the home; failure is `private`
+    with that code in the field and notice `codeInvalid` or `tooManyAttempts`;
+  - else GET status: no home online and a `?setup=` link waiting, while this browser has no demo
+    home, or is a browser tab on an iPhone or iPad: `setupElsewhere` (the setup code, this
+    browser's own summary if it has one, `ios`); no home online and this browser holds a demo home
+    (`serverSetupSummary(localStorage homeos.demo.v1)` not null): `setup` with the summary,
+    `pendingSetupCode()` (or `''`) and `elsewhere` on an iPhone browser tab;
   - else `private` (`homeOnline` from status; notice `setupUsed` when a `?setup=` link was waiting
     and a home is online, and that link is forgotten).
+- `chooseSetupHere()`: "Use This Copy Instead" on `setupElsewhere`: `setup` with this browser's copy.
 - `bringHomeOnline(setupCode)`, `redeemCode(code)`, `createCode(memberId)`, `listDevices()`,
   `removeDevice(deviceId)`: see their doc comments. After bringing the home online:
   `onboardingTail` and `invitePeople` (the server variant of "haven't joined yet", below), then
@@ -1046,19 +1129,34 @@ claim). New in `HomeContextValue` (stubs now, `TODO(zero-data)`):
   home is private." (17/600) and "Ask someone at home for a code." With `homeOnline` false, the
   second line is "home.os isn't set up here yet." Then **Have a code?**: one text field
   (`autocapitalize=characters`, `autocomplete=one-time-code`, `inputmode=text`, `spellcheck=false`,
-  `maxLength` 12, placeholder "ABCD-EFGH", shown in groups as typed) and **Join** (primary, off
+  `maxLength` 20, placeholder "ABCD-EFGH", shown in groups as typed) and **Join** (primary, off
   until 8 letters; busy while it runs). Errors under the field (`role="alert"`): `invalid_code`
   "That code didn't work. Check it, or ask for a new one."; `too_many_attempts` "Too many tries.
-  Wait 15 minutes, then try again."; else `errorMessage`. Notices above the field:
-  `codeInvalid` "That link's code didn't work. Ask for a new one."; `tooManyAttempts` as the
-  error; `setupUsed` "This home is already online. Ask someone at home for a code." No Google
-  button and no demo note in server mode.
+  Wait 15 minutes, then try again."; a setup code (12 or more letters), without asking the
+  server: "That's a setup code, and this home is already online. Ask someone at home for a
+  code." (no home online: "That's the setup code. Enter it in home.os where your home is.");
+  else `errorMessage`. Notices above the field: `codeInvalid` "That link's code didn't work. Ask
+  for a new one."; `tooManyAttempts` as the error; `setupUsed` "This home is already online. Ask
+  someone at home for a code."; `codeHere` "Using home.os from your Home Screen? Open it there
+  and type this code. Or join in this browser.", with the link's code in the field, the button
+  reading **Join in This Browser**, and **Copy Code** under it ("Copied." or "Couldn't copy.
+  Select the code instead."). No Google button and no demo note in server mode.
+- **A setup link where the home is not** (`setupElsewhere`), in place of the code field: on an
+  iPhone or iPad "Open home.os from your Home Screen." and "Your home is kept in the home.os app
+  on your Home Screen, not in Safari. Open it there and enter this setup code."; elsewhere "Open
+  home.os where your home is." and "This browser doesn't have your home. Open home.os where you
+  use it, and enter this setup code."; the setup code large on a card (28/600, selectable, read
+  out a letter at a time), **Copy Code**; when this browser has a copy too, "This browser has a
+  copy too: {name}, {counts}, last changed {day}." and **Use This Copy Instead** (text button).
 - **Bring this home online** (`setup`): title "Bring this home online"; the card of "Bring over
   the home from this phone" (name, address, "{n} areas · {m} items" plus " · {d} done" and
-  " · {k} messages" when there are any, the people with "(you)"); a **Setup code** field
-  (pre-filled from the link; same input attributes, `maxLength` 20, placeholder
-  "XXXX-XXXX-XXXX"); footnote "Everyone else joins with a code you send them from Profile.";
-  **Bring It Online** (primary; busy; `errorMessage` under it). Nothing else: no Start Fresh.
+  " · {k} messages" when there are any, the people with "(you)"); "Last changed {day}." under it;
+  on an iPhone browser tab also "Use home.os from your Home Screen? Bring it online from there.";
+  a **Setup code** field (pre-filled from the link; same input attributes, `maxLength` 20,
+  placeholder "XXXX-XXXX-XXXX") with **Paste** at its end where the clipboard can be read (the
+  code from the link or on its own; else "There's no setup code to paste. Copy it from the link
+  first."); footnote "Everyone else joins with a code you send them from Profile."; **Bring It
+  Online** (primary; busy; `errorMessage` under it). Nothing else: no Start Fresh.
 - **Welcome home, {name}** (after a redeem that made someone join): the existing ClaimWelcome;
   the "Not {name}?" sheet's message in server mode: "You'll be signed out and {name} goes back to
   waiting to join. Ask someone at home for a new code."
@@ -1070,31 +1168,39 @@ claim). New in `HomeContextValue` (stubs now, `TODO(zero-data)`):
   another device"); the code large (34/600, letter-spaced, selectable); "Works once, for 7 days.
   On {name}'s phone, open home.os and enter it, or open the link." (another device: "On your
   other phone or tablet, open home.os and enter it, or open the link."); **Share** (the share
-  helper, text "Join our home on home.os: {link}\nCode: {code}"); **Done**.
+  helper, text "Join our home on home.os. Type this code in home.os: {code}\nOr open {link}": the
+  code first, since a link opens in Safari or the messaging app's browser); **Done**. A code that
+  could not be made because the person signed in meanwhile says "{name} signed in meanwhile, so
+  only they can add a device now." in a toast.
 - **Profile**: the account line reads "This device · {label}" instead of "Signed in with
   Google"; **Add another device** (a code for me); **Sign Out** as now. Push notifications,
   weekly email and "Invite someone" are hidden.
 - **People > a person**: not joined: no Google Email field; **Invite {name}** (code sheet), and
   Remove as now. Joined: **Devices**, each "{label} · Signed in {date}" with **Remove** (asks
   "Remove this device?" / "It will need a new code to get back in." / **Remove**, destructive;
-  removing your own signs you out), and **Sign in on a new phone** (code sheet). Add Person has
-  no email field; its footnote: "Then send them a code from their page."
+  removing your own signs you out), and **Sign in on a new phone** (code sheet) on your own page,
+  and on someone else's once none of their devices is signed in; while they are, the caption
+  "Only {name} can sign in on another device, from their Profile. If they lost their phone,
+  remove it here, then send them a code." instead. Add Person has no email field; its footnote:
+  "Then send them a code from their page."
 - **Read-only**: when `readOnly`, Home shows one line under the person filter (13/18 secondary):
   "Saving is paused until next month: the free storage limit is used up." A failed save says
-  "Couldn't save. Saving is paused until next month."
+  "Couldn't save. Saving is paused until next month." A save refused because the home reached
+  its size limit says "Couldn't save. The home is full."
 
 ### Sync guarantees in server mode
 
 The table in "Sync guarantees" holds, every row heard through polling: within about 5 s while
 both are open and online (a 3 s poll, the 250 ms debounce, the load), and within about 5 s of
-coming back into view or online. A browser polls only while visible. Writes resolve as soon as
-they are stored, and the writer reloads at once (with `minRev`).
+coming back into view or online. A browser polls only while visible and in use (after 3 minutes
+without input once a minute, after 15 not until the next input, which polls at once). Writes
+resolve as soon as they are stored, and the writer reloads at once (with `minRev`).
 
 ### Local server and tests
 
 - `server/entry/local.ts` (bundled by `npm run build:server` into `dist-server/local.mjs`): the
   built app and `/api/home` on one port, `FileBlobStore` under `.homeos-local/` or `--memory`,
-  `--allow-reset` (`POST /__homeos/reset`), `--attempts`. `npm run dev:server`
+  `--allow-reset` (`POST /__homeos/reset`), `--attempts <perIp>,<global>,<windowMs>[,<trustedPerIp>]`. `npm run dev:server`
   (`scripts/dev-server.mjs`): bundles the local server, runs it on 4300 (`--api-port` to
   change; `--allow-reset`; `HOMEOS_SETUP_CODE` from the shell, else `TEST-SETU-PCDE`) and Vite's
   dev server (its own script, so Ctrl+C stops both; other arguments go to Vite) with
@@ -1102,13 +1208,16 @@ they are stored, and the writer reloads at once (with `minRev`).
 - `playwright.server.config.ts` (`npm run test:e2e:server`, `e2e-server/`): port
   `E2E_PORT` (default 4316); builds with `HOMEOS_LOCAL_SERVER=1` (Supabase and VAPID variables
   emptied, `VITE_FORCE_DEMO` empty) into `dist-server/app`, then runs the local server with
-  `--memory --allow-reset --attempts 5,20,60000` and `HOMEOS_SETUP_CODE=TEST-SETU-PCDE` (the
+  `--memory --allow-reset --attempts 5,20,60000,5` and `HOMEOS_SETUP_CODE=TEST-SETU-PCDE` (the
   default Blob budgets), plus a second local server on `E2E_PORT + 1` over the same build with
-  `HOMEOS_BLOB_WRITES_PER_MONTH=3` (`readonly.spec.ts`); one worker; each test starts from a
+  `HOMEOS_BLOB_WRITES_PER_MONTH=4` (`readonly.spec.ts`: setup, the phone's first use of its key,
+  and two changes); one worker; each test starts from a
   reset; `serviceWorkers: 'block'`; timezone Europe/London. Each person is their own browser
   context (`e2e-server/helpers.ts`: `openDevice()` can sign a context in first through its own
   cookie jar, with the same setup or redeem call the screens make, so a test that is not about
-  signing in starts on Home). Console errors fail a test, except the 400, 401 and 429 answers
+  signing in starts on Home; `userAgent` for an iPhone's Safari; unless `inUse: false`, a
+  harmless `wheel` event every 20 s, as a person looking at the phone would make, so a phone that
+  only watches another's changes keeps its 3 s polls). Console errors fail a test, except the 400, 401 and 429 answers
   the app expects and shows (a signed-out session check, a refused code, a limit). It proves: setup from the user's home fixture
   (`USER_DEMO_DOC` put in localStorage first) with the summary and everything coming along;
   Shea joining with her code (typed, and as a link) and seeing her items; a stranger with no code
@@ -1122,22 +1231,42 @@ they are stored, and the writer reloads at once (with `minRev`).
   holding every change once; a browser that was offline catching up when back online; no GET
   version while the page is hidden and a catch-up as soon as it is visible; the used code and the
   used setup link refused; the code sheet's copy and focus return; the only device's Sign Out
-  warning; and read-only (the month's last change, then Home's line and the failed save's toast,
-  and reading still working).
+  warning; read-only (the month's last change, then Home's line and the failed save's toast,
+  and reading still working); Bring It Online tapped again after its reply (and cookie) was lost,
+  opening the home with one device; a setup link opened in an iPhone's Safari with no home there
+  (where to use it, the code, Copy Code) and with a copy there (its age, Use This Copy Instead);
+  a code link opened in an iPhone's Safari not used up, then typed in the Home Screen app, which
+  People lists as "iPhone · Home Screen app", with no Sign in on a new phone for Stratis to tap;
+  and Sign Out while offline staying signed out after a reload online, with its device gone.
 - Unit tests (Vitest, `server/**/*.test.ts` and `src`): `rpc` (every method accepts the app's
   real shapes; wrong types, unknown keys, unknown methods, `constructor` and `__proto__` refused);
-  `runAs` (the session never reaches the stored home); `auth` (format, normalising, one code per
-  person, expiry, single use, claim, device limits); `limits`; `homeStore` with two stores over
-  one `MemoryBlobStore` (concurrent writes never lost, group commit, a lost reply not applied
-  twice, no put for no change, `minRev`, freshness, budget and read-only); `handler` (CSRF,
-  content type, body limits, cookie attributes, 401s, every op, error mapping, no key or hash in
-  any response); `serverImport` (the fixture: Stratis owner, Shea with her items, Ela and the
+  `runAs` (the session never reaches the stored home); `auth` (format, normalising, up to 5 live
+  codes and the others going when someone joins, who may make one, expiry, single use and the
+  lost-reply replay, claim, the owner's second chance, device tokens, device limits); `limits`
+  (a burst counted from its start, trusted addresses, the global rule never holding an address
+  with no failures, IPv6 by /64); `homeStore` with two stores over one `MemoryBlobStore`
+  (concurrent writes never lost, group commit of at most 25, a lost reply not applied twice, no
+  put for no change, meta writes keeping the rev, pure and whole-document rollback, the body cap,
+  jittered backoff, `minRev`, freshness, budget levels and the ceiling, the read count stored
+  every 50 reads, read-only); `handler` (CSRF, content type, body limits, cookie attributes, 401s,
+  every op, error mapping, no key, hash, secret or setup hash in any response; and every finding of
+  the review: no code for someone signed in elsewhere, 200 wrong codes at once looked at only 10
+  times without a write, strangers on many addresses or one IPv6 /64, old keys not counted against
+  codes, a device redeemed on another instance signed in at once on this one even under budget
+  pressure, at the ceiling and with the limiter tripped, a cookie cleared only when a copy new
+  enough says so, 503 rather than 401 when it can't tell, status from memory, `minRev` reads gated,
+  the ceiling stopping reads, Bring It Online and a code entered again after a lost reply, the size
+  and row limits, the Home Screen app label); `serverImport` (the fixture: Stratis owner, Shea with her items, Ela and the
   made-up history and chat left behind, the starter task list; `demoCreatedDoc()`: one
   completion; real chat and visits after set-up come along); `deviceLabel`; and
   `server/client.test.ts`: ServerBackend against `handleApi` in-process (a fake `fetch`), every
   RPC round trip, polling with fake timers (visible, hidden, focus, online, first poll, rev and
-  chatRev changes, recovery), 401 signing out, the one-off `claimed` entry. HomeProvider and the
-  screens' server-mode behaviour in `src`.
+  chatRev changes, recovery, idle backoff and a tab left open for five days), 401 signing out
+  (and asked once more just after signing in), `busy` asked once more, Sign Out while offline
+  finishing when back online and at start-up, `home_exists` with this browser signed in, the
+  `app` hint, the one-off `claimed` entry. HomeProvider and the screens' server-mode behaviour in
+  `src` (links that need a choice, a setup link where the home is not, Copy Code, Paste, the
+  last-changed line, People's rule for Sign in on a new phone).
 - `scripts/vercel-function.test.ts` (Vitest): `server/entry/vercel.ts` bundled with the same
   esbuild options as `build-server.mjs`, loaded by Node's own loader from a temporary folder
   outside the repository (nothing resolvable from there), its default export served with
@@ -1147,7 +1276,8 @@ they are stored, and the writer reloads at once (with `minRev`).
   SDK really sends (the private blob URL with `cache=0`, `If-None-Match`, `x-vercel-blob-access:
   private`, `x-allow-overwrite: 0` on create, `x-if-match` on every other put, the bearer token),
   the 412 from a moved ETag becoming a retry that keeps both changes, polls with no Blob call,
-  the Secure HttpOnly cookie, and no token, setup code or key hash in any response.
+  the Secure HttpOnly cookie holding a device token, the device's first use stored once without a
+  new rev, and no token, setup code or key hash in any response.
 - `npm run test:build` (`scripts/check-build.mjs`): with every mode variable emptied, a build is
   demo mode and `build-server.mjs --vercel` publishes nothing (no `.vercel/output`: Vercel
   deploys `dist/` as before); with a random made-up `BLOB_READ_WRITE_TOKEN` and setup code,
@@ -1170,20 +1300,36 @@ exists (`getBuildOutputDirectory()` in `packages/static-build/src/utils/build-ou
 There is no `api/` folder, so no zero-config function competes with the bundled one.
 
 After the first deploy with the Blob store connected and `HOMEOS_SETUP_CODE` set, the main
-session checks (no user step, nothing here changes the home):
+session checks (no user step, no setup code needed, nothing here changes the home; `H='X-HomeOS: 1'`,
+`J='Content-Type: application/json'`, `A=https://<app>/api/home`):
 
 1. The build log says `build-server: published dist/ and /api/home in .vercel/output.` (else
    the build was not in server mode: `BLOB_READ_WRITE_TOKEN` was missing at build time).
-2. `curl -sS -H 'X-HomeOS: 1' https://<app>/api/home?op=status` gives `{"home":false}` with
-   `Content-Type: application/json` and `Cache-Control: no-store`; without the header it gives
-   403 `{"error":{"code":"forbidden",…}}`. HTML or a 404 means the function was not deployed
-   (see the fallback under "Deploying").
-3. `curl -sS -H 'X-HomeOS: 1' https://<app>/api/home?op=version` gives 401 `not_signed_in`.
-4. `https://<app>/` serves the app, whose Welcome screen (in a fresh private window) says "This
-   home is private." and "home.os isn't set up here yet." with a "Have a code?" field.
-5. The function's logs show no `HOMEOS_SETUP_CODE is set but is not a setup code` warning.
-6. Then the setup link `https://<app>/?setup=<HOMEOS_SETUP_CODE>` goes to the user; once the
-   home is online, step 2 gives `{"home":true}` and a second setup answers `home_exists`.
+2. `curl -sSi -H "$H" "$A?op=status"`: 200, `{"home":false}`, `Content-Type: application/json;
+   charset=utf-8`, `Cache-Control: no-store`. Without the header: 403
+   `{"error":{"code":"forbidden","message":"Missing the X-HomeOS header"}}`. HTML or a 404 means
+   the function was not deployed (see the fallback under "Deploying").
+3. `curl -sSi -H "$H" "$A?op=version"`: 401 `not_signed_in` with
+   `Set-Cookie: homeos_key=; Path=/api; HttpOnly; SameSite=Lax; Max-Age=0; Secure`. The same with
+   `-H "Authorization: Bearer $(printf 'A%.0s' {1..43})"` (a made-up key): 401.
+4. `curl -sSi -H "$H" -H "$J" -d '{"op":"redeem","code":"ZZZZ-ZZZZ"}' "$A"`: 400 `invalid_code`
+   (one failed attempt for that address; 10 in 15 minutes, then 429 with Retry-After).
+   `-d '{"op":"setup","code":"AAAA-AAAA-AAAA","phone":"{}"}'`: 400 `invalid_code` (a wrong setup
+   code, also counted). `-d '{"op":"nope"}'`: 400 `unknown_op`. `-H 'Content-Type: text/plain'
+   -d '{"op":"signOut"}'`: 403 `forbidden`. `-X PUT "$A?op=status"`: 405. A redeem body over 4 KiB
+   (`-d "{\"op\":\"redeem\",\"code\":\"$(head -c 5000 /dev/zero | tr '\0' x)\"}"`): 413 `too_large`.
+   `-d '{"op":"signOut"}'`: 200 `{"ok":true}` with the clearing cookie.
+5. `https://<app>/` in a fresh private window: the Welcome screen says "This home is private."
+   and "home.os isn't set up here yet." with a "Have a code?" field and no Google button.
+   `https://<app>/?setup=K7QM-3XRP-WN9D` (any made-up code; nothing is sent to the server with it)
+   in a fresh private window: "Open home.os where your home is." with that code on a card and
+   **Copy Code**, and the address bar loses `?setup=`. `https://<app>/?code=ZZZZ-ZZZZ` in a
+   desktop browser: "That link's code didn't work. Ask for a new one." with the code in the field.
+6. The function's logs show no `HOMEOS_SETUP_CODE is set but is not a setup code` warning.
+7. Then the setup link `https://<app>/?setup=<HOMEOS_SETUP_CODE>` goes to the user; once the
+   home is online, step 2 gives `{"home":true}`, step 4's setup with the real code gives 409
+   `home_exists` once the owner's phone has made a request, and `GET ?op=version` with the
+   user's cookie gives `{ rev, chatRev, pollMs: 3000, readOnly: false }`.
 
 Connected Blob stores also get `BLOB_STORE_ID` and OIDC credentials; `@vercel/blob` uses OIDC
 when it can and falls back to `BLOB_READ_WRITE_TOKEN` (its token lookup never throws), so
@@ -1196,8 +1342,20 @@ either works. The build only needs the token's presence to choose server mode.
   would put the household's address, names and items in the public JavaScript bundle, so it
   must stay out of the client: if wanted, the function should hold it (for example setup with
   `phone: 'saved'`, the summary returned only after the setup code checks out). Today, a setup
-  link opened where the home isn't (Safari, while the home is in the Home Screen app) shows
-  "home.os isn't set up here yet."; the setup code can then be typed in the Home Screen app.
+  link opened where the home isn't (Safari, while the home is in the Home Screen app) says where
+  to use it and shows the setup code with Copy Code; the Home Screen app's setup step has Paste.
+- **Who may make a code (a decision for the architect):** the decided design allows codes for a
+  person not joined yet, a new person, or yourself. The fix for "anyone could make a code for
+  someone joined and sign in as them" keeps that, and also allows a code for someone joined who
+  has no device signed in any more, so a lost phone (or signing out of your only one) can be
+  recovered by someone at home without anyone typing anything in a console; doing so needs a
+  visible step first (removing that person's devices signs them out everywhere). Without it, a
+  person who lost their only phone could never be themselves again.
+- **Known limits** (by design, documented in "Signing in" and "Budget"): a removed device can
+  still read through an instance whose copy has not seen the removal for up to `freshMs`; at the
+  read ceiling (90 % of the month's reads) a change made on another instance is seen only when
+  this instance next writes; a sustained stranger can use up to `reads / 300` stranger rechecks a
+  day per instance, which the ceiling bounds.
 - **UI additions beyond the contract, awaiting the architect:** the Item sheet hides Notify in
   server mode; Sign Out and removing the last device say that a new code is needed (and that
   nobody could make one when it is the only device signed in); the extra copy "No devices
@@ -1224,6 +1382,16 @@ signatures in `server/core/*.ts` and `src/lib/logic/serverImport.ts`, `buildImpo
 the wire helpers and their tests, `MemoryBlobStore`, the mode choice, the build output helpers and
 `scripts/build-server.mjs`. Every other `server/` function and every ServerBackend method throws
 "not implemented yet" until built.
+
+Changed by the review fixes (additive; the architect to confirm): the cookie's value is a device
+token (the key inside it); `SetupRequest.app` and `RedeemRequest.app` (`AppMode`); `createCode` may
+answer 403 `forbidden`; `unavailable` also means "this instance can't tell yet"; `ServerAuth.secret`
+and `setupHash`, `DeviceRow.seenAt`, `CodeRow.usedAt`, `usedBy` and `usedClaimed`;
+`ServerSetupSummary.lastChanged`; `ServerWelcome` kind `setupElsewhere`, `setup.elsewhere` and
+notice `codeHere`; `HomeContextValue.chooseSetupHere`; `HomeStore.write(change, { kind, pure })`,
+`recheck()`, `knowsHome()`, `checkedAt()` and `Pressure.recheckMs` and `ceiling`;
+`ServerContext.keyMisses`; `AttemptLimiter.begin()` and `AttemptLimits.trustedPerIp`; `newServerDoc`'s
+third argument; `deviceLabel`'s second.
 
 `server/entry/vercel.ts` comes with `@vercel/blob` (the integrator installs it and adds `esbuild`
 as an explicit devDependency at the version Vite already brings):

@@ -1,9 +1,11 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { SETUP_CODE_MIN_LENGTH } from '../../lib/backend/serverApi';
-import type { ServerSetupSummary } from '../../lib/types';
+import { APP_NAME } from '../../lib/constants';
+import { deviceTimeZone, formatDay, todayIn } from '../../lib/logic/dates';
+import type { ISOTimestamp, ServerSetupSummary } from '../../lib/types';
 import { errorMessage, useHome } from '../../state/HomeProvider';
 import { CodeField } from './CodeField';
-import { codeLetters, groupCode } from './codeText';
+import { codeLetters, groupCode, setupCodeFromText } from './codeText';
 import { HomeSummaryCard } from './ImportHome';
 import shared from './Onboarding.module.css';
 import styles from './OneHome.module.css';
@@ -11,12 +13,34 @@ import { PrimaryButton, StepPage, type Enter } from './StepPage';
 
 export const BRING_ONLINE_TITLE = 'Bring this home online';
 export const BRING_ONLINE_NOTE = 'Everyone else joins with a code you send them from Profile.';
+/** On an iPhone or iPad in a browser tab: the home is usually kept in the Home Screen app. */
+export const USE_HOME_SCREEN = `Use ${APP_NAME} from your Home Screen? Bring it online from there.`;
+export const NOTHING_TO_PASTE = 'There’s no setup code to paste. Copy it from the link first.';
+
+/** "Last changed Sat 10 Oct" for the copy's newest change (this browser's day), or null. */
+export function lastChangedLine(at: ISOTimestamp | null | undefined, now: Date = new Date()): string | null {
+  const when = at ? new Date(at) : null;
+  if (!when || Number.isNaN(when.getTime())) return null;
+  const zone = deviceTimeZone();
+  return `Last changed ${formatDay(todayIn(zone, when), todayIn(zone, now))}`;
+}
+
+/** Whether this browser can read the clipboard when asked (a Paste button is worth showing). */
+function canPaste(): boolean {
+  try {
+    return typeof navigator !== 'undefined' && typeof navigator.clipboard?.readText === 'function';
+  } catch {
+    return false;
+  }
+}
 
 interface BringOnlineProps {
   enter: Enter;
   summary: ServerSetupSummary;
   /** From a ?setup= link, else ''. */
   setupCode: string;
+  /** A browser tab on an iPhone or iPad: say the home may be kept in the Home Screen app. */
+  elsewhere?: boolean;
 }
 
 /**
@@ -27,7 +51,7 @@ interface BringOnlineProps {
  * storage, so the link may have opened in Safari), and Bring It Online. Once it is online this
  * browser is signed in as the owner and HomeProvider moves on. Nothing else: no Start Fresh.
  */
-export function BringOnline({ enter, summary, setupCode }: BringOnlineProps) {
+export function BringOnline({ enter, summary, setupCode, elsewhere = false }: BringOnlineProps) {
   const { bringHomeOnline } = useHome();
   const fieldId = useId();
   const errorId = useId();
@@ -48,6 +72,19 @@ export function BringOnline({ enter, summary, setupCode }: BringOnlineProps) {
   }, [setupCode]);
 
   const ready = codeLetters(code).length >= SETUP_CODE_MIN_LENGTH;
+  const changed = lastChangedLine(summary.lastChanged);
+
+  const paste = async () => {
+    setError(null);
+    try {
+      const found = setupCodeFromText(await navigator.clipboard.readText());
+      if (!alive.current) return;
+      if (found) setCode(found);
+      else setError(NOTHING_TO_PASTE);
+    } catch {
+      if (alive.current) setError(NOTHING_TO_PASTE);
+    }
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -72,6 +109,8 @@ export function BringOnline({ enter, summary, setupCode }: BringOnlineProps) {
         </div>
 
         <HomeSummaryCard summary={summary} busy={busy} />
+        {changed ? <p className={shared.caption}>{changed}.</p> : null}
+        {elsewhere ? <p className={`${shared.caption} ${styles.elsewhere}`}>{USE_HOME_SCREEN}</p> : null}
 
         <h2 className={shared.sectionHeader}>
           <label htmlFor={fieldId}>Setup code</label>
@@ -91,6 +130,11 @@ export function BringOnline({ enter, summary, setupCode }: BringOnlineProps) {
               disabled={busy}
               describedBy={error ? errorId : undefined}
             />
+            {canPaste() ? (
+              <button type="button" className={styles.paste} onClick={() => void paste()} disabled={busy}>
+                Paste
+              </button>
+            ) : null}
           </div>
         </div>
         <p className={shared.caption}>{BRING_ONLINE_NOTE}</p>

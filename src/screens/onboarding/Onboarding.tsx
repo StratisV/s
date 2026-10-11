@@ -112,7 +112,13 @@ export function Onboarding() {
       return <Welcome key={view} enter={enter} />;
     case 'serverSetup':
       return serverWelcome?.kind === 'setup' ? (
-        <BringOnline key={view} enter={enter} summary={serverWelcome.summary} setupCode={serverWelcome.setupCode} />
+        <BringOnline
+          key={view}
+          enter={enter}
+          summary={serverWelcome.summary}
+          setupCode={serverWelcome.setupCode}
+          elsewhere={serverWelcome.elsewhere === true}
+        />
       ) : null;
     case 'private':
       return (

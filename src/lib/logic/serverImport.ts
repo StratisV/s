@@ -431,8 +431,29 @@ function build(raw: string, opts: BuildServerHomeOptions): ServerHome | null {
     people: comes.map((p) => ({ name: p.name, emoji: p.emoji, me: p.me === true })),
     messages: home.messages.length,
     visits: home.housekeeping_visits.length,
+    lastChanged: newestOf([
+      ...home.items.flatMap((i) => [i.updated_at, i.completed_at]),
+      ...home.completions.map((c) => c.completed_at),
+      ...home.messages.map((m) => m.created_at),
+      ...home.housekeeping_visits.map((v) => v.updated_at),
+      ...home.housekeeping_notes.map((n) => n.updated_at),
+    ]),
   };
   return { home, householdId, ownerMemberId, summary };
+}
+
+/** The latest of these times (ISO), or null. */
+function newestOf(times: (string | null | undefined)[]): string | null {
+  let best: string | null = null;
+  let bestMs = -Infinity;
+  for (const t of times) {
+    const ms = typeof t === 'string' ? Date.parse(t) : NaN;
+    if (Number.isFinite(ms) && ms > bestMs) {
+      bestMs = ms;
+      best = new Date(ms).toISOString();
+    }
+  }
+  return best;
 }
 
 /**

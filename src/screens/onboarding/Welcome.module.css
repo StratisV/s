@@ -252,3 +252,55 @@
     transition: none;
   }
 }
+
+/* "Copy Code" under the Join button, and how it went. */
+.copy {
+  margin-top: 4px;
+}
+
+.copyStatus {
+  margin: 0;
+  min-height: 20px;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
+}
+
+.copyStatus:empty {
+  min-height: 0;
+}
+
+/* The setup code, large on a card, for typing on the Home Screen app. */
+.setupCode {
+  margin: 16px 0 0;
+  padding: 18px 12px;
+  border-radius: var(--r-card);
+  background: var(--card);
+  font-size: 28px;
+  line-height: 34px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  color: var(--label);
+  user-select: all;
+  -webkit-user-select: all;
+  overflow-wrap: anywhere;
+}
+
+/* This browser's own copy of a home, which can come online instead. */
+.thisCopy {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.thisCopyText {
+  margin: 0;
+  padding: 0 8px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--label-secondary);
+  text-wrap: balance;
+}

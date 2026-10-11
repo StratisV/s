@@ -86,7 +86,19 @@ export interface DeviceOptions {
   /** Where the app opens (a link). */
   path?: string;
   viewport?: { width: number; height: number };
+  /** The browser's user agent (an iPhone's Safari, say); default Chromium's. */
+  userAgent?: string;
+  /**
+   * Someone is looking at this phone (default true): a harmless input event every 20 s, so a
+   * phone that only watches another's changes keeps polling at its usual pace (ServerBackend
+   * slows to a poll a minute after 3 minutes without input). False: left alone, as on a stand.
+   */
+  inUse?: boolean;
 }
+
+/** Safari on an iPhone, as a ?code= link from Messages opens it. */
+export const IPHONE_SAFARI_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
 
 /**
  * A phone: a fresh browser context (its own cookies and storage), opened at `path`. With
@@ -102,11 +114,18 @@ export async function openDevice(browser: Browser, baseURL: string, opts: Device
     timezoneId: 'Europe/London',
     locale: 'en-GB',
     serviceWorkers: 'block',
+    ...(opts.userAgent ? { userAgent: opts.userAgent } : {}),
     storageState: {
       cookies: [],
       origins: [{ origin, localStorage: Object.entries(opts.localStorage ?? {}).map(([name, value]) => ({ name, value })) }],
     },
   });
+  if (opts.inUse !== false) {
+    // A wheel event with no movement: nothing on the page reacts to it but the poller.
+    await context.addInitScript(() => {
+      setInterval(() => window.dispatchEvent(new WheelEvent('wheel')), 20_000);
+    });
+  }
   if (opts.signIn && 'setup' in opts.signIn) {
     const phone = opts.localStorage?.[DEMO_DOC_KEY] ?? JSON.stringify(PHONE_DOC);
     await api(context.request, { op: 'setup', code: opts.signIn.setup, phone });
@@ -203,8 +222,14 @@ export function area(page: Page, name: string): Locator {
   return homeScreen(page).getByRole('region', { name, exact: true });
 }
 
+/** Home's areas (not the calendar above them, whose chosen day lists rows of its own). */
+export function areas(page: Page): Locator {
+  return homeScreen(page).locator('section[data-area-id]');
+}
+
+/** Area names on Home, top to bottom. */
 export function areaHeadings(page: Page): Locator {
-  return homeScreen(page).getByRole('heading', { level: 2 });
+  return areas(page).getByRole('heading', { level: 2 });
 }
 
 /** The part of a Home row that opens the Item sheet ("<title>, <Red|Amber|Green>." then the meta line). */

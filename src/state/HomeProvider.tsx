@@ -21,6 +21,7 @@ import {
   withTasksReordered,
 } from '../lib/logic/housekeeping';
 import { disablePush } from '../lib/push';
+import { isIos, isStandalone, linkNeedsChoice } from '../lib/appMode';
 import { forgetServerLinks, pendingSetupCode, takeSignInCode } from '../lib/serverLinks';
 import { forgetSharedLink } from '../lib/sharedLink';
 import { applyKindRules, nextDueDate } from '../lib/logic/items';
@@ -115,17 +116,27 @@ export type ServerWelcome =
   /**
    * No home is online yet and this browser kept one in demo mode: "Bring this home online",
    * with what comes along and the setup code field (pre-filled from a ?setup= link, else '').
+   * `elsewhere`: this is a browser tab on an iPhone or iPad, where the home is usually kept in
+   * the Home Screen app instead (the step says so).
    */
-  | { kind: 'setup'; summary: ServerSetupSummary; setupCode: string }
+  | { kind: 'setup'; summary: ServerSetupSummary; setupCode: string; elsewhere?: boolean }
+  /**
+   * A ?setup= link opened where the home is not (no demo home here, or Safari on an iPhone,
+   * whose Home Screen app keeps its own): "Open home.os from your Home Screen" with the setup
+   * code large and Copy. `summary`: this browser has a copy too, which can come online
+   * instead ("Use This Copy Instead"). `ios`: the copy for an iPhone or iPad.
+   */
+  | { kind: 'setupElsewhere'; setupCode: string; summary: ServerSetupSummary | null; ios: boolean }
   /**
    * "This home is private. Ask someone at home for a code." and "Have a code?" (pre-filled
-   * with a ?code= link's code that did not work, else ''). `homeOnline` false: no home is online
-   * yet and this browser has none to bring. `notice`: why a link did not work.
+   * with a ?code= link's code, else ''). `homeOnline` false: no home is online yet and this
+   * browser has none to bring. `notice`: why a link did not work, or (codeHere) that a link
+   * was opened where home.os may not live, so its code waits to be used here or typed there.
    */
   | { kind: 'private'; homeOnline: boolean; code: string; notice: ServerWelcomeNotice | null };
 
-/** Why a link opened on the Welcome screen did not work (server mode; copy in docs/ARCHITECTURE.md). */
-export type ServerWelcomeNotice = 'codeInvalid' | 'tooManyAttempts' | 'setupUsed';
+/** About a link opened on the Welcome screen (server mode; copy in docs/ARCHITECTURE.md). */
+export type ServerWelcomeNotice = 'codeInvalid' | 'tooManyAttempts' | 'setupUsed' | 'codeHere';
 
 export interface ToastState {
   id: number;
@@ -363,12 +374,20 @@ export interface HomeContextValue {
    * 'invalid_code' or 'too_many_attempts' (the field says why) or 'network'.
    */
   redeemCode(code: string): Promise<void>;
-  /** A fresh code for anyone in the home ("Invite Shea", "Add another device", a new phone for someone). */
+  /**
+   * A fresh code ("Invite Shea", "Add another device", a new phone for someone whose devices were
+   * all removed). The server refuses one for someone joined and signed in elsewhere (forbidden).
+   */
   createCode(memberId: string): Promise<IssuedCode>;
   /** Every signed-in browser in the home (Profile and People load it when they open). */
   listDevices(): Promise<DeviceInfo[]>;
   /** Signs a browser out for good; this browser's own: signs out here (phase 'signedOut'). */
   removeDevice(deviceId: string): Promise<void>;
+  /**
+   * "Use This Copy Instead" (serverWelcome 'setupElsewhere' with a summary): this browser's
+   * own copy is the one to bring online after all; serverWelcome becomes 'setup' with the code.
+   */
+  chooseSetupHere(): void;
   /** Saving is paused until next month (ServerStatus.readOnly): Home shows one line saying so. */
   readOnly: boolean;
 
@@ -490,6 +509,10 @@ export function notSavedMessage(err: unknown, verb: 'save' | 'undo' = 'save'): s
         return `${lead} Someone at home already has that email.`;
       case 'read_only':
         return `${lead} Saving is paused until next month.`;
+      case 'unknown':
+        // Server mode: the home reached its size limit (server/core/runAs.ts).
+        if (err.message.startsWith('too_large')) return `${lead} The home is full.`;
+        break;
     }
   }
   return `${lead} Try again.`;
@@ -1289,6 +1312,8 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
 
   /** A working-out of serverWelcome that is not in the background is under way. */
   const welcomeBusy = useRef(false);
+  /** "Use This Copy Instead" on setupElsewhere: this browser's copy comes online after all. */
+  const setupHereChosen = useRef(false);
 
   /**
    * What the signed-out Welcome screen shows (see ServerWelcome). `quiet`: a look in the
@@ -1305,6 +1330,12 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         if (!quiet) {
           setServerWelcome({ kind: 'checking' });
           const link = takeSignInCode();
+          if (link && linkNeedsChoice()) {
+            // Safari on an iPhone, or a browser inside another app: codes work once, so this one
+            // is not used up here by itself. Join here, or type it in home.os on the Home Screen.
+            if (current()) setServerWelcome({ kind: 'private', homeOnline: true, code: link, notice: 'codeHere' });
+            return;
+          }
           if (link) {
             try {
               await signInByCode(link);
@@ -1334,9 +1365,15 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
           const { serverSetupSummary } = await import('../lib/logic/serverImport');
           if (!current()) return;
           const summary = serverSetupSummary(readRawDemoDoc());
-          next = summary
-            ? { kind: 'setup', summary, setupCode: setupLink ?? '' }
-            : { kind: 'private', homeOnline: false, code: '', notice: null };
+          const tab = isIos() && !isStandalone();
+          if (setupLink && (!summary || tab) && !setupHereChosen.current) {
+            // The setup link opened where the home is not kept (or likely not): say where to use it.
+            next = { kind: 'setupElsewhere', setupCode: setupLink, summary, ios: isIos() };
+          } else if (summary) {
+            next = { kind: 'setup', summary, setupCode: setupLink ?? '', ...(tab ? { elsewhere: true } : {}) };
+          } else {
+            next = { kind: 'private', homeOnline: false, code: '', notice: null };
+          }
         } else {
           let notice: ServerWelcomeNotice | null = null;
           if (online === true && setupLink) {
@@ -2026,6 +2063,14 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
           forgetSharedLink();
           forgetServerLinks('code');
         }
+      },
+      chooseSetupHere: () => {
+        setServerWelcome((prev) => {
+          if (prev?.kind !== 'setupElsewhere' || !prev.summary) return prev;
+          setupHereChosen.current = true;
+          welcomeSeq.current += 1;
+          return { kind: 'setup', summary: prev.summary, setupCode: prev.setupCode, ...(prev.ios ? { elsewhere: true } : {}) };
+        });
       },
       readOnly: access ? readOnly : false,
 

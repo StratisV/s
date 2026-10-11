@@ -132,6 +132,30 @@
   letter-spacing: 0.08em;
 }
 
+/* Paste, at the end of the setup code's row. */
+.paste {
+  flex: none;
+  min-height: 44px;
+  padding: 0 4px 0 8px;
+  font-size: 17px;
+  letter-spacing: -0.4px;
+  color: var(--tint);
+  transition: opacity 0.15s ease;
+}
+
+.paste:active {
+  opacity: 0.4;
+}
+
+.paste:disabled {
+  opacity: 0.35;
+}
+
+/* "Use home.os from your Home Screen?" on a browser tab on an iPhone. */
+.elsewhere {
+  color: var(--label);
+}
+
 /* ── The people who came along ─────────────────────────── */
 
 /* The subtitle wraps here (two lines or more), unlike a one-line address. */

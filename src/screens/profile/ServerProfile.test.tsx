@@ -199,7 +199,7 @@ describe('People in server mode', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Invite Pat' }));
   });
 
-  it('someone who has joined: their devices, each with Remove, and a code for a new phone', async () => {
+  it('someone who has joined: their devices, each with Remove, and a code for a new phone once none is signed in', async () => {
     const { home } = await openPeople();
     await openPersonPage('Shea');
     const devices = screen.getByRole('region', { name: 'Devices' });
@@ -207,6 +207,13 @@ describe('People in server mode', () => {
     expect(within(devices).getAllByText('iPhone · Safari')).toHaveLength(1);
     // Only Shea's.
     expect(within(devices).queryByText('Mac · Chrome')).toBeNull();
+    // While she is signed in somewhere, only she can add a device (a code would let anyone be her).
+    expect(within(devices).queryByRole('button', { name: 'Sign in on a new phone' })).toBeNull();
+    expect(
+      within(devices).getByText(
+        'Only Shea can sign in on another device, from their Profile. If they lost their phone, remove it here, then send them a code.',
+      ),
+    ).toBeTruthy();
 
     fireEvent.click(within(devices).getByRole('button', { name: 'Remove iPhone · Safari, signed in Thu 8 Oct' }));
     const sheet = await screen.findByRole('alertdialog', { name: 'Remove this device?' });
@@ -304,5 +311,16 @@ describe('Profile outside server mode', () => {
     expect(screen.queryByRole('button', { name: 'Add another device' })).toBeNull();
     expect(home.listDevices).not.toHaveBeenCalled();
     expect(USER.email).toBeTruthy();
+  });
+});
+
+describe('codes that could not be made', () => {
+  it('says so when the person signed in meanwhile (only they can add a device now)', async () => {
+    const { codeErrorMessage } = await import('./CodeSheet');
+    const { BackendError } = await import('../../lib/backend/types');
+    expect(codeErrorMessage(new BackendError('unknown', 'forbidden: Shea is signed in already'), 'Shea')).toBe(
+      'Shea signed in meanwhile, so only they can add a device now.',
+    );
+    expect(codeErrorMessage(new BackendError('network'), 'Shea')).toBe('No connection. Try again in a moment.');
   });
 });

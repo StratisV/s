@@ -177,3 +177,29 @@ test('“Not Shea?” signs out and puts Shea back to waiting to join', async ({
   await stratis.context.close();
   await other.context.close();
 });
+
+test('Sign Out while offline sticks: once back online the phone stays signed out, and its device goes', async ({ browser, baseURL }) => {
+  const { stratis, shea } = await stratisAndShea(browser, baseURL!);
+  const b = shea.page;
+  const sheaId = (await devicesOf(shea.context)).find((d) => d.current)!.memberId;
+  const profile = await openProfile(b);
+  await shea.context.setOffline(true);
+  await profile.getByRole('button', { name: 'Sign Out' }).click();
+  const ask = await confirmation(b, 'Sign out of home.os?');
+  await ask.getByRole('button', { name: 'Sign Out' }).click();
+  await expect(welcome(b).getByText('This home is private.', { exact: true })).toBeVisible();
+  // Back online, the app starts again: the sign-out goes through first, and it stays out.
+  await shea.context.setOffline(false);
+  await b.reload();
+  await expect(welcome(b).getByText('This home is private.', { exact: true })).toBeVisible();
+  await expect(codeField(b)).toBeVisible();
+  await expect.poll(async () => (await devicesOf(stratis.context)).filter((d) => d.memberId === sheaId).length).toBe(0);
+  const res = await shea.context.request.get('/api/home?op=version', { headers: { 'X-HomeOS': '1' } });
+  expect(res.status()).toBe(401);
+  // The browser logs the requests that failed while offline.
+  shea.errors.splice(0, shea.errors.length, ...shea.errors.filter((e) => !/ERR_INTERNET_DISCONNECTED/.test(e)));
+  expect(shea.errors).toEqual([]);
+  await expectNoReload(stratis);
+  await stratis.context.close();
+  await shea.context.close();
+});

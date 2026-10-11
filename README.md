@@ -79,32 +79,41 @@ mode (they need other services), and are hidden in the app.
 
 **What you do, once:** open the **setup link** you were sent (it ends in `?setup=…`) on the
 phone that has the home, check what comes along (the home's name and address, areas, items,
-who's who, real history, chat and housekeeping) and tap **Bring It Online**. That phone is now
-signed in as you, and everyone else in the home is waiting to join with their items. If the
-home lives in the home.os app on your Home Screen and the link opened in Safari instead, open
-the app and type the setup code under **Setup code**. The setup code works once, only while no
-home is online.
+who's who, real history, chat and housekeeping, and when that copy last changed) and tap
+**Bring It Online**. That phone is now signed in as you, and everyone else in the home is
+waiting to join with their items. If the home lives in the home.os app on your Home Screen and
+the link opened in Safari instead, Safari says so and shows the setup code with **Copy Code**:
+open the app and paste it (**Paste**) or type it under **Setup code**. If the connection drops
+just as you tap, tap again: the same setup code signs that phone in as you until you have used
+the home. After that the setup code does nothing.
 
 **Inviting the others:** right after that, or later in **Profile > Household > People**, tap
 **Invite** next to someone (for someone new, **Add Person** first: a name and an emoji). The
-code sheet shows a code like `K7QM-3XRP` and **Share** sends it with a link. They open the link,
-or open home.os and type the code under **Have a code?**, and they are in as themselves, with
-their items. A code works once and for 7 days; a new one replaces the last one for that person.
+code sheet shows a code like `K7QM-3XRP` and **Share** sends it, with a link. They open home.os
+and type the code under **Have a code?** (or open the link; on an iPhone a link opens in
+Safari, so it asks whether to join there or shows the code to type in the Home Screen app), and
+they are in as themselves, with their items. A code works once and for 7 days; making another
+for the same person does not cancel the first (once they join, the others go).
 
 - **Another phone or tablet of your own:** **Profile > Add another device**.
-- **Someone's devices:** their page in People lists where they are signed in; **Remove** signs
-  that device out. **Sign in on a new phone** makes them a fresh code.
-- **Sign Out** forgets this device; signing in again needs a new code from someone at home
-  (the app warns you when it is the only device signed in, so nobody is locked out).
+- **Someone's devices:** their page in People lists where they are signed in ("iPhone · Home
+  Screen app", "iPhone · Safari"…); **Remove** signs that device out. Only they can add a
+  device of their own; when they have lost their phone, remove it, and then **Sign in on a new
+  phone** makes them a fresh code.
+- **Sign Out** forgets this device (also when offline: it finishes once back online); signing
+  in again needs a new code from someone at home (the app warns you when it is the only device
+  signed in).
 - Anyone without a code sees "This home is private." and nothing of the home. Wrong codes are
-  limited (a few tries per address, then a 15-minute wait).
-- Changes show on everyone's phone within a few seconds while the app is open (each phone asks
-  the server every few seconds while it is on screen, and at once when it comes back).
+  limited (a few tries per address, then a 15-minute wait), without holding up anyone else.
+- Changes show on everyone's phone within a few seconds while the app is open and in use
+  (each phone asks the server every few seconds while it is on screen, once a minute after 3
+  minutes without a tap, not at all after 15, and at once when someone uses it again).
 
 **Limits:** on Vercel's free (Hobby) plan the Blob store allows about 2,000 saved changes and
 10,000 reads a month. home.os counts them; if the month's saving runs out, Home says
-"Saving is paused until next month" and everything can still be read, instead of the store
-being blocked. On a paid plan set `HOMEOS_BLOB_WRITES_PER_MONTH` and `HOMEOS_BLOB_READS_PER_MONTH`
+"Saving is paused until next month" and everything can still be read, and near the read
+allowance it stops reading the store for anything but saving, instead of the store being
+blocked. On a paid plan set `HOMEOS_BLOB_WRITES_PER_MONTH` and `HOMEOS_BLOB_READS_PER_MONTH`
 to `0` (no limit).
 
 **For whoever deploys** (not the household): connect a private Blob store to the Vercel

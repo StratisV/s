@@ -1,7 +1,12 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, request as requestFor, test, type Locator, type Page } from '@playwright/test';
 import {
+  devicesOf,
+  IPHONE_SAFARI_UA,
+  openHousehold as openHouseholdOf,
+  openPersonPage,
   area,
   areaHeadings,
+  areas,
   chips,
   codeField,
   codeFor,
@@ -76,7 +81,7 @@ async function expectPhoneHome(page: Page): Promise<void> {
     if (it.note) await expect(row).toContainText(it.note);
     await expect(ring(area(page, it.area), it.title)).toHaveCount(it.state ? 0 : 1);
   }
-  await expect(homeScreen(page).locator('[data-item-open]')).toHaveCount(OPEN_ITEMS.length);
+  await expect(areas(page).locator('[data-item-open]')).toHaveCount(OPEN_ITEMS.length);
 }
 
 /** Types into the code field a letter at a time, as a phone keyboard would. */
@@ -106,7 +111,8 @@ test('Stratis brings the home on his phone online with the setup link, invites S
   await expect(step.getByRole('list', { name: 'People' }).getByRole('listitem')).toHaveText(['🦆Stratis (you)', '🦔Shea']);
   await expect(step.getByRole('textbox', { name: 'Setup code' })).toHaveValue(SETUP_CODE);
   await expect(step).toContainText('Everyone else joins with a code you send them from Profile.');
-  await expect(step.getByRole('button')).toHaveText(['Bring It Online']);
+  // Paste is there where the browser lets the page read the clipboard.
+  await expect(step.getByRole('button')).toHaveText(['Paste', 'Bring It Online']);
   // The link is gone from the address.
   expect(new URL(a.url()).search).toBe('');
   await step.getByRole('button', { name: 'Bring It Online' }).click();
@@ -134,7 +140,7 @@ test('Stratis brings the home on his phone online with the setup link, invites S
     `Shea, ${SHEAS.length} items, not joined yet`,
     'Unassigned, 3 items',
   ]);
-  await expect(homeScreen(a).getByText('Order water test strips')).toHaveCount(0);
+  await expect(areas(a).getByText('Order water test strips')).toHaveCount(0);
   await goToTab(a, 'Stats');
   await statsScreen(a).getByRole('radio', { name: 'Lifetime' }).click();
   await expect(statsScreen(a).getByRole('img', { name: /tasks? done/ })).toHaveAccessibleName('3 tasks done in total: Stratis 1, Shea 2.');
@@ -169,7 +175,7 @@ test('Stratis brings the home on his phone online with the setup link, invites S
   await expect(b.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🦔');
   const mine = chips(b).getByRole('radio', { name: `Shea (you), ${SHEAS.length} items`, exact: true });
   await mine.click();
-  await expect(homeScreen(b).locator('[data-item-open]')).toHaveCount(SHEAS.length);
+  await expect(areas(b).locator('[data-item-open]')).toHaveCount(SHEAS.length);
   for (const it of SHEAS) await expect(rowFor(b, it.title, it.area)).toBeVisible();
   await chips(b).getByRole('radio', { name: /^Everyone,/ }).click();
   await expectPhoneHome(b);
@@ -334,3 +340,138 @@ test('the Welcome screen works on the smallest phone', async ({ browser, baseURL
   await other.context.close();
 });
 
+
+test('Bring It Online again after its reply was lost: the phone gets in as the owner, and the home is not built twice', async ({
+  browser,
+  baseURL,
+}) => {
+  const stratis = await openDevice(browser, baseURL!, {
+    localStorage: { [DEMO_DOC_KEY]: JSON.stringify(doc) },
+    path: `/?setup=${SETUP_CODE}`,
+  });
+  const a = stratis.page;
+  const step = a.getByRole('region', { name: 'Bring this home online' });
+  await expect(step.getByRole('textbox', { name: 'Setup code' })).toHaveValue(SETUP_CODE);
+  // The first tap reaches the server, but neither its reply nor its cookie ever arrives (the
+  // connection dropped, or the app was put away straight after the tap).
+  let dropped = false;
+  await a.route('**/api/home', async (route) => {
+    if (!dropped && (route.request().postData() ?? '').includes('"op":"setup"')) {
+      dropped = true;
+      await route.fetch();
+      await stratis.context.clearCookies();
+      await route.abort('failed');
+      return;
+    }
+    await route.continue();
+  });
+  await step.getByRole('button', { name: 'Bring It Online' }).click();
+  await expect(step.getByRole('alert')).toHaveText('No connection. Try again in a moment.');
+  expect(dropped).toBe(true);
+  const api = await requestFor.newContext({ baseURL });
+  const status = await api.get('/api/home?op=status', { headers: { 'X-HomeOS': '1' } });
+  expect(await status.json()).toEqual({ home: true });
+  await api.dispose();
+
+  // Tapped again: this phone becomes the owner's device, on the home that is online.
+  await step.getByRole('button', { name: 'Bring It Online' }).click();
+  await a.getByRole('region', { name: 'Shea hasn’t joined yet' }).getByRole('button', { name: 'Continue' }).click();
+  await expect(homeHeading(a)).toBeVisible();
+  await expectPhoneHome(a);
+  expect(await devicesOf(stratis.context)).toHaveLength(1);
+  // It stays signed in.
+  await a.reload();
+  await expect(homeHeading(a)).toBeVisible();
+  // Once the owner has used it, the setup code is used up for good.
+  const late = await openDevice(browser, baseURL!, {
+    localStorage: { [DEMO_DOC_KEY]: JSON.stringify(doc) },
+    path: `/?setup=${SETUP_CODE}`,
+  });
+  await expect(welcome(late.page).getByText('This home is already online. Ask someone at home for a code.')).toBeVisible();
+  // The browser logs the dropped request.
+  stratis.errors.splice(0, stratis.errors.length, ...stratis.errors.filter((e) => !/ERR_FAILED/.test(e)));
+  expect(stratis.errors).toEqual([]);
+  expect(late.errors).toEqual([]);
+  await stratis.context.close();
+  await late.context.close();
+});
+
+test('a setup link opened where the home is not says where to use it, with the code to copy', async ({ browser, baseURL }) => {
+  // Safari on an iPhone with no home in it: the home is in the Home Screen app.
+  const safari = await openDevice(browser, baseURL!, { path: `/?setup=${SETUP_CODE}`, userAgent: IPHONE_SAFARI_UA });
+  await safari.context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const door = welcome(safari.page);
+  await expect(door.getByText('Open home.os from your Home Screen.')).toBeVisible();
+  await expect(
+    door.getByText('Your home is kept in the home.os app on your Home Screen, not in Safari. Open it there and enter this setup code.'),
+  ).toBeVisible();
+  await expect(door.getByText(SETUP_CODE, { exact: true })).toBeVisible();
+  await door.getByRole('button', { name: 'Copy Code' }).click();
+  await expect(door.getByText('Copied.')).toBeVisible();
+  expect(await safari.page.evaluate(() => navigator.clipboard.readText())).toBe(SETUP_CODE);
+  await expect(safari.page.getByRole('region', { name: 'Bring this home online' })).toHaveCount(0);
+  expect(await safari.page.evaluate(() => document.scrollingElement!.scrollWidth)).toBeLessThanOrEqual(402);
+
+  // Safari holding a copy too (say, from trying home.os before adding it to the Home Screen):
+  // the same, with that copy's age and a way to bring it online after all.
+  const withCopy = await openDevice(browser, baseURL!, {
+    path: `/?setup=${SETUP_CODE}`,
+    userAgent: IPHONE_SAFARI_UA,
+    localStorage: { [DEMO_DOC_KEY]: JSON.stringify(doc) },
+  });
+  const there = welcome(withCopy.page);
+  await expect(there.getByText(/^This browser has a copy too: Our home, 6 areas · 19 items · 3 done, last changed /)).toBeVisible();
+  await there.getByRole('button', { name: 'Use This Copy Instead' }).click();
+  const step = withCopy.page.getByRole('region', { name: 'Bring this home online' });
+  await expect(step.getByRole('textbox', { name: 'Setup code' })).toHaveValue(SETUP_CODE);
+  await expect(step.getByText('Use home.os from your Home Screen? Bring it online from there.')).toBeVisible();
+  await expect(step.getByText(/^Last changed /)).toBeVisible();
+  await expectNoReload(safari);
+  await expectNoReload(withCopy);
+  await safari.context.close();
+  await withCopy.context.close();
+});
+
+test('a code link opened in Safari on an iPhone is not used up there: typed in the Home Screen app, it works', async ({
+  browser,
+  baseURL,
+}) => {
+  const stratis = await openDevice(browser, baseURL!, {
+    localStorage: { [DEMO_DOC_KEY]: JSON.stringify(doc) },
+    signIn: { setup: SETUP_CODE },
+  });
+  await expect(homeHeading(stratis.page)).toBeVisible();
+  const code = await codeFor(stratis.context, 'Shea');
+
+  // Shea taps the link in Messages: Safari opens it.
+  const safari = await openDevice(browser, baseURL!, { path: `/?code=${code}`, userAgent: IPHONE_SAFARI_UA });
+  const door = welcome(safari.page);
+  await expect(door.getByText('Using home.os from your Home Screen? Open it there and type this code. Or join in this browser.')).toBeVisible();
+  await expect(codeField(safari.page)).toHaveValue(code);
+  await expect(door.getByRole('button', { name: 'Join in This Browser' })).toBeVisible();
+  await expect(door.getByRole('button', { name: 'Copy Code' })).toBeVisible();
+  expect(new URL(safari.page.url()).search).toBe('');
+
+  // She opens home.os on her Home Screen and types it there.
+  const app = await openDevice(browser, baseURL!, { userAgent: IPHONE_SAFARI_UA });
+  await app.context.addInitScript(() => Object.defineProperty(navigator, 'standalone', { value: true }));
+  await app.page.reload();
+  await typeCode(codeField(app.page), code);
+  await welcome(app.page).getByRole('button', { name: 'Join' }).click();
+  const hello = app.page.getByRole('region', { name: 'Welcome home, Shea' });
+  await expect(hello.getByRole('heading', { name: 'Welcome home, Shea', level: 1 })).toBeVisible();
+  await hello.getByRole('button', { name: 'Continue' }).click();
+  await expect(homeHeading(app.page)).toBeVisible();
+
+  // Stratis sees which of her devices it is.
+  const dialog = await openHouseholdOf(stratis.page);
+  await openPersonPage(dialog, 'Shea');
+  const devices = dialog.getByRole('region', { name: 'Devices' });
+  await expect(devices.getByText('iPhone · Home Screen app')).toBeVisible();
+  // He can't make her a code while she is signed in: only she can add a device.
+  await expect(devices.getByRole('button', { name: 'Sign in on a new phone' })).toHaveCount(0);
+  await expect(dialog.getByText(/^Only Shea can sign in on another device/)).toBeVisible();
+  await expectNoReload(stratis);
+  await expectNoReload(safari);
+  for (const d of [stratis, safari, app]) await d.context.close();
+});
