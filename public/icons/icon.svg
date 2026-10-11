@@ -1,87 +1,368 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <title>home.os</title>
   <!--
-    The home scene (design/README.md "Home scene card"): sky and grass split at 66%,
-    the sun with its soft halo, and a friendly house. scripts/make-icons.mjs renders the
-    PNG icons from this file: it drops the rounded #tile clip for the full-bleed icons
-    and shrinks #art into the safe zone for the maskable one, so the sky and grass
-    rects reach far past the canvas on purpose.
+    The home.os app icon: the hero's cottage as one bold glyph of frosted glass,
+    at dusk under the hero's evening sky. A coral fish-scale roof and a brick chimney
+    over cream walls lit from inside, the round attic window, the teal arched door with its
+    lit fanlight, and the household's green duck on the lawn, facing the door. Light comes
+    from the top left.
+
+    scripts/make-icons.mjs renders the bitmap icons from this file. The full-bleed icons
+    (apple-touch-icon, maskable) drop the #tile clip, iOS's continuous-corner square, which
+    is only for the manifest "any" icons and the SVG favicon. The sky sits outside #art and
+    reaches past the canvas; the maskable icon shrinks #art (the stars, the glow, the lawn,
+    the cottage and the duck) about the centre into the safe zone.
   -->
+  <style>
+    /* At favicon size (16 px), only the cottage, a little larger: the duck and stars would be specks. */
+    @media (max-width: 24px) {
+      .speck { display: none; }
+      #art { transform: translate(512px, 560px) scale(1.2) translate(-512px, -560px); }
+    }
+  </style>
   <defs>
-    <clipPath id="tile">
-      <rect width="512" height="512" rx="114" />
-    </clipPath>
-    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="338" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#EAF3FF" />
-      <stop offset="1" stop-color="#F6FAFF" />
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#19308A" />
+      <stop offset="0.36" stop-color="#243F9F" />
+      <stop offset="0.6" stop-color="#3A47A3" />
+      <stop offset="0.8" stop-color="#5C4F9E" />
+      <stop offset="1" stop-color="#3A3279" />
     </linearGradient>
-    <linearGradient id="grass" x1="0" y1="338" x2="0" y2="512" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#DCEFD6" />
-      <stop offset="1" stop-color="#CFE8C8" />
-    </linearGradient>
-    <linearGradient id="roof" x1="0" y1="130" x2="0" y2="280" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FF7B56" />
-      <stop offset="1" stop-color="#EE5236" />
-    </linearGradient>
-    <linearGradient id="wall" x1="0" y1="160" x2="0" y2="392" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FFF6E6" />
-      <stop offset="1" stop-color="#FBDDB4" />
-    </linearGradient>
-    <radialGradient id="halo" cx="404" cy="106" r="68" gradientUnits="userSpaceOnUse">
-      <stop offset="0.55" stop-color="#FFD66B" stop-opacity="0.42" />
-      <stop offset="0.75" stop-color="#FFD66B" stop-opacity="0.22" />
-      <stop offset="1" stop-color="#FFD66B" stop-opacity="0" />
+    <radialGradient id="skyTop" cx="380" cy="-180" r="820" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16" />
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0" />
     </radialGradient>
-    <linearGradient id="bush" x1="0" y1="350" x2="0" y2="410" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#86CC6E" />
-      <stop offset="1" stop-color="#5DAE4E" />
+    <!-- The last of the sunset, low behind the house. -->
+    <radialGradient id="glow" cx="512" cy="900" r="620" gradientTransform="translate(0 900) scale(1 0.42) translate(0 -900)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFA683" stop-opacity="0.95" />
+      <stop offset="0.6" stop-color="#F38E88" stop-opacity="0.5" />
+      <stop offset="1" stop-color="#B9709E" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="starGlow">
+      <stop offset="0" stop-color="#FFF6E0" stop-opacity="0.5" />
+      <stop offset="1" stop-color="#FFF6E0" stop-opacity="0" />
+    </radialGradient>
+    <!-- Lamplight hanging in the air round the house. -->
+    <radialGradient id="bloom" cx="512" cy="700" r="430" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFC77A" stop-opacity="0.26" />
+      <stop offset="0.5" stop-color="#FFC77A" stop-opacity="0.1" />
+      <stop offset="1" stop-color="#FFC77A" stop-opacity="0" />
+    </radialGradient>
+
+    <linearGradient id="lawn" x1="0" y1="868" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3E7F66" />
+      <stop offset="0.35" stop-color="#2F6B57" />
+      <stop offset="1" stop-color="#1F4A44" />
     </linearGradient>
+    <radialGradient id="pool" cx="512" cy="896" r="270" gradientTransform="translate(0 896) scale(1 0.24) translate(0 -896)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFC27A" stop-opacity="0.7" />
+      <stop offset="0.55" stop-color="#FFC27A" stop-opacity="0.2" />
+      <stop offset="1" stop-color="#FFC27A" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- Glass fills, lit from the top left. -->
+    <linearGradient id="roofFill" x1="300" y1="200" x2="720" y2="620" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF956C" />
+      <stop offset="0.55" stop-color="#EE6243" />
+      <stop offset="1" stop-color="#D2472F" />
+    </linearGradient>
+    <linearGradient id="roofSheen" x1="146" y1="300" x2="878" y2="520" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.32" />
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0.2" />
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.04" />
+    </linearGradient>
+    <linearGradient id="brick" x1="0" y1="230" x2="0" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C66C53" />
+      <stop offset="1" stop-color="#A5533F" />
+    </linearGradient>
+    <linearGradient id="cap" x1="0" y1="236" x2="0" y2="270" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E3A283" />
+      <stop offset="0.3" stop-color="#B25D49" />
+      <stop offset="1" stop-color="#B25D49" />
+    </linearGradient>
+    <linearGradient id="wallFill" x1="330" y1="346" x2="700" y2="878" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF8EC" />
+      <stop offset="0.6" stop-color="#FDEBD2" />
+      <stop offset="1" stop-color="#F4D3AC" />
+    </linearGradient>
+    <!-- The far (right) wall a touch cooler, away from the light. -->
+    <linearGradient id="wallCool" x1="298" y1="0" x2="726" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0.6" stop-color="#5B5AA6" stop-opacity="0" />
+      <stop offset="1" stop-color="#5B5AA6" stop-opacity="0.16" />
+    </linearGradient>
+    <!-- The lamp inside, glowing through the walls round the door and windows. -->
+    <radialGradient id="wallLamp" cx="512" cy="726" r="250" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFC774" stop-opacity="0.5" />
+      <stop offset="0.5" stop-color="#FFC774" stop-opacity="0.1" />
+      <stop offset="1" stop-color="#FFC774" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="lit" cx="0.5" cy="0.62" r="0.72">
+      <stop offset="0" stop-color="#FFF6D2" />
+      <stop offset="0.5" stop-color="#FFD06A" />
+      <stop offset="1" stop-color="#FF9C3A" />
+    </radialGradient>
+    <linearGradient id="door" x1="0" y1="664" x2="0" y2="866" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#45978F" />
+      <stop offset="0.5" stop-color="#2F7871" />
+      <stop offset="1" stop-color="#24615C" />
+    </linearGradient>
+    <linearGradient id="step" x1="0" y1="864" x2="0" y2="886" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#EBD3AE" />
+      <stop offset="1" stop-color="#CDAE88" />
+    </linearGradient>
+
+    <!-- The duck's gradients are in its own 40-unit drawing. -->
+    <radialGradient id="duckBody" cx="18" cy="17" r="21" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#AEEC92" />
+      <stop offset="0.46" stop-color="#5BC26A" />
+      <stop offset="1" stop-color="#36975A" />
+    </radialGradient>
+    <radialGradient id="duckHead" cx="27" cy="4.5" r="11.5" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7FDDA0" />
+      <stop offset="0.5" stop-color="#2E9E5E" />
+      <stop offset="1" stop-color="#237F4B" />
+    </radialGradient>
+    <linearGradient id="bill" x1="0" y1="7" x2="0" y2="12.4" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFC060" />
+      <stop offset="0.55" stop-color="#FFA43C" />
+      <stop offset="1" stop-color="#E07E28" />
+    </linearGradient>
+
+    <!--
+      Liquid glass: a soft shadow below (kept outside the shape, so the glass stays clean),
+      a bright rim on the edges facing the light (top left), a fainter rim where the light
+      leaves (bottom right), and a frosted glow just inside every edge. "glass" is for the
+      cream walls; "glassTint" frosts the coloured pieces more lightly.
+    -->
+    <filter id="glass" x="-512" y="-512" width="2048" height="2048" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="20" result="sb" />
+      <feOffset in="sb" dy="22" result="so" />
+      <feFlood flood-color="#0A1238" flood-opacity="0.42" />
+      <feComposite in2="so" operator="in" result="sc" />
+      <feComposite in="sc" in2="SourceAlpha" operator="out" result="shadow" />
+      <feGaussianBlur in="SourceAlpha" stdDeviation="16" result="ab" />
+      <feComposite in="SourceAlpha" in2="ab" operator="arithmetic" k2="1" k3="-1" result="edge" />
+      <feFlood flood-color="#FFFFFF" flood-opacity="0.5" />
+      <feComposite in2="edge" operator="in" result="frost" />
+      <feOffset in="SourceAlpha" dx="5" dy="9" result="dn" />
+      <feComposite in="SourceAlpha" in2="dn" operator="out" result="tl" />
+      <feGaussianBlur in="tl" stdDeviation="2.4" result="tlb" />
+      <feComposite in="tlb" in2="SourceAlpha" operator="in" result="tlc" />
+      <feFlood flood-color="#FFFFFF" flood-opacity="0.95" />
+      <feComposite in2="tlc" operator="in" result="spec" />
+      <feOffset in="SourceAlpha" dx="-4" dy="-6" result="up" />
+      <feComposite in="SourceAlpha" in2="up" operator="out" result="br" />
+      <feGaussianBlur in="br" stdDeviation="2.4" result="brb" />
+      <feComposite in="brb" in2="SourceAlpha" operator="in" result="brc" />
+      <feFlood flood-color="#FFFFFF" flood-opacity="0.4" />
+      <feComposite in2="brc" operator="in" result="rim" />
+      <feMerge>
+        <feMergeNode in="shadow" />
+        <feMergeNode in="SourceGraphic" />
+        <feMergeNode in="frost" />
+        <feMergeNode in="rim" />
+        <feMergeNode in="spec" />
+      </feMerge>
+    </filter>
+    <filter id="glassDuck" x="-512" y="-512" width="2048" height="2048" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="12" result="sb" />
+      <feOffset in="sb" dy="14" result="so" />
+      <feFlood flood-color="#0A1238" flood-opacity="0.36" />
+      <feComposite in2="so" operator="in" result="sc" />
+      <feComposite in="sc" in2="SourceAlpha" operator="out" result="shadow" />
+      <feGaussianBlur in="SourceAlpha" stdDeviation="10" result="ab" />
+      <feComposite in="SourceAlpha" in2="ab" operator="arithmetic" k2="1" k3="-1" result="edge" />
+      <feFlood flood-color="#F4FFF0" flood-opacity="0.21" />
+      <feComposite in2="edge" operator="in" result="frost" />
+      <feOffset in="SourceAlpha" dx="5" dy="9" result="dn" />
+      <feComposite in="SourceAlpha" in2="dn" operator="out" result="tl" />
+      <feGaussianBlur in="tl" stdDeviation="2.4" result="tlb" />
+      <feComposite in="tlb" in2="SourceAlpha" operator="in" result="tlc" />
+      <feFlood flood-color="#FFFFFF" flood-opacity="0.675" />
+      <feComposite in2="tlc" operator="in" result="spec" />
+      <feOffset in="SourceAlpha" dx="-4" dy="-6" result="up" />
+      <feComposite in="SourceAlpha" in2="up" operator="out" result="br" />
+      <feGaussianBlur in="br" stdDeviation="2.4" result="brb" />
+      <feComposite in="brb" in2="SourceAlpha" operator="in" result="brc" />
+      <feFlood flood-color="#E8FFE0" flood-opacity="0.384" />
+      <feComposite in2="brc" operator="in" result="rim" />
+      <feMerge>
+        <feMergeNode in="shadow" />
+        <feMergeNode in="SourceGraphic" />
+        <feMergeNode in="frost" />
+        <feMergeNode in="rim" />
+        <feMergeNode in="spec" />
+      </feMerge>
+    </filter>
+    <filter id="glassTint" x="-512" y="-512" width="2048" height="2048" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="16" result="sb" />
+      <feOffset in="sb" dy="18" result="so" />
+      <feFlood flood-color="#0A1238" flood-opacity="0.36" />
+      <feComposite in2="so" operator="in" result="sc" />
+      <feComposite in="sc" in2="SourceAlpha" operator="out" result="shadow" />
+      <feGaussianBlur in="SourceAlpha" stdDeviation="13" result="ab" />
+      <feComposite in="SourceAlpha" in2="ab" operator="arithmetic" k2="1" k3="-1" result="edge" />
+      <feFlood flood-color="#FFF4EC" flood-opacity="0.3" />
+      <feComposite in2="edge" operator="in" result="frost" />
+      <feOffset in="SourceAlpha" dx="5" dy="9" result="dn" />
+      <feComposite in="SourceAlpha" in2="dn" operator="out" result="tl" />
+      <feGaussianBlur in="tl" stdDeviation="2.4" result="tlb" />
+      <feComposite in="tlb" in2="SourceAlpha" operator="in" result="tlc" />
+      <feFlood flood-color="#FFFFFF" flood-opacity="0.9" />
+      <feComposite in2="tlc" operator="in" result="spec" />
+      <feOffset in="SourceAlpha" dx="-4" dy="-6" result="up" />
+      <feComposite in="SourceAlpha" in2="up" operator="out" result="br" />
+      <feGaussianBlur in="br" stdDeviation="2.4" result="brb" />
+      <feComposite in="brb" in2="SourceAlpha" operator="in" result="brc" />
+      <feFlood flood-color="#FFE6D8" flood-opacity="0.48" />
+      <feComposite in2="brc" operator="in" result="rim" />
+      <feMerge>
+        <feMergeNode in="shadow" />
+        <feMergeNode in="SourceGraphic" />
+        <feMergeNode in="frost" />
+        <feMergeNode in="rim" />
+        <feMergeNode in="spec" />
+      </feMerge>
+    </filter>
+
+    <filter id="soft" x="-512" y="-512" width="2048" height="2048" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="12" />
+    </filter>
+    <filter id="blur6" x="-512" y="-512" width="2048" height="2048" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="6" />
+    </filter>
+    <filter id="blur3" x="-512" y="-512" width="2048" height="2048" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="3" />
+    </filter>
+
+    <!-- A pane set into the wall: a soft shade just inside its top edge. -->
+    <filter id="inset" x="-512" y="-512" width="2048" height="2048" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feOffset in="SourceAlpha" dy="8" result="dn" />
+      <feComposite in="SourceAlpha" in2="dn" operator="out" result="top" />
+      <feGaussianBlur in="top" stdDeviation="4" result="tb" />
+      <feComposite in="tb" in2="SourceAlpha" operator="in" result="tc" />
+      <feFlood flood-color="#B5531C" flood-opacity="0.45" />
+      <feComposite in2="tc" operator="in" result="shade" />
+      <feMerge>
+        <feMergeNode in="SourceGraphic" />
+        <feMergeNode in="shade" />
+      </feMerge>
+    </filter>
+
+    <clipPath id="roofClip">
+      <path d="M544.5 228.5L865.3 549.3Q878 562 878 580L878 574Q878 588 864 588L764 588Q754 588 746.9 580.9L527.6 361.6Q512 346 496.4 361.6L277.1 580.9Q270 588 260 588L160 588Q146 588 146 574L146 580Q146 562 158.7 549.3L479.5 228.5Q512 196 544.5 228.5Z" />
+    </clipPath>
+    <clipPath id="wallClip">
+      <path d="M298 844L298 520.1Q298 520 298.1 519.9L511.9 286.1Q512 286 512.1 286.1L725.9 519.9Q726 520 726 520.1L726 844Q726 878 692 878L332 878Q298 878 298 844Z" />
+    </clipPath>
+
+    <!-- The tile for the manifest "any" icons and the SVG favicon: iOS's continuous-corner square. -->
+    <clipPath id="tile">
+      <path d="M350.17 0L673.83 0C774.66 0 825.08 0 870.54 15L879.34 17.16C938.6 38.73 985.27 85.4 1006.84 144.66L1009 153.46C1024 198.92 1024 249.34 1024 350.17L1024 673.83C1024 774.66 1024 825.08 1009 870.54L1006.84 879.34C985.27 938.6 938.6 985.27 879.34 1006.84L870.54 1009C825.08 1024 774.66 1024 673.83 1024L350.17 1024C249.34 1024 198.92 1024 153.46 1009L144.66 1006.84C85.4 985.27 38.73 938.6 17.16 879.34L15 870.54C0 825.08 0 774.66 0 673.83L0 350.17C0 249.34 0 198.92 15 153.46L17.16 144.66C38.73 85.4 85.4 38.73 144.66 17.16L153.46 15C198.92 0 249.34 0 350.17 0Z" />
+    </clipPath>
   </defs>
 
   <g clip-path="url(#tile)">
+    <!-- Sky, reaching past the canvas so a shrunken #art never shows an edge. -->
+    <rect x="-512" y="-512" width="2048" height="2048" fill="url(#sky)" />
+    <rect x="-512" y="-512" width="2048" height="2048" fill="url(#skyTop)" />
+
     <g id="art">
-      <!-- Sky and grass -->
-      <rect x="-512" y="-512" width="1536" height="850" fill="url(#sky)" />
-      <rect x="-512" y="338" width="1536" height="686" fill="url(#grass)" />
+      <!-- The evening star (top left, balancing the chimney) and two faint ones. -->
+      <g class="speck" fill="#FFF7E4">
+        <circle cx="200" cy="244" r="78" fill="url(#starGlow)" />
+        <path d="M200 206C203.8 235.6 208.4 240.2 238 244C208.4 247.8 203.8 252.4 200 282C196.2 252.4 191.6 247.8 162 244C191.6 240.2 196.2 235.6 200 206Z" opacity="0.95" />
+        <circle cx="318" cy="128" r="7" opacity="0.62" />
+        <circle cx="868" cy="166" r="6" opacity="0.5" />
+      </g>
 
-      <!-- Sun with its halo -->
-      <circle cx="404" cy="106" r="68" fill="url(#halo)" />
-      <circle cx="404" cy="106" r="40" fill="#FFD66B" />
+      <!-- Sunset glow and lamplight, low behind the house. -->
+      <rect x="-512" y="-512" width="2048" height="2048" fill="url(#glow)" />
+      <circle cx="512" cy="700" r="430" fill="url(#bloom)" />
 
-      <!-- The house, drawn around its doorstep at (256, 392) and scaled up to fill the tile -->
-      <g transform="translate(256 412) scale(1.25) translate(-256 -392)">
-        <!-- Soft ground shadow -->
-        <ellipse cx="256" cy="393" rx="136" ry="11" fill="#4E9A40" fill-opacity="0.18" />
+      <!-- The lawn: a low hill, with the last light along its crest. -->
+      <path d="M-512 1560V958C-120 890 180 868 512 868S1144 890 1536 958V1560Z" fill="url(#lawn)" />
+      <path d="M-120 902C120 876 300 870 512 870S904 876 1144 902" fill="none" stroke="#8CC7A0" stroke-width="6" stroke-opacity="0.34" filter="url(#blur3)" />
 
-        <!-- Chimney (behind the roof) -->
-        <rect x="168" y="152" width="30" height="80" rx="6" fill="#E04B33" />
-        <rect x="161" y="142" width="44" height="18" rx="7" fill="#C93F2A" />
+      <!-- Contact shadow under the house, and the lamplight spilling out of the door. -->
+      <ellipse cx="512" cy="882" rx="262" ry="20" fill="#0B2230" opacity="0.5" filter="url(#soft)" />
+      <rect x="-512" y="838" width="2048" height="200" fill="url(#pool)" />
 
-        <!-- Walls and gable -->
-        <path d="M166 392 V244 L256 162 L346 244 V392 Z" fill="url(#wall)" stroke="url(#wall)" stroke-width="8" stroke-linejoin="round" />
+      <!-- The cottage, drawn round its doorstep. -->
+      <g transform="translate(512 878) scale(1.04) translate(-512 -878)">
+      <!-- Chimney, behind the roof: brick, with the hero's cap and pot. -->
+      <g filter="url(#glassTint)">
+        <rect x="642" y="254" width="70" height="170" rx="10" fill="url(#brick)" />
+        <rect x="628" y="234" width="98" height="38" rx="14" fill="url(#cap)" />
+        <rect x="654" y="204" width="46" height="38" rx="10" fill="#DD8A62" />
+      </g>
 
-        <!-- Roof -->
-        <path d="M134 262 L256 150 L378 262" fill="none" stroke="url(#roof)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" />
+      <!-- Walls: cream frosted glass, lit from inside. -->
+      <g filter="url(#glass)">
+        <path d="M298 844L298 520.1Q298 520 298.1 519.9L511.9 286.1Q512 286 512.1 286.1L725.9 519.9Q726 520 726 520.1L726 844Q726 878 692 878L332 878Q298 878 298 844Z" fill="url(#wallFill)" />
+      </g>
+      <g clip-path="url(#wallClip)">
+        <rect x="298" y="286" width="428" height="592" fill="url(#wallCool)" />
+        <rect x="298" y="286" width="428" height="592" fill="url(#wallLamp)" />
+      </g>
 
-        <!-- Round gable window -->
-        <circle cx="256" cy="228" r="19" fill="#FFFFFF" />
-        <circle cx="256" cy="228" r="13" fill="#8CC8FF" />
+      <!-- Roof: coral glass, with faint fish-scale tiles and light along its top. -->
+      <g filter="url(#glassTint)">
+        <path d="M544.5 228.5L865.3 549.3Q878 562 878 580L878 574Q878 588 864 588L764 588Q754 588 746.9 580.9L527.6 361.6Q512 346 496.4 361.6L277.1 580.9Q270 588 260 588L160 588Q146 588 146 574L146 580Q146 562 158.7 549.3L479.5 228.5Q512 196 544.5 228.5Z" fill="url(#roofFill)" />
+      </g>
+      <path d="M106 202a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0M83 240a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0M106 278a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0M83 316a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0M106 354a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0M83 392a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0M106 430a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0M83 468a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0M106 506a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0M83 544a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0M106 582a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0a23 36.1 0 0 0 46 0" fill="none" stroke="#9E3426" stroke-width="4" stroke-opacity="0.13" clip-path="url(#roofClip)" />
+      <path d="M168 548L512 210L856 548" fill="none" stroke="url(#roofSheen)" stroke-width="30" stroke-linecap="round" stroke-linejoin="round" filter="url(#blur6)" clip-path="url(#roofClip)" />
 
-        <!-- Windows -->
-        <rect x="180" y="282" width="46" height="46" rx="10" fill="#FFFFFF" />
-        <rect x="185.5" y="287.5" width="35" height="35" rx="6.5" fill="#8CC8FF" />
-        <rect x="286" y="282" width="46" height="46" rx="10" fill="#FFFFFF" />
-        <rect x="291.5" y="287.5" width="35" height="35" rx="6.5" fill="#8CC8FF" />
+      <!-- The round attic window, lit. -->
+      <circle cx="512" cy="468" r="44" fill="#FFF7EA" />
+      <circle cx="512" cy="468" r="33" fill="url(#lit)" filter="url(#inset)" />
 
-        <!-- Door -->
-        <path d="M230 392 V320 a26 26 0 0 1 52 0 V392 Z" fill="#D6703A" />
-        <circle cx="269" cy="358" r="4.5" fill="#FFE2B8" />
+      <!-- The lit window beside the door. -->
+      <rect x="601" y="667" width="94" height="110" rx="18" fill="#FFF7EA" />
+      <rect x="612" y="678" width="72" height="88" rx="8" fill="url(#lit)" filter="url(#inset)" />
+      <path d="M648 678V766M612 720.24H684" stroke="#FFF7EA" stroke-width="7" />
 
-        <!-- Bushes -->
-        <circle cx="166" cy="380" r="24" fill="url(#bush)" />
-        <circle cx="142" cy="390" r="17" fill="url(#bush)" />
-        <circle cx="346" cy="380" r="24" fill="url(#bush)" />
-        <circle cx="370" cy="390" r="17" fill="url(#bush)" />
+      <!-- The teal door, its fanlight glowing, on a stone step. -->
+      <path d="M446 868V716A66 66 0 0 1 578 716V868Z" fill="#FFF7EA" />
+      <path d="M460 868V716A52 52 0 0 1 564 716V868Z" fill="url(#door)" />
+      <path d="M460 716A52 52 0 0 1 564 716Z" fill="url(#lit)" filter="url(#inset)" />
+      <rect x="458" y="712" width="108" height="9" fill="#FFF7EA" />
+      <g fill="#1C4F4B" opacity="0.42">
+        <rect x="476" y="738" width="29" height="48" rx="8" />
+        <rect x="519" y="738" width="29" height="48" rx="8" />
+        <rect x="476" y="800" width="29" height="44" rx="8" />
+        <rect x="519" y="800" width="29" height="44" rx="8" />
+      </g>
+      <circle cx="546" cy="794" r="6.5" fill="#F2C14E" />
+      <rect x="430" y="864" width="164" height="20" rx="9" fill="url(#step)" />
+      </g>
+
+      <!-- The green duck on the lawn, facing the door: the hero's duck, in glass. -->
+      <g class="speck">
+      <ellipse cx="265.1" cy="946" rx="137" ry="16" fill="#0B2230" opacity="0.5" filter="url(#blur6)" />
+      <g transform="translate(121.3 700.1) scale(6.85)">
+        <path d="M14.6 30.6v3.8c0 .8.6 1.4 1.4 1.4h4.8c.9 0 1.1-.9.4-1.4l-3.8-3.8z" fill="#E98019" />
+        <path d="M22 30.6v3.8c0 .8.6 1.4 1.4 1.4h4.8c.9 0 1.1-.9.4-1.4l-3.8-3.8z" fill="#F7972A" />
+      </g>
+      <g filter="url(#glassDuck)">
+        <g transform="translate(121.3 700.1) scale(6.85)">
+          <path d="M3 11.4C4.6 14 7.8 15.4 11.6 15.4 15.4 15.4 19 14.2 23 14.8 30.6 16 35.8 19.8 35.8 25 35.8 30.6 30.6 33.4 22.6 33.4H13.4C7 33.4 3 30.2 3 25.2 3 22.2 3.8 20.2 5 18.6 3.4 16.6 2.6 14 3 11.4Z" fill="url(#duckBody)" />
+          <ellipse cx="27.8" cy="15.4" rx="5.4" ry="5" fill="url(#duckBody)" />
+          <circle cx="29.6" cy="8.8" r="7.4" fill="url(#duckHead)" />
+        </g>
+      </g>
+      <g transform="translate(121.3 700.1) scale(6.85)">
+        <path d="M27.4 1.9c.3-2 2.5-3 4.2-2" fill="none" stroke="#2E9E5E" stroke-width="1.3" stroke-linecap="round" />
+        <path d="M24.6 20.4C21.8 18.4 15.6 18.6 12 20.4 10.8 21 10.6 22.2 11.6 22.6 12.6 23 13.6 22.7 14.2 22.5 14.6 23.6 15.8 24.2 17.2 23.8 18 24.8 19.4 25.1 20.8 24.7 23.8 24.3 25.8 22.4 24.6 20.4Z" fill="#3A9C5A" opacity="0.92" />
+        <path d="M24.6 20.4C21.8 18.4 15.6 18.6 12 20.4" fill="none" stroke="#A6EBA0" stroke-width="1.1" stroke-linecap="round" opacity="0.85" />
+        <!-- Warm light from the doorway on its face. -->
+        <path d="M35.2 5C36.2 6.2 36.7 7.4 36.8 8.6" fill="none" stroke="#FFD08A" stroke-width="1.1" stroke-linecap="round" opacity="0.4" />
+        <path d="M35.8 7.6C39 6.6 42.8 7 43.8 8.6 44.4 9.8 42.6 10.8 36.4 11Z" fill="url(#bill)" />
+        <path d="M36.6 10.6C39.8 10.8 43 10.4 43.8 9.5 44 11.2 41.2 12.4 37 12Z" fill="#E07E28" />
+        <path d="M37.4 8.3c1.4-.4 2.9-.5 4.1-.2" fill="none" stroke="#FFFFFF" stroke-width="0.6" stroke-linecap="round" opacity="0.6" />
+        <ellipse cx="32.6" cy="7.2" rx="1.45" ry="1.7" fill="#1D2A21" />
+        <circle cx="33" cy="6.6" r="0.6" fill="#FFFFFF" />
+      </g>
       </g>
     </g>
   </g>

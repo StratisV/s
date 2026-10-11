@@ -123,6 +123,13 @@ scripts/                   migrate, build-server (Build Output for Vercel, local
   and `data-sheet` while a sheet is up (the screen behind goes black). The strip's colour is
   also written to `<meta name="theme-color">`.
 - Icons are inline SVG from `src/ui/icons.tsx` (SF Symbols stand-ins).
+- The app icon is `public/icons/icon.svg`: the hero's cottage at dusk as one frosted-glass
+  glyph (coral fish-scale roof, brick chimney, lit attic window, teal arched door with a lit
+  fanlight, one lit window) with the green duck on the lawn, under the hero's evening sky.
+  `npm run icons` renders the touch icon (180, full bleed, no alpha), the manifest icons
+  (rounded "any", and maskable with `#art` shrunk into the safe zone) and `favicon.ico`
+  (16 and 32). At 16 px the SVG's own media query leaves out the duck and the stars and draws
+  the cottage larger, in the ICO and when a browser draws the SVG favicon.
 - Respect `prefers-reduced-motion`.
 
 ## Database (Supabase Postgres, schema `public`)
