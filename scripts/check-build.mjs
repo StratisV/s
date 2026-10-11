@@ -90,7 +90,9 @@ const output = path.join(root, '.vercel', 'output');
 
 // ── 2. With a Blob store: Vercel's build command, made-up secrets ────────────
 const storeId = randomBytes(8).toString('hex');
-const token = `vercel_blob_rw_${storeId}_${randomBytes(18).toString('base64url')}`;
+// Hex parts: the token's own separator (_) must not appear inside them.
+const secretPart = randomBytes(18).toString('hex');
+const token = `vercel_blob_rw_${storeId}_${secretPart}`;
 const ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 const setup = Array.from(randomBytes(16), (b) => ALPHABET[b & 31]).join('');
 const setupFormatted = setup.match(/.{4}/g).join('-');
@@ -126,7 +128,8 @@ const setupFormatted = setup.match(/.{4}/g).join('-');
   check(!/from\s*["'](\.{1,2}\/|@vercel\/blob|undici)/.test(fn), 'index.mjs imports nothing from the repository or node_modules');
 
   // No secret anywhere that would be deployed (or left in dist/).
-  const secrets = [token, token.slice('vercel_blob_rw_'.length), token.split('_').at(-1), setup, setupFormatted, setup.toLowerCase()];
+  const secrets = [token, `${storeId}_${secretPart}`, secretPart, setup, setupFormatted, setup.toLowerCase()];
+  if (secrets.some((x) => x.length < 12)) throw new Error('check-build: a made-up secret is too short to search for');
   const leaks = [];
   for (const file of [...filesUnder(path.join(root, 'dist')), ...filesUnder(output)]) {
     const text = readFileSync(file).toString('latin1');
