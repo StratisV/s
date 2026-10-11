@@ -79,7 +79,10 @@ export function DayDetail({ date, announce, onShowToday }: DayDetailProps) {
 
   return (
     <div ref={rootRef} data-day-detail={date}>
-      <h3 className={styles.dayHeader}>{heading}</h3>
+      {/* Focused when Home's calendar opens this day here. */}
+      <h3 className={`${styles.dayHeader} ${styles.target}`} tabIndex={-1}>
+        {heading}
+      </h3>
       {date === today ? (
         <div className={styles.card}>
           <div className={styles.cardRow}>

@@ -21,30 +21,14 @@ import type {
   Member,
 } from '../types';
 import { senderOf, stampLabel, timeOf } from './chat';
-import { formatDay, parseISODate, zonedParts } from './dates';
+import { formatDay, zonedParts } from './dates';
+import { fullDay, monthOf, type YearMonth } from './months';
 
-/** A calendar month, `YYYY-MM`. */
-export type YearMonth = string;
+// The month grid's helpers live in ./months (Home's calendar shares them); Housekeeping
+// keeps exporting them under the names it has always had.
+export { WEEKDAYS, monthGrid, monthOf, monthTitle, shiftMonth, type YearMonth } from './months';
 
 const pad = (n: number) => String(n).padStart(2, '0');
-
-const MONTH_NAMES = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
-];
-
-/** Sunday first, as Date.getUTCDay() counts. */
-const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -64,73 +48,6 @@ export function emptyHousekeeping(): HousekeepingData {
 
 // ── Calendar ──────────────────────────────────────────────
 
-/** Column headers of the month grid, Monday first: the letter shown and the name read out. */
-export const WEEKDAYS: readonly { short: string; long: string }[] = [
-  { short: 'M', long: 'Monday' },
-  { short: 'T', long: 'Tuesday' },
-  { short: 'W', long: 'Wednesday' },
-  { short: 'T', long: 'Thursday' },
-  { short: 'F', long: 'Friday' },
-  { short: 'S', long: 'Saturday' },
-  { short: 'S', long: 'Sunday' },
-];
-
-function parseMonth(month: YearMonth): { y: number; m: number } {
-  const [y, m] = month.split('-').map(Number);
-  return { y, m };
-}
-
-/**
- * The month a day is in: `monthOf('2026-10-08')` is `'2026-10'`.
- * Tests: a mid-month day; the 1st and the last day of a month; 31 Dec.
- */
-export function monthOf(date: ISODate): YearMonth {
-  return date.slice(0, 7);
-}
-
-/**
- * The month `n` months after `month` (before, for negative n):
- * `shiftMonth('2026-12', 1)` is `'2027-01'`, `shiftMonth('2026-01', -1)` is `'2025-12'`.
- * Tests: +1 and -1 inside a year; across a year end both ways; n = 0; n = ±13.
- */
-export function shiftMonth(month: YearMonth, n: number): YearMonth {
-  const { y, m } = parseMonth(month);
-  const total = y * 12 + (m - 1) + Math.trunc(n);
-  const year = Math.floor(total / 12);
-  const index = total - year * 12;
-  return `${year}-${pad(index + 1)}`;
-}
-
-/**
- * The month's heading, `'October 2026'` (en-GB, always with the year).
- * Tests: October 2026; January; a different year.
- */
-export function monthTitle(month: YearMonth): string {
-  const { y, m } = parseMonth(month);
-  return `${MONTH_NAMES[m - 1]} ${y}`;
-}
-
-/**
- * The month as weeks of seven days, Monday first. Days of the month are ISODates; the
- * cells before the 1st and after the last day are null. 4 to 6 weeks, each exactly 7 cells.
- * Tests: Oct 2026 (starts Thu: 3 nulls, 5 weeks); Feb 2021 (starts Mon, 28 days: exactly
- * 4 full weeks, no nulls); Aug 2026 (starts Sat, 31 days: 6 weeks); a leap February
- * (2028-02 has 29 days); a month ending on a Sunday has no trailing nulls; every date of
- * the month appears once, in order.
- */
-export function monthGrid(month: YearMonth): (ISODate | null)[][] {
-  const { y, m } = parseMonth(month);
-  const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  // Monday = 0 … Sunday = 6.
-  const lead = (new Date(Date.UTC(y, m - 1, 1)).getUTCDay() + 6) % 7;
-  const cells: (ISODate | null)[] = Array.from({ length: lead }, () => null);
-  for (let d = 1; d <= days; d++) cells.push(`${y}-${pad(m)}-${pad(d)}`);
-  while (cells.length % 7 !== 0) cells.push(null);
-  const weeks: (ISODate | null)[][] = [];
-  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
-  return weeks;
-}
-
 /**
  * Whether a day may have a visit: today or earlier (`date <= today`). Future days are
  * shown dimmed and can't be chosen.
@@ -142,15 +59,10 @@ export function canHaveVisit(date: ISODate, today: ISODate): boolean {
 
 /**
  * The selected day's heading, `'Thursday 1 October'`, with the year when it is not
- * today's year (`'Thursday 31 December 2025'`).
+ * today's year (`'Thursday 31 December 2025'`): fullDay() in ./months.
  * Tests: same year; a different year; the 1st of a month.
  */
-export function longDay(date: ISODate, today: ISODate): string {
-  const { y, m, d } = parseISODate(date);
-  const weekday = DAY_NAMES[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
-  const base = `${weekday} ${d} ${MONTH_NAMES[m - 1]}`;
-  return parseISODate(today).y === y ? base : `${base} ${y}`;
-}
+export const longDay: (date: ISODate, today: ISODate) => string = fullDay;
 
 /**
  * The accessible name of a day in the month grid: longDay(), then `', today'` when it is
