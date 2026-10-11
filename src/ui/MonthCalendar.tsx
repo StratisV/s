@@ -20,10 +20,20 @@ export interface MonthCalendarProps {
   today: ISODate;
   /**
    * 'month' (the default): the month's title between Previous and Next, then its weeks.
-   * 'week': one row, the week of the day moved to with the keys, else the selected day,
-   * else today; no title (the grid is named by `weekName`).
+   * 'week': one row of seven days, with its title (`weekTitle`) between Previous week and
+   * Next week; the grid is named by `weekName`.
    */
   view?: 'month' | 'week';
+  /**
+   * Week view: a day of the week shown (its parent keeps it, and moves it on `onWeek`).
+   * Without it, the strip shows the week of the day moved to with the keys, else the
+   * selected day, else today.
+   */
+  week?: ISODate;
+  /** Previous week or Next week, or a key that moved focus into another week: its Monday. */
+  onWeek?(monday: ISODate): void;
+  /** The week strip's visible title, from its seven days (Home: "5 to 11 October"). */
+  weekTitle?(days: ISODate[]): string;
   /**
    * The last day that can be chosen (Housekeeping: today, as visits can't be ahead). Later
    * days are dimmed and disabled, the keys stop there and Next stops at its month.
@@ -35,7 +45,7 @@ export interface MonthCalendarProps {
   weekName?(monday: ISODate): string;
   /** Under the month's title (Housekeeping: "4 visits · £180.00"). */
   summary?: ReactNode;
-  /** A 5px dot under the number, inside the circle (Housekeeping: a visit). */
+  /** A 5px dot under the number, inside the circle (a housekeeping visit, on both calendars). */
   dot?(date: ISODate): boolean;
   /** The number in the alert colour (Home: a day with something missed). */
   alert?(date: ISODate): boolean;
@@ -44,8 +54,6 @@ export interface MonthCalendarProps {
    * cell is taller, to hold them. Decorative: `dayName` says what they mean.
    */
   marks?(date: ISODate): ReactNode;
-  /** A small badge on the circle's top right corner (Home: the housekeeping broom). Decorative. */
-  badge?(date: ISODate): ReactNode;
   /** More data attributes on a day's button. */
   dayData?(date: ISODate): DayData;
   /** Under the grid, inside the card (Home: what the marks mean). */
@@ -55,9 +63,10 @@ export interface MonthCalendarProps {
 /**
  * The calendar card Home and Housekeeping share (docs/ARCHITECTURE.md "Housekeeping" UI 4 and
  * "Home: the calendar"): a month with its title between Previous and Next, or one week as
- * a strip. Days are a grid, Monday first. Today has a tint ring, the selected day is filled;
- * a day can carry a dot in its circle, marks under it and a badge on it. Each day's button
- * fills its cell, so a tap anywhere in the cell chooses it; the circle is drawn inside.
+ * a strip with its title between Previous week and Next week. Days are a grid, Monday
+ * first. Today has a tint ring, the selected day is filled; a day can carry a dot in its
+ * circle and marks under it. Each day's button fills its cell, so a tap anywhere in the cell
+ * chooses it; the circle is drawn inside.
  *
  * Assistive tech gets a grid labelled by the month title (or the week's name): column
  * headers name the weekdays, each day button reads `dayName()` (", selected" on the chosen
@@ -73,6 +82,9 @@ export function MonthCalendar({
   onSelect,
   today,
   view = 'month',
+  week: weekDay,
+  onWeek,
+  weekTitle,
   lastDay,
   dayName,
   weekName,
@@ -80,7 +92,6 @@ export function MonthCalendar({
   dot,
   alert,
   marks,
-  badge,
   dayData,
   legend,
 }: MonthCalendarProps) {
@@ -89,8 +100,11 @@ export function MonthCalendar({
   // The day the arrow keys last moved to (null: the default below).
   const [focused, setFocused] = useState<ISODate | null>(null);
   const moveFocus = useRef(false);
+  // A new day (back from the background after midnight): where the keys were is forgotten,
+  // so the default (the selected day, else today) is the one in the tab order again.
+  useEffect(() => setFocused(null), [today]);
 
-  const week = view === 'week' ? weekOf(focused ?? selected ?? today) : null;
+  const week = view === 'week' ? weekOf(weekDay ?? focused ?? selected ?? today) : null;
   const weeks: (ISODate | null)[][] = week ? [week] : monthGrid(month);
   const shown = (d: ISODate | null): d is ISODate => !!d && (week ? week.includes(d) : monthOf(d) === month);
   const disabled = (d: ISODate) => lastDay !== undefined && d > lastDay;
@@ -116,7 +130,9 @@ export function MonthCalendar({
     const target = lastDay !== undefined && date > lastDay ? lastDay : date;
     setFocused(target);
     moveFocus.current = true;
-    if (monthOf(target) !== month) onMonth(monthOf(target));
+    if (week) {
+      if (!week.includes(target)) onWeek?.(weekOf(target)[0]);
+    } else if (monthOf(target) !== month) onMonth(monthOf(target));
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>, date: ISODate) => {
@@ -158,37 +174,44 @@ export function MonthCalendar({
     goTo(next);
   };
 
-  const changeMonth = (n: number) => {
-    setFocused(null);
-    onMonth(shiftMonth(month, n));
+  // Previous or Next: a month, or in the strip a week.
+  const change = (n: number) => {
+    if (week) {
+      const monday = addDays(week[0], 7 * n);
+      // Without `week` from the parent, the strip follows this.
+      setFocused(weekDay === undefined ? monday : null);
+      onWeek?.(monday);
+    } else {
+      setFocused(null);
+      onMonth(shiftMonth(month, n));
+    }
   };
 
-  const atLatest = lastDay !== undefined && month >= monthOf(lastDay);
+  const atLatest = lastDay !== undefined && (week ? addDays(week[0], 7) > lastDay : month >= monthOf(lastDay));
+  const unit = week ? 'week' : 'month';
 
   return (
-    <div className={styles.card} data-view={view}>
-      {week ? null : (
-        <div className={styles.top}>
-          <button type="button" className={styles.navButton} aria-label="Previous month" onClick={() => changeMonth(-1)}>
-            <ChevronLeftIcon size={18} strokeWidth={2.6} />
-          </button>
-          <div className={styles.heading}>
-            <div id={titleId} className={styles.title} aria-live="polite">
-              {monthTitle(month)}
-            </div>
-            {summary !== undefined ? <div className={styles.summary}>{summary}</div> : null}
+    <div className={styles.card} data-view={view} data-marks={marks ? '' : undefined}>
+      <div className={styles.top}>
+        <button type="button" className={styles.navButton} aria-label={`Previous ${unit}`} onClick={() => change(-1)}>
+          <ChevronLeftIcon size={18} strokeWidth={2.6} />
+        </button>
+        <div className={styles.heading}>
+          <div id={titleId} className={styles.title} aria-live="polite">
+            {week ? (weekTitle?.(week) ?? weekName?.(week[0]) ?? week[0]) : monthTitle(month)}
           </div>
-          <button
-            type="button"
-            className={styles.navButton}
-            aria-label="Next month"
-            disabled={atLatest}
-            onClick={() => changeMonth(1)}
-          >
-            <ChevronRightIcon size={18} strokeWidth={2.6} />
-          </button>
+          {summary !== undefined ? <div className={styles.summary}>{summary}</div> : null}
         </div>
-      )}
+        <button
+          type="button"
+          className={styles.navButton}
+          aria-label={`Next ${unit}`}
+          disabled={atLatest}
+          onClick={() => change(1)}
+        >
+          <ChevronRightIcon size={18} strokeWidth={2.6} />
+        </button>
+      </div>
       <table
         ref={tableRef}
         className={styles.grid}
@@ -231,10 +254,7 @@ export function MonthCalendar({
                       }}
                       onKeyDown={(e) => onKeyDown(e, date)}
                     >
-                      <span className={styles.circle}>
-                        {parseISODate(date).d}
-                        {badge ? badge(date) : null}
-                      </span>
+                      <span className={styles.circle}>{parseISODate(date).d}</span>
                       {marks ? (
                         <span className={styles.marks} aria-hidden="true">
                           {marks(date)}

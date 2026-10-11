@@ -1,19 +1,22 @@
-import { useCallback, useEffect, useId, useMemo, useState, type CSSProperties } from 'react';
-import { RAG_LABEL, RAG_RING } from '../../lib/constants';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { RAG_LABEL, RAG_RING, RAG_TEXT } from '../../lib/constants';
 import {
   calendarDayAnnouncement,
   calendarDayName,
   calendarLookup,
   dayDots,
+  dayRows,
   repeatMeta,
+  todaySummary,
   visitSummary,
   weekName,
+  weekTitle,
   type CalendarDay,
   type CalendarView,
 } from '../../lib/logic/calendar';
 import { doneCount, formatPrice } from '../../lib/logic/housekeeping';
 import { itemMeta, memberLabel } from '../../lib/logic/items';
-import { fullDay, monthOf, type YearMonth } from '../../lib/logic/months';
+import { fullDay, monthOf, weekOf, type YearMonth } from '../../lib/logic/months';
 import type { HousekeepingVisit, ISODate, Item, Member } from '../../lib/types';
 import { EmojiText } from '../../ui/EmojiText';
 import { BroomIcon, ChevronRightIcon } from '../../ui/icons';
@@ -48,11 +51,21 @@ interface Chosen {
   /** The day it was chosen on: once midnight passes, today is chosen again. */
   today: ISODate;
   selected: ISODate;
+  /**
+   * The chosen day's list shows under the calendar. False for today at first: a line says
+   * what is due (its rows are in the areas just below) until today is chosen.
+   */
+  opened: boolean;
+  /** The month shown (month view). */
   month: YearMonth;
+  /** The Monday of the week the strip shows (week view). */
+  week: ISODate;
 }
 
-/** The chosen day and month, remembered while the app runs (Home comes and goes with its tab). */
+/** The chosen day and the month and week shown, remembered while the app runs (Home comes and goes with its tab). */
 let remembered: Chosen | null = null;
+
+const mondayOf = (date: ISODate): ISODate => weekOf(date)[0];
 
 const reducedMotion = () => {
   try {
@@ -61,6 +74,36 @@ const reducedMotion = () => {
     return false;
   }
 };
+
+/** The nearest ancestor that scrolls (the tab's scroll area). */
+function scrollParent(el: HTMLElement): HTMLElement | null {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const { overflowY } = getComputedStyle(p);
+    if (overflowY === 'auto' || overflowY === 'scroll') return p;
+  }
+  return null;
+}
+
+/**
+ * Brings a chosen day's details up when they are low on the screen: as much of them as
+ * fits above the floating + (the scroll area's bottom padding keeps that room), without
+ * taking the day's heading up under the docked tab switch (the scroll area's
+ * scroll-padding-top). Measured, as `scrollIntoView` with `block: 'nearest'` ignores the
+ * room wanted under the heading.
+ */
+function revealDay(panel: HTMLElement): void {
+  const heading = panel.querySelector('h3');
+  const scroller = scrollParent(panel);
+  if (!heading || !scroller) return;
+  const style = getComputedStyle(scroller);
+  const box = scroller.getBoundingClientRect();
+  const top = box.top + (parseFloat(style.scrollPaddingTop) || 0);
+  const bottom = box.bottom - (parseFloat(style.paddingBottom) || 0);
+  const below = panel.getBoundingClientRect().bottom - bottom;
+  const above = heading.getBoundingClientRect().top - top;
+  const delta = Math.min(below, above);
+  if (delta > 1) scroller.scrollBy?.({ top: delta, behavior: reducedMotion() ? 'auto' : 'smooth' });
+}
 
 interface HomeCalendarProps {
   householdId: string;
@@ -83,10 +126,12 @@ interface HomeCalendarProps {
 /**
  * Home's calendar (docs/ARCHITECTURE.md "Home: the calendar"), under the person filter: the
  * week as a strip, or the whole month (Show month / Show week, remembered on this device),
- * on the calendar card Housekeeping uses too. Each day shows the To do items due (status
- * dots, up to three and "+2"; the number in red when something was missed), the later
- * repeats of repeating items (faint hollow dots) and the housekeeping visit (a broom).
- * Today is chosen at first; the chosen day's items show under the calendar, as Home's rows.
+ * on the calendar card Housekeeping uses too, with Previous and Next for the week or the
+ * month and Today to come back. Each day shows the To do items due (status dots, up to three
+ * and "+2"; the number in red when something was missed), the later repeats of repeating
+ * items (faint hollow dots) and the housekeeping visit (a dot in the circle, as in
+ * Housekeeping). Today is chosen at first, with a line saying what is due; a chosen day's
+ * items show under the calendar, as Home's rows.
  */
 export function HomeCalendar({
   householdId,
@@ -101,17 +146,26 @@ export function HomeCalendar({
   onOpenHousekeeping,
 }: HomeCalendarProps) {
   const headingId = useId();
+  const sectionRef = useRef<HTMLElement>(null);
+  const todayRef = useRef<HTMLButtonElement>(null);
   const [view, setView] = useState<CalendarView>(readView);
-  const fresh = (): Chosen => ({ householdId, today, selected: today, month: monthOf(today) });
+  const fresh = (): Chosen => ({
+    householdId,
+    today,
+    selected: today,
+    opened: false,
+    month: monthOf(today),
+    week: mondayOf(today),
+  });
   const valid = (c: Chosen | null): c is Chosen => !!c && c.householdId === householdId && c.today === today;
   const [state, setState] = useState<Chosen>(() => (valid(remembered) ? remembered : fresh()));
-  // Another household, or a new day since: start on today.
+  // Another household, or a new day since: start on today, in this week and month.
   const chosen = valid(state) ? state : fresh();
-  const update = (patch: Partial<Pick<Chosen, 'selected' | 'month'>>) => {
-    const next = { ...chosen, ...patch };
+  const save = (next: Chosen) => {
     remembered = next;
     setState(next);
   };
+  const update = (patch: Partial<Omit<Chosen, 'householdId' | 'today'>>) => save({ ...chosen, ...patch });
 
   const lookup = useMemo(() => calendarLookup(items, visits, today), [items, visits, today]);
 
@@ -124,23 +178,50 @@ export function HomeCalendar({
   const [reveal, setReveal] = useState(0);
   useEffect(() => {
     if (!reveal) return;
-    const heading = document.getElementById(headingId)?.closest('section')?.querySelector<HTMLElement>('[data-calendar-day] h3');
-    heading?.scrollIntoView?.({ block: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
-  }, [reveal, headingId]);
+    const panel = sectionRef.current?.querySelector<HTMLElement>('[data-calendar-day]');
+    if (panel) revealDay(panel);
+  }, [reveal]);
+
+  // Today was pressed from the keyboard (or by VoiceOver): the button goes, so focus goes to today.
+  const focusToday = useRef(false);
+  useEffect(() => {
+    if (!focusToday.current) return;
+    focusToday.current = false;
+    sectionRef.current?.querySelector<HTMLElement>(`[role="grid"] [data-date="${today}"]`)?.focus();
+  });
 
   const select = (date: ISODate) => {
-    update({ selected: date });
+    update({ selected: date, opened: true, week: mondayOf(date) });
     announce(calendarDayAnnouncement(date, today, lookup(date)));
     setReveal((n) => n + 1);
   };
 
+  const goToday = () => {
+    focusToday.current = document.activeElement === todayRef.current;
+    save(fresh());
+  };
+
   const toggleView = () => {
     const next: CalendarView = view === 'week' ? 'month' : 'week';
-    // The month opens on the chosen day's.
-    if (next === 'month') update({ month: monthOf(chosen.selected) });
+    if (next === 'month') {
+      // The month of the chosen day if the strip shows it, else of today, else of the week's Monday.
+      const days = weekOf(chosen.week);
+      const anchor = days.includes(chosen.selected) ? chosen.selected : days.includes(today) ? today : days[0];
+      update({ month: monthOf(anchor) });
+    } else if (monthOf(chosen.selected) === chosen.month) {
+      // The week of the chosen day, when it is in the month shown.
+      update({ week: mondayOf(chosen.selected) });
+    } else {
+      // Otherwise this week, today chosen.
+      save(fresh());
+    }
     setView(next);
     writeView(next);
   };
+
+  const shownDays = view === 'week' ? weekOf(chosen.week) : null;
+  const todayShown = shownDays ? shownDays.includes(today) : monthOf(today) === chosen.month;
+  const opened = chosen.opened || chosen.selected !== today;
 
   const marks = (date: ISODate) => {
     const { dots, more } = dayDots(lookup(date));
@@ -152,20 +233,13 @@ export function HomeCalendar({
             className={styles.dot}
             data-rag={dot.rag}
             data-repeat={dot.repeat || undefined}
-            style={{ '--dot': RAG_RING[dot.rag] } as CSSProperties}
+            style={{ '--dot': dot.repeat ? RAG_TEXT[dot.rag] : RAG_RING[dot.rag] } as CSSProperties}
           />
         ))}
         {more ? <span className={styles.more}>+{more}</span> : null}
       </>
     );
   };
-
-  const badge = (date: ISODate) =>
-    lookup(date).visit ? (
-      <span className={styles.broom} data-broom="">
-        <BroomIcon size={11} />
-      </span>
-    ) : null;
 
   const dayData = (date: ISODate) => {
     const day = lookup(date);
@@ -179,28 +253,46 @@ export function HomeCalendar({
   };
 
   const whoName = who === 'all' || who === 'none' ? null : (members.find((m) => m.id === who)?.name ?? null);
+  /** "Nothing due today", "Nothing due for Shea", "Nothing unassigned due today" (no full stop). */
   const nothingDue = (isToday: boolean) => {
     const when = isToday ? ' today' : '';
-    if (who === 'none') return `Nothing unassigned due${when}.`;
-    if (whoName) return `Nothing due for ${whoName}${when}.`;
-    return `Nothing due${when}.`;
+    if (who === 'none') return `Nothing unassigned due${when}`;
+    if (whoName) return `Nothing due for ${whoName}${when}`;
+    return `Nothing due${when}`;
   };
 
   return (
-    <section aria-labelledby={headingId} className={styles.section} data-calendar="">
-      <div className={styles.headerRow}>
-        <h2 id={headingId} className={styles.header}>
-          Calendar
-        </h2>
-        <button type="button" className={styles.headerAction} data-calendar-toggle="" onClick={toggleView}>
+    <section ref={sectionRef} aria-labelledby={headingId} className={styles.section} data-calendar="">
+      <h2 id={headingId} className="visually-hidden">
+        Calendar
+      </h2>
+      <div className={styles.bar} data-calendar-bar="">
+        {!todayShown || chosen.selected !== today ? (
+          <button ref={todayRef} type="button" className={styles.barAction} onClick={goToday}>
+            Today
+          </button>
+        ) : !opened ? (
+          <p className={styles.summary} data-today-summary="">
+            {todaySummary(lookup(today), nothingDue(true))}
+          </p>
+        ) : null}
+        <button
+          type="button"
+          className={`${styles.barAction} ${styles.toggle}`}
+          data-calendar-toggle=""
+          onClick={toggleView}
+        >
           {view === 'week' ? 'Show month' : 'Show week'}
         </button>
       </div>
       <MonthCalendar
-        // A fresh grid for each view: the strip follows the chosen day, not where the keys were.
+        // A fresh grid for each view: where the keys were in the other one is forgotten.
         key={view}
         month={chosen.month}
         onMonth={(month) => update({ month })}
+        week={chosen.week}
+        onWeek={(week) => update({ week })}
+        weekTitle={(days) => weekTitle(days, today)}
         selected={chosen.selected}
         onSelect={select}
         today={today}
@@ -208,23 +300,25 @@ export function HomeCalendar({
         dayName={(date, isSelected) => calendarDayName(date, today, lookup(date), isSelected)}
         weekName={(monday) => weekName(monday, today)}
         alert={(date) => lookup(date).missed.length > 0}
+        dot={(date) => lookup(date).visit !== null}
         marks={marks}
-        badge={badge}
         dayData={dayData}
         legend={view === 'month' ? <Legend /> : undefined}
       />
-      <DayPanel
-        key={chosen.selected}
-        date={chosen.selected}
-        day={lookup(chosen.selected)}
-        today={today}
-        timeZone={timeZone}
-        members={members}
-        empty={nothingDue(chosen.selected === today)}
-        onOpenItem={onOpenItem}
-        onComplete={onComplete}
-        onOpenHousekeeping={onOpenHousekeeping}
-      />
+      {opened ? (
+        <DayPanel
+          key={chosen.selected}
+          date={chosen.selected}
+          day={lookup(chosen.selected)}
+          today={today}
+          timeZone={timeZone}
+          members={members}
+          empty={`${nothingDue(chosen.selected === today)}.`}
+          onOpenItem={onOpenItem}
+          onComplete={onComplete}
+          onOpenHousekeeping={onOpenHousekeeping}
+        />
+      ) : null}
       <div className="visually-hidden" aria-live="polite" data-announcer="">
         <span key={said.key}>{said.text}</span>
       </div>
@@ -249,11 +343,11 @@ function Legend() {
         Missed
       </span>
       <span className={styles.legendItem}>
-        <span className={styles.dot} data-repeat="" style={{ '--dot': RAG_RING.amber } as CSSProperties} />
+        <span className={styles.dot} data-repeat="" style={{ '--dot': RAG_TEXT.amber } as CSSProperties} />
         Repeats
       </span>
       <span className={styles.legendItem}>
-        <BroomIcon size={11} className={styles.legendBroom} />
+        <span className={styles.legendVisit} />
         Housekeeping
       </span>
     </div>
@@ -275,11 +369,14 @@ interface DayPanelProps {
 
 /**
  * The chosen day, under the calendar: its To do items as Home's rows (the ring completes,
- * the row opens the Item sheet), missed ones first, then the repeats coming round that day
- * (opened, not completed), then its housekeeping visit, which opens that day in Housekeeping.
+ * the row opens the Item sheet) in the order of its marks (missed first, then red, amber,
+ * green), then the repeats coming round that day (opened, not completed), then its
+ * housekeeping visit, which opens that day in Housekeeping. A row due that day leaves its
+ * date out (the heading says it); a missed one keeps "Missed · Tue 6 Oct". Every row leaves
+ * the list once completed, a repeating one too (it moves on to a later day).
  */
 function DayPanel({ date, day, today, timeZone, members, empty, onOpenItem, onComplete, onOpenHousekeeping }: DayPanelProps) {
-  const rows = [...day.missed, ...day.due];
+  const { rows, repeats } = dayRows(day);
   const visit = day.visit;
   let visitName = '';
   if (visit) {
@@ -289,20 +386,27 @@ function DayPanel({ date, day, today, timeZone, members, empty, onOpenItem, onCo
   }
   return (
     <div className={styles.day} data-calendar-day={date}>
-      <h3 className={styles.dayHeader}>{fullDay(date, today)}</h3>
+      {/* Focus comes here when the last row is completed and the day isn't on the grid. */}
+      <h3 className={styles.dayHeader} tabIndex={-1}>
+        {fullDay(date, today)}
+      </h3>
       <div className={styles.card}>
-        {rows.length || day.repeats.length ? (
+        {rows.length || repeats.length ? (
           <ul className={styles.list} role="list">
-            {rows.map((item) => (
-              <ItemRow
-                key={item.id}
-                item={item}
-                meta={itemMeta(item, members, today, timeZone)}
-                onOpen={onOpenItem}
-                onComplete={onComplete}
-              />
-            ))}
-            {day.repeats.map((item) => (
+            {rows.map((item) => {
+              const meta = itemMeta(item, members, today, timeZone);
+              return (
+                <ItemRow
+                  key={item.id}
+                  item={item}
+                  meta={meta.missed ? meta : { ...meta, date: null }}
+                  leavesOnComplete
+                  onOpen={onOpenItem}
+                  onComplete={onComplete}
+                />
+              );
+            })}
+            {repeats.map((item) => (
               <RepeatRow key={`repeat:${item.id}`} item={item} members={members} today={today} onOpen={onOpenItem} />
             ))}
           </ul>
@@ -342,11 +446,12 @@ interface RepeatRowProps {
 
 /**
  * A repeat coming round on the chosen day: drawn like Home's row, with a faint dashed ring
- * that is not a button (it isn't due yet, so it can't be marked done), and "Repeats every
- * week · Due Tue 13 Oct" after who it is for. The row opens the item.
+ * that is not a button (it isn't due yet, so it can't be marked done), and "Repeat of Tue 13
+ * Oct · Every week" after who it is for (how often gives way first). The row opens the item.
  */
 function RepeatRow({ item, members, today, onOpen }: RepeatRowProps) {
   const who = memberLabel(members.find((m) => m.id === item.assignee_id));
+  const { when, every } = repeatMeta(item, today);
   return (
     <li className={rowStyles.row} data-repeat="">
       <span className={styles.repeatSlot} aria-hidden="true">
@@ -368,7 +473,11 @@ function RepeatRow({ item, members, today, onOpen }: RepeatRowProps) {
               <EmojiText text={who} />
             </span>
             {' · '}
-            <span className={styles.repeatMeta}>{repeatMeta(item, today)}</span>
+            <span className={styles.repeatMeta}>{when}</span>
+          </span>
+          <span className={rowStyles.note}>
+            {' · '}
+            {every}
           </span>
         </span>
       </button>

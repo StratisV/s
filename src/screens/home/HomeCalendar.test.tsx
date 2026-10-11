@@ -120,14 +120,30 @@ function setup({ items = ITEMS, who = 'all', today = TODAY, householdId }: Optio
     </ConfettiProvider>
   );
   const result = render(view());
-  return { ...props, rerender: (over: Options = {}) => result.rerender(view(over)), unmount: result.unmount };
+  return {
+    ...props,
+    container: result.container,
+    rerender: (over: Options = {}) => result.rerender(view(over)),
+    unmount: result.unmount,
+  };
 }
 
 const section = () => screen.getByRole('region', { name: 'Calendar' });
 const grid = () => within(section()).getByRole('grid');
 const day = (name: string | RegExp) => within(grid()).getByRole('button', { name });
-const panel = () => section().querySelector<HTMLElement>('[data-calendar-day]')!;
+const panel = () => section().querySelector<HTMLElement>('[data-calendar-day]');
+const summary = () => section().querySelector('[data-today-summary]')?.textContent ?? null;
 const said = () => section().querySelector('[data-announcer]')!.textContent;
+const control = (name: string) => within(section()).getByRole('button', { name });
+const title = () => section().querySelector('[aria-live="polite"]')!.textContent;
+
+/** jsdom has no :focus-visible: from the keyboard, focus would show. */
+function keyboardFocus() {
+  const matches = Element.prototype.matches;
+  return vi.spyOn(Element.prototype, 'matches').mockImplementation(function (this: Element, selector: string) {
+    return selector === ':focus-visible' ? this === document.activeElement : matches.call(this, selector);
+  });
+}
 
 beforeEach(() => {
   localStorage.clear();
@@ -135,13 +151,15 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
 describe('Home calendar: the week', () => {
-  it('opens on this week, today chosen and ringed, its items under it', () => {
+  it('opens on this week, today chosen and ringed, with a line saying what is due today', () => {
     setup();
     expect(grid().getAttribute('aria-label')).toBe('Week of Monday 5 October');
+    expect(title()).toBe('5 to 11 October');
     const days = within(grid()).getAllByRole('button');
     expect(days.map((b) => b.getAttribute('data-date'))).toEqual([
       '2026-10-05',
@@ -156,7 +174,7 @@ describe('Home calendar: the week', () => {
     expect(today.hasAttribute('data-today')).toBe(true);
     expect(today.closest('[role="gridcell"]')!.getAttribute('aria-selected')).toBe('true');
     expect(today.tabIndex).toBe(0);
-    // Column headers name the weekdays; no month title or Previous and Next in the strip.
+    // Column headers name the weekdays; Previous week and Next week, no month controls.
     expect(within(grid()).getAllByRole('columnheader').map((th) => th.getAttribute('abbr'))).toEqual([
       'Monday',
       'Tuesday',
@@ -166,14 +184,25 @@ describe('Home calendar: the week', () => {
       'Saturday',
       'Sunday',
     ]);
+    expect(control('Previous week')).toBeTruthy();
+    expect(control('Next week')).toBeTruthy();
     expect(within(section()).queryByRole('button', { name: 'Previous month' })).toBeNull();
-    expect(within(section()).getByRole('button', { name: 'Show month' })).toBeTruthy();
+    expect(control('Show month')).toBeTruthy();
+    // Today is shown and chosen: no Today button.
+    expect(within(section()).queryByRole('button', { name: 'Today' })).toBeNull();
 
-    expect(within(panel()).getByRole('heading', { level: 3, name: 'Thursday 8 October' })).toBeTruthy();
-    expect(within(panel()).getByRole('button', { name: 'Mark Empty the dehumidifier as done' })).toBeTruthy();
+    // Today's rows are in the areas below: one line here, until today is chosen.
+    expect(summary()).toBe('1 due today');
+    expect(panel()).toBeNull();
+    fireEvent.click(today);
+    expect(summary()).toBeNull();
+    expect(within(panel()!).getByRole('heading', { level: 3, name: 'Thursday 8 October' })).toBeTruthy();
+    expect(within(panel()!).getByRole('button', { name: 'Mark Empty the dehumidifier as done' })).toBeTruthy();
+    // A row due that day leaves its date out: the heading says it.
+    expect(panel()!.querySelector('[data-meta]')!.textContent).toBe('🦆 Shea');
   });
 
-  it('marks each day: status dots, missed in red, repeats faint, the visit with a broom', () => {
+  it('marks each day: status dots, missed in red, repeats faint, the visit with the dot Housekeeping uses', () => {
     setup();
     const tuesday = day('Tuesday 6 October, 1 missed');
     expect(tuesday.hasAttribute('data-alert')).toBe(true);
@@ -181,18 +210,70 @@ describe('Home calendar: the week', () => {
     expect(Array.from(tuesday.querySelectorAll('[data-rag]')).map((d) => d.getAttribute('data-rag'))).toEqual(['red']);
     // Wednesday 7 has a visit with nothing recorded: no mark.
     expect(day('Wednesday 7 October').hasAttribute('data-visit')).toBe(false);
+    expect(day('Wednesday 7 October').hasAttribute('data-dot')).toBe(false);
     const saturday = day('Saturday 10 October, 1 due');
     expect(saturday.querySelector('[data-rag="green"]:not([data-repeat])')).toBeTruthy();
     // The marks are drawn for the eye only: the name says it all.
     expect(saturday.querySelector('[aria-hidden="true"] [data-rag]')).toBeTruthy();
   });
 
+  it('Previous week and Next week move the strip; Today comes back to this week', () => {
+    setup();
+    act(() => control('Next week').focus());
+    fireEvent.click(control('Next week'));
+    expect(grid().getAttribute('aria-label')).toBe('Week of Monday 12 October');
+    expect(title()).toBe('12 to 18 October');
+    expect(within(grid()).queryAllByRole('button', { name: /today/ })).toHaveLength(0);
+    // Today is chosen but not shown: Today brings it back.
+    expect(summary()).toBeNull();
+    fireEvent.click(control('Previous week'));
+    fireEvent.click(control('Previous week'));
+    expect(title()).toBe('28 Sep to 4 Oct');
+    const back = control('Today');
+    act(() => back.focus());
+    fireEvent.click(back);
+    expect(grid().getAttribute('aria-label')).toBe('Week of Monday 5 October');
+    expect(summary()).toBe('1 due today');
+    expect(within(section()).queryByRole('button', { name: 'Today' })).toBeNull();
+    // The button went, so focus is on today.
+    expect(document.activeElement).toBe(day(/^Thursday 8 October, today/));
+
+    // Another day chosen in this week: Today chooses today again.
+    fireEvent.click(day(/^Saturday 10 October/));
+    expect(within(panel()!).getByRole('heading', { level: 3, name: 'Saturday 10 October' })).toBeTruthy();
+    fireEvent.click(control('Today'));
+    expect(panel()).toBeNull();
+    expect(day(/^Thursday 8 October, today, 1 due, selected/)).toBeTruthy();
+  });
+
+  it('a new day after midnight shows its own week, with today chosen and in the tab order, even after a tap', () => {
+    const { rerender } = setup({ householdId: 'h-midnight' });
+    fireEvent.click(day(/^Sunday 11 October/));
+    rerender({ today: '2026-10-12' });
+    expect(grid().getAttribute('aria-label')).toBe('Week of Monday 12 October');
+    const monday = day('Monday 12 October, today, selected');
+    expect(monday.hasAttribute('data-today')).toBe(true);
+    expect(monday.tabIndex).toBe(0);
+    expect(panel()).toBeNull();
+    expect(summary()).toBe('Nothing due today');
+  });
+
+  it('a new day forgets the day tapped in the month too: today is the one in the tab order', () => {
+    const { rerender } = setup({ householdId: 'h-midnight-month' });
+    fireEvent.click(control('Show month'));
+    fireEvent.click(day(/^Wednesday 28 October/));
+    expect(day(/^Wednesday 28 October/).tabIndex).toBe(0);
+    rerender({ today: '2026-10-29' });
+    expect(day(/^Thursday 29 October, today/).tabIndex).toBe(0);
+    expect(day(/^Wednesday 28 October/).tabIndex).toBe(-1);
+  });
+
   it('remembers Show month on this device, and the month has its marks and legend', () => {
     const first = setup();
-    fireEvent.click(within(section()).getByRole('button', { name: 'Show month' }));
+    fireEvent.click(control('Show month'));
     expect(localStorage.getItem(CALENDAR_VIEW_KEY)).toBe('month');
     expect(document.getElementById(grid().getAttribute('aria-labelledby')!)!.textContent).toBe('October 2026');
-    expect(within(section()).getByRole('button', { name: 'Show week' })).toBeTruthy();
+    expect(control('Show week')).toBeTruthy();
     expect(section().querySelector('[data-legend]')!.getAttribute('aria-hidden')).toBe('true');
 
     // Four things due: three dots, red first, and "+1".
@@ -208,75 +289,92 @@ describe('Home calendar: the week', () => {
     expect(wed21.querySelector('[data-repeat][data-rag="green"]')).toBeTruthy();
     expect(day('Saturday 17 October, 1 repeat').getAttribute('data-repeats')).toBe('1');
     expect(day('Thursday 15 October, 1 repeat')).toBeTruthy();
-    // The visit: a broom, and its name says so.
+    // The visit: the dot Housekeeping's calendar uses, and its name says so.
     const oct1 = day('Thursday 1 October, housekeeping visit');
-    expect(oct1.querySelector('[data-broom]')).toBeTruthy();
+    expect(oct1.hasAttribute('data-dot')).toBe(true);
+    expect(oct1.getAttribute('data-visit')).toBe('true');
     // To maintain items have no date: never on the calendar.
     expect(within(grid()).queryAllByRole('button', { name: /Firepit/ })).toHaveLength(0);
 
     first.unmount();
     setup();
-    expect(within(section()).getByRole('button', { name: 'Show week' })).toBeTruthy();
-    fireEvent.click(within(section()).getByRole('button', { name: 'Show week' }));
+    expect(control('Show week')).toBeTruthy();
+    fireEvent.click(control('Show week'));
     expect(localStorage.getItem(CALENDAR_VIEW_KEY)).toBeNull();
     expect(grid().getAttribute('aria-label')).toBe('Week of Monday 5 October');
   });
 
+  it('Show week opens on the chosen day’s week when it is in the month shown, else on this week with today chosen', () => {
+    setup();
+    fireEvent.click(control('Show month'));
+    fireEvent.click(control('Next month'));
+    fireEvent.click(control('Next month'));
+    fireEvent.click(day(/^Thursday 3 December/));
+    fireEvent.click(control('Show week'));
+    expect(grid().getAttribute('aria-label')).toBe('Week of Monday 30 November');
+    expect(title()).toBe('30 Nov to 6 Dec');
+    expect(day(/^Thursday 3 December, .*selected/)).toBeTruthy();
+    // Back with taps only: Today.
+    fireEvent.click(control('Today'));
+    expect(grid().getAttribute('aria-label')).toBe('Week of Monday 5 October');
+
+    // The chosen day isn't in the month shown: this week, today chosen.
+    fireEvent.click(day(/^Saturday 10 October/));
+    fireEvent.click(control('Show month'));
+    fireEvent.click(control('Next month'));
+    fireEvent.click(control('Show week'));
+    expect(grid().getAttribute('aria-label')).toBe('Week of Monday 5 October');
+    expect(day(/^Thursday 8 October, today, 1 due, selected/)).toBeTruthy();
+    expect(summary()).toBe('1 due today');
+  });
+
   it('works without storage (private mode)', () => {
-    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
       throw new Error('blocked');
     });
-    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('blocked');
     });
-    try {
-      setup();
-      fireEvent.click(within(section()).getByRole('button', { name: 'Show month' }));
-      expect(within(section()).getByRole('button', { name: 'Show week' })).toBeTruthy();
-    } finally {
-      get.mockRestore();
-      set.mockRestore();
-    }
+    setup();
+    fireEvent.click(control('Show month'));
+    expect(control('Show week')).toBeTruthy();
   });
 });
 
 describe('Home calendar: choosing a day', () => {
   it('shows a repeat coming round: labelled, opened but not completed, and says what is there', () => {
     const { onOpenItem } = setup();
-    fireEvent.click(within(section()).getByRole('button', { name: 'Show month' }));
+    fireEvent.click(control('Show month'));
     fireEvent.click(day('Thursday 15 October, 1 repeat'));
     expect(said()).toBe('Thursday 15 October: 1 repeat. Details below the calendar.');
-    expect(within(panel()).getByRole('heading', { level: 3, name: 'Thursday 15 October' })).toBeTruthy();
+    expect(within(panel()!).getByRole('heading', { level: 3, name: 'Thursday 15 October' })).toBeTruthy();
     // Repeats can't be marked done: no ring, and they say what they are.
-    expect(within(panel()).queryAllByRole('button', { name: /^Mark / })).toHaveLength(0);
-    let rows = within(panel()).getAllByRole('listitem');
-    expect(rows.map((r) => r.querySelector('[data-meta]')!.textContent)).toEqual([
-      '🦆 Shea · Repeats every week · Due Thu 8 Oct',
-    ]);
+    expect(within(panel()!).queryAllByRole('button', { name: /^Mark / })).toHaveLength(0);
+    let rows = within(panel()!).getAllByRole('listitem');
+    expect(rows.map((r) => r.querySelector('[data-meta]')!.textContent)).toEqual(['🦆 Shea · Repeat of Thu 8 Oct']);
+    expect(rows[0].textContent).toContain('Every week');
     // The chosen day says so on its button.
     expect(day('Thursday 15 October, 1 repeat, selected')).toBeTruthy();
 
     fireEvent.click(day('Wednesday 21 October, 1 repeat'));
-    rows = within(panel()).getAllByRole('listitem');
-    expect(rows.map((r) => r.querySelector('[data-meta]')!.textContent)).toEqual([
-      '🦔 Stratis · Repeats every week · Due Wed 14 Oct',
-    ]);
-    const bins = within(panel()).getByRole('button', { name: /^Put the bins out ?, Green, repeat\./ });
+    rows = within(panel()!).getAllByRole('listitem');
+    expect(rows.map((r) => r.querySelector('[data-meta]')!.textContent)).toEqual(['🦔 Stratis · Repeat of Wed 14 Oct']);
+    const bins = within(panel()!).getByRole('button', { name: /^Put the bins out ?, Green, repeat\./ });
     fireEvent.click(bins);
     expect(onOpenItem).toHaveBeenCalledWith('bins');
   });
 
-  it('lists a busy day’s items as Home rows, in Home’s order', () => {
+  it('lists a busy day’s items in the order of its marks: red, then amber, then green', () => {
     setup();
-    fireEvent.click(within(section()).getByRole('button', { name: 'Show month' }));
+    fireEvent.click(control('Show month'));
     fireEvent.click(day('Wednesday 14 October, 4 due'));
     expect(said()).toBe('Wednesday 14 October: 4 due. Details below the calendar.');
-    const rings = within(panel()).getAllByRole('button', { name: /^Mark / });
+    const rings = within(panel()!).getAllByRole('button', { name: /^Mark / });
     expect(rings.map((b) => b.getAttribute('aria-label'))).toEqual([
-      'Mark Shower draining slowly as done',
       'Mark Cover the garden furniture as done',
-      'Mark Put the bins out as done',
+      'Mark Shower draining slowly as done',
       'Mark Clear the gutters as done',
+      'Mark Put the bins out as done',
     ]);
   });
 
@@ -285,7 +383,8 @@ describe('Home calendar: choosing a day', () => {
     const { onComplete, onOpenItem } = setup();
     fireEvent.click(day(/^Tuesday 6 October/));
     expect(said()).toBe('Tuesday 6 October: 1 missed. Details below the calendar.');
-    const row = within(panel()).getByRole('listitem');
+    const row = within(panel()!).getByRole('listitem');
+    // A missed row keeps its date.
     expect(row.querySelector('[data-meta]')!.textContent).toBe('🦆 Shea · Missed · Tue 6 Oct');
     fireEvent.click(within(row).getAllByRole('button')[1]);
     expect(onOpenItem).toHaveBeenCalledWith('heaters');
@@ -296,72 +395,127 @@ describe('Home calendar: choosing a day', () => {
     expect(onComplete).toHaveBeenCalledWith('heaters');
   });
 
+  it('completing a weekly item from the keyboard keeps focus in the calendar, as it leaves the day', () => {
+    vi.useFakeTimers();
+    keyboardFocus();
+    const { onComplete } = setup();
+    fireEvent.click(day(/^Thursday 8 October/));
+    const ring = within(panel()!).getByRole('button', { name: 'Mark Empty the dehumidifier as done' });
+    act(() => ring.focus());
+    fireEvent.click(ring);
+    act(() => {
+      vi.advanceTimersByTime(COMPLETE_FEEDBACK_MS);
+    });
+    expect(onComplete).toHaveBeenCalledWith('dehum');
+    // The only row: focus goes to the chosen day's button, not lost with the row.
+    expect(document.activeElement).toBe(day(/^Thursday 8 October, today, 1 due, selected/));
+  });
+
+  it('completing a weekly item from the keyboard moves focus to the next row of the day', () => {
+    vi.useFakeTimers();
+    keyboardFocus();
+    setup();
+    fireEvent.click(control('Show month'));
+    fireEvent.click(day(/^Wednesday 14 October/));
+    const ring = within(panel()!).getByRole('button', { name: 'Mark Clear the gutters as done' });
+    // The gutters repeat every 6 months: once done they leave the 14th too.
+    act(() => ring.focus());
+    fireEvent.click(ring);
+    act(() => {
+      vi.advanceTimersByTime(COMPLETE_FEEDBACK_MS);
+    });
+    expect(document.activeElement).toBe(within(panel()!).getByRole('button', { name: /^Put the bins out ?, Green\./ }));
+  });
+
+  it('completing the last row when its day is not on the grid puts focus on the day’s heading', () => {
+    vi.useFakeTimers();
+    keyboardFocus();
+    setup();
+    fireEvent.click(day(/^Tuesday 6 October/));
+    fireEvent.click(control('Next week'));
+    const ring = within(panel()!).getByRole('button', { name: 'Mark Heaters not working as done' });
+    act(() => ring.focus());
+    fireEvent.click(ring);
+    act(() => {
+      vi.advanceTimersByTime(COMPLETE_FEEDBACK_MS);
+    });
+    expect(document.activeElement).toBe(within(panel()!).getByRole('heading', { level: 3, name: 'Tuesday 6 October' }));
+  });
+
   it('shows the visit, which opens that day in Housekeeping', () => {
     const { onOpenHousekeeping } = setup();
-    fireEvent.click(within(section()).getByRole('button', { name: 'Show month' }));
+    fireEvent.click(control('Show month'));
     fireEvent.click(day(/^Thursday 1 October/));
     expect(said()).toBe('Thursday 1 October: housekeeping visit. Details below the calendar.');
-    expect(within(panel()).getByText('Nothing due.')).toBeTruthy();
-    const link = within(panel()).getByRole('button', {
+    expect(within(panel()!).getByText('Nothing due.')).toBeTruthy();
+    const link = within(panel()!).getByRole('button', {
       name: 'Housekeeping visit, 6 of 7 done, £60.00. Show in Housekeeping',
     });
     expect(link.textContent).toContain('6 of 7 done · £60.00');
     fireEvent.click(link);
     expect(onOpenHousekeeping).toHaveBeenCalledWith('2026-10-01');
     // Without a price.
-    fireEvent.click(screen.getByRole('button', { name: 'Previous month' }));
+    fireEvent.click(control('Previous month'));
     fireEvent.click(day(/^Thursday 24 September/));
-    expect(within(panel()).getByRole('button', { name: 'Housekeeping visit, 7 of 7 done. Show in Housekeeping' })).toBeTruthy();
+    expect(within(panel()!).getByRole('button', { name: 'Housekeeping visit, 7 of 7 done. Show in Housekeeping' })).toBeTruthy();
   });
 
   it('says plainly when nothing is due, for whoever is shown', () => {
     const { rerender } = setup({ items: [] });
-    expect(within(panel()).getByText('Nothing due today.')).toBeTruthy();
+    expect(summary()).toBe('Nothing due today');
     expect(said()).toBe('');
     fireEvent.click(day(/^Friday 9 October/));
-    expect(within(panel()).getByText('Nothing due.')).toBeTruthy();
+    expect(within(panel()!).getByText('Nothing due.')).toBeTruthy();
     expect(said()).toBe('Friday 9 October: nothing due. Details below the calendar.');
     rerender({ items: [], who: 'm-shea' });
-    expect(within(panel()).getByText('Nothing due for Shea.')).toBeTruthy();
+    expect(within(panel()!).getByText('Nothing due for Shea.')).toBeTruthy();
     fireEvent.click(day(/^Thursday 8 October/));
-    expect(within(panel()).getByText('Nothing due for Shea today.')).toBeTruthy();
+    expect(within(panel()!).getByText('Nothing due for Shea today.')).toBeTruthy();
     rerender({ items: [], who: 'none' });
-    expect(within(panel()).getByText('Nothing unassigned due today.')).toBeTruthy();
+    expect(within(panel()!).getByText('Nothing unassigned due today.')).toBeTruthy();
+    cleanup();
+    setup({ items: [], who: 'm-shea' });
+    expect(summary()).toBe('Nothing due for Shea today');
   });
 
-  it('brings the day into view when it is low on the screen, without smooth scrolling for Reduce Motion', () => {
-    const scrolled: { el: Element; opts: unknown }[] = [];
-    const proto = Element.prototype as { scrollIntoView?: unknown };
-    const before = proto.scrollIntoView;
-    proto.scrollIntoView = function (this: Element, opts: unknown) {
-      scrolled.push({ el: this, opts });
-    };
-    const matchMedia = window.matchMedia;
+  it('brings the day up when it is low on the screen, above the + and under the tab switch, without smooth scrolling for Reduce Motion', () => {
     window.matchMedia = ((query: string) => ({ matches: query.includes('reduce'), media: query })) as typeof window.matchMedia;
-    try {
-      setup();
-      const sat = day(/^Saturday 10 October/);
-      act(() => sat.focus());
-      fireEvent.click(sat);
-      expect(scrolled.map((s) => s.el)).toEqual([within(panel()).getByRole('heading', { level: 3 })]);
-      expect(scrolled[0].opts).toEqual({ block: 'nearest', behavior: 'auto' });
-      // Focus stays on the day.
-      expect(document.activeElement).toBe(day(/^Saturday 10 October, 1 due, selected/));
-    } finally {
-      proto.scrollIntoView = before;
-      window.matchMedia = matchMedia;
-    }
+    const { container } = setup();
+    // The tab's scroll area: 700px tall, 104px kept clear at the bottom for the +.
+    const scroller = container;
+    scroller.style.overflowY = 'auto';
+    scroller.style.paddingBottom = '104px';
+    const scrollBy = vi.fn();
+    scroller.scrollBy = scrollBy as typeof scroller.scrollBy;
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      const box = (top: number, bottom: number) => ({ top, bottom, left: 0, right: 320, width: 320, height: bottom - top, x: 0, y: top, toJSON() {} }) as DOMRect;
+      if (this === scroller) return box(0, 700);
+      if (this.matches('[data-calendar-day]')) return box(560, 720);
+      if (this.matches('[data-calendar-day] h3')) return box(560, 600);
+      return box(0, 0);
+    });
+    const sat = day(/^Saturday 10 October/);
+    act(() => sat.focus());
+    fireEvent.click(sat);
+    // Its bottom (720) comes up to 596, above the +.
+    expect(scrollBy).toHaveBeenCalledWith({ top: 124, behavior: 'auto' });
+    // Focus stays on the day.
+    expect(document.activeElement).toBe(day(/^Saturday 10 October, 1 due, selected/));
   });
 
   it('remembers the chosen day while the app runs, and starts on today again the next day', () => {
     const first = setup({ householdId: 'h-remember' });
-    fireEvent.click(day(/^Saturday 10 October/));
+    fireEvent.click(control('Next week'));
+    fireEvent.click(day(/^Saturday 17 October/));
     first.unmount();
     setup({ householdId: 'h-remember' });
-    expect(within(panel()).getByRole('heading', { level: 3, name: 'Saturday 10 October' })).toBeTruthy();
+    expect(within(panel()!).getByRole('heading', { level: 3, name: 'Saturday 17 October' })).toBeTruthy();
+    expect(grid().getAttribute('aria-label')).toBe('Week of Monday 12 October');
+    expect(control('Today')).toBeTruthy();
     cleanup();
     setup({ householdId: 'h-remember', today: '2026-10-09' });
-    expect(within(panel()).getByRole('heading', { level: 3, name: 'Friday 9 October' })).toBeTruthy();
+    expect(panel()).toBeNull();
+    expect(grid().getAttribute('aria-label')).toBe('Week of Monday 5 October');
     expect(day(/^Friday 9 October, today/).tabIndex).toBe(0);
   });
 });
@@ -384,23 +538,29 @@ describe('Home calendar: keyboard', () => {
     expect(document.activeElement).toBe(day(/^Monday 19 October/));
     // Enter (a click) chooses it.
     fireEvent.click(document.activeElement!);
-    expect(within(panel()).getByRole('heading', { level: 3, name: 'Monday 19 October' })).toBeTruthy();
+    expect(within(panel()!).getByRole('heading', { level: 3, name: 'Monday 19 October' })).toBeTruthy();
+    // Back a week with the keys too.
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
+    expect(grid().getAttribute('aria-label')).toBe('Week of Monday 12 October');
+    expect(document.activeElement).toBe(day(/^Monday 12 October/));
   });
 
   it('in the month, the future is open: Page Down goes on to next month', () => {
     setup();
-    fireEvent.click(within(section()).getByRole('button', { name: 'Show month' }));
+    fireEvent.click(control('Show month'));
     const today = day(/^Thursday 8 October/);
     act(() => today.focus());
     fireEvent.keyDown(today, { key: 'PageDown' });
     expect(document.getElementById(grid().getAttribute('aria-labelledby')!)!.textContent).toBe('November 2026');
     expect(document.activeElement).toBe(day(/^Sunday 8 November/));
-    expect((screen.getByRole('button', { name: 'Next month' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((control('Next month') as HTMLButtonElement).disabled).toBe(false);
     // The weekly jobs come round in November too.
     expect(day('Wednesday 4 November, 1 repeat')).toBeTruthy();
-    // Changing month keeps the chosen day under the calendar.
-    fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    // Changing month keeps the chosen day (today, not opened yet), and Today comes back.
+    fireEvent.click(control('Next month'));
     expect(document.getElementById(grid().getAttribute('aria-labelledby')!)!.textContent).toBe('December 2026');
-    expect(within(panel()).getByRole('heading', { level: 3, name: 'Thursday 8 October' })).toBeTruthy();
+    fireEvent.click(control('Today'));
+    expect(document.getElementById(grid().getAttribute('aria-labelledby')!)!.textContent).toBe('October 2026');
+    expect(summary()).toBe('1 due today');
   });
 });

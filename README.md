@@ -16,14 +16,17 @@ never gets done and stays on the list, and says **What good looks like** for it,
   tap (or all at once) and stay that way on that phone. Add an item with the round + at the
   bottom right, or with the small + in an area's header, which starts the item in that area.
 - **Calendar** (on Home, under the row of people): this week as a strip, or the whole month
-  with **Show month** (the phone remembers which). Each day shows what is due as red, amber and
-  green dots (up to three, then "+2"), a missed day's date in red, a repeating job's later
-  rounds as faint hollow dots, and a little broom on the days the housekeeper came. It follows
-  the row of people: pick Shea and only Shea's jobs mark it (the housekeeper's visits stay).
-  Today is chosen at first; tap any day to see underneath what is due that day, ticked off
-  with the ring just like on Home, the repeats coming round that day, and that day's
-  housekeeping visit, which opens it on the Housekeeping tab. To maintain items have no date,
-  so they are never on it. Housekeeping's calendar is the same one.
+  with **Show month** (the phone remembers which). The arrows either side of its title go back
+  and forward a week (or a month), and **Today** brings you back. Each day shows what is due as
+  red, amber and green dots (up to three, then "+2"), a missed day's date in red, a repeating
+  job's later rounds as faint hollow dots, and the small blue dot Housekeeping's calendar uses
+  on the days the housekeeper came. It follows the row of people: pick Shea and only Shea's
+  jobs mark it (the housekeeper's visits stay). Today is chosen at first, with one line above
+  the calendar saying how much is due today (those jobs are in the areas just below); tap any
+  day, today too, to see underneath what is due that day, most urgent first, ticked off with
+  the ring just like on Home, the repeats coming round that day, and that day's housekeeping
+  visit, which opens it on the Housekeeping tab. To maintain items have no date, so they are
+  never on it. Housekeeping's calendar is the same one.
 - **The hero**: every tab opens on an illustration that runs to the very top of the screen: the
   house in its garden, with a green duck and a brown hedgehog, under the sky as it is in London
   right now (sunrise, daytime, sunset, dusk or a starry night). The Home / Chat / Housekeeping /

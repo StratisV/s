@@ -172,11 +172,6 @@
   cursor: default;
 }
 
-/* The week strip: no title row above the weekday letters. */
-.card[data-view='week'] {
-  padding-top: 10px;
-}
-
 /* The number in the alert colour (Home: something missed that day). */
 .day[data-alert]:not([data-selected]) {
   color: var(--destructive);
@@ -184,12 +179,22 @@
 }
 
 /*
- * Marks under the circle (Home): every cell is taller to hold a 10px row under the
- * number, and the circle sits at the top of the cell.
+ * Marks under the circle (Home): every cell is a little taller (52px, not 46) to hold an
+ * 8px row under the circle, which sits at the top of the cell. All rows keep the same
+ * height, marks or not, so the weeks line up. The card sits a little tighter round its
+ * title, to keep Home's areas up the screen.
  */
+.card[data-marks] {
+  padding-top: 2px;
+}
+
+.card[data-marks] .grid {
+  margin-top: 2px;
+}
+
 .grid[data-marks] .cell,
 .grid[data-marks] .day {
-  height: 56px;
+  height: 52px;
 }
 
 .grid[data-marks] .day {
@@ -198,11 +203,11 @@
   align-items: center;
   justify-content: flex-start;
   gap: 2px;
-  padding-top: 2px;
+  padding-top: 1px;
 }
 
 .marks {
-  height: 10px;
+  height: 8px;
   max-width: 100%;
   display: flex;
   align-items: center;
@@ -224,6 +229,11 @@
 
   .day[data-dot] .circle::after {
     bottom: 3px;
+  }
+
+  .grid[data-marks] .cell,
+  .grid[data-marks] .day {
+    height: 48px;
   }
 }
 

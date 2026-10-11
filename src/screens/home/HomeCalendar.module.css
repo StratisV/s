@@ -1,47 +1,57 @@
 /* Home's calendar (HomeCalendar.tsx): the card is src/ui/MonthCalendar; these are its marks and the day under it. */
 
 .section {
-  /* The chosen day's details come up this far when a day low on the screen is chosen. */
-  --day-room: 40vh;
+  padding-top: 0;
 }
 
-/* "Calendar", and Show month / Show week on the right. */
-.headerRow {
+/*
+ * Above the card, in place of a visible "Calendar" header: on the left, Today (when today
+ * isn't the chosen day or isn't shown) or, for today at first, a line saying what is due;
+ * Show month / Show week on the right. 44px tall.
+ */
+.bar {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
-  padding: 14px 20px 8px;
+  align-items: center;
+  gap: 16px;
+  min-height: 44px;
+  padding: 0 20px;
 }
 
-.header {
+.summary {
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
-  font-size: 20px;
-  line-height: 25px;
-  font-weight: 600;
-  letter-spacing: -0.3px;
+  padding: 12px 0;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
 }
 
-.headerAction {
-  position: relative;
+/* Today, and Show month / Show week: tint text, each its own 44px tap target. */
+.barAction {
   flex: none;
+  min-height: 44px;
+  padding: 0 4px;
+  margin: 0 -4px;
   font-size: 15px;
   line-height: 20px;
   letter-spacing: -0.2px;
   color: var(--tint);
-  border-radius: 6px;
+  border-radius: 8px;
+  -webkit-tap-highlight-color: transparent;
 }
 
-/* 44px tap target around the 20px line. */
-.headerAction::before {
-  content: '';
-  position: absolute;
-  inset: -12px -10px;
-}
-
-.headerAction:active {
+.barAction:active {
   opacity: 0.5;
+}
+
+.barAction:focus-visible {
+  outline-offset: -2px;
+}
+
+.toggle {
+  margin-left: auto;
 }
 
 /* ── Marks under a day's number ────────────────────────── */
@@ -55,40 +65,27 @@
   background: var(--dot);
 }
 
-/* A repeat still to come: hollow and faint. */
+/*
+ * A repeat still to come: hollow, in the darker status colour (RAG_TEXT, set by
+ * HomeCalendar) at 80%, so the ring keeps 3:1 against the card (3.2:1 for green, 3.9:1 for
+ * amber, 4.5:1 for red) while being clearly lighter than a solid dot. Hollow or solid is the
+ * cue that doesn't rely on colour.
+ */
 .dot[data-repeat] {
   background: transparent;
   box-shadow: inset 0 0 0 1.5px var(--dot);
-  opacity: 0.55;
+  opacity: 0.8;
 }
 
 /* More than three: "+2". */
 .more {
   flex: none;
   font-size: 10px;
-  line-height: 10px;
+  line-height: 8px;
   font-weight: 600;
   letter-spacing: 0;
   color: var(--label-secondary);
   font-variant-numeric: tabular-nums;
-}
-
-/*
- * A housekeeping visit: a broom on a small disc at the circle's top right, like a badge, so
- * it reads on a plain day, on today's ring and on the chosen day's fill.
- */
-.broom {
-  position: absolute;
-  top: -4px;
-  right: -3px;
-  width: 17px;
-  height: 17px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: var(--card);
-  color: var(--tint);
-  box-shadow: 0 0 0 0.5px rgba(0, 122, 255, 0.25);
 }
 
 /* ── What the marks mean (month view) ──────────────────── */
@@ -125,14 +122,33 @@
   font-variant-numeric: tabular-nums;
 }
 
-.legendBroom {
-  color: var(--tint);
+/* A housekeeping visit: a day's circle with the tint dot in it, as on both calendars. */
+.legendVisit {
+  position: relative;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--separator);
+}
+
+.legendVisit::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--tint);
 }
 
 /* ── The chosen day ────────────────────────────────────── */
 
+/* 10px under the last card: Collapse All's tap target reaches that far up. */
 .day {
-  padding-bottom: 2px;
+  padding-bottom: 10px;
 }
 
 .dayHeader {
@@ -143,8 +159,11 @@
   font-weight: 600;
   letter-spacing: -0.4px;
   overflow-wrap: anywhere;
-  /* Choosing a day low on the screen scrolls it up until this much is left under it. */
-  scroll-margin-bottom: var(--day-room);
+}
+
+/* Focused (tabIndex -1) when the last row is completed and the day isn't on the grid. */
+.dayHeader:focus:not(:focus-visible) {
+  outline: none;
 }
 
 .card {

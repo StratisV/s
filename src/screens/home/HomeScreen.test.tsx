@@ -633,7 +633,11 @@ describe('the calendar on Home', () => {
     const { home } = await setup();
     const today = home().today;
     const panel = () => calendar().querySelector<HTMLElement>('[data-calendar-day]')!;
-    // Today is chosen at first: the dehumidifier is due.
+    // Today is chosen at first, with a line saying what is due (its rows are in the areas).
+    expect(within(calendar()).getByText('1 due today')).toBeTruthy();
+    expect(calendar().querySelector('[data-calendar-day]')).toBeNull();
+    // Choosing it lists them: the dehumidifier is due.
+    fireEvent.click(dayButton(today)!);
     expect(panel().getAttribute('data-calendar-day')).toBe(today);
     fireEvent.click(within(panel()).getByRole('button', { name: 'Mark Empty the dehumidifier as done' }));
     // A weekly job: due again in a week, so today has nothing left.

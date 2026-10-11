@@ -24,8 +24,14 @@ export function rowsBeside(row: Element, root: ParentNode = document): HTMLEleme
 
 /**
  * Where focus goes when no row is left near one in `section`: the area's name, or under the
- * calendar, the chosen day's button.
+ * calendar, the chosen day's button, or its heading under the calendar when that day isn't
+ * on the grid (another month or week is shown).
  */
 export function rowFallback(section: Element | null | undefined): HTMLElement | null {
-  return section?.querySelector<HTMLElement>('button[aria-expanded], [role="gridcell"][aria-selected="true"] > button') ?? null;
+  if (!section) return null;
+  if (!section.hasAttribute('data-calendar')) return section.querySelector<HTMLElement>('button[aria-expanded]');
+  return (
+    section.querySelector<HTMLElement>('[role="gridcell"][aria-selected="true"] > button') ??
+    section.querySelector<HTMLElement>('[data-calendar-day] h3[tabindex]')
+  );
 }

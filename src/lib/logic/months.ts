@@ -70,6 +70,14 @@ export function shiftMonth(month: YearMonth, n: number): YearMonth {
 }
 
 /**
+ * The month's name, without the year: `monthName('2026-10-08')` is `'October'` (a day or a month).
+ * Tests: October; January.
+ */
+export function monthName(dateOrMonth: ISODate | YearMonth): string {
+  return MONTH_NAMES[Number(dateOrMonth.slice(5, 7)) - 1];
+}
+
+/**
  * The month's heading, `'October 2026'` (en-GB, always with the year).
  * Tests: October 2026; January; a different year.
  */

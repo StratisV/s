@@ -7,18 +7,21 @@ import {
   calendarLookup,
   dayDots,
   dayOn,
+  dayRows,
   EMPTY_DAY,
   isDated,
   isEmptyDay,
   repeatDates,
   repeatMeta,
+  todaySummary,
   visitSummary,
   weekName,
+  weekTitle,
   type CalendarDay,
 } from './calendar';
 import { todayIn } from './dates';
 import { nextDueDate } from './items';
-import { monthRange, weekdayIndex, weekOf } from './months';
+import { monthName, monthRange, weekdayIndex, weekOf } from './months';
 
 /** Thu 8 Oct 2026, the e2e clock's day. */
 const TODAY = '2026-10-08';
@@ -120,6 +123,21 @@ describe('weeks', () => {
   it('weekName names the week by its Monday', () => {
     expect(weekName('2026-10-05', TODAY)).toBe('Week of Monday 5 October');
     expect(weekName('2027-01-04', TODAY)).toBe('Week of Monday 4 January 2027');
+  });
+
+  it('weekTitle: the strip’s title, short month names across two months, the year when not today’s', () => {
+    expect(weekTitle(weekOf('2026-10-08'), TODAY)).toBe('5 to 11 October');
+    expect(weekTitle(weekOf('2026-10-01'), TODAY)).toBe('28 Sep to 4 Oct');
+    expect(weekTitle(weekOf('2027-01-06'), TODAY)).toBe('4 to 10 January 2027');
+    expect(weekTitle(weekOf('2026-12-30'), TODAY)).toBe('28 Dec to 3 Jan 2027');
+    expect(weekTitle(weekOf('2026-12-30'), '2027-01-02')).toBe('28 Dec 2026 to 3 Jan');
+    // The week the clocks go back in London: still Monday to Sunday.
+    expect(weekTitle(weekOf('2026-10-25'), TODAY)).toBe('19 to 25 October');
+  });
+
+  it('monthName: the month without its year', () => {
+    expect(monthName('2026-10-08')).toBe('October');
+    expect(monthName('2027-01')).toBe('January');
   });
 });
 
@@ -364,6 +382,27 @@ describe('dayDots', () => {
   });
 });
 
+describe('dayRows', () => {
+  it('lists a day in the order of its marks: missed first, then red, amber, green, ties in the order given', () => {
+    const shower = item({ id: 'shower', rag: 'amber' });
+    const cover = item({ id: 'cover', rag: 'green' });
+    const bins = item({ id: 'bins', rag: 'green' });
+    const gutters = item({ id: 'gutters', rag: 'red' });
+    expect(dayRows(day({ due: [shower, cover, bins, gutters] })).rows.map((i) => i.id)).toEqual([
+      'gutters',
+      'shower',
+      'cover',
+      'bins',
+    ]);
+    const old = item({ id: 'old', rag: 'green' });
+    expect(dayRows(day({ missed: [old], due: [gutters] })).rows.map((i) => i.id)).toEqual(['old', 'gutters']);
+    const r1 = item({ id: 'r1', rag: 'green' });
+    const r2 = item({ id: 'r2', rag: 'red' });
+    expect(dayRows(day({ repeats: [r1, r2] })).repeats.map((i) => i.id)).toEqual(['r2', 'r1']);
+    expect(dayRows(EMPTY_DAY)).toEqual({ rows: [], repeats: [] });
+  });
+});
+
 describe('names and announcements', () => {
   const three = [item({ id: 'a' }), item({ id: 'b' }), item({ id: 'c' })];
 
@@ -395,12 +434,28 @@ describe('names and announcements', () => {
   });
 
   it('describes a repeat', () => {
-    expect(repeatMeta({ repeat: 'weekly', due_date: '2026-10-13' }, TODAY)).toBe('Repeats every week · Due Tue 13 Oct');
-    expect(repeatMeta({ repeat: 'quarterly', due_date: '2026-11-02' }, TODAY)).toBe(
-      'Repeats every 3 months · Due Mon 2 Nov',
-    );
-    expect(repeatMeta({ repeat: 'monthly', due_date: '2026-10-06' }, TODAY)).toBe('Repeats every month · Missed Tue 6 Oct');
-    expect(repeatMeta({ repeat: 'none', due_date: '2026-10-06' }, TODAY)).toBe('');
+    expect(repeatMeta({ repeat: 'weekly', due_date: '2026-10-13' }, TODAY)).toEqual({
+      when: 'Repeat of Tue 13 Oct',
+      every: 'Every week',
+    });
+    expect(repeatMeta({ repeat: 'quarterly', due_date: '2026-11-02' }, TODAY)).toEqual({
+      when: 'Repeat of Mon 2 Nov',
+      every: 'Every 3 months',
+    });
+    expect(repeatMeta({ repeat: 'monthly', due_date: '2026-10-06' }, TODAY)).toEqual({
+      when: 'Repeat of Tue 6 Oct, missed',
+      every: 'Every month',
+    });
+    expect(repeatMeta({ repeat: 'yearly', due_date: null }, TODAY)).toEqual({ when: 'Repeat', every: 'Every year' });
+    expect(repeatMeta({ repeat: 'none', due_date: '2026-10-06' }, TODAY)).toEqual({ when: '', every: '' });
+  });
+
+  it('sums up today while it is chosen and not opened', () => {
+    const two = [item({ id: 'a' }), item({ id: 'b' })];
+    expect(todaySummary(day({ due: [two[0]] }), 'Nothing due today')).toBe('1 due today');
+    expect(todaySummary(day({ due: two, visit: visit(TODAY) }), 'Nothing due today')).toBe('2 due today · housekeeping visit');
+    expect(todaySummary(EMPTY_DAY, 'Nothing due for Shea today')).toBe('Nothing due for Shea today');
+    expect(todaySummary(day({ visit: visit(TODAY) }), 'Nothing due today')).toBe('Nothing due today · housekeeping visit');
   });
 
   it('sums up a visit', () => {

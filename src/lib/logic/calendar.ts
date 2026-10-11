@@ -7,10 +7,10 @@
 
 import { RAG_ORDER } from '../constants';
 import type { HousekeepingVisit, ISODate, Item, Rag } from '../types';
-import { formatDay } from './dates';
+import { formatDay, parseISODate } from './dates';
 import { doneCount, formatPrice, isRecorded } from './housekeeping';
 import { isState, nextDueDate } from './items';
-import { fullDay, monthOf, monthRange, type YearMonth } from './months';
+import { fullDay, monthName, monthOf, monthRange, type YearMonth } from './months';
 import { SHARE_REPEAT } from './share';
 
 /** The compact week strip, or the whole month. */
@@ -162,6 +162,20 @@ export interface DayDot {
 const byRag = (a: { rag: Rag }, b: { rag: Rag }) => RAG_ORDER.indexOf(a.rag) - RAG_ORDER.indexOf(b.rag);
 
 /**
+ * A day's items in the order its marks show them: missed first, then the rest due, each red,
+ * then amber, then green (the order given, Home's, breaks ties); then its repeats, the same way.
+ * The list under the calendar is in this order, so its most urgent row is at the top.
+ * Tests: a missed green before a due red; red, amber, green; ties keep the order given; repeats.
+ */
+export function dayRows(day: CalendarDay): { rows: Item[]; repeats: Item[] } {
+  // Array.prototype.sort is stable, so equal statuses keep Home's order.
+  return {
+    rows: [...[...day.missed].sort(byRag), ...[...day.due].sort(byRag)],
+    repeats: [...day.repeats].sort(byRag),
+  };
+}
+
+/**
  * The marks under a day's number: a dot per item due or missed, red first, then amber,
  * then green; then a faint one per repeat in the same order; at most `max` (3), and how
  * many more there are (shown as "+2").
@@ -224,17 +238,50 @@ export function weekName(monday: ISODate, today: ISODate): string {
 }
 
 /**
- * The second line of a repeat's row under the calendar, after who it is for:
- * `'Repeats every week · Due Tue 13 Oct'` (its next due date), or `'Repeats every month ·
- * Missed Tue 6 Oct'` when that has passed. Empty for an item that doesn't repeat.
- * Tests: weekly; every 3 months; missed; no repeat.
+ * The second line of a repeat's row under the calendar, after who it is for: `when`, the due
+ * date it repeats, worded so it can't be read as due on another day than the one chosen
+ * (`'Repeat of Thu 8 Oct'`, or `'Repeat of Tue 6 Oct, missed'` when that date has passed;
+ * `'Repeat'` without a date), then `every`, how often (`'Every week'`), which gives way first
+ * on a narrow screen. Both empty for an item that doesn't repeat.
+ * Tests: weekly; every 3 months; missed; no repeat; no date.
  */
-export function repeatMeta(item: Pick<Item, 'repeat' | 'due_date'>, today: ISODate): string {
-  if (item.repeat === 'none') return '';
-  const every = `Repeats ${SHARE_REPEAT[item.repeat].toLowerCase()}`;
-  if (!item.due_date) return every;
-  const when = `${item.due_date < today ? 'Missed' : 'Due'} ${formatDay(item.due_date, today)}`;
-  return `${every} · ${when}`;
+export function repeatMeta(item: Pick<Item, 'repeat' | 'due_date'>, today: ISODate): { when: string; every: string } {
+  if (item.repeat === 'none') return { when: '', every: '' };
+  const every = SHARE_REPEAT[item.repeat];
+  if (!item.due_date) return { when: 'Repeat', every };
+  const missed = item.due_date < today ? ', missed' : '';
+  return { when: `Repeat of ${formatDay(item.due_date, today)}${missed}`, every };
+}
+
+/**
+ * The line under the calendar while today is chosen and not yet opened (its rows are in the
+ * areas below, so they aren't listed twice): `'1 due today'`, `'2 due today · housekeeping
+ * visit'`, or `nothing` (`'Nothing due today'`, `'Nothing due for Shea today'`) with the visit
+ * after it in the same way. Today never has missed items or repeats.
+ * Tests: due; due and a visit; nothing; nothing and a visit.
+ */
+export function todaySummary(day: CalendarDay, nothing: string): string {
+  const due = day.due.length ? `${day.due.length} due today` : nothing;
+  return day.visit ? `${due} · housekeeping visit` : due;
+}
+
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * The week strip's visible title, between Previous week and Next week, from its seven days:
+ * `'5 to 11 October'`; across two months, short names (`'28 Sep to 4 Oct'`); the year when it
+ * is not today's, after the day it belongs to (`'4 to 10 January 2027'`, `'28 Dec to 3 Jan
+ * 2027'`, or seen from 2027, `'28 Dec 2026 to 3 Jan'`).
+ * Tests: one month; two months; next year; across a year end, from either year.
+ */
+export function weekTitle(week: ISODate[], today: ISODate): string {
+  const first = parseISODate(week[0]);
+  const last = parseISODate(week[week.length - 1]);
+  const year = parseISODate(today).y;
+  const lastYear = last.y === year ? '' : ` ${last.y}`;
+  if (first.m === last.m && first.y === last.y) return `${first.d} to ${last.d} ${monthName(week[0])}${lastYear}`;
+  const firstYear = first.y === year || first.y === last.y ? '' : ` ${first.y}`;
+  return `${first.d} ${SHORT_MONTHS[first.m - 1]}${firstYear} to ${last.d} ${SHORT_MONTHS[last.m - 1]}${lastYear}`;
 }
 
 /**

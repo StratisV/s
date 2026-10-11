@@ -29,6 +29,12 @@ interface ItemRowProps {
   meta: { who: string; date: string | null; missed: boolean };
   onOpen(itemId: string): void;
   onComplete(itemId: string): Promise<void> | void;
+  /**
+   * The row leaves its list once completed, even when the item repeats: under the calendar,
+   * the chosen day lists what is due that day, and a repeating item moves on to a later one.
+   * (In an area a one-off leaves and a repeating item stays.)
+   */
+  leavesOnComplete?: boolean;
 }
 
 /**
@@ -38,7 +44,7 @@ interface ItemRowProps {
  * A state (To maintain) has a solid dot instead of the ring: it is never completed, and
  * the whole row opens it.
  */
-export function ItemRow({ item, meta, onOpen, onComplete }: ItemRowProps) {
+export function ItemRow({ item, meta, onOpen, onComplete, leavesOnComplete = false }: ItemRowProps) {
   const fire = useConfetti();
   const [completing, setCompleting] = useState(false);
   const busy = useRef(false);
@@ -67,11 +73,13 @@ export function ItemRow({ item, meta, onOpen, onComplete }: ItemRowProps) {
     const keyboard = isFocusVisible(ring);
 
     setTimeout(() => {
-      // A one-off item leaves the list: move keyboard focus to the nearest remaining row in
-      // the same list (the areas', or the chosen day's under the calendar; rows in a collapsed
-      // area can't take it), else to the area's name (under the calendar: the chosen day).
+      // A row that leaves its list (a one-off, or any row under the calendar): move keyboard
+      // focus to the nearest remaining row in the same list (the areas', or the chosen day's;
+      // rows in a collapsed area can't take it), else to the area's name (under the calendar:
+      // the chosen day's button, or its heading when the day isn't on the grid).
       const own = openRef.current;
-      if (item.repeat === 'none' && keyboard && document.activeElement === ring && own) {
+      const leaves = leavesOnComplete || item.repeat === 'none';
+      if (leaves && keyboard && document.activeElement === ring && own) {
         const rows = rowsBeside(own).filter((el) => el === own || !inCollapsedArea(el));
         const i = rows.indexOf(own);
         const next = rows[i + 1] ?? rows[i - 1] ?? rowFallback(own.closest('section'));

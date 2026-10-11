@@ -297,7 +297,9 @@ describe('today’s housekeeping visit on Home’s calendar', () => {
         await backend.setHousekeepingTaskDone(hid, today, { taskId: data.housekeeping.tasks[0].id }, true);
       });
       const calendar = screen.getByRole('region', { name: 'Calendar' });
-      // Today is chosen at first, with its visit under the calendar.
+      // Today is chosen at first, with a line that mentions the visit; choosing it shows the visit.
+      expect(within(calendar).getByText(/housekeeping visit$/)).toBeTruthy();
+      fireEvent.click(within(calendar).getByRole('button', { name: /, today, .*selected$/ }));
       fireEvent.click(within(calendar).getByRole('button', { name: 'Housekeeping visit, 1 of 7 done. Show in Housekeeping' }));
       await screen.findByRole('heading', { name: 'Housekeeping', level: 1 });
       const heading = screen.getByRole('heading', { level: 2, name: 'Today' });
