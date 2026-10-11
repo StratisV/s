@@ -23,7 +23,7 @@ function browserOf(ua: string): string {
   if (/\b(Edg|Edge|EdgA|EdgiOS)\//.test(ua)) return 'Edge';
   if (/\bSamsungBrowser\//.test(ua)) return 'Samsung Internet';
   if (/\b(Firefox|FxiOS)\//.test(ua)) return 'Firefox';
-  if (/\b(Chrome|CriOS|Chromium)\//.test(ua)) return 'Chrome';
+  if (/\b(Chrome|HeadlessChrome|CriOS|Chromium)\//.test(ua)) return 'Chrome';
   if (/\b(Safari|AppleWebKit)\//.test(ua)) return 'Safari';
   return 'Browser';
 }
