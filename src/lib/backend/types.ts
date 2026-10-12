@@ -367,6 +367,10 @@ export interface ServerAccess {
    * unknown, used or expired; a malformed one without asking the server) or 'too_many_attempts'.
    */
   redeemCode(code: string): Promise<HomeEntry>;
+  /** Continue with Google is on (as the last homeOnline() call heard). */
+  googleOn(): boolean;
+  /** Continue with Google: leaves for Google; back signed in, or with /?google=<reason>. */
+  continueWithGoogle(): void;
   /**
    * A fresh code for anyone in the home: someone who has not joined ("Invite Shea"), someone
    * who has and needs a new phone, or the caller ("Add another device"). Replaces that person's

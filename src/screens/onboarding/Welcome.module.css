@@ -305,3 +305,9 @@
   color: var(--label-secondary);
   text-wrap: balance;
 }
+
+/* Continue with Google on the private screen (server mode), above "Have a code?". */
+.googleHere {
+  margin-top: 16px;
+  width: 100%;
+}

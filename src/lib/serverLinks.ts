@@ -4,7 +4,7 @@
 // only; other parameters left exactly as they were) and kept in localStorage until used.
 // docs/ARCHITECTURE.md "Server mode (no setup)", "Screens". Every storage access in try/catch.
 
-import { formatCode, normaliseCode } from './backend/serverApi';
+import { formatCode, normaliseCode, type GoogleReturn } from './backend/serverApi';
 
 /** The setup code from a ?setup= link: { code, at }. Forgotten after SETUP_LINK_KEEP_MS, once a home is online, or on sign-in. */
 export const SETUP_LINK_KEY = 'homeos.setup';
@@ -28,14 +28,18 @@ function paramName(part: string): string {
   }
 }
 
-/** `search` without `setup` and `code`; the other parameters are left exactly as they were. */
+/** Why Continue with Google came back without signing in (?google=), until taken. */
+let googleReturn: GoogleReturn | null = null;
+const GOOGLE_RETURNS: readonly GoogleReturn[] = ['not_member', 'failed', 'no_home'];
+
+/** `search` without `setup`, `code` and `google`; the other parameters are left exactly as they were. */
 export function withoutServerLinkParams(search: string): string {
   let removed = false;
   const kept = search
     .replace(/^\?/, '')
     .split('&')
     .filter((part) => {
-      const link = paramName(part) in PARAMS;
+      const link = paramName(part) in PARAMS || paramName(part) === 'google';
       if (link) removed = true;
       return part && !link;
     });
@@ -57,6 +61,8 @@ export function captureServerLinks(now: number = Date.now()): void {
     if (rest === search) return;
     window.history.replaceState(window.history.state, '', pathname + rest + hash);
     const params = new URLSearchParams(search);
+    const google = params.get('google') as GoogleReturn | null;
+    if (google && GOOGLE_RETURNS.includes(google)) googleReturn = google;
     if (params.has('setup')) keep('setup', params.get('setup'), now);
     if (params.has('code')) keep('code', params.get('code'), now);
   } catch {
@@ -102,4 +108,11 @@ export function forgetServerLinks(which: 'setup' | 'code' | 'both' = 'both'): vo
   } catch {
     /* storage unavailable */
   }
+}
+
+/** Why Continue with Google came back without signing in (once), or null. */
+export function takeGoogleReturn(): GoogleReturn | null {
+  const reason = googleReturn;
+  googleReturn = null;
+  return reason;
 }

@@ -22,7 +22,7 @@ import {
 } from '../lib/logic/housekeeping';
 import { disablePush } from '../lib/push';
 import { isIos, isStandalone, linkNeedsChoice } from '../lib/appMode';
-import { forgetServerLinks, pendingSetupCode, takeSignInCode } from '../lib/serverLinks';
+import { forgetServerLinks, pendingSetupCode, takeGoogleReturn, takeSignInCode } from '../lib/serverLinks';
 import { forgetSharedLink } from '../lib/sharedLink';
 import { applyKindRules, nextDueDate } from '../lib/logic/items';
 import {
@@ -141,10 +141,10 @@ export type ServerWelcome =
    * browser has none to bring. `notice`: why a link did not work, or (codeHere) that a link
    * was opened where home.os may not live, so its code waits to be used here or typed there.
    */
-  | { kind: 'private'; homeOnline: boolean; code: string; notice: ServerWelcomeNotice | null };
+  | { kind: 'private'; homeOnline: boolean; code: string; notice: ServerWelcomeNotice | null; google?: boolean };
 
 /** About a link opened on the Welcome screen (server mode; copy in docs/ARCHITECTURE.md). */
-export type ServerWelcomeNotice = 'codeInvalid' | 'tooManyAttempts' | 'setupUsed' | 'codeHere';
+export type ServerWelcomeNotice = 'codeInvalid' | 'tooManyAttempts' | 'setupUsed' | 'codeHere' | 'googleNotMember' | 'googleFailed';
 
 export interface ToastState {
   id: number;
@@ -408,6 +408,8 @@ export interface HomeContextValue {
    * False (nothing changes) when it is not that screen or there is no saved copy.
    */
   startSetup(setupCode: string): boolean;
+  /** Continue with Google (server mode, when it is on): leaves for Google, back signed in. */
+  continueWithGoogle(): void;
   /** Saving is paused until next month (ServerStatus.readOnly): Home shows one line saying so. */
   readOnly: boolean;
 
@@ -1337,6 +1339,8 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
   const welcomeBusy = useRef(false);
   /** "Use This Copy Instead" on setupElsewhere: this browser's copy comes online after all. */
   const setupHereChosen = useRef(false);
+  /** Why Continue with Google came back without signing in (shown once on the Welcome screen). */
+  const googleNotice = useRef<ServerWelcomeNotice | null>(null);
   /** "Use the Saved Copy": the household's saved copy comes online instead of this browser's. */
   const savedChosen = useRef(false);
   /** The saved copy's summary, once the Welcome screen worked it out (no home online yet). */
@@ -1356,6 +1360,8 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
       try {
         if (!quiet) {
           setServerWelcome({ kind: 'checking' });
+          const back = takeGoogleReturn();
+          if (back) googleNotice.current = back === 'not_member' ? 'googleNotMember' : 'googleFailed';
           const link = takeSignInCode();
           if (link && linkNeedsChoice()) {
             // Safari on an iPhone, or a browser inside another app: codes work once, so this one
@@ -1416,6 +1422,12 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
             notice = 'setupUsed';
           }
           next = { kind: 'private', homeOnline: online ?? true, code: '', notice };
+        }
+        if (next.kind === 'private') {
+          // Continue with Google, when it is on; and why it came back without signing in, once.
+          if (access.googleOn()) next = { ...next, google: true };
+          if (!quiet && googleNotice.current && !next.notice) next = { ...next, notice: googleNotice.current };
+          if (!quiet) googleNotice.current = null;
         }
         setServerWelcome((prev) => {
           if (!quiet || !prev || prev.kind !== next.kind) return next;
@@ -2122,6 +2134,7 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
           return prev;
         });
       },
+      continueWithGoogle: () => access?.continueWithGoogle(),
       startSetup: (setupCode) => {
         const saved = savedSummary.current;
         if (!access || !saved || serverWelcomeRef.current?.kind !== 'private' || serverWelcomeRef.current.homeOnline) return false;

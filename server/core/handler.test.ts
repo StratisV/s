@@ -66,7 +66,7 @@ describe('every request', () => {
     const res = await h.request({ method: 'GET', url: `${API_PATH}?op=status` });
     expect(res.status).toBe(200);
     expect(res.headers).toMatchObject({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    expect(JSON.parse(res.body)).toEqual({ home: false });
+    expect(JSON.parse(res.body)).toEqual({ home: false, google: false });
   });
 
   it('refuses unknown ops and bodies that are not JSON objects', async () => {
@@ -151,7 +151,7 @@ describe('bringing the home online (setup)', () => {
     const other = h.instance();
     const raced = await h.request({ method: 'POST', json: { op: 'setup', code: TEST_SETUP_CODE, phone: PHONE } }, other);
     expect(JSON.parse(raced.body).error.code).toBe('home_exists');
-    expect(JSON.parse((await h.request({ method: 'GET', url: `${API_PATH}?op=status` })).body)).toEqual({ home: true });
+    expect(JSON.parse((await h.request({ method: 'GET', url: `${API_PATH}?op=status` })).body)).toEqual({ home: true, google: false });
   });
 
   it('refuses everything when no setup code is configured', async () => {
@@ -174,7 +174,7 @@ describe('bringing the home online (setup)', () => {
       const res = await h.request({ method: 'POST', json: { op: 'setup', code: TEST_SETUP_CODE, phone } });
       expect([res.status, JSON.parse(res.body).error]).toEqual([400, { code: 'invalid_input', message: 'invalid_input: phone' }]);
     }
-    expect(JSON.parse((await h.request({ method: 'GET', url: `${API_PATH}?op=status` })).body)).toEqual({ home: false });
+    expect(JSON.parse((await h.request({ method: 'GET', url: `${API_PATH}?op=status` })).body)).toEqual({ home: false, google: false });
   });
 
   it('limits wrong setup codes like sign-in codes', async () => {
@@ -270,7 +270,7 @@ describe('signing in with a code', () => {
     expect(forged.headers['Set-Cookie']).toBe('homeos_key=; Path=/api; HttpOnly; SameSite=Lax; Max-Age=0; Secure');
     // Whether a home is online is all a stranger can learn.
     const res = await h.request({ method: 'GET', url: `${API_PATH}?op=status` });
-    expect(JSON.parse(res.body)).toEqual({ home: true });
+    expect(JSON.parse(res.body)).toEqual({ home: true, google: false });
   });
 
   it('finds a device another instance signed in a moment ago', async () => {
@@ -726,7 +726,7 @@ describe('the Blob read budget', () => {
     for (let i = 0; i < 1000; i++) {
       h.clock.advance(20_000);
       const res = await h.request({ method: 'GET', url: `${API_PATH}?op=status` }, other);
-      expect(JSON.parse(res.body)).toEqual({ home: true });
+      expect(JSON.parse(res.body)).toEqual({ home: true, google: false });
     }
     expect(getsOf(h) - gets).toBe(1);
   });

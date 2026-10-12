@@ -351,6 +351,52 @@ export function redeemCode(doc: ServerDoc, code: string, label: string, deps: Au
 }
 
 /**
+ * Continue with Google: this browser signs in as the person whose email `email` (verified by
+ * Google, lower case) is: their member email, else `people`'s name for it (HOMEOS_GOOGLE_PEOPLE)
+ * when that person has no email yet, which is then kept as theirs. Someone who has not joined
+ * yet joins as redeemCode() does ('claimed'); else one more device ('member'). Null: the email
+ * is nobody's in the home.
+ */
+export function signInByEmail(
+  doc: ServerDoc,
+  email: string,
+  people: Record<string, string>,
+  label: string,
+  deps: AuthDeps,
+): SignedInDevice | null {
+  const wanted = email.trim().toLowerCase();
+  if (!wanted) return null;
+  const members = doc.home.members;
+  let member = members.find((m) => (m.email ?? '').trim().toLowerCase() === wanted);
+  if (!member) {
+    const name = people[wanted]?.trim().toLowerCase();
+    member = name ? members.find((m) => m.name.trim().toLowerCase() === name && !(m.email ?? '').trim()) : undefined;
+  }
+  if (!member) return null;
+  const now = deps.now();
+  // The next put stores this as rev + 1 (HomeStore), which is where the device first is.
+  const rev = doc.rev + 1;
+  let status: 'member' | 'claimed' = 'member';
+  const before = member;
+  const after =
+    member.user_id === null
+      ? { ...member, user_id: `u-${deps.newId()}`, claimed_at: now.toISOString(), email: wanted, push_enabled: false }
+      : { ...member, email: wanted };
+  if (before.user_id === null) status = 'claimed';
+  doc.home = { ...doc.home, members: members.map((m) => (m === before ? after : m)) };
+  member = after;
+  const userId = member.user_id!;
+  const { key, device } = addDevice(doc, userId, label, deps);
+  return {
+    key,
+    token: deviceToken(doc, device, key, rev),
+    device,
+    caller: { userId, memberId: member.id, name: member.name },
+    entry: { status, householdId: member.household_id, memberId: member.id, canImport: false },
+  };
+}
+
+/**
  * Setup's second chance (the home is online already and the setup code `code` checked out):
  * when the owner has no device that was ever used (the reply to "Bring It Online" was lost,
  * or every device of theirs was signed out or removed), their unused devices go and this

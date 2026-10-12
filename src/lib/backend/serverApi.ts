@@ -166,7 +166,11 @@ export const SMALL_BODY_MAX = 4 * 1024;
 export interface StatusResponse {
   /** A home is online on this server. */
   home: boolean;
+  /** Continue with Google is on (HOMEOS_GOOGLE_CLIENT_ID is set). */
+  google?: boolean;
 }
+/** Why Continue with Google sent the browser back without signing it in: /?google=<reason>. */
+export type GoogleReturn = 'not_member' | 'failed' | 'no_home';
 /** Who this browser is signed in as. */
 export interface SessionResponse {
   /** id: the person's user id (members.user_id), email '', name: their name. */

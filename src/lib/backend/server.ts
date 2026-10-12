@@ -170,6 +170,8 @@ export class ServerBackend implements Backend, ServerAccess {
   private sessionLoad: Promise<KeptSession | null> | null = null;
   /** The entry setup or redeem gave, for the next enterHome() (once). */
   private pendingEntry: HomeEntry | null = null;
+  /** Continue with Google is on (GET ?op=status). */
+  private google = false;
   /** This browser's device, as the last session, setup or redeem said. */
   private deviceId: string | null = null;
   /** Who onAuthChange last reported (undefined: nothing yet). */
@@ -710,7 +712,17 @@ export class ServerBackend implements Backend, ServerAccess {
 
   /** GET ?op=status. */
   async homeOnline(): Promise<boolean> {
-    return (await this.call<StatusResponse>({ get: 'status' })).home === true;
+    const status = await this.call<StatusResponse>({ get: 'status' });
+    this.google = status.google === true;
+    return status.home === true;
+  }
+  /** Continue with Google is on (as the last GET ?op=status said). */
+  googleOn(): boolean {
+    return this.google;
+  }
+  /** Continue with Google: off to Google (a navigation; the server signs this browser in on the way back). */
+  continueWithGoogle(): void {
+    window.location.assign(`${API_PATH}?op=googleStart`);
   }
   /**
    * POST {op:'setup', code, phone, app}; keeps the entry for the next enterHome(), writes

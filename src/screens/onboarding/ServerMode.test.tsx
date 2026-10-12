@@ -304,6 +304,27 @@ describe('Welcome in server mode', () => {
     expect(screen.getByText(/^Or bring your saved copy online from here: Our home, 6\sareas · 19\sitems\.$/)).toBeTruthy();
   });
 
+  it('offers Continue with Google when it is on, and says why it came back without signing in', () => {
+    const home = show(signedOut(privateHome({ google: true })));
+    expect(screen.getByText('Sign in with Google to see your home.')).toBeTruthy();
+    const google = screen.getByRole('button', { name: 'Continue with Google' });
+    fireEvent.click(google);
+    fireEvent.click(google);
+    expect(home.continueWithGoogle).toHaveBeenCalledTimes(1);
+    expect(google.getAttribute('aria-busy')).toBe('true');
+    // Codes still work.
+    expect(screen.getByRole('textbox', { name: 'Have a code?' })).toBeTruthy();
+    cleanup();
+    show(signedOut(privateHome({ google: true, notice: 'googleNotMember' })));
+    expect(screen.getByRole('status').textContent).toBe(
+      'That Google account isn’t in this home. Sign in with the one your home knows, or ask someone at home to add you.',
+    );
+    cleanup();
+    show(signedOut(privateHome()));
+    expect(screen.queryByRole('button', { name: 'Continue with Google' })).toBeNull();
+    expect(screen.getByText('Ask someone at home for a code.')).toBeTruthy();
+  });
+
   it('takes the code out of a pasted message', () => {
     show(signedOut(privateHome()));
     const text = 'Join our home on home.os: https://home-os-orpin.vercel.app/?code=WXYZ-2345\nCode: WXYZ-2345';

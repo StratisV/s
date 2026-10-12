@@ -237,6 +237,7 @@ export function makeHome(over: Partial<HomeContextValue> = {}): HomeContextValue
     chooseSetupHere: vi.fn(),
     chooseSavedCopy: vi.fn(),
     startSetup: vi.fn(() => false),
+    continueWithGoogle: vi.fn(),
     readOnly: false,
     toast: null,
     showToast: vi.fn(),

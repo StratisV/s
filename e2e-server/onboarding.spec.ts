@@ -421,7 +421,7 @@ test('Bring It Online again after its reply was lost: the phone gets in as the o
   expect(dropped).toBe(true);
   const api = await requestFor.newContext({ baseURL });
   const status = await api.get('/api/home?op=status', { headers: { 'X-HomeOS': '1' } });
-  expect(await status.json()).toEqual({ home: true });
+  expect(await status.json()).toEqual({ home: true, google: false });
   await api.dispose();
 
   // Tapped again: this phone becomes the owner's device, on the home that is online.

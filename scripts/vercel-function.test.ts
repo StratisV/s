@@ -220,7 +220,7 @@ describe('the Vercel Function bundle with @vercel/blob', () => {
   it('answers status before any home exists, reading the private blob without a cache', async () => {
     const res = await call('GET', '?op=status');
     expect(res.status).toBe(200);
-    expect(res.json).toEqual({ home: false });
+    expect(res.json).toEqual({ home: false, google: false });
     expect(res.headers['content-type']).toMatch(/^application\/json/);
     expect(res.headers['cache-control']).toBe('no-store');
     const get = service.log.find((r) => r.method === 'GET')!;
@@ -278,7 +278,7 @@ describe('the Vercel Function bundle with @vercel/blob', () => {
     // ... and from then on the setup code is used up: a second setup finds the home.
     const again = await call('POST', '', { op: 'setup', code: SETUP, phone: JSON.stringify(USER_DEMO_DOC) });
     expect(again.status).toBe(409);
-    expect((await call('GET', '?op=status')).json).toEqual({ home: true });
+    expect((await call('GET', '?op=status')).json).toEqual({ home: true, google: false });
   });
 
   it('runs the app’s calls as the signed-in person, with conditional writes', async () => {

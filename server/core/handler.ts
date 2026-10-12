@@ -59,6 +59,7 @@ import {
   type RpcResponse,
   type SessionResponse,
   type SetupRequest,
+  type GoogleReturn,
   type StatusResponse,
   type VersionResponse,
 } from '../../src/lib/backend/serverApi';
@@ -74,6 +75,7 @@ import {
   parseDeviceToken,
   redeemCode,
   removeDevice,
+  signInByEmail,
   tokenVerifies,
   type AuthDeps,
   type PresentedToken,
@@ -87,6 +89,7 @@ import { isRpcMethod, runRpc, validateArgs } from './rpc';
 import { runAs, type Caller } from './runAs';
 import type { DeviceRow, ServerDoc } from './serverDoc';
 import { setupHome } from './setup';
+import { googleAuthUrl, verifyGoogleIdToken, type GoogleKeys } from './google';
 
 /** A copy checked within this long counts as up to date for a bare key it does not hold. */
 export const RECHECK_MS = 2000;
@@ -126,6 +129,8 @@ export interface ServerContext {
   /** Device keys this instance did not know (counted apart: they never hold up anyone's code). */
   keyMisses: AttemptLimiter;
   deps: AuthDeps;
+  /** Google's signing keys (Continue with Google); none: Google sign-in answers 'failed'. */
+  googleKeys?: GoogleKeys;
 }
 
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } as const;
@@ -374,6 +379,11 @@ async function route(request: ApiRequest, ctx: ServerContext): Promise<ApiRespon
   const method = (request.method || '').toUpperCase();
   if (method !== 'GET' && method !== 'POST') return json(405, errorBody('unknown_op', 'Method not allowed'), { Allow: 'GET, POST' });
   const headers = request.headers;
+  // Continue with Google: a navigation to Google and Google's form post back (google.ts), so
+  // neither carries the X-HomeOS header; the state cookie and Google's signature guard them.
+  const navOp = url.searchParams.get('op');
+  if (method === 'GET' && navOp === 'googleStart') return googleStart(request, ctx);
+  if (method === 'POST' && navOp === 'google') return googleReturn(request, ctx);
   if (headers[API_HEADER.toLowerCase()] !== API_HEADER_VALUE) throw new ApiError('forbidden', 'Missing the X-HomeOS header');
   const info: RequestInfo = { ip: request.ip || 'unknown', userAgent: headers['user-agent'] };
 
@@ -404,9 +414,10 @@ async function get(op: GetOp, request: ApiRequest, ctx: ServerContext): Promise<
   const secure = ctx.config.secureCookies;
   if (op === 'status') {
     // A home never goes away: once seen, no read is needed to say so.
-    if (ctx.store.knowsHome()) return json(200, { home: true } satisfies StatusResponse);
+    const google = ctx.config.googleClientId !== null;
+    if (ctx.store.knowsHome()) return json(200, { home: true, google } satisfies StatusResponse);
     const snapshot = await ctx.store.read({ maxAgeMs: NO_HOME_FRESH_MS });
-    return json(200, { home: snapshot !== null } satisfies StatusResponse);
+    return json(200, { home: snapshot !== null, google } satisfies StatusResponse);
   }
   const me = await signedIn(ctx, request);
   if (!me) throw new ApiError('not_signed_in');
@@ -585,4 +596,86 @@ async function post(
       return json(200, { ok: true } satisfies OkResponse, { 'Set-Cookie': keyCookie(null, secure) });
     }
   }
+}
+
+// ── Continue with Google (google.ts) ────────────────────
+
+/** The short-lived cookie with the state and nonce of a Google sign-in under way. */
+const GOOGLE_COOKIE = 'homeos_google';
+
+function googleCookie(value: string | null, secure: boolean): string {
+  // SameSite=None (Secure): it has to come back with Google's cross-site form post.
+  const same = secure ? 'SameSite=None; Secure' : 'SameSite=Lax';
+  return `${GOOGLE_COOKIE}=${value ?? ''}; Path=/api; HttpOnly; ${same}; Max-Age=${value === null ? 0 : 600}`;
+}
+
+function cookieValue(headers: ApiRequest['headers'], name: string): string | null {
+  const cookie = headers.cookie;
+  if (typeof cookie !== 'string') return null;
+  for (const part of cookie.split(';')) {
+    const at = part.indexOf('=');
+    if (at > 0 && part.slice(0, at).trim() === name) return part.slice(at + 1).trim();
+  }
+  return null;
+}
+
+/** This app's origin as the browser sees it (Google's redirect_uri must match what is registered). */
+function appOrigin(request: ApiRequest, secure: boolean): string {
+  const host = (request.headers['x-forwarded-host'] ?? request.headers.host ?? 'localhost').split(',')[0].trim();
+  return `${secure ? 'https' : 'http'}://${host}`;
+}
+
+function redirect(location: string, cookies: string[] = [], status = 303): ApiResponse {
+  return { status, headers: { Location: location, 'Cache-Control': 'no-store', ...(cookies.length ? { 'Set-Cookie': cookies } : {}) }, body: '' };
+}
+
+/** Step 1: a fresh state and nonce in GOOGLE_COOKIE, then off to Google. */
+function googleStart(request: ApiRequest, ctx: ServerContext): ApiResponse {
+  const secure = ctx.config.secureCookies;
+  const clientId = ctx.config.googleClientId;
+  if (!clientId) return redirect('/?google=failed');
+  const state = Buffer.from(ctx.deps.randomBytes(18)).toString('base64url');
+  const nonce = Buffer.from(ctx.deps.randomBytes(18)).toString('base64url');
+  const origin = appOrigin(request, secure);
+  const url = googleAuthUrl({ clientId, redirectUri: `${origin}${API_PATH}?op=google`, state, nonce });
+  return redirect(url, [googleCookie(`${state}.${nonce}`, secure)], 302);
+}
+
+/** Step 2 and 3: Google's form post, checked, then this browser signed in (or why not). */
+async function googleReturn(request: ApiRequest, ctx: ServerContext): Promise<ApiResponse> {
+  const secure = ctx.config.secureCookies;
+  const clear = googleCookie(null, secure);
+  const back = (reason: GoogleReturn) => redirect(`/?google=${reason}`, [clear]);
+  const clientId = ctx.config.googleClientId;
+  if (!clientId || !ctx.googleKeys || (request.body ?? '').length > 16_384) return back('failed');
+  const form = new URLSearchParams(request.body ?? '');
+  const [state, nonce] = (cookieValue(request.headers, GOOGLE_COOKIE) ?? '').split('.');
+  const token = form.get('id_token');
+  if (!state || !nonce || form.get('state') !== state || !token) return back('failed');
+  let identity;
+  try {
+    identity = await verifyGoogleIdToken(token, { clientId, nonce, now: ctx.deps.now(), keys: ctx.googleKeys });
+  } catch (err) {
+    console.error(`home.os api: Google sign-in could not check the token: ${(err as Error).message}`);
+    return back('failed');
+  }
+  if (!identity) return back('failed');
+  const label = deviceLabel(request.headers['user-agent'], undefined);
+  let done;
+  try {
+    done = await ctx.store.write(
+      (doc) => {
+        const signed = signInByEmail(doc, identity.email, ctx.config.googlePeople, label, ctx.deps);
+        if (!signed) throw new ApiError('forbidden', 'not_member');
+        return signed;
+      },
+      { pure: true },
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.message === 'not_member') return back('not_member');
+    if (err instanceof BackendError && err.code === 'not_found') return back('no_home');
+    console.error(`home.os api: Google sign-in could not sign in: ${toApiError(err).code}`);
+    return back('failed');
+  }
+  return redirect('/', [clear, keyCookie(done.result.token, secure)]);
 }

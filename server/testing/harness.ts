@@ -30,6 +30,8 @@ export interface HarnessOptions {
   secureCookies?: boolean;
   /** HomeStore's wait between write attempts (default: real time). */
   sleep?: (ms: number) => Promise<void>;
+  /** Google's signing keys, for Continue with Google (default: none, so it answers 'failed'). */
+  googleKeys?: import('../core/google').GoogleKeys;
 }
 
 export interface TestClock {
@@ -79,6 +81,7 @@ export function createHarness(opts: HarnessOptions = {}): Harness {
       limiter: new AttemptLimiter(config.attempts, now),
       keyMisses: new AttemptLimiter(DEFAULT_KEY_MISS_LIMITS, now),
       deps: { now: () => new Date(now()), randomBytes: (n) => new Uint8Array(randomBytes(n)), newId: () => randomUUID() },
+      googleKeys: opts.googleKeys,
     };
   };
   const ctx = makeContext();

@@ -8,6 +8,7 @@ import { CODE_FIELD_LENGTH, codeFromPaste, codeLetters, groupCode } from './code
 import { summaryCounts } from './ImportHome';
 import { lastChangedLine } from './BringOnline';
 import { PrimaryButton, Spinner } from './StepPage';
+import { GoogleGIcon } from '../../ui/icons';
 import shared from './Onboarding.module.css';
 import styles from './Welcome.module.css';
 
@@ -20,7 +21,11 @@ export const NOTICES: Record<ServerWelcomeNotice, string> = {
   tooManyAttempts: 'Too many tries. Wait 15 minutes, then try again.',
   setupUsed: 'This home is already online. Ask someone at home for a code.',
   codeHere: `Using ${APP_NAME} from your Home Screen? Open it there and type this code. Or join in this browser.`,
+  googleNotMember: 'That Google account isn’t in this home. Sign in with the one your home knows, or ask someone at home to add you.',
+  googleFailed: 'Couldn’t sign in with Google. Try again.',
 };
+/** With Continue with Google on: what the private screen says instead of asking for a code. */
+export const SIGN_IN_WITH_GOOGLE = 'Sign in with Google to see your home.';
 /** A setup code typed in "Have a code?". */
 export const SETUP_CODE_HERE = {
   online: 'That’s a setup code, and this home is already online. Ask someone at home for a code.',
@@ -50,7 +55,7 @@ export function ServerSignIn({ welcome }: { welcome: Shown }) {
     );
   }
   if (welcome.kind === 'setupElsewhere') return <SetupElsewhere welcome={welcome} />;
-  return <HaveACode homeOnline={welcome.homeOnline} code={welcome.code} notice={welcome.notice} />;
+  return <HaveACode homeOnline={welcome.homeOnline} code={welcome.code} notice={welcome.notice} google={welcome.google === true} />;
 }
 
 /** A Copy button for a code, saying how it went under it. */
@@ -79,12 +84,15 @@ function HaveACode({
   homeOnline,
   code: linked,
   notice,
+  google,
 }: {
   homeOnline: boolean;
   code: string;
   notice: ServerWelcomeNotice | null;
+  google: boolean;
 }) {
-  const { redeemCode, startSetup } = useHome();
+  const { redeemCode, startSetup, continueWithGoogle } = useHome();
+  const [leaving, setLeaving] = useState(false);
   const fieldId = useId();
   const errorId = useId();
   const [code, setCode] = useState(() => groupCode(linked));
@@ -139,11 +147,27 @@ function HaveACode({
   return (
     <div className={styles.access}>
       <p className={styles.privateTitle}>{PRIVATE_TITLE}</p>
-      <p className={styles.privateLine}>{homeOnline ? ASK_FOR_CODE : NOT_SET_UP}</p>
+      <p className={styles.privateLine}>{!homeOnline ? NOT_SET_UP : google ? SIGN_IN_WITH_GOOGLE : ASK_FOR_CODE}</p>
       {notice && !tried ? (
         <p className={styles.notice} role="status">
           {NOTICES[notice]}
         </p>
+      ) : null}
+      {google && homeOnline ? (
+        <button
+          type="button"
+          className={`${styles.google} ${styles.googleHere}`}
+          onClick={() => {
+            if (leaving) return;
+            setLeaving(true);
+            continueWithGoogle();
+          }}
+          aria-busy={leaving || undefined}
+          aria-disabled={leaving || undefined}
+        >
+          <GoogleGIcon size={20} />
+          <span>Continue with Google</span>
+        </button>
       ) : null}
       <form className={styles.codeForm} onSubmit={(e) => void join(e)} noValidate>
         <label htmlFor={fieldId} className={styles.codeLabel}>

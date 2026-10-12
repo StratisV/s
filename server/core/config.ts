@@ -2,6 +2,7 @@
 // "Settings". Nothing here is ever sent to a browser or logged.
 
 import { isSetupCode, normaliseCode } from '../../src/lib/backend/serverApi';
+import { googleClientIdOf, googlePeopleOf } from './google';
 import { DEFAULT_ATTEMPT_LIMITS, type AttemptLimits } from './limits';
 import { homeBlobPath } from './serverDoc';
 
@@ -18,6 +19,10 @@ export interface ServerConfig {
   /** HOMEOS_BLOB_WRITES_PER_MONTH (default 1900) and HOMEOS_BLOB_READS_PER_MONTH (default 9000); 0 = no limit. */
   budget: { writes: number; reads: number };
   attempts: AttemptLimits;
+  /** HOMEOS_GOOGLE_CLIENT_ID (googleClientIdOf): Continue with Google is on when set. */
+  googleClientId: string | null;
+  /** HOMEOS_GOOGLE_PEOPLE (googlePeopleOf): who in the household each Google email is, by name. */
+  googlePeople: Record<string, string>;
 }
 
 export const DEFAULT_BUDGET = { writes: 1900, reads: 9000 } as const;
@@ -51,5 +56,7 @@ export function configFromEnv(env: Record<string, string | undefined>): ServerCo
       reads: budgetOf(env.HOMEOS_BLOB_READS_PER_MONTH, DEFAULT_BUDGET.reads),
     },
     attempts: { ...DEFAULT_ATTEMPT_LIMITS },
+    googleClientId: googleClientIdOf(env.HOMEOS_GOOGLE_CLIENT_ID),
+    googlePeople: googlePeopleOf(env.HOMEOS_GOOGLE_PEOPLE),
   };
 }
