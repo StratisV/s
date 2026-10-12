@@ -410,6 +410,10 @@ export interface HomeContextValue {
   startSetup(setupCode: string): boolean;
   /** Continue with Google (server mode, when it is on): leaves for Google, back signed in. */
   continueWithGoogle(): void;
+  /** Create Account (server mode): signs this browser in, then the home opens (after a join, the welcome step). */
+  createAccount(name: string, email: string, password: string): Promise<void>;
+  /** Sign In with email and password (server mode): then the home opens. */
+  signInWithPassword(email: string, password: string): Promise<void>;
   /** Saving is paused until next month (ServerStatus.readOnly): Home shows one line saying so. */
   readOnly: boolean;
 
@@ -2135,6 +2139,18 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         });
       },
       continueWithGoogle: () => access?.continueWithGoogle(),
+      createAccount: async (name, email, password) => {
+        if (!access) return notSupported('createAccount');
+        await access.createAccount(name, email, password);
+        forgetServerLinks('code');
+        await lastBoot.current;
+      },
+      signInWithPassword: async (email, password) => {
+        if (!access) return notSupported('signInWithPassword');
+        await access.signInWithPassword(email, password);
+        forgetServerLinks('code');
+        await lastBoot.current;
+      },
       startSetup: (setupCode) => {
         const saved = savedSummary.current;
         if (!access || !saved || serverWelcomeRef.current?.kind !== 'private' || serverWelcomeRef.current.homeOnline) return false;

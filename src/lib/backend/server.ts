@@ -716,6 +716,16 @@ export class ServerBackend implements Backend, ServerAccess {
     this.google = status.google === true;
     return status.home === true;
   }
+  /** Create Account: POST {op:'signUp', name, email, password, app}, then as bringOnline. */
+  async createAccount(name: string, email: string, password: string): Promise<HomeEntry> {
+    const response = await this.call<SignedInResponse>({ post: { op: 'signUp', name, email, password, app: appMode() } });
+    return this.signedInHere(response);
+  }
+  /** Sign In: POST {op:'signIn', email, password, app}, then as bringOnline. Wrong email or password: 'invalid_code'. */
+  async signInWithPassword(email: string, password: string): Promise<HomeEntry> {
+    const response = await this.call<SignedInResponse>({ post: { op: 'signIn', email, password, app: appMode() } });
+    return this.signedInHere(response);
+  }
   /** Continue with Google is on (as the last GET ?op=status said). */
   googleOn(): boolean {
     return this.google;

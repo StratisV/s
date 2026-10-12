@@ -147,9 +147,26 @@ export interface SignOutRequest {
 export interface ReleaseRequest {
   op: 'release';
 }
+/** Create Account. */
+export interface SignUpRequest {
+  op: 'signUp';
+  name: string;
+  email: string;
+  password: string;
+  app?: AppMode;
+}
+/** Sign In with email and password. */
+export interface SignInRequest {
+  op: 'signIn';
+  email: string;
+  password: string;
+  app?: AppMode;
+}
 export type ApiPostRequest =
   | SetupRequest
   | RedeemRequest
+  | SignUpRequest
+  | SignInRequest
   | RpcRequest
   | CreateCodeRequest
   | RemoveDeviceRequest

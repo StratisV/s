@@ -311,3 +311,81 @@
   margin-top: 16px;
   width: 100%;
 }
+
+/* ── Create Account and Sign In (server mode) ─────────────── */
+
+.account {
+  margin: 16px 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.fieldLabel {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* A white field as tall as the buttons, in ordinary type (the code field's look, not its spacing). */
+.field {
+  width: 100%;
+  height: 52px;
+  margin: 0;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--r-card);
+  background: var(--card);
+  outline: none;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  font: inherit;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  text-align: left;
+  color: var(--label);
+  caret-color: var(--tint);
+  appearance: none;
+  -webkit-appearance: none;
+  transition: box-shadow 0.15s ease;
+}
+
+.field::placeholder {
+  color: rgba(60, 60, 67, 0.3);
+  opacity: 1;
+}
+
+.field:focus {
+  box-shadow: 0 0 0 2px var(--tint);
+}
+
+.field:focus-visible {
+  outline: none;
+}
+
+.field[aria-invalid='true'] {
+  box-shadow: 0 0 0 1px var(--destructive);
+}
+
+.switch {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .field::placeholder {
+    color: rgba(235, 235, 245, 0.3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .field {
+    transition: none;
+  }
+}

@@ -367,6 +367,15 @@ export interface ServerAccess {
    * unknown, used or expired; a malformed one without asking the server) or 'too_many_attempts'.
    */
   redeemCode(code: string): Promise<HomeEntry>;
+  /**
+   * Create Account: this email and password sign this person in from now on. They are the
+   * person in the home with this name who has no account yet, else someone new; a person who
+   * had not joined joins ('claimed': the welcome step follows). Throws 'email_taken',
+   * 'invalid_input' (name, email, or a password under 6 characters), 'too_many_attempts'.
+   */
+  createAccount(name: string, email: string, password: string): Promise<HomeEntry>;
+  /** Sign In with email and password. Throws 'invalid_code' (wrong email or password), 'too_many_attempts'. */
+  signInWithPassword(email: string, password: string): Promise<HomeEntry>;
   /** Continue with Google is on (as the last homeOnline() call heard). */
   googleOn(): boolean;
   /** Continue with Google: leaves for Google; back signed in, or with /?google=<reason>. */

@@ -10,6 +10,7 @@ import {
   devicesOf,
   expectNoReload,
   homeHeading,
+  openCodes,
   openDevice,
   openHousehold,
   openPersonPage,
@@ -58,6 +59,7 @@ test('Add another device signs a second phone in as Stratis; removing it from th
   // The tablet types it: it is Stratis, straight to Home (he has joined already).
   const tablet = await openDevice(browser, baseURL!);
   const b = tablet.page;
+  await openCodes(b);
   await codeField(b).click();
   await codeField(b).pressSequentially(code);
   await welcome(b).getByRole('button', { name: 'Join' }).click();
@@ -81,10 +83,12 @@ test('Add another device signs a second phone in as Stratis; removing it from th
   await expect(removes).toHaveCount(1);
 
   // The tablet is signed out at its next poll: the Welcome screen, without a reload.
+  await openCodes(b);
   await expect(welcome(b).getByText('This home is private.', { exact: true })).toBeVisible({ timeout: SYNC_MS });
   await expect(codeField(b)).toBeVisible();
   // And it stays out after a reload (the key is no good any more).
   await b.reload();
+  await openCodes(b);
   await expect(welcome(b).getByText('This home is private.', { exact: true })).toBeVisible();
   // The code was used up when the tablet signed in.
   await codeField(b).pressSequentially(code);
@@ -105,8 +109,10 @@ test('Sign Out forgets this device; it needs a new code to get back in', async (
   const ask = await confirmation(b, 'Sign out of home.os?');
   await expect(ask).toContainText('To sign in again, you’ll need a new code from someone at home.');
   await ask.getByRole('button', { name: 'Sign Out' }).click();
+  await openCodes(b);
   await expect(welcome(b).getByText('This home is private.', { exact: true })).toBeVisible();
   await b.reload();
+  await openCodes(b);
   await expect(welcome(b).getByText('This home is private.', { exact: true })).toBeVisible();
 
   // On Stratis's phone, Shea has joined but has no device now; he can make her a new code.
@@ -166,6 +172,7 @@ test('“Not Shea?” signs out and puts Shea back to waiting to join', async ({
   const ask = await confirmation(other.page, 'Not Shea?');
   await expect(ask).toContainText("You'll be signed out and Shea goes back to waiting to join. Ask someone at home for a new code.".replace("'", '’'));
   await ask.getByRole('button', { name: 'Sign Out' }).click();
+  await openCodes(other.page);
   await expect(welcome(other.page).getByText('This home is private.', { exact: true })).toBeVisible();
 
   // Stratis's phone hears it; Shea can be invited again.
@@ -187,10 +194,12 @@ test('Sign Out while offline sticks: once back online the phone stays signed out
   await profile.getByRole('button', { name: 'Sign Out' }).click();
   const ask = await confirmation(b, 'Sign out of home.os?');
   await ask.getByRole('button', { name: 'Sign Out' }).click();
+  await openCodes(b);
   await expect(welcome(b).getByText('This home is private.', { exact: true })).toBeVisible();
   // Back online, the app starts again: the sign-out goes through first, and it stays out.
   await shea.context.setOffline(false);
   await b.reload();
+  await openCodes(b);
   await expect(welcome(b).getByText('This home is private.', { exact: true })).toBeVisible();
   await expect(codeField(b)).toBeVisible();
   await expect.poll(async () => (await devicesOf(stratis.context)).filter((d) => d.memberId === sheaId).length).toBe(0);

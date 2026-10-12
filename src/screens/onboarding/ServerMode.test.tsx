@@ -75,7 +75,12 @@ function deferred<T = void>() {
   return { promise, resolve, reject };
 }
 
-const codeField = () => screen.getByRole('textbox', { name: 'Have a code?' }) as HTMLInputElement;
+/** "Have a code?": behind its button on Create Account (opened here when it is not open yet). */
+const codeField = () => {
+  const open = screen.queryByRole('textbox', { name: 'Have a code?' });
+  if (!open) fireEvent.click(screen.getByRole('button', { name: 'Have a code?' }));
+  return screen.getByRole('textbox', { name: 'Have a code?' }) as HTMLInputElement;
+};
 const joinButton = () => screen.getByRole('button', { name: 'Join' }) as HTMLButtonElement;
 
 afterEach(() => {
@@ -85,9 +90,18 @@ afterEach(() => {
 });
 
 describe('Welcome in server mode', () => {
-  it('says the home is private and asks for a code, with no Google and no demo note', () => {
+  it('opens on Create Account, with Sign In, and a code behind Have a code? (no Google, no demo note)', () => {
     show(signedOut(privateHome()));
     expect(screen.getByRole('heading', { level: 1, name: 'home.os' })).toBeTruthy();
+    expect(screen.getByText('Join your home')).toBeTruthy();
+    expect(screen.getByText('Create your account to see everything at home.')).toBeTruthy();
+    expect((screen.getByLabelText('Your name') as HTMLInputElement).autocomplete).toBe('name');
+    expect((screen.getByLabelText('Email') as HTMLInputElement).type).toBe('email');
+    expect((screen.getByLabelText('Password') as HTMLInputElement).autocomplete).toBe('new-password');
+    expect(screen.getByRole('button', { name: 'Create Account' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Have an account? Sign In' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Google/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Have a code?' }));
     expect(screen.getByText('This home is private.')).toBeTruthy();
     expect(screen.getByText('Ask someone at home for a code.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Google/ })).toBeNull();
@@ -306,14 +320,17 @@ describe('Welcome in server mode', () => {
 
   it('offers Continue with Google when it is on, and says why it came back without signing in', () => {
     const home = show(signedOut(privateHome({ google: true })));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }));
+    expect(home.continueWithGoogle).toHaveBeenCalledTimes(1);
+    cleanup();
+    const coded = show(signedOut(privateHome({ google: true })));
+    codeField();
     expect(screen.getByText('Sign in with Google to see your home.')).toBeTruthy();
     const google = screen.getByRole('button', { name: 'Continue with Google' });
     fireEvent.click(google);
     fireEvent.click(google);
-    expect(home.continueWithGoogle).toHaveBeenCalledTimes(1);
+    expect(coded.continueWithGoogle).toHaveBeenCalledTimes(1);
     expect(google.getAttribute('aria-busy')).toBe('true');
-    // Codes still work.
-    expect(screen.getByRole('textbox', { name: 'Have a code?' })).toBeTruthy();
     cleanup();
     show(signedOut(privateHome({ google: true, notice: 'googleNotMember' })));
     expect(screen.getByRole('status').textContent).toBe(
@@ -322,7 +339,35 @@ describe('Welcome in server mode', () => {
     cleanup();
     show(signedOut(privateHome()));
     expect(screen.queryByRole('button', { name: 'Continue with Google' })).toBeNull();
+    codeField();
     expect(screen.getByText('Ask someone at home for a code.')).toBeTruthy();
+  });
+
+  it('creates an account, signs in, and says what went wrong', async () => {
+    const createAccount = vi.fn(async () => {
+      throw new BackendError('email_taken');
+    });
+    const signInWithPassword = vi.fn(async () => {
+      throw new BackendError('invalid_code');
+    });
+    const home = show(signedOut(privateHome(), { createAccount, signInWithPassword }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create Account' }));
+    expect(screen.getByRole('alert').textContent).toBe('Add your name, your email, and a password of 6 or more characters.');
+    expect(createAccount).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Your name'), { target: { value: ' Shea ' } });
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: ' shea@example.com ' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'hedgehog1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create Account' }));
+    expect(home.createAccount).toHaveBeenCalledWith('Shea', 'shea@example.com', 'hedgehog1');
+    // Taken: on to Sign In, the email kept.
+    expect((await screen.findByRole('alert')).textContent).toBe('That email already has an account. Sign in instead.');
+    expect(screen.getByText('Welcome back')).toBeTruthy();
+    expect((screen.getByLabelText('Email') as HTMLInputElement).value).toBe('shea@example.com');
+    expect((screen.getByLabelText('Password') as HTMLInputElement).autocomplete).toBe('current-password');
+    expect(screen.queryByLabelText('Your name')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
+    expect(signInWithPassword).toHaveBeenCalledWith('shea@example.com', 'hedgehog1');
+    expect((await screen.findByRole('alert')).textContent).toBe('Wrong email or password.');
   });
 
   it('takes the code out of a pasted message', () => {

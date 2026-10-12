@@ -35,6 +35,8 @@ export interface ServerDoc {
 }
 
 export interface ServerAuth {
+  /** Email and password accounts, one per person at most. Missing in documents made before them. */
+  accounts?: AccountRow[];
   /** Signed-in browsers, in sign-in order. At most DEVICE_LIMITS.perPerson per person and DEVICE_LIMITS.perHome in all. */
   devices: DeviceRow[];
   /**
@@ -50,6 +52,17 @@ export interface ServerAuth {
   secret?: string;
   /** hex SHA-256 of the normalised setup code that brought the home online (setup's recovery checks it). */
   setupHash?: string;
+}
+
+/** An email and password someone signs in with (Create Account / Sign In). */
+export interface AccountRow {
+  /** The person's user id (members[].user_id). */
+  userId: string;
+  /** Lower case. */
+  email: string;
+  /** hashPassword() (./auth.ts): scrypt with a random salt. The password itself is never stored. */
+  passHash: string;
+  createdAt: ISOTimestamp;
 }
 
 export interface DeviceRow {
@@ -168,7 +181,8 @@ export function parseServerDoc(body: string): ServerDoc {
     !Array.isArray(auth.devices) ||
     !Array.isArray(auth.codes) ||
     (auth.secret !== undefined && typeof auth.secret !== 'string') ||
-    (auth.setupHash !== undefined && typeof auth.setupHash !== 'string')
+    (auth.setupHash !== undefined && typeof auth.setupHash !== 'string') ||
+    (auth.accounts !== undefined && !Array.isArray(auth.accounts))
   ) {
     throw new Error('server document: bad auth');
   }

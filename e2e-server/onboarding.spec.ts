@@ -19,6 +19,7 @@ import {
   homeScreen,
   loadHome,
   meta,
+  openCodes,
   openDevice,
   openHousehold,
   people,
@@ -153,6 +154,7 @@ test('Stratis brings the home on his phone online with the setup link, invites S
   const shea = await openDevice(browser, baseURL!);
   const b = shea.page;
   const door = welcome(b);
+  await openCodes(b);
   await expect(door.getByText('This home is private.', { exact: true })).toBeVisible();
   await expect(door.getByText('Ask someone at home for a code.', { exact: true })).toBeVisible();
   await expect(door.getByRole('button', { name: /Google/ })).toHaveCount(0);
@@ -183,6 +185,7 @@ test('Stratis brings the home on his phone online with the setup link, invites S
 
   // The code is used up: on a third phone it does not work.
   const third = await openDevice(browser, baseURL!);
+  await openCodes(third.page);
   await typeCode(codeField(third.page), code);
   await welcome(third.page).getByRole('button', { name: 'Join' }).click();
   await expect(welcome(third.page).getByRole('alert')).toHaveText('That code didn’t work. Check it, or ask for a new one.');
@@ -328,6 +331,7 @@ test('a stranger without a code stays out; wrong codes are refused, then limited
   const robin = await openDevice(browser, baseURL!);
   const page = robin.page;
   const door = welcome(page);
+  await openCodes(page);
   await expect(door.getByText('This home is private.', { exact: true })).toBeVisible();
   await expect(door.getByText('Ask someone at home for a code.', { exact: true })).toBeVisible();
   // Nothing of the home shows.
@@ -383,6 +387,7 @@ test('the Welcome screen works on the smallest phone', async ({ browser, baseURL
   await phone.context.close();
 
   const other = await openDevice(browser, baseURL!, { viewport: { width: 320, height: 568 } });
+  await openCodes(other.page);
   await expect(codeField(other.page)).toBeVisible();
   expect(await other.page.evaluate(() => document.scrollingElement!.scrollWidth)).toBeLessThanOrEqual(320);
   const join = welcome(other.page).getByRole('button', { name: 'Join' });
@@ -546,6 +551,7 @@ test('a code link opened in Safari on an iPhone is not used up there: typed in t
   const app = await openDevice(browser, baseURL!, { userAgent: IPHONE_SAFARI_UA });
   await app.context.addInitScript(() => Object.defineProperty(navigator, 'standalone', { value: true }));
   await app.page.reload();
+  await openCodes(app.page);
   await typeCode(codeField(app.page), code);
   await welcome(app.page).getByRole('button', { name: 'Join' }).click();
   const hello = app.page.getByRole('region', { name: 'Welcome home, Shea' });

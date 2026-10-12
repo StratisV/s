@@ -351,6 +351,13 @@ export function codeField(page: Page): Locator {
   return page.getByRole('textbox', { name: 'Have a code?' });
 }
 
+/** The Welcome screen opens on Create Account when a home is online: "Have a code?" shows the code field. */
+export async function openCodes(page: Page): Promise<void> {
+  const button = welcome(page).getByRole('button', { name: 'Have a code?' });
+  await expect(codeField(page).or(button)).toBeVisible({ timeout: SYNC_MS });
+  if (await button.isVisible()) await button.click();
+}
+
 /** The code sheet ("Code for Shea", "Code for another device"). */
 export function codeSheet(page: Page, title: string): Locator {
   return page.getByRole('dialog', { name: title });

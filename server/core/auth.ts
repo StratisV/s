@@ -25,14 +25,14 @@
 // - Changes never edit doc.home in place: a member that changes is replaced (HomeStore rolls a
 //   failed write back by putting the previous objects back).
 
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, scryptSync, timingSafeEqual } from 'node:crypto';
 import { CODE_ALPHABET, CODE_LENGTH, CODE_TTL_MS, formatCode, isSignInCode, normaliseCode } from '../../src/lib/backend/serverApi';
 import { BackendError } from '../../src/lib/backend/types';
 import type { HomeEntry, DeviceInfo } from '../../src/lib/types';
 import { DEVICE_LABEL_MAX } from './deviceLabel';
 import { ApiError } from './errors';
-import type { Caller } from './runAs';
-import type { CodeRow, DeviceRow, ServerDoc } from './serverDoc';
+import { runAs, type Caller } from './runAs';
+import type { AccountRow, CodeRow, DeviceRow, ServerDoc } from './serverDoc';
 
 export const DEVICE_LIMITS = {
   /** A person's oldest device is signed out when they sign in on one more. */
@@ -455,4 +455,110 @@ export function pruneAuth(doc: ServerDoc, now: Date): void {
     )
     .map((c) => (c.createdBy !== null && !members.has(c.createdBy) ? { ...c, createdBy: null } : c));
   doc.auth.devices = doc.auth.devices.filter((d) => users.has(d.userId));
+  if (doc.auth.accounts) doc.auth.accounts = doc.auth.accounts.filter((a) => users.has(a.userId));
+}
+
+// ── Accounts (email and password) ───────────────────────
+
+export const PASSWORD_MIN = 6;
+export const PASSWORD_MAX = 200;
+const SCRYPT = { N: 16384, r: 8, p: 1 } as const;
+
+/** "scrypt$<salt>$<hash>" (base64url) for `password`, with a fresh 16-byte salt. */
+export function hashPassword(password: string, deps: Pick<AuthDeps, 'randomBytes'>): string {
+  const salt = Buffer.from(deps.randomBytes(16));
+  const hash = scryptSync(password.normalize('NFKC'), salt, 32, SCRYPT);
+  return `scrypt$${salt.toString('base64url')}$${hash.toString('base64url')}`;
+}
+
+/** Whether `password` is the one `stored` (hashPassword()) was made from. */
+export function passwordMatches(password: string, stored: string): boolean {
+  const [kind, salt, hash] = stored.split('$');
+  if (kind !== 'scrypt' || !salt || !hash) return false;
+  const want = Buffer.from(hash, 'base64url');
+  const got = scryptSync(password.normalize('NFKC'), Buffer.from(salt, 'base64url'), want.length, SCRYPT);
+  return want.length === got.length && timingSafeEqual(want, got);
+}
+
+/** A hash to check wrong emails against, so a missing account takes as long as a wrong password. */
+const DUMMY_HASH = `scrypt$${Buffer.alloc(16).toString('base64url')}$${Buffer.alloc(32).toString('base64url')}`;
+
+function accountsOf(doc: ServerDoc): AccountRow[] {
+  return doc.auth.accounts ?? [];
+}
+
+function signedInAs(doc: ServerDoc, member: ServerDoc['home']['members'][number], status: 'member' | 'claimed', label: string, deps: AuthDeps): SignedInDevice {
+  // The next put stores this as rev + 1 (HomeStore), which is where the device first is.
+  const rev = doc.rev + 1;
+  const userId = member.user_id!;
+  const { key, device } = addDevice(doc, userId, label, deps);
+  return {
+    key,
+    token: deviceToken(doc, device, key, rev),
+    device,
+    caller: { userId, memberId: member.id, name: member.name },
+    entry: { status, householdId: member.household_id, memberId: member.id, canImport: false },
+  };
+}
+
+/**
+ * Create Account: `email` (lower case) and `password` become this person's sign-in, and this
+ * browser is signed in. Who they are in the home: the person already called `name` who has no
+ * account yet (joined or not: Shea, or Stratis who brought the home online), else someone new
+ * (added as the owner would add them). A person who had not joined joins ('claimed', so the
+ * welcome step follows: their emoji); someone who had keeps their place ('member').
+ * Throws BackendError 'email_taken' when the email has an account.
+ */
+export async function createAccount(
+  doc: ServerDoc,
+  input: { name: string; email: string; password: string },
+  label: string,
+  deps: AuthDeps,
+): Promise<SignedInDevice> {
+  const email = input.email.trim().toLowerCase();
+  const name = input.name.trim();
+  const accounts = accountsOf(doc);
+  if (accounts.some((a) => a.email === email)) throw new BackendError('email_taken', 'That email has an account');
+  const now = deps.now();
+  const withAccount = new Set(accounts.map((a) => a.userId));
+  const household = doc.home.households[0];
+  if (!household) throw new BackendError('not_found', 'No home');
+  let member = doc.home.members.find(
+    (m) => m.household_id === household.id && m.name.trim().toLowerCase() === name.toLowerCase() && !(m.user_id && withAccount.has(m.user_id)),
+  );
+  if (!member) {
+    // Someone new: added as the owner adds people (the same checks and colours), then joined below.
+    const owner = doc.home.members.find((m) => m.household_id === household.id && m.role === 'owner' && m.user_id);
+    if (!owner) throw new BackendError('not_found', 'No owner');
+    const ran = await runAs(
+      doc.home,
+      { userId: owner.user_id!, memberId: owner.id, name: owner.name },
+      (b) => b.addPerson(household.id, { name, emoji: '', email: '' }),
+      { now: () => now, kind: 'write' },
+    );
+    doc.home = ran.home!;
+    member = doc.home.members.find((m) => m.id === ran.result.id)!;
+  }
+  let status: 'member' | 'claimed' = 'member';
+  const before = member;
+  const emailFree = !doc.home.members.some((m) => m !== before && (m.email ?? '').trim().toLowerCase() === email);
+  const after =
+    before.user_id === null
+      ? { ...before, user_id: `u-${deps.newId()}`, claimed_at: now.toISOString(), email: emailFree ? email : '', push_enabled: false }
+      : { ...before, email: emailFree ? email : before.email };
+  if (before.user_id === null) status = 'claimed';
+  doc.home = { ...doc.home, members: doc.home.members.map((m) => (m === before ? after : m)) };
+  doc.auth.accounts = [...accounts, { userId: after.user_id!, email, passHash: hashPassword(input.password, deps), createdAt: now.toISOString() }];
+  return signedInAs(doc, after, status, label, deps);
+}
+
+/** Sign In: the account for `email`, when `password` is right. Null otherwise (wrong email or password alike). */
+export function signInWithPassword(doc: ServerDoc, email: string, password: string, label: string, deps: AuthDeps): SignedInDevice | null {
+  const wanted = email.trim().toLowerCase();
+  const account = accountsOf(doc).find((a) => a.email === wanted);
+  const ok = passwordMatches(password, account?.passHash ?? DUMMY_HASH);
+  if (!account || !ok) return null;
+  const member = memberFor(doc, account.userId);
+  if (!member) return null;
+  return signedInAs(doc, member, 'member', label, deps);
 }

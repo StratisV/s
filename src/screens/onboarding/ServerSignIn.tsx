@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { CODE_LENGTH, SETUP_CODE_MIN_LENGTH } from '../../lib/backend/serverApi';
+import { BackendError } from '../../lib/backend/types';
 import { copyText } from '../../lib/clipboard';
 import { APP_NAME } from '../../lib/constants';
 import { errorMessage, useHome, type ServerWelcome, type ServerWelcomeNotice } from '../../state/HomeProvider';
@@ -55,7 +56,25 @@ export function ServerSignIn({ welcome }: { welcome: Shown }) {
     );
   }
   if (welcome.kind === 'setupElsewhere') return <SetupElsewhere welcome={welcome} />;
-  return <HaveACode homeOnline={welcome.homeOnline} code={welcome.code} notice={welcome.notice} google={welcome.google === true} />;
+  // A home is online: Create Account and Sign In, unless a code link brought them here.
+  const codeFirst = !welcome.homeOnline || welcome.code !== '' || (welcome.notice !== null && welcome.notice !== 'googleNotMember' && welcome.notice !== 'googleFailed');
+  return <SignInOrCode welcome={welcome} codeFirst={codeFirst} />;
+}
+
+function SignInOrCode({ welcome, codeFirst }: { welcome: Extract<ServerWelcome, { kind: 'private' }>; codeFirst: boolean }) {
+  const [withCode, setWithCode] = useState(codeFirst);
+  if (withCode) {
+    return (
+      <HaveACode
+        homeOnline={welcome.homeOnline}
+        code={welcome.code}
+        notice={welcome.notice}
+        google={welcome.google === true}
+        onAccount={welcome.homeOnline ? () => setWithCode(false) : undefined}
+      />
+    );
+  }
+  return <Account google={welcome.google === true} notice={welcome.notice} onCode={() => setWithCode(true)} />;
 }
 
 /** A Copy button for a code, saying how it went under it. */
@@ -85,11 +104,14 @@ function HaveACode({
   code: linked,
   notice,
   google,
+  onAccount,
 }: {
   homeOnline: boolean;
   code: string;
   notice: ServerWelcomeNotice | null;
   google: boolean;
+  /** Back to Create Account and Sign In (when a home is online). */
+  onAccount?: () => void;
 }) {
   const { redeemCode, startSetup, continueWithGoogle } = useHome();
   const [leaving, setLeaving] = useState(false);
@@ -198,7 +220,202 @@ function HaveACode({
           </PrimaryButton>
         </div>
         {choice ? <CopyCode code={groupCode(linked)} /> : null}
+        {onAccount ? (
+          <button type="button" className={shared.textButton} onClick={onAccount} disabled={busy}>
+            Create Account or Sign In
+          </button>
+        ) : null}
       </form>
+    </div>
+  );
+}
+
+/** Copy for Create Account and Sign In (server mode). */
+export const ACCOUNT = {
+  createTitle: 'Join your home',
+  createLine: 'Create your account to see everything at home.',
+  signInTitle: 'Welcome back',
+  signInLine: 'Sign in to see your home.',
+  emailTaken: 'That email already has an account. Sign in instead.',
+  wrong: 'Wrong email or password.',
+  missingCreate: 'Add your name, your email, and a password of 6 or more characters.',
+  missingSignIn: 'Enter your email and your password (6 or more characters).',
+  tooMany: 'Too many tries. Wait 15 minutes, then try again.',
+};
+
+/**
+ * Create Account and Sign In (server mode, a home online): name, email and password once,
+ * then email and password on any other phone. The browser stays signed in. "Have a code?"
+ * is still there for a code someone sent.
+ */
+function Account({ google, notice, onCode }: { google: boolean; notice: ServerWelcomeNotice | null; onCode(): void }) {
+  const { createAccount, signInWithPassword, continueWithGoogle } = useHome();
+  const [mode, setMode] = useState<'create' | 'signIn'>('create');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const errorId = useId();
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  const creating = mode === 'create';
+  const ready = (!creating || name.trim() !== '') && /\S+@\S+\.\S+/.test(email.trim()) && password.length >= 6;
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    if (!ready) {
+      setError(creating ? ACCOUNT.missingCreate : ACCOUNT.missingSignIn);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      // The home opens by itself (after joining, the welcome step: their emoji).
+      if (creating) await createAccount(name.trim(), email.trim(), password);
+      else await signInWithPassword(email.trim(), password);
+    } catch (err) {
+      if (!alive.current) return;
+      const code = err instanceof BackendError ? err.code : null;
+      setError(
+        code === 'email_taken'
+          ? ACCOUNT.emailTaken
+          : code === 'invalid_code'
+            ? ACCOUNT.wrong
+            : err instanceof BackendError && err.message.startsWith('invalid_input')
+              ? creating
+                ? ACCOUNT.missingCreate
+                : ACCOUNT.missingSignIn
+              : code === 'too_many_attempts'
+                ? ACCOUNT.tooMany
+                : errorMessage(err),
+      );
+      if (code === 'email_taken') setMode('signIn');
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  };
+
+  const field = (id: string, label: string, input: JSX.Element) => (
+    <>
+      <label htmlFor={id} className={styles.fieldLabel}>
+        {label}
+      </label>
+      {input}
+    </>
+  );
+
+  return (
+    <div className={styles.access}>
+      <p className={styles.privateTitle}>{creating ? ACCOUNT.createTitle : ACCOUNT.signInTitle}</p>
+      <p className={styles.privateLine}>{creating ? ACCOUNT.createLine : ACCOUNT.signInLine}</p>
+      {notice === 'googleNotMember' || notice === 'googleFailed' ? (
+        <p className={styles.notice} role="status">
+          {NOTICES[notice]}
+        </p>
+      ) : null}
+      <form className={styles.account} onSubmit={(e) => void submit(e)} noValidate>
+        {creating
+          ? field(
+              'account-name',
+              'Your name',
+              <input
+                id="account-name"
+                className={styles.field}
+                type="text"
+                autoComplete="name"
+                autoCapitalize="words"
+                placeholder="Your name"
+                value={name}
+                maxLength={60}
+                disabled={busy}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setError(null);
+                }}
+              />,
+            )
+          : null}
+        {field(
+          'account-email',
+          'Email',
+          <input
+            id="account-email"
+            className={styles.field}
+            type="email"
+            inputMode="email"
+            autoComplete={creating ? 'email' : 'username'}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="Email"
+            value={email}
+            maxLength={254}
+            disabled={busy}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              setError(null);
+            }}
+          />,
+        )}
+        {field(
+          'account-password',
+          'Password',
+          <input
+            id="account-password"
+            className={styles.field}
+            type="password"
+            autoComplete={creating ? 'new-password' : 'current-password'}
+            placeholder={creating ? 'Password (6 or more characters)' : 'Password'}
+            value={password}
+            maxLength={200}
+            disabled={busy}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setError(null);
+            }}
+          />,
+        )}
+        {error ? (
+          <p id={errorId} className={styles.codeError} role="alert">
+            {error}
+          </p>
+        ) : null}
+        <div className={styles.join}>
+          <PrimaryButton type="submit" busy={busy} busyLabel={creating ? 'Creating Account' : 'Signing In'}>
+            {creating ? 'Create Account' : 'Sign In'}
+          </PrimaryButton>
+        </div>
+      </form>
+      <div className={styles.switch}>
+        <button
+          type="button"
+          className={shared.textButton}
+          onClick={() => {
+            setMode(creating ? 'signIn' : 'create');
+            setError(null);
+          }}
+          disabled={busy}
+        >
+          {creating ? 'Have an account? Sign In' : 'New here? Create Account'}
+        </button>
+        {google ? (
+          <button type="button" className={shared.textButton} onClick={continueWithGoogle} disabled={busy}>
+            Continue with Google
+          </button>
+        ) : null}
+        <button type="button" className={shared.textButton} onClick={onCode} disabled={busy}>
+          Have a code?
+        </button>
+      </div>
     </div>
   );
 }

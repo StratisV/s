@@ -75,7 +75,11 @@ import {
   parseDeviceToken,
   redeemCode,
   removeDevice,
+  createAccount,
+  PASSWORD_MAX,
+  PASSWORD_MIN,
   signInByEmail,
+  signInWithPassword,
   tokenVerifies,
   type AuthDeps,
   type PresentedToken,
@@ -346,7 +350,7 @@ function deviceInfo(device: DeviceRow, memberId: string, current: boolean): Devi
 
 const isId = (v: unknown): v is string => typeof v === 'string' && v.length >= 1 && v.length <= 100;
 
-const POST_OPS = ['setup', 'redeem', 'rpc', 'createCode', 'removeDevice', 'signOut', 'release'] as const;
+const POST_OPS = ['setup', 'redeem', 'signUp', 'signIn', 'rpc', 'createCode', 'removeDevice', 'signOut', 'release'] as const;
 type PostOp = (typeof POST_OPS)[number];
 const GET_OPS = ['status', 'session', 'version', 'devices'] as const;
 type GetOp = (typeof GET_OPS)[number];
@@ -495,6 +499,38 @@ async function post(
         if (err instanceof BackendError && err.code === 'not_found') throw new ApiError('invalid_code', 'That code did not work');
         throw err;
       }
+      attempt.ticket.succeeded();
+      const { token, device, caller, entry } = done.result;
+      const response: SessionResponse = {
+        user: { id: caller.userId, email: '', name: caller.name },
+        entry,
+        device: deviceInfo(device, caller.memberId, true),
+        rev: done.rev,
+      };
+      return json(200, response, { 'Set-Cookie': keyCookie(token, secure) });
+    }
+
+    case 'signUp':
+    case 'signIn': {
+      // Counted as a failed attempt until it works, like a code: guessing passwords is limited.
+      const attempt = ctx.limiter.begin(info.ip);
+      if (!attempt.ticket) throw new ApiError('too_many_attempts', 'Too many tries', attempt.wait);
+      const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+      const password = typeof body.password === 'string' ? body.password : '';
+      const name = typeof body.name === 'string' ? body.name.trim() : '';
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) throw new ApiError('invalid_input', 'invalid_input: email');
+      if (password.length < PASSWORD_MIN || password.length > PASSWORD_MAX) throw new ApiError('invalid_input', 'invalid_input: password');
+      if (op === 'signUp' && (!name || name.length > 60)) throw new ApiError('invalid_input', 'invalid_input: name');
+      const label = deviceLabel(info.userAgent, body.app);
+      const done = await ctx.store.write(
+        async (doc) => {
+          if (op === 'signUp') return createAccount(doc, { name, email, password }, label, ctx.deps);
+          const signed = signInWithPassword(doc, email, password, label, ctx.deps);
+          if (!signed) throw new ApiError('invalid_code', 'Wrong email or password');
+          return signed;
+        },
+        { pure: true },
+      );
       attempt.ticket.succeeded();
       const { token, device, caller, entry } = done.result;
       const response: SessionResponse = {
