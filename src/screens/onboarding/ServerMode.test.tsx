@@ -367,7 +367,25 @@ describe('Welcome in server mode', () => {
     expect(screen.queryByLabelText('Your name')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
     expect(signInWithPassword).toHaveBeenCalledWith('shea@example.com', 'hedgehog1');
-    expect((await screen.findByRole('alert')).textContent).toBe('Wrong email or password.');
+    expect((await screen.findByRole('alert')).textContent).toBe('Wrong password. Check it and try again.');
+  });
+
+  it('sends Sign In with an email that has no account on to Create Account, keeping what was typed', async () => {
+    const signInWithPassword = vi.fn(async () => {
+      throw new BackendError('not_found');
+    });
+    const home = show(signedOut(privateHome(), { signInWithPassword }));
+    fireEvent.click(screen.getByRole('button', { name: 'Have an account? Sign In' }));
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'stratis@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'duckduck' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('There’s no account for this email yet. Add your name to create it.');
+    expect(screen.getByText('Join your home')).toBeTruthy();
+    expect((screen.getByLabelText('Email') as HTMLInputElement).value).toBe('stratis@example.com');
+    expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('duckduck');
+    fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Stratis' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create Account' }));
+    expect(home.createAccount).toHaveBeenCalledWith('Stratis', 'stratis@example.com', 'duckduck');
   });
 
   it('takes the code out of a pasted message', () => {

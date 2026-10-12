@@ -76,6 +76,9 @@ import {
   redeemCode,
   removeDevice,
   createAccount,
+  hasAccount,
+  removeAccount,
+  setupCodeMatches,
   PASSWORD_MAX,
   PASSWORD_MIN,
   signInByEmail,
@@ -350,7 +353,7 @@ function deviceInfo(device: DeviceRow, memberId: string, current: boolean): Devi
 
 const isId = (v: unknown): v is string => typeof v === 'string' && v.length >= 1 && v.length <= 100;
 
-const POST_OPS = ['setup', 'redeem', 'signUp', 'signIn', 'rpc', 'createCode', 'removeDevice', 'signOut', 'release'] as const;
+const POST_OPS = ['setup', 'redeem', 'signUp', 'signIn', 'resetAccount', 'rpc', 'createCode', 'removeDevice', 'signOut', 'release'] as const;
 type PostOp = (typeof POST_OPS)[number];
 const GET_OPS = ['status', 'session', 'version', 'devices'] as const;
 type GetOp = (typeof GET_OPS)[number];
@@ -525,8 +528,10 @@ async function post(
       const done = await ctx.store.write(
         async (doc) => {
           if (op === 'signUp') return createAccount(doc, { name, email, password }, label, ctx.deps);
+          // No account for this email yet: say so (the screen offers Create Account instead).
+          if (!hasAccount(doc, email)) throw new ApiError('not_found', 'No account for that email');
           const signed = signInWithPassword(doc, email, password, label, ctx.deps);
-          if (!signed) throw new ApiError('invalid_code', 'Wrong email or password');
+          if (!signed) throw new ApiError('invalid_code', 'Wrong password');
           return signed;
         },
         { pure: true },
@@ -540,6 +545,20 @@ async function post(
         rev: done.rev,
       };
       return json(200, response, { 'Set-Cookie': keyCookie(token, secure) });
+    }
+
+    case 'resetAccount': {
+      // A forgotten password: whoever holds the setup code forgets that email's account, and
+      // the person creates it again (they keep their place in the home).
+      const attempt = ctx.limiter.begin(info.ip);
+      if (!attempt.ticket) throw new ApiError('too_many_attempts', 'Too many tries', attempt.wait);
+      if (typeof body.setupCode !== 'string' || !setupCodeMatches(body.setupCode, ctx.config.setupCode)) {
+        throw new ApiError('invalid_code', 'That setup code did not work');
+      }
+      attempt.ticket.succeeded();
+      const email = typeof body.email === 'string' ? body.email : '';
+      const done = await ctx.store.write((doc) => removeAccount(doc, email), { pure: true });
+      return json(200, { ok: true, removed: done.result });
     }
 
     case 'signOut': {

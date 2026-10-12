@@ -53,6 +53,7 @@ describe('Create Account and Sign In', () => {
 
     const laptop = h.browser();
     expect((await call(laptop, 'signIn', { email: 'shea@example.com', password: 'wrong-one' })).json.error.code).toBe('invalid_code');
+    expect((await call(laptop, 'signIn', { email: 'nobody@example.com', password: 'hedgehog1' })).json.error.code).toBe('not_found');
     const back = await call(laptop, 'signIn', { email: 'SHEA@example.com', password: 'hedgehog1' });
     expect(back.status).toBe(200);
     expect(back.json.user.name).toBe('Shea');
@@ -95,8 +96,24 @@ describe('Create Account and Sign In', () => {
     expect((await call(b, 'signUp', { name: 'Other', email: 'o@example.com', password: '123' })).json.error.code).toBe('invalid_input');
     expect((await call(b, 'signUp', { name: 'Other', email: 'not-an-email', password: '123456' })).json.error.code).toBe('invalid_input');
     expect((await call(b, 'signUp', { name: ' ', email: 'o@example.com', password: '123456' })).json.error.code).toBe('invalid_input');
-    expect((await call(b, 'signIn', { email: 'nobody@example.com', password: '123456' })).json.error.code).toBe('invalid_code');
+    expect((await call(b, 'signIn', { email: 'nobody@example.com', password: '123456' })).json.error.code).toBe('not_found');
     expect((await call(b, 'session')).status).toBe(401);
+  });
+
+  it('forgets an account with the setup code, so a forgotten password can be set again', async () => {
+    const h = createHarness();
+    await online(h);
+    const shea = h.browser();
+    expect((await call(shea, 'signUp', { name: 'Shea', email: 'shea@example.com', password: 'hedgehog1' })).status).toBe(200);
+    const other = h.browser();
+    expect((await call(other, 'resetAccount', { setupCode: 'WRONG-CODE-HERE', email: 'shea@example.com' })).json.error.code).toBe('invalid_code');
+    expect((await call(other, 'resetAccount', { setupCode: TEST_SETUP_CODE, email: 'SHEA@example.com' })).json).toEqual({ ok: true, removed: true });
+    expect((await call(other, 'resetAccount', { setupCode: TEST_SETUP_CODE, email: 'shea@example.com' })).json).toEqual({ ok: true, removed: false });
+    // She makes it again with a new password, and is still the same Shea.
+    const again = await call(other, 'signUp', { name: 'Shea', email: 'shea@example.com', password: 'new-password' });
+    expect(again.status).toBe(200);
+    expect(again.json.entry.memberId).toBeTruthy();
+    expect((await call(h.browser(), 'signIn', { email: 'shea@example.com', password: 'new-password' })).status).toBe(200);
   });
 
   it('limits password guessing', async () => {

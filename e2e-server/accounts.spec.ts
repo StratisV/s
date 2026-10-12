@@ -38,7 +38,7 @@ test('people create an account, see the same home, and sign in again on another 
   await again.getByLabel('Email').fill('shea@example.com');
   await again.getByLabel('Password').fill('wrong-password');
   await again.getByRole('button', { name: 'Sign In' }).click();
-  await expect(again.getByRole('alert')).toHaveText('Wrong email or password.');
+  await expect(again.getByRole('alert')).toHaveText('Wrong password. Check it and try again.');
   await again.getByLabel('Password').fill('hedgehog1');
   await again.getByRole('button', { name: 'Sign In' }).click();
   await expect(homeHeading(laptop.page)).toBeVisible();

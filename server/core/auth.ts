@@ -552,6 +552,22 @@ export async function createAccount(
   return signedInAs(doc, after, status, label, deps);
 }
 
+/** Whether `email` (any case) has an account. */
+export function hasAccount(doc: ServerDoc, email: string): boolean {
+  const wanted = email.trim().toLowerCase();
+  return accountsOf(doc).some((a) => a.email === wanted);
+}
+
+/** Forgets the account for `email` (the person stays, and can create their account again). False: there was none. */
+export function removeAccount(doc: ServerDoc, email: string): boolean {
+  const wanted = email.trim().toLowerCase();
+  const before = accountsOf(doc);
+  const after = before.filter((a) => a.email !== wanted);
+  if (after.length === before.length) return false;
+  doc.auth.accounts = after;
+  return true;
+}
+
 /** Sign In: the account for `email`, when `password` is right. Null otherwise (wrong email or password alike). */
 export function signInWithPassword(doc: ServerDoc, email: string, password: string, label: string, deps: AuthDeps): SignedInDevice | null {
   const wanted = email.trim().toLowerCase();

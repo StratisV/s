@@ -237,7 +237,8 @@ export const ACCOUNT = {
   signInTitle: 'Welcome back',
   signInLine: 'Sign in to see your home.',
   emailTaken: 'That email already has an account. Sign in instead.',
-  wrong: 'Wrong email or password.',
+  wrong: 'Wrong password. Check it and try again.',
+  noAccount: 'There’s no account for this email yet. Add your name to create it.',
   missingCreate: 'Add your name, your email, and a password of 6 or more characters.',
   missingSignIn: 'Enter your email and your password (6 or more characters).',
   tooMany: 'Too many tries. Wait 15 minutes, then try again.',
@@ -283,6 +284,12 @@ function Account({ google, notice, onCode }: { google: boolean; notice: ServerWe
     } catch (err) {
       if (!alive.current) return;
       const code = err instanceof BackendError ? err.code : null;
+      if (!creating && code === 'not_found') {
+        // No account yet: on to Create Account, with what they typed kept.
+        setMode('create');
+        setError(ACCOUNT.noAccount);
+        return;
+      }
       setError(
         code === 'email_taken'
           ? ACCOUNT.emailTaken
