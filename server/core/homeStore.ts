@@ -291,7 +291,7 @@ export class HomeStore {
     const generation = this.generation;
     const prev = this.cache;
     const run = (async (): Promise<Cached> => {
-      this.counts().reads += 1;
+      this.counts().reads += this.blobs.readCost ?? 1;
       const got = await this.blobs.get(this.options.path, prev?.etag ? { ifNoneMatch: prev.etag } : {});
       const at = this.clock();
       let next: Cached;

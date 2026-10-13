@@ -42,7 +42,10 @@ export interface VercelBlobSdk {
       ifMatch?: string;
     },
   ): Promise<{ etag: string }>;
+  /** The blob's metadata from the Blob API: its etag is the one put's ifMatch is checked against. */
+  head(pathname: string): Promise<{ etag: string }>;
   BlobPreconditionFailedError: abstract new (...args: never[]) => Error;
+  BlobNotFoundError: abstract new (...args: never[]) => Error;
 }
 
 /** A stream's bytes as UTF-8 text. */
@@ -59,6 +62,9 @@ async function readText(stream: ReadableStream<Uint8Array>): Promise<string> {
 }
 
 export class VercelBlobStore implements BlobStore {
+  /** A read is a head and (unless unchanged) a get: two operations toward the Blob budget. */
+  readonly readCost = 2;
+
   constructor(readonly sdk: VercelBlobSdk) {}
 
   /** The SDK's error as the store's. */
@@ -68,16 +74,26 @@ export class VercelBlobStore implements BlobStore {
     return new BlobUnavailableError('blob store unavailable', { cause: err });
   }
 
+  /**
+   * The etag comes from the Blob API (head), never from the content's ETag header: the CDN in
+   * front of the content can answer with an ETag of its own (weak, W/"…", when it compresses),
+   * which a put's ifMatch never matches, so every write would conflict until 'busy'. Head
+   * first, then the body: the body is at least as new as the etag, so a put on it can fail
+   * (and is tried again on what is there) but can never write over a change it did not see.
+   */
   async get(path: string, opts: { ifNoneMatch?: string } = {}): Promise<StoredBlob | 'unchanged' | null> {
     try {
-      const got = await this.sdk.get(path, {
-        access: 'private',
-        useCache: false,
-        ...(opts.ifNoneMatch ? { ifNoneMatch: opts.ifNoneMatch } : {}),
-      });
-      if (got === null) return null;
-      if (got.statusCode === 304) return 'unchanged';
-      return { body: await readText(got.stream), etag: got.blob.etag };
+      let etag: string;
+      try {
+        etag = (await this.sdk.head(path)).etag;
+      } catch (err) {
+        if (err instanceof this.sdk.BlobNotFoundError) return null;
+        throw err;
+      }
+      if (opts.ifNoneMatch && opts.ifNoneMatch === etag) return 'unchanged';
+      const got = await this.sdk.get(path, { access: 'private', useCache: false });
+      if (got === null || got.statusCode !== 200) return null;
+      return { body: await readText(got.stream), etag };
     } catch (err) {
       throw this.failure(err);
     }

@@ -17,6 +17,8 @@ export interface BlobStore {
    * store can't be reached.
    */
   get(path: string, opts?: { ifNoneMatch?: string }): Promise<StoredBlob | 'unchanged' | null>;
+  /** How many operations a get costs toward the Blob budget (default 1). */
+  readonly readCost?: number;
   /**
    * Stores `body` at `path` and resolves to its new ETag. `{ ifMatch }`: only while the blob's
    * ETag is still that, else BlobConflictError (nothing written). `{ create: true }`: only while

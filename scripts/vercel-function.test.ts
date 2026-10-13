@@ -86,8 +86,36 @@ class FakeBlobService {
     const pathname = decodeURIComponent(new URL(opts.path, 'https://x').pathname.slice(1));
     const blob = this.blobs.get(pathname);
     if (!blob) return { statusCode: 404, data: '' };
-    if (headers['if-none-match'] === blob.etag) return { statusCode: 304, data: '', responseOptions: { headers: { etag: blob.etag } } };
-    return { statusCode: 200, data: blob.body, responseOptions: { headers: { etag: blob.etag, 'content-type': 'application/json' } } };
+    // As the CDN in front of the content answers: an ETag of its own (weak: it compresses),
+    // which put's x-if-match never matches. Only the API (head) has the etag put checks.
+    const cdnEtag = `W/${blob.etag}`;
+    if (headers['if-none-match'] === cdnEtag) return { statusCode: 304, data: '', responseOptions: { headers: { etag: cdnEtag } } };
+    return { statusCode: 200, data: blob.body, responseOptions: { headers: { etag: cdnEtag, 'content-type': 'application/json' } } };
+  }
+
+  /** GET https://vercel.com/api/blob/?url=<pathname> (head) */
+  head(opts: MockRequest): FakeReply {
+    const headers = this.headersOf(opts);
+    this.log.push({ method: 'HEAD', path: opts.path, headers });
+    if (headers.authorization !== `Bearer ${TOKEN}`) return { statusCode: 403, data: { error: { code: 'forbidden', message: 'Forbidden' } } };
+    const pathname = new URL(opts.path, 'https://vercel.com').searchParams.get('url')!;
+    const blob = this.blobs.get(pathname);
+    if (!blob) return { statusCode: 404, data: { error: { code: 'not_found', message: 'The requested blob does not exist' } } };
+    const url = `https://${STORE_ID}.private.blob.vercel-storage.com/${pathname}`;
+    return {
+      statusCode: 200,
+      data: {
+        url,
+        downloadUrl: `${url}?download=1`,
+        pathname,
+        size: blob.body.length,
+        uploadedAt: new Date(0).toISOString(),
+        contentType: 'application/json',
+        contentDisposition: 'inline',
+        cacheControl: 'public, max-age=60',
+        etag: blob.etag,
+      },
+    };
   }
 
   /** Another instance stores a change: the blob moves on under this one. */
@@ -178,6 +206,11 @@ beforeAll(async () => {
     .reply<object>((opts) => service.put(opts))
     .persist();
   agent
+    .get('https://vercel.com')
+    .intercept({ path: (p) => /^\/api\/blob\/?\?url=/.test(p), method: 'GET' })
+    .reply<object>((opts) => service.head(opts))
+    .persist();
+  agent
     .get(`https://${STORE_ID}.private.blob.vercel-storage.com`)
     .intercept({ path: () => true, method: 'GET' })
     .reply<object>((opts) => service.get(opts))
@@ -223,9 +256,11 @@ describe('the Vercel Function bundle with @vercel/blob', () => {
     expect(res.json).toEqual({ home: false, google: false });
     expect(res.headers['content-type']).toMatch(/^application\/json/);
     expect(res.headers['cache-control']).toBe('no-store');
-    const get = service.log.find((r) => r.method === 'GET')!;
-    expect(get.path).toBe(`/${BLOB_PATH}?cache=0`);
-    expect(get.headers.authorization).toBe(`Bearer ${TOKEN}`);
+    // The Blob API says there is none: no content is fetched.
+    const head = service.log.find((r) => r.method === 'HEAD')!;
+    expect(new URL(head.path, 'https://vercel.com').searchParams.get('url')).toBe(BLOB_PATH);
+    expect(head.headers.authorization).toBe(`Bearer ${TOKEN}`);
+    expect(service.log.filter((r) => r.method === 'GET')).toHaveLength(0);
   });
 
   it('refuses a request without the X-HomeOS header, and a stranger', async () => {
@@ -323,6 +358,17 @@ describe('the Vercel Function bundle with @vercel/blob', () => {
     const data = load.json.result as { household: { name: string }; areas: { name: string }[] };
     expect(data.household.name).toBe('The Burrow');
     expect(data.areas.map((a) => a.name)).toEqual(expect.arrayContaining(['Shed', 'Loft']));
+  });
+
+  it('creates an account for the person who brought the home online, and signs in with it', async () => {
+    const owner = cookie;
+    cookie = '';
+    const made = await call('POST', '', { op: 'signUp', name: 'Stratis', email: 'stratis@example.com', password: 'duckduck1' });
+    expect([made.status, made.text]).toEqual([200, expect.stringContaining('"name":"Stratis"')]);
+    cookie = '';
+    const back = await call('POST', '', { op: 'signIn', email: 'stratis@example.com', password: 'duckduck1' });
+    expect([back.status, back.text]).toEqual([200, expect.stringContaining('"name":"Stratis"')]);
+    cookie = owner;
   });
 
   it('a poll is answered from the instance’s copy: no Blob call', async () => {
