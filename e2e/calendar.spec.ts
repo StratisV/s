@@ -225,9 +225,11 @@ test.describe('Home calendar', () => {
     await panel(page).getByRole('button', { name: 'Housekeeping visit, 6 of 7 done, £60.00. Show in Housekeeping' }).click();
     await expect(tabButton(page, 'Housekeeping')).toHaveAttribute('aria-current', 'page');
     const screen = housekeepingScreen(page);
-    const heading = screen.getByRole('heading', { level: 3, name: 'Thursday 1 October' });
+    const heading = screen.getByRole('heading', { level: 2, name: 'Thursday 1 October' });
     await expect(heading).toBeFocused();
     await expect(heading).toBeInViewport();
+    // Chosen in Housekeeping's date picker, in its week.
+    await expect(screen.getByRole('grid')).toHaveAccessibleName('Week of Monday 28 September');
     await expect(screen.getByRole('grid').getByRole('button', { name: /^Thursday 1 October/ })).toHaveAccessibleName(
       'Thursday 1 October, visit, 6 of 7 done, £60.00, selected',
     );
@@ -386,26 +388,46 @@ test.describe('Home calendar fits', () => {
   }
 });
 
-test.describe('the Housekeeping calendar, unchanged', () => {
-  test('the same card: month title and total, 46px days with 40px circles, a dot for a visit, no marks or legend', async ({ page }) => {
+test.describe('the Housekeeping calendar: the same date picker', () => {
+  test('the same bar and card: the week strip, 46px days with 40px circles, a dot for a visit, no marks or legend; the month with its total', async ({
+    page,
+  }) => {
+    const homeBar = (await calendar(page).locator('[data-calendar-bar]').boundingBox())!;
+    const homeCard = (await grid(page).locator('xpath=..').boundingBox())!;
     await goToTab(page, 'Housekeeping');
     const screen = housekeepingScreen(page);
-    const hkGrid = screen.getByRole('grid');
-    await expect(hkGrid).toHaveAccessibleName('October 2026');
-    await expect(screen.getByText('1 visit · £60.00', { exact: true })).toBeVisible();
-    await expect(screen.getByRole('button', { name: 'Next month' })).toBeDisabled();
-    await expect(screen.getByRole('button', { name: 'Show month' })).toHaveCount(0);
+    const hkCalendar = screen.getByRole('region', { name: 'Calendar', exact: true });
+    const hkGrid = hkCalendar.getByRole('grid');
+    await expect(hkGrid).toHaveAccessibleName('Week of Monday 5 October');
+    await expect(hkCalendar.getByText('5 to 11 October', { exact: true })).toBeVisible();
+    await expect(hkCalendar.getByRole('button', { name: 'Show month', exact: true })).toBeVisible();
+    await expect(hkCalendar.getByRole('button', { name: 'Next week' })).toBeDisabled();
+    // The bar is Home's; the card is as wide, a little taller without marks under the days.
+    const bar = (await hkCalendar.locator('[data-calendar-bar]').boundingBox())!;
+    expect([bar.x, bar.width, bar.height]).toEqual([homeBar.x, homeBar.width, homeBar.height]);
     const card = hkGrid.locator('xpath=..');
     const box = (await card.boundingBox())!;
+    expect([box.x, box.width]).toEqual([homeCard.x, homeCard.width]);
     expect(box.width).toBe(370);
-    expect(box.height).toBe(328);
-    const oct1 = hkGrid.getByRole('button', { name: /^Thursday 1 October/ });
-    expect((await oct1.boundingBox())!.height).toBe(46);
-    expect((await oct1.locator('span').first().boundingBox())!.width).toBe(40);
-    await expect(oct1).toHaveAttribute('data-visit', 'true');
-    await expect(oct1.locator('span').first()).toHaveCSS('background-color', 'rgb(0, 122, 255)');
+    expect(box.height).toBe(140);
+    const oct8 = hkGrid.getByRole('button', { name: /^Thursday 8 October/ });
+    expect((await oct8.boundingBox())!.height).toBe(46);
+    expect((await oct8.locator('span').first().boundingBox())!.width).toBe(40);
+    await expect(oct8.locator('span').first()).toHaveCSS('background-color', 'rgb(0, 122, 255)');
     await expect(card.locator('[data-legend], [data-rag]')).toHaveCount(0);
     await expect(hkGrid.getByRole('button', { name: /^Friday 9 October/ })).toBeDisabled();
+
+    // The month: its title and total, as before, and the visit's dot.
+    await hkCalendar.getByRole('button', { name: 'Show month', exact: true }).click();
+    await expect(hkGrid).toHaveAccessibleName('October 2026');
+    await expect(hkCalendar.getByText('1 visit · £60.00', { exact: true })).toBeVisible();
+    await expect(hkCalendar.getByRole('button', { name: 'Next month' })).toBeDisabled();
+    expect((await card.boundingBox())!.height).toBe(328);
+    await expect(hkGrid.getByRole('button', { name: /^Thursday 1 October/ })).toHaveAttribute('data-visit', 'true');
+    await expect(card.locator('[data-legend], [data-rag]')).toHaveCount(0);
+    // Home's choice is its own.
+    await goToTab(page, 'Home');
+    await expect(toggle(page, 'Show month')).toBeVisible();
   });
 
   test('a visit is marked the same way on both calendars: the tint dot in the circle', async ({ page }) => {
@@ -419,9 +441,10 @@ test.describe('the Housekeeping calendar, unchanged', () => {
     const home = await mark(day(page, 'Thursday 1 October'));
     expect(home).toEqual({ content: '""', size: '5px x 5px', colour: 'rgb(0, 122, 255)', bottom: '4px' });
     await goToTab(page, 'Housekeeping');
-    const hk = housekeepingScreen(page).getByRole('grid').getByRole('button', { name: /^Thursday 1 October/ });
-    // Housekeeping chooses its latest visit (filled, so its dot is white): choose another day first.
-    await housekeepingScreen(page).getByRole('grid').getByRole('button', { name: /^Monday 5 October/ }).click();
+    const hkCalendar = housekeepingScreen(page).getByRole('region', { name: 'Calendar', exact: true });
+    // Today is chosen at first: last week's visit is not.
+    await hkCalendar.getByRole('button', { name: 'Previous week' }).click();
+    const hk = hkCalendar.getByRole('grid').getByRole('button', { name: /^Thursday 1 October/ });
     expect(await mark(hk)).toEqual(home);
   });
 });

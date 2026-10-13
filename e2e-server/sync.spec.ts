@@ -369,6 +369,13 @@ const day = (screen: Locator, name: string) => grid(screen).getByRole('button', 
 const detail = (screen: Locator) => screen.locator('[data-day-detail]');
 const noteField = (screen: Locator) => screen.getByRole('textbox', { name: 'Message for the housekeeper' });
 
+/** The Monday of the week a day (YYYY-MM-DD) is in: the calendar's week strip starts there. */
+function mondayOf(isoDate: string): string {
+  const d = new Date(`${isoDate}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+
 /** "Friday 9 October" for 2026-10-09 (the calendar's day names). */
 function longDay(isoDate: string): string {
   const d = new Date(`${isoDate}T12:00:00Z`);
@@ -451,8 +458,8 @@ test('housekeeping: the message, ticks, comments, price, the task list and visit
   // Shea adds a visit on a past day: Stratis's calendar shows it.
   await quiet(stratis);
   const past = londonDate(-2);
-  if (past.slice(0, 7) !== londonDate().slice(0, 7)) {
-    for (const s of [sa, sb]) await s.getByRole('button', { name: 'Previous month' }).click();
+  if (mondayOf(past) !== mondayOf(londonDate())) {
+    for (const s of [sa, sb]) await calendar(s).getByRole('button', { name: 'Previous week' }).click();
   }
   const pastName = longDay(past);
   await day(sb, pastName).click();
@@ -472,7 +479,10 @@ test('housekeeping: the message, ticks, comments, price, the task list and visit
   await quiet(stratis);
   await sb.getByRole('button', { name: 'Clear message' }).click();
   await expect(noteField(sa)).toHaveValue('', { timeout: SYNC_MS });
-  await expect(calendar(sa).getByText(/^1 visit/)).toBeVisible();
+  // Back to today on Stratis's phone: today's visit is the only one left.
+  await calendar(sa).getByRole('button', { name: 'Today', exact: true }).click();
+  await expect(calendar(sa).locator('[role="grid"] [data-visit]')).toHaveCount(1);
+  await expect(calendar(sa).locator('[data-today-summary]')).toHaveText(/^1 of 8 done today/);
 
   await expectNoReload(stratis);
   await expectNoReload(shea);

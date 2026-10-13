@@ -1494,8 +1494,11 @@ entry builds the same with its own store and `secureCookies: false`.)
 ### Home: the calendar
 
 `screens/home/HomeCalendar.tsx` (+ `.module.css`, `.test.tsx`), logic in
-`lib/logic/calendar.ts` (+ `.test.ts`) and `lib/logic/months.ts`, on the calendar card
-`ui/MonthCalendar.tsx` that Housekeeping uses too. Nothing new is stored on the server.
+`lib/logic/calendar.ts` (+ `.test.ts`) and `lib/logic/months.ts`, on the date picker
+`ui/DatePicker.tsx` (+ `.module.css`, `.test.tsx`: the bar, Show month / Show week, Today, the
+chosen day and the week and month shown, `useChosenDay()`, and `revealDay()`) and its calendar
+card `ui/MonthCalendar.tsx`, both of which Housekeeping uses too (see "Housekeeping" UI 2).
+Nothing new is stored on the server.
 
 - **Where**: a section between the person filter and the areas (above Collapse All), named by
   a visually hidden `h2` **Calendar** (no visible header row, to keep the areas up the
@@ -1573,9 +1576,10 @@ entry builds the same with its own store and `secureCookies: false`.)
   row: the broom, "Housekeeping visit" and "6 of 7 done · £60.00" (`visitSummary()`), named
   "Housekeeping visit, 6 of 7 done, £60.00. Show in Housekeeping". It opens that day in
   Housekeeping: App switches tab and passes the day (`showDay`); Housekeeping chooses it in its
-  calendar (in its month), scrolls its heading to the top and focuses it (`tabIndex={-1}`), or
-  for today scrolls to the Today section and focuses its heading, as Show does. 10px under the
-  last card, as Collapse All's tap target reaches that far up.
+  date picker (in its week and month), so the day shows in place of the Today section, then
+  scrolls its heading to the top and focuses it (`tabIndex={-1}`); for today, the Today
+  section's heading. 10px under the last card, as Collapse All's tap target reaches that far
+  up.
 - **Two lists of rows**: the chosen day's (inside `section[data-calendar]`) and the areas'.
   Moving focus to a nearby row (after a completion in `ItemRow`, or when the Item sheet closes
   on a row that is gone in `App`) stays in the row's own list (`rowsBeside()` in
@@ -1625,8 +1629,10 @@ entry builds the same with its own store and `secureCookies: false`.)
   it, the view remembered after a reload, the link to Housekeeping, the keyboard (a weekly
   item and an off-grid day completed from the list), a new day after midnight, Reduce Motion,
   320, 375 and 402px with no sideways scroll and 44px targets, the first screen at 402 by 874
-  and 320 by 700, a day low in the month brought up above the + at 320 by 700, the
-  Housekeeping calendar unchanged, and the visit marked the same on both). The e2e helpers
+  and 320 by 700, a day low in the month brought up above the + at 320 by 700, Housekeeping's
+  date picker the same bar and card, and the visit marked the same on both), and
+  `ui/DatePicker.test.tsx` (the line and Today, Show month and Show week kept under the screen's
+  own key, `lastDay`, the chosen day kept per household until a new day). The e2e helpers
   `ring`, `row` and `areaHeadings` look in the areas only (`areas()` in `e2e/fixtures.ts`),
   since the chosen day lists rows of its own.
 
@@ -2145,8 +2151,8 @@ for `src/lib/logic/housekeeping.test.ts`). Calendar: `WEEKDAYS` (Monday first), 
 padding; these five live in `lib/logic/months.ts`, which Home's calendar shares, and are
 re-exported here), `canHaveVisit`, `longDay` ("Thursday 1 October"; `fullDay()` in
 `months.ts`), `calendarDayLabel` (", selected"
-for the chosen day), `defaultSelectedDay` (today's month, or any month),
-`daySelectedAnnouncement`. Visits: `isRecorded`, `visitOn`, `visitDays`, `monthTotals`,
+for the chosen day), `daySelectedAnnouncement`, `todayLine` ("6 of 7 done today · £60.00").
+Visits: `isRecorded`, `visitOn`, `visitDays` (a month's, or all), `monthTotals`,
 `monthSummary` ("4 visits · £180.00", "2 visits", "No visits"), `doneCount`,
 `housekeepingSubtitle`. Prices:
 `formatPrice` ("£1,234.50"), `priceInputValue` ("1234.50"), `parsePrice`. Checklist:
@@ -2170,8 +2176,8 @@ Files under `src/screens/housekeeping/` (each with a `.module.css` where it has 
 | `useNewNote.ts` | the Housekeeping tab's dot (a new message from someone else) |
 | `Checklist.tsx` | the tasks as checkboxes |
 | `PriceField.tsx` | the £ field: parse, format, error |
-| `Calendar.tsx` | the month of visits: `ui/MonthCalendar.tsx` (the card Home's calendar uses too; styles in `ui/MonthCalendar.module.css`) with the month's summary, a dot for each visit (`data-visit`) and `lastDay` today |
-| `DayDetail.tsx` | the selected day under the calendar |
+| `Calendar.tsx` | the visits under the tab switch: `ui/DatePicker.tsx` (Home's date picker, on the card `ui/MonthCalendar.tsx`) with today's line, the month's summary, a dot for each visit (`data-visit`) and `lastDay` today; the view kept under `homeos.calendar.housekeeping` |
+| `DayDetail.tsx` | a chosen day before today, in place of the Today section |
 | `TaskListSheet.tsx` | the page sheet that edits the task list; App mounts it beside the stage, like the Item sheet, so the screen behind is pushed back |
 | `useSavedText.ts` | the message and comments fields: save after a pause and on blur, keep a draft while editing or after a failed save |
 | `Housekeeping.module.css` | the shared sections, cards, captions, price row and empty states |
@@ -2200,10 +2206,37 @@ pops in when you come back from a tab without it.
 **Screen**, top to bottom (16px gutters, white cards radius 24, section headers 20/25/600 as
 `h2`, rows 17/22):
 
-1. `ScreenHeader`: the hero with the title **Housekeeping**, the secondary line
-   `housekeepingSubtitle()` ("Today's visit", "Last visit Thu 1 Oct" or "Weekly") and the
-   avatar; then the tab switch. `Screen` with `label="Housekeeping"` and `withAdd={false}`.
-2. **Message for the housekeeper** (`NoteSection`): the `h2`, with **Clear** on the right
+1. `ScreenHeader`: the hero with today's date in full on its top line, as on Home ("THURSDAY
+   8 OCTOBER", `longDay()` in `lib/logic/dates.ts`, in a `time`), the title **Housekeeping**,
+   the secondary line `housekeepingSubtitle()` ("Today's visit", "Last visit Thu 1 Oct" or
+   "Weekly") and the avatar; then the tab switch. `Screen` with `label="Housekeeping"` and
+   `withAdd={false}`.
+2. **Calendar** (`Calendar`, right under the tab switch): Home's date picker
+   (`ui/DatePicker.tsx`, see "Home: the calendar"), in a section named by a visually hidden
+   `h2` **Calendar**. The 44px bar: on the left, while today is chosen and shown, a 15/20
+   secondary line on today's visit (`todayLine()`: "No visit yet today", "6 of 7 done today ·
+   £60.00"), else **Today**; on the right **Show month** / **Show week**, kept on this device
+   under `homeos.calendar.housekeeping` (apart from Home's choice). Then the card: this week as
+   a strip at first ("5 to 11 October" between Previous week and Next week, the grid named
+   "Week of Monday 5 October"), or the month ("October 2026" between Previous month and Next
+   month, with `monthSummary(monthTotals())` under it: "4 visits · £180.00"). No marks under
+   the days and no legend: each day's button fills its cell (46px tall, square, so a tap
+   anywhere in the cell counts) and draws a round 40px circle (36px below 360px wide) with its
+   number: today has a tint number and a 1.5px tint ring, the chosen day is filled with the
+   tint and has a white number, a day with a recorded visit (`visitDays()`) has a 5px dot under
+   its number (tint; white when chosen), the mark Home's calendar gives a visit, and future
+   days are dimmed (`--label-tertiary`) and disabled (`lastDay` today), as is Next once the
+   week or month after would be all future: no visits can be ahead. The chosen day and the
+   week and month shown (`useChosenDay()`) are remembered while the app runs, per household:
+   today at first, in this week and month, and again on a new day. Changing week or month
+   keeps the chosen day; Today chooses today again, in its week. Choosing a day shows it below
+   (5.), says what is there through the live region (`daySelectedAnnouncement()`: "Thursday 1
+   October: 6 of 7 done, £60.00. Details below the calendar.", "Thursday 8 October, today: not
+   started yet. …") and, when its heading is low on the screen, scrolls it up (`revealDay()`,
+   measured, no smooth scroll with Reduce Motion) until 45% of the screen is left under the
+   heading for the day's details, without taking the heading under the docked tab switch, so
+   the strip stays in sight; focus stays on the day.
+3. **Message for the housekeeper** (`NoteSection`): the `h2`, with **Clear** on the right
    (15px tint text button, `aria-label="Clear message"`; with nothing to clear it stays in place,
    dimmed and `aria-disabled`, so focus and VoiceOver keep their place after a Clear). A card
    that is an auto-growing textarea (`AutoGrowTextarea` from `screens/item`, two lines when
@@ -2216,8 +2249,9 @@ pops in when you come back from a tab without it.
    name and time). After a save, the byline starts with "✓ Saved ·" for 2s (`SAVED_FLASH_MS`);
    a failed save keeps the text in the field (unsaved typing, sent again on the next pause or
    blur) and shows "Not saved." with **Try again** in place of the byline.
-3. **Today** (`h2`, with **Edit** on the right: 15px tint text, `aria-label="Edit task list"`,
-   opens `TaskListSheet`), then `VisitEditor` for `today`:
+4. **Today**, while today is chosen in the calendar (`h2`, `tabIndex={-1}`, with **Edit** on
+   the right: 15px tint text, `aria-label="Edit task list"`, opens `TaskListSheet`), then
+   `VisitEditor` for `today`:
    - the checklist card (`Checklist`, rows from `checklistFor()`): each row a `label` with a
      native checkbox drawn as a 24px iOS circle (empty: 1.5px #C7C7CC ring; ticked: filled
      `--tint` with a white check), the title at 17/22, and when ticked a second line at 13/18
@@ -2246,33 +2280,13 @@ pops in when you come back from a tab without it.
      field goes back to the stored price.
    - Once something is recorded today, a card with **Delete Visit** under it, as on other days
      (title "Delete today's visit?"); afterwards focus goes to the Today heading.
-4. **Calendar** (`h2`, `Calendar`): one card. Its top row: a previous-month button (chevron,
-   `aria-label="Previous month"`), the month title centred (17/22/600, `monthTitle()`), a
-   next-month button (`aria-label="Next month"`, disabled on today's month: no visits can be
-   ahead). Under the title, 15/20 secondary: `monthSummary(monthTotals())` ("4 visits ·
-   £180.00"). Then the grid: weekday letters (13/18/600 secondary, `WEEKDAYS`), then the weeks
-   of `monthGrid()`. Each day's button fills its cell (46px tall, square, so a tap anywhere in
-   the cell counts) and draws a round 40px circle (36px below 360px wide) with its number:
-   today has a tint number and a 1.5px tint ring, the selected day is filled with the tint and
-   has a white number, a day with a visit has a 5px dot under its number (tint; white when
-   selected), and future days are dimmed (`--label-tertiary`) and disabled. The month and the
-   selected day are remembered while the app runs (like Stats' period). On first opening: the
-   month of today and `defaultSelectedDay()` (the latest recorded visit this month before
-   today, else nothing). Changing month chooses that month's latest recorded visit, or nothing,
-   never a day from another month. Choosing a day says what is there through the live region
-   (`daySelectedAnnouncement()`: "Thursday 1 October: 6 of 7 done, £60.00. Details below the
-   calendar.") and, when its heading is low on the screen, scrolls it up (`scrollIntoView`,
-   `block: 'nearest'`, the heading's `scroll-margin-bottom` 45vh; no smooth scroll with Reduce
-   Motion); focus stays on the day.
-5. **The selected day** (`DayDetail`, under the calendar card; a visit on Home's calendar opens
-   its day here, chosen, with focus on this heading: see "Home: the calendar"):
-   - nothing selected: 15/20 secondary "Tap a day to see its visit."
-   - a heading (`h3`, 20/25/600): `longDay()` ("Thursday 1 October");
-   - today: "Today's visit is above." and a tint **Show** button (`aria-label="Show today's
-     visit"`) that scrolls the Today section into view and focuses its heading (`tabIndex={-1}`);
-   - a past day without a visit: "No visit recorded." and a tint **Add a visit** button
+5. **A past day** (`DayDetail`), in place of the Today section while a day before today is
+   chosen in the calendar (a visit on Home's calendar opens its day here, chosen, with focus on
+   this heading: see "Home: the calendar"):
+   - a heading (`h2`, 20/25/600, `tabIndex={-1}`): `longDay()` ("Thursday 1 October");
+   - without a visit: "No visit recorded." and a tint **Add a visit** button
      (`addHousekeepingVisit(date)`; focus then moves to the first checkbox);
-   - a past day with a visit: a card **Message that day** (13/18 secondary label above 17/22
+   - with a visit: a card **Message that day** (13/18 secondary label above 17/22
      text, read-only; "No message that day." when empty), then `VisitEditor` for that date
      (editable, same as today; its fields are named with the day, "Comments, Thursday 1
      October" and "Price for the day, Thursday 1 October", so they can't be mistaken for
@@ -2310,15 +2324,16 @@ draft and follows the stored value again once saved or blurred.
 - The checklist is a `fieldset` with a visually hidden `legend` ("Tasks today", or "Tasks on
   Thursday 1 October") and real checkboxes named by their titles; the "who ticked it" line is
   their description (`aria-describedby`).
-- The calendar is a `table` with `role="grid"`, labelled by the month title (the title is
-  `aria-live="polite"`, so changing month is announced); column headers are `th scope="col"`
-  with the full weekday as `abbr`; each day cell is `role="gridcell"` with `aria-selected` and
-  holds the day's button, named by `calendarDayLabel()` ("Thursday 1 October, visit, 6 of 7
-  done, £60.00", then ", selected" for the chosen day, since focus is on the button, not its
-  cell). One day button is in the tab order (the selected day, else today, else the
-  1st); arrow keys move a day or a week, Home and End go to the start and end of the week,
-  Page Up and Page Down change month, moving past the month's edge changes month, and focus
-  never lands on a future day.
+- The calendar is a `table` with `role="grid"`, named by the week ("Week of Monday 5
+  October") or labelled by the month title (the titles are `aria-live="polite"`, so changing
+  week or month is announced); column headers are `th scope="col"` with the full weekday as
+  `abbr`; each day cell is `role="gridcell"` with `aria-selected` and holds the day's button,
+  named by `calendarDayLabel()` ("Thursday 1 October, visit, 6 of 7 done, £60.00", then ",
+  selected" for the chosen day, since focus is on the button, not its cell). One day button is
+  in the tab order (the one the keys moved to, else the chosen day, else today, else the first
+  day shown); arrow keys move a day or a week, Home and End go to the start and end of the
+  week, Page Up and Page Down change month, moving past the edge of the week or month goes on
+  into the next, and focus never lands on a future day.
 - One polite, visually hidden live region on the screen announces what was saved: "Saved"
   (message, comments, price), "<title> done" or "<title> not done" (ticks), "Message cleared",
   "Visit added", "Visit deleted", and what a chosen day holds. Failures are the provider's
@@ -2346,11 +2361,13 @@ subtitle reads "Last visit Thu 1 Oct", October "1 visit · £60.00", September "
   then the stored one; a failed write takes back only its change; a future date is refused;
   deleting a pending visit (straight after Add a visit, after a failed reload, after a failed
   write); Undo after Clear (shown at once, after the Clear in flight, a failure taken back).
-- `src/screens/housekeeping/HousekeepingScreen.test.tsx`: the sections and copy, saving
-  comments and the price ("Saved", and a failed save keeping what was typed), the price error,
-  the calendar labels, keyboard and month change, choosing a day (scroll and announcement),
-  Add a visit, Delete Visit (today's too), visits with nothing recorded, Clear and Undo, and
-  the task list sheet.
+- `src/screens/housekeeping/HousekeepingScreen.test.tsx`: the date over the title, the
+  sections and copy, saving comments and the price ("Saved", and a failed save keeping what was
+  typed), the price error, the date picker (this week with today chosen and its line, Previous
+  week and Today, Show month with each month's total kept apart from Home's, labels, the
+  keyboard), choosing a day (it shows in place of today's, scroll and announcement), a day from
+  Home's calendar, Add a visit, Delete Visit (today's too), visits with nothing recorded, Clear
+  and Undo, and the task list sheet.
 - `src/screens/housekeeping/HousekeepingProvider.test.tsx`: the screen with the real provider
   and demo backend: typing kept through failed saves and saved once back; Delete straight after
   Add a visit; a tick taken back counts no visit.
@@ -2364,13 +2381,17 @@ subtitle reads "Last visit Thu 1 Oct", October "1 visit · £60.00", September "
   realtime on the four tables.
 - `e2e/housekeeping.spec.ts`: the tab order and `aria-current`; no + on Housekeeping; the switch
   fits at 320, 375 and 402px (no horizontal scroll, every label's `scrollWidth` within its
-  `clientWidth`); the seed as above; ticking starts today's visit (subtitle "Today's visit",
-  today marked); comments and price save and survive a reload; September's summary; a past
-  visit's details; Delete Visit (today's too); Add a visit; future days disabled; the task list
+  `clientWidth`); the seed as above, today's date over the title and the date picker right under
+  the tab switch; ticking starts today's visit (subtitle "Today's visit", today marked, the
+  line); comments and price save and survive a reload (the month remembered); September's
+  summary; a past visit's details in place of today's; Show week and Today; the keyboard;
+  Delete Visit (today's too); Add a visit; future days and next week disabled; the task list
   sheet's add, rename, reorder and delete reach today's checklist while last week's visit keeps
-  the old title; Undo after Clear keeps the writer; "Saved"; a day low on the screen scrolls
-  into view; a tap in a cell's corner chooses it at 320px; the Housekeeping dot and reopening
-  on the last tab; focus back on Edit after the task list. Existing e2e tests keep passing.
+  the old title; Undo after Clear keeps the writer; "Saved"; a chosen day brought up with the
+  strip still in sight (with and without Reduce Motion); a tap in a cell's corner chooses it at
+  320px; the picker's 44px targets and no sideways scroll at 320, 375 and 402px; the
+  Housekeeping dot and reopening on the last tab; focus back on Edit after the task list.
+  Existing e2e tests keep passing.
 
 ## Edge Function `scheduler` (runs every 15 minutes via pg_cron + pg_net)
 

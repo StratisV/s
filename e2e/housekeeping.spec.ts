@@ -18,7 +18,8 @@ import {
 // The Housekeeping tab (docs/ARCHITECTURE.md "Housekeeping") against the demo seed, at the
 // e2e clock (Thu 8 Oct 2026, 10:00 London): the message from Shea yesterday at 19:20, the
 // starter task list, no visit today, and visits on Thu 1 Oct, 24 Sep, 17 Sep, 10 Sep and
-// 3 Sep (HOUSEKEEPING_DEMO_VISITS).
+// 3 Sep (HOUSEKEEPING_DEMO_VISITS). The calendar is Home's date picker: this week (5 to 11
+// October) at first, with today chosen.
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
 
@@ -45,8 +46,18 @@ const calendar = (screen: Locator) => screen.getByRole('region', { name: 'Calend
 const grid = (screen: Locator) => screen.getByRole('grid');
 const day = (screen: Locator, name: string | RegExp) =>
   grid(screen).getByRole('button', { name: typeof name === 'string' ? new RegExp(`^${name}(,|$)`) : name });
-/** The chosen day's visit, under the calendar. */
+/** A button of the calendar: Today, Show month, Previous week… */
+const control = (screen: Locator, name: string) => calendar(screen).getByRole('button', { name, exact: true });
+/** The line beside the calendar while today is chosen and shown. */
+const line = (screen: Locator) => calendar(screen).locator('[data-today-summary]');
+/** The chosen day before today, in place of the Today section. */
 const detail = (screen: Locator) => screen.locator('[data-day-detail]');
+/** Last week in the strip, and its visit (Thu 1 Oct) chosen. */
+async function chooseLastVisit(screen: Locator): Promise<void> {
+  await control(screen, 'Previous week').click();
+  await day(screen, 'Thursday 1 October').click();
+  await expect(detail(screen).getByRole('heading', { level: 2 })).toHaveText('Thursday 1 October');
+}
 /** What the screen last said was saved (its polite live region). */
 const said = (screen: Locator) => screen.locator('[data-announcer]');
 const message = (screen: Locator) => screen.getByRole('textbox', { name: 'Message for the housekeeper' });
@@ -121,13 +132,16 @@ test.describe('Housekeeping tab', () => {
     });
   }
 
-  test('shows the message at the top, today’s list, and the calendar of visits', async ({ page }) => {
+  test('shows today’s date, the date picker under the tab switch, the message, then today’s list', async ({ page }) => {
     const screen = await openHousekeeping(page);
     await expect(screen.getByText('Last visit Thu 1 Oct', { exact: true })).toBeVisible();
+    // Today's date over the title, as on Home.
+    await expect(screen.locator('time')).toHaveText('THURSDAY 8 OCTOBER', { useInnerText: true });
+    await expect(screen.locator('time')).toHaveAttribute('datetime', '2026-10-08');
     await expect(screen.getByRole('heading', { level: 2 })).toHaveText([
+      'Calendar',
       'Message for the housekeeper',
       'Today',
-      'Calendar',
     ]);
     await expect(message(screen)).toHaveValue('Guests arrive Friday, please do the spare room first.');
     await expect(screen.getByText('🦆 Shea · Yesterday 19:20', { exact: true })).toBeVisible();
@@ -136,19 +150,33 @@ test.describe('Housekeeping tab', () => {
     expect(await checklist(tasks)).toEqual(STARTER.map((title) => ({ title, done: false })));
     await expect(today(screen).getByText("Not started yet. Ticking a task starts today's visit.")).toBeVisible();
 
-    await expect(calendar(screen).getByText('October 2026', { exact: true })).toBeVisible();
-    await expect(calendar(screen).getByText('1 visit · £60.00', { exact: true })).toBeVisible();
-    await expect(day(screen, 'Thursday 1 October')).toHaveAccessibleName(
-      'Thursday 1 October, visit, 6 of 7 done, £60.00, selected',
-    );
-    await expect(day(screen, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today');
-    // Days to come can't have a visit, and there is no month after this one yet.
+    // Right under the tab switch: this week, today chosen and ringed, a line on today's visit.
+    const below = await calendar(screen).evaluate((el) => {
+      const nav = document.querySelector('nav[aria-label="Tabs"]')!.getBoundingClientRect();
+      return el.getBoundingClientRect().top - nav.bottom;
+    });
+    expect(below).toBeGreaterThanOrEqual(0);
+    expect(below).toBeLessThanOrEqual(12);
+    await expect(grid(screen)).toHaveAccessibleName('Week of Monday 5 October');
+    await expect(calendar(screen).getByText('5 to 11 October', { exact: true })).toBeVisible();
+    await expect(day(screen, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today, selected');
+    await expect(day(screen, 'Thursday 8 October')).toHaveAttribute('data-today', 'true');
+    await expect(line(screen)).toHaveText('No visit yet today');
+    await expect(control(screen, 'Today')).toHaveCount(0);
+    await expect(control(screen, 'Show month')).toBeVisible();
+    // Days to come can't have a visit, and there is no week after this one yet.
     await expect(day(screen, 'Friday 9 October')).toBeDisabled();
-    await expect(screen.getByRole('button', { name: 'Next month' })).toBeDisabled();
+    await expect(control(screen, 'Next week')).toBeDisabled();
 
-    // The last visit is chosen: what was asked that day, what was done.
+    // Last week: the visit's dot; chosen, what was asked that day and what was done, in place of today's.
+    await control(screen, 'Previous week').click();
+    await expect(calendar(screen).getByText('28 Sep to 4 Oct', { exact: true })).toBeVisible();
+    await expect(day(screen, 'Thursday 1 October')).toHaveAccessibleName('Thursday 1 October, visit, 6 of 7 done, £60.00');
+    await expect(day(screen, 'Thursday 1 October')).toHaveAttribute('data-visit', 'true');
+    await day(screen, 'Thursday 1 October').click();
+    await expect(today(screen)).toHaveCount(0);
     const visit = detail(screen);
-    await expect(visit.getByRole('heading', { level: 3 })).toHaveText('Thursday 1 October');
+    await expect(visit.getByRole('heading', { level: 2 })).toHaveText('Thursday 1 October');
     await expect(visit.getByText('Please leave the ironing for next week.', { exact: true })).toBeVisible();
     expect(await checklist(visit.getByRole('group', { name: 'Tasks on Thursday 1 October' }))).toEqual(
       STARTER.map((title) => ({ title, done: title !== 'Ironing' })),
@@ -173,17 +201,17 @@ test.describe('Housekeeping tab', () => {
     await expect(screen.getByText("Today's visit", { exact: true })).toBeVisible();
     await expect(today(screen).getByText(/^Recorded by 🦔 Stratis · Today 10:00/)).toBeVisible();
     await expect(day(screen, 'Thursday 8 October')).toHaveAccessibleName(
-      'Thursday 8 October, today, visit, 1 of 7 done',
+      'Thursday 8 October, today, visit, 1 of 7 done, selected',
     );
-    await expect(calendar(screen).getByText('2 visits · £60.00', { exact: true })).toBeVisible();
+    await expect(line(screen)).toHaveText('1 of 7 done today');
 
     await box.click();
     await expect(box).not.toBeChecked();
     await expect(said(screen)).toHaveText('Change the bed sheets not done');
     // Nothing recorded any more: not a visit, anywhere.
-    await expect(day(screen, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today');
+    await expect(day(screen, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today, selected');
     await expect(day(screen, 'Thursday 8 October')).not.toHaveAttribute('data-visit', 'true');
-    await expect(calendar(screen).getByText('1 visit · £60.00', { exact: true })).toBeVisible();
+    await expect(line(screen)).toHaveText('No visit yet today');
     await expect(screen.getByText('Last visit Thu 1 Oct', { exact: true })).toBeVisible();
     await expect(today(screen).getByText("Not started yet. Ticking a task starts today's visit.")).toBeVisible();
     await expect(today(screen).getByRole('button', { name: 'Delete Visit' })).toHaveCount(0);
@@ -213,6 +241,8 @@ test.describe('Housekeeping tab', () => {
     await expect(price).not.toHaveAttribute('aria-invalid', 'true');
     await expect(today(screen).getByRole('alert')).toHaveCount(0);
     await expect(said(screen)).toHaveText('Saved');
+    await expect(line(screen)).toHaveText('0 of 7 done today · £45.50');
+    await control(screen, 'Show month').click();
     await expect(calendar(screen).getByText('2 visits · £105.50', { exact: true })).toBeVisible();
 
     await reopen(page);
@@ -221,8 +251,10 @@ test.describe('Housekeeping tab', () => {
     await expect(today(screen).getByRole('textbox', { name: 'Comments' })).toHaveValue('Out of bin bags.');
     await expect(today(screen).getByRole('textbox', { name: 'Price for the day' })).toHaveValue('45.50');
     await expect(day(screen, 'Thursday 8 October')).toHaveAccessibleName(
-      'Thursday 8 October, today, visit, 0 of 7 done, £45.50',
+      'Thursday 8 October, today, visit, 0 of 7 done, £45.50, selected',
     );
+    // The month is remembered on this device.
+    await expect(calendar(screen).getByText('2 visits · £105.50', { exact: true })).toBeVisible();
   });
 
   test('the message saves itself, and Clear can be undone', async ({ page }) => {
@@ -254,13 +286,17 @@ test.describe('Housekeeping tab', () => {
     await expect(clear).not.toHaveAttribute('aria-disabled', 'true');
   });
 
-  test('the calendar shows each month’s visits and total; a past visit’s details', async ({ page }) => {
+  test('Show month: each month’s visits and total; a past visit’s details', async ({ page }) => {
     const screen = await openHousekeeping(page);
-    await screen.getByRole('button', { name: 'Previous month' }).click();
+    await control(screen, 'Show month').click();
+    await expect(grid(screen)).toHaveAccessibleName('October 2026');
+    await expect(calendar(screen).getByText('1 visit · £60.00', { exact: true })).toBeVisible();
+    await expect(control(screen, 'Next month')).toBeDisabled();
+    await control(screen, 'Previous month').click();
     await expect(calendar(screen).getByText('September 2026', { exact: true })).toBeVisible();
     await expect(calendar(screen).getByText('4 visits · £240.00', { exact: true })).toBeVisible();
-    // September's own latest visit shows under it, not October's day.
-    await expect(detail(screen).getByRole('heading', { level: 3 })).toHaveText('Thursday 24 September');
+    // Another month keeps the chosen day: today's visit is still the one shown.
+    await expect(today(screen).getByRole('group', { name: 'Tasks today' })).toBeVisible();
     for (const date of [
       'Thursday 3 September',
       'Thursday 10 September',
@@ -274,7 +310,7 @@ test.describe('Housekeeping tab', () => {
     await day(screen, 'Thursday 24 September').click();
     await expect(day(screen, 'Thursday 24 September').locator('xpath=..')).toHaveAttribute('aria-selected', 'true');
     const visit = detail(screen);
-    await expect(visit.getByRole('heading', { level: 3 })).toHaveText('Thursday 24 September');
+    await expect(visit.getByRole('heading', { level: 2 })).toHaveText('Thursday 24 September');
     await expect(visit.getByText('No message that day.', { exact: true })).toBeVisible();
     expect(await checklist(visit.getByRole('group', { name: 'Tasks on Thursday 24 September' }))).toEqual(
       STARTER.map((title) => ({ title, done: true })),
@@ -292,27 +328,31 @@ test.describe('Housekeeping tab', () => {
       'Thursday 24 September, visit, 6 of 7 done, £65.00, selected',
     );
 
-    await screen.getByRole('button', { name: 'Next month' }).click();
-    await expect(calendar(screen).getByText('October 2026', { exact: true })).toBeVisible();
-    // Today points back up.
-    await day(screen, 'Thursday 8 October').click();
-    await expect(detail(screen).getByText("Today's visit is above.")).toBeVisible();
-    await detail(screen).getByRole('button', { name: 'Show' }).click();
-    await expect(today(screen).getByRole('heading', { name: 'Today' })).toBeFocused();
-    await expect(today(screen).getByRole('heading', { name: 'Today' })).toBeInViewport();
+    // Show week: that day's week. Today comes back to this week and today's visit.
+    await control(screen, 'Show week').click();
+    await expect(grid(screen)).toHaveAccessibleName('Week of Monday 21 September');
+    await control(screen, 'Today').click();
+    await expect(grid(screen)).toHaveAccessibleName('Week of Monday 5 October');
+    await expect(day(screen, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today, selected');
+    await expect(detail(screen)).toHaveCount(0);
+    await expect(today(screen).getByRole('group', { name: 'Tasks today' })).toBeVisible();
+    await expect(line(screen)).toHaveText('No visit yet today');
   });
 
   test('the calendar works from the keyboard', async ({ page }) => {
     const screen = await openHousekeeping(page);
-    await day(screen, 'Thursday 1 October').focus();
+    await day(screen, 'Thursday 8 October').focus();
     await page.keyboard.press('ArrowLeft');
-    await expect(day(screen, 'Wednesday 30 September')).toBeFocused();
-    await expect(calendar(screen).getByText('September 2026', { exact: true })).toBeVisible();
+    await expect(day(screen, 'Wednesday 7 October')).toBeFocused();
+    // Past the strip's edge, into the week before.
     await page.keyboard.press('ArrowUp');
-    await expect(day(screen, 'Wednesday 23 September')).toBeFocused();
+    await expect(day(screen, 'Wednesday 30 September')).toBeFocused();
+    await expect(calendar(screen).getByText('28 Sep to 4 Oct', { exact: true })).toBeVisible();
     await page.keyboard.press('ArrowRight');
     await page.keyboard.press('Enter');
-    await expect(detail(screen).getByRole('heading', { level: 3 })).toHaveText('Thursday 24 September');
+    await expect(detail(screen).getByRole('heading', { level: 2 })).toHaveText('Thursday 1 October');
+    await expect(day(screen, 'Thursday 1 October')).toBeFocused();
+    // A month on is still to come: as far as today.
     await page.keyboard.press('PageDown');
     await expect(day(screen, 'Thursday 8 October')).toBeFocused();
     await page.keyboard.press('ArrowRight');
@@ -321,6 +361,7 @@ test.describe('Housekeeping tab', () => {
 
   test('deleting a visit asks first, then takes it off the calendar for good', async ({ page }) => {
     let screen = await openHousekeeping(page);
+    await chooseLastVisit(screen);
     await detail(screen).getByRole('button', { name: 'Delete Visit' }).click();
     const sheet = await confirmation(page, 'Delete the visit on Thu 1 Oct?');
     await expect(sheet.getByText('Its ticks, comments and price will be deleted for everyone.')).toBeVisible();
@@ -328,9 +369,11 @@ test.describe('Housekeeping tab', () => {
     await expect(detail(screen).getByText('No visit recorded.', { exact: true })).toBeVisible();
     await expect(detail(screen).getByRole('button', { name: 'Add a visit' })).toBeFocused();
     await expect(said(screen)).toHaveText('Visit deleted');
-    await expect(calendar(screen).getByText('No visits', { exact: true })).toBeVisible();
     await expect(day(screen, 'Thursday 1 October')).toHaveAccessibleName('Thursday 1 October, selected');
+    await expect(day(screen, 'Thursday 1 October')).not.toHaveAttribute('data-visit', 'true');
     await expect(screen.getByText('Last visit Thu 24 Sep', { exact: true })).toBeVisible();
+    await control(screen, 'Show month').click();
+    await expect(calendar(screen).getByText('No visits', { exact: true })).toBeVisible();
 
     await reopen(page);
     await goToTab(page, 'Housekeeping');
@@ -338,9 +381,11 @@ test.describe('Housekeeping tab', () => {
     await expect(calendar(screen).getByText('No visits', { exact: true })).toBeVisible();
   });
 
-  test('a past day without a visit can have one added', async ({ page }) => {
+  test('a past day without a visit says so, and can have one added', async ({ page }) => {
     const screen = await openHousekeeping(page);
     await day(screen, 'Tuesday 6 October').click();
+    await expect(today(screen)).toHaveCount(0);
+    await expect(detail(screen).getByRole('heading', { level: 2 })).toHaveText('Tuesday 6 October');
     await expect(detail(screen).getByText('No visit recorded.', { exact: true })).toBeVisible();
     await detail(screen).getByRole('button', { name: 'Add a visit' }).click();
     const tasks = detail(screen).getByRole('group', { name: 'Tasks on Tuesday 6 October' });
@@ -349,9 +394,11 @@ test.describe('Housekeeping tab', () => {
     await expect(said(screen)).toHaveText('Visit added');
     // Counted once something is recorded on it.
     await expect(detail(screen).getByText('Nothing recorded yet.', { exact: true })).toBeVisible();
-    await expect(calendar(screen).getByText('1 visit · £60.00', { exact: true })).toBeVisible();
+    await expect(day(screen, 'Tuesday 6 October')).toHaveAccessibleName('Tuesday 6 October, selected');
     await tasks.getByRole('checkbox', { name: 'Ironing' }).click();
     await expect(day(screen, 'Tuesday 6 October')).toHaveAccessibleName('Tuesday 6 October, visit, 1 of 7 done, selected');
+    await expect(day(screen, 'Tuesday 6 October')).toHaveAttribute('data-visit', 'true');
+    await control(screen, 'Show month').click();
     await expect(calendar(screen).getByText('2 visits · £60.00', { exact: true })).toBeVisible();
   });
 
@@ -359,6 +406,7 @@ test.describe('Housekeeping tab', () => {
     let screen = await openHousekeeping(page);
     await today(screen).getByRole('checkbox', { name: 'Dust the surfaces' }).click();
     await expect(screen.getByText("Today's visit", { exact: true })).toBeVisible();
+    await expect(line(screen)).toHaveText('1 of 7 done today');
     await today(screen).getByRole('button', { name: 'Delete Visit' }).click();
     const sheet = await confirmation(page, "Delete today's visit?");
     await sheet.getByRole('button', { name: 'Delete Visit' }).click();
@@ -366,12 +414,12 @@ test.describe('Housekeeping tab', () => {
     await expect(today(screen).getByRole('heading', { name: 'Today', level: 2 })).toBeFocused();
     await expect(said(screen)).toHaveText('Visit deleted');
     await expect(screen.getByText('Last visit Thu 1 Oct', { exact: true })).toBeVisible();
-    await expect(calendar(screen).getByText('1 visit · £60.00', { exact: true })).toBeVisible();
+    await expect(line(screen)).toHaveText('No visit yet today');
 
     await reopen(page);
     screen = housekeepingScreen(page);
-    await expect(calendar(screen).getByText('1 visit · £60.00', { exact: true })).toBeVisible();
-    await expect(day(screen, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today');
+    await expect(line(screen)).toHaveText('No visit yet today');
+    await expect(day(screen, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today, selected');
   });
 
   test('comments and the price say “Saved” for a moment where they are', async ({ page }) => {
@@ -389,24 +437,35 @@ test.describe('Housekeeping tab', () => {
     await expect(caption).toHaveText(/^Recorded by/, { timeout: 4000 });
   });
 
-  test('choosing a day low on the screen brings its details up; focus stays on the day', async ({ page }) => {
-    await page.setViewportSize({ width: 320, height: 700 });
-    const screen = await openHousekeeping(page);
-    const table = grid(screen);
-    // Just far enough down to see the whole calendar at the bottom of the screen.
-    await table.evaluate((el) => el.scrollIntoView({ block: 'end' }));
-    const target = day(screen, 'Tuesday 6 October');
-    await target.click();
-    const heading = detail(screen).getByRole('heading', { level: 3 });
-    await expect(heading).toHaveText('Tuesday 6 October');
-    await expect(detail(screen).getByRole('button', { name: 'Add a visit' })).toBeInViewport();
-    await expect(target).toBeFocused();
-    await expect(said(screen)).toHaveText('Tuesday 6 October: no visit recorded. Details below the calendar.');
-  });
+  for (const reducedMotion of ['no-preference', 'reduce'] as const) {
+    test(`choosing a day brings its details up under the strip, which stays in sight; focus stays on the day (${reducedMotion})`, async ({
+      page,
+    }) => {
+      await page.emulateMedia({ reducedMotion });
+      await page.setViewportSize({ width: 320, height: 700 });
+      const screen = await openHousekeeping(page);
+      const target = day(screen, 'Tuesday 6 October');
+      await target.click();
+      const heading = detail(screen).getByRole('heading', { level: 2 });
+      await expect(heading).toHaveText('Tuesday 6 October');
+      await expect(detail(screen).getByRole('button', { name: 'Add a visit' })).toBeInViewport({ ratio: 1 });
+      // The week strip is still there to choose another day, clear of the docked tab switch.
+      await expect
+        .poll(async () => {
+          const nav = (await tabs(page).boundingBox())!;
+          const days = (await target.boundingBox())!;
+          return days.y >= nav.y + nav.height;
+        })
+        .toBe(true);
+      await expect(target).toBeFocused();
+      await expect(said(screen)).toHaveText('Tuesday 6 October: no visit recorded. Details below the calendar.');
+    });
+  }
 
   test('a tap anywhere in a day’s cell chooses it, on the narrowest phone too', async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 800 });
     const screen = await openHousekeeping(page);
+    await control(screen, 'Previous week').click();
     const cell = day(screen, 'Friday 2 October').locator('xpath=..');
     await cell.scrollIntoViewIfNeeded();
     const box = (await cell.boundingBox())!;
@@ -414,8 +473,34 @@ test.describe('Housekeeping tab', () => {
     expect(Math.abs(button.width - box.width)).toBeLessThan(1);
     expect(button.height).toBeGreaterThanOrEqual(44);
     await page.mouse.click(box.x + 2, box.y + 2);
-    await expect(detail(screen).getByRole('heading', { level: 3 })).toHaveText('Friday 2 October');
+    await expect(detail(screen).getByRole('heading', { level: 2 })).toHaveText('Friday 2 October');
   });
+
+  for (const width of [320, 375, 402]) {
+    test(`the date picker fits at ${width}px: no sideways scroll, 44px targets`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      const screen = await openHousekeeping(page);
+      await control(screen, 'Previous week').click();
+      for (const name of ['Today', 'Show month', 'Previous week', 'Next week']) {
+        const target = (await control(screen, name).boundingBox())!;
+        expect(target.height, name).toBeGreaterThanOrEqual(44);
+        expect(target.width, name).toBeGreaterThanOrEqual(44);
+      }
+      const days = await grid(screen)
+        .getByRole('button')
+        .evaluateAll((els) => els.map((el) => el.getBoundingClientRect()).map((r) => ({ w: r.width, h: r.height })));
+      for (const box of days) {
+        expect(box.h).toBeGreaterThanOrEqual(44);
+        expect(box.w).toBeGreaterThanOrEqual(width < 360 ? 39.5 : 44);
+      }
+      await control(screen, 'Show month').click();
+      for (const name of ['Show week', 'Previous month', 'Next month']) {
+        const target = (await control(screen, name).boundingBox())!;
+        expect(target.height, name).toBeGreaterThanOrEqual(44);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    });
+  }
 
   test('reopens on Housekeeping, and its dot shows a message from someone else until seen', async ({ page }) => {
     await openSeeded(page);
@@ -498,6 +583,7 @@ test.describe('Housekeeping tab', () => {
       { title: 'Ironing and folding', done: false },
     ]);
     // Last week's visit (chosen in the calendar) keeps its own list.
+    await chooseLastVisit(screen);
     expect(await checklist(detail(screen).getByRole('group', { name: 'Tasks on Thursday 1 October' }))).toEqual(
       STARTER.map((title) => ({ title, done: title !== 'Ironing' })),
     );

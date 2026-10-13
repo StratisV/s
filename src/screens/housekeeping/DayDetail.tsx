@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type Ref } from 'react';
 import { formatDay } from '../../lib/logic/dates';
 import { longDay, visitOn } from '../../lib/logic/housekeeping';
 import type { ISODate } from '../../lib/types';
@@ -8,25 +8,26 @@ import { VisitEditor } from './VisitEditor';
 import styles from './Housekeeping.module.css';
 
 interface DayDetailProps {
-  /** The day chosen in the calendar; null: nothing chosen yet. */
-  date: ISODate | null;
+  /** The day chosen in the calendar, before today (today has the Today section). */
+  date: ISODate;
   announce(text: string): void;
-  /** Brings the Today section into view and focuses its heading. */
-  onShowToday(): void;
+  /** The day's heading: brought into view when the day is chosen, focused when Home's calendar opens it here. */
+  headingRef?: Ref<HTMLHeadingElement>;
 }
 
 /**
- * The day chosen in the calendar, under it: its visit (the message that day, then the same
- * editor as today's, then Delete Visit), or "No visit recorded." with Add a visit, or, for
- * today, a pointer back up to Today.
+ * A day before today, chosen in the calendar, in place of the Today section: its heading, then
+ * its visit (the message that day, then the same editor as today's, then Delete Visit), or
+ * "No visit recorded." with Add a visit.
  */
-export function DayDetail({ date, announce, onShowToday }: DayDetailProps) {
+export function DayDetail({ date, announce, headingRef }: DayDetailProps) {
   const { data, today, addHousekeepingVisit, deleteHousekeepingVisit } = useHousehold();
-  const rootRef = useRef<HTMLDivElement>(null);
+  const headingId = useId();
+  const rootRef = useRef<HTMLElement>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   // Where focus goes once the change shows: the new visit's first task, or Add a visit.
   const focusAfter = useRef<'visit' | 'add' | null>(null);
-  const visit = date ? visitOn(data.housekeeping.visits, date) : undefined;
+  const visit = visitOn(data.housekeeping.visits, date);
   const hasVisit = !!visit;
 
   useEffect(() => {
@@ -46,14 +47,6 @@ export function DayDetail({ date, announce, onShowToday }: DayDetailProps) {
     focusAfter.current = null;
     setConfirmOpen(false);
   }, [date]);
-
-  if (!date) {
-    return (
-      <p className={styles.hint} data-day-detail="">
-        Tap a day to see its visit.
-      </p>
-    );
-  }
 
   const add = () => {
     focusAfter.current = 'visit';
@@ -78,21 +71,14 @@ export function DayDetail({ date, announce, onShowToday }: DayDetailProps) {
   const heading = longDay(date, today);
 
   return (
-    <div ref={rootRef} data-day-detail={date}>
-      {/* Focused when Home's calendar opens this day here. */}
-      <h3 className={`${styles.dayHeader} ${styles.target}`} tabIndex={-1}>
-        {heading}
-      </h3>
-      {date === today ? (
-        <div className={styles.card}>
-          <div className={styles.cardRow}>
-            <span className={styles.cardRowText}>Today's visit is above.</span>
-            <button type="button" className={styles.inlineAction} aria-label="Show today's visit" onClick={onShowToday}>
-              Show
-            </button>
-          </div>
-        </div>
-      ) : visit ? (
+    <section ref={rootRef} aria-labelledby={headingId} data-day-detail={date}>
+      <div className={styles.headerRow}>
+        {/* Focused when Home's calendar opens this day here. */}
+        <h2 id={headingId} ref={headingRef} className={`${styles.header} ${styles.target}`} tabIndex={-1}>
+          {heading}
+        </h2>
+      </div>
+      {visit ? (
         <>
           <div className={styles.card}>
             <div className={styles.message}>
@@ -110,7 +96,6 @@ export function DayDetail({ date, announce, onShowToday }: DayDetailProps) {
             date={date}
             legend={`Tasks on ${heading}`}
             dayName={heading}
-            level={4}
             announce={announce}
           />
           <div className={styles.gap} />
@@ -130,6 +115,6 @@ export function DayDetail({ date, announce, onShowToday }: DayDetailProps) {
         onConfirm={confirmDelete}
         onCancel={() => setConfirmOpen(false)}
       />
-    </div>
+    </section>
   );
 }

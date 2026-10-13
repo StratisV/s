@@ -1,15 +1,9 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import {
-  daySelectedAnnouncement,
-  defaultSelectedDay,
-  housekeepingSubtitle,
-  isRecorded,
-  monthOf,
-  visitOn,
-  type YearMonth,
-} from '../../lib/logic/housekeeping';
+import { longDay } from '../../lib/logic/dates';
+import { daySelectedAnnouncement, housekeepingSubtitle, isRecorded, monthOf, visitOn } from '../../lib/logic/housekeeping';
 import type { ISODate } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
+import { mondayOf, revealDay, useChosenDay, type ChosenDay } from '../../ui/DatePicker';
 import { Screen } from '../../ui/Screen';
 import { Calendar } from './Calendar';
 import { DayDetail } from './DayDetail';
@@ -35,12 +29,14 @@ interface HousekeepingScreenProps {
   onDayShown?(): void;
 }
 
-/** The calendar's month and chosen day, remembered while the app runs (like Stats' period). */
-let remembered: {
-  householdId: string;
-  month: YearMonth;
-  selected: ISODate | null;
-} | null = null;
+/** The chosen day and the week and month shown, remembered while the app runs (the tab comes and goes). */
+const remembered: { current: ChosenDay | null } = { current: null };
+
+/**
+ * How much of the screen choosing a day leaves under its heading, at most, for the day's
+ * details: a visit is long, and this keeps the calendar in sight above it.
+ */
+const DAY_ROOM = 0.45;
 
 const reducedMotion = () => {
   try {
@@ -52,107 +48,71 @@ const reducedMotion = () => {
 
 /**
  * Housekeeping (docs/ARCHITECTURE.md "Housekeeping"): the weekly visit by the housekeeper,
- * who is a household member like everyone else. Top to bottom: the message for the
- * housekeeper, today's visit (checklist, comments, price, and Delete Visit once something
- * is recorded), and the calendar of every visit with the chosen day's visit under it.
+ * who is a household member like everyone else. Today's date over the title, as on Home.
+ * Top to bottom: the calendar of every visit (Home's date picker: this week, today chosen at
+ * first), the message for the housekeeper, then the chosen day: today's visit (checklist,
+ * comments, price, and Delete Visit once something is recorded), or another day's visit.
  * Everything saves itself; a polite live region says what was saved.
  */
 export function HousekeepingScreen({ tabs, onOpenProfile, onEditTasks, showDay, onDayShown }: HousekeepingScreenProps) {
   const { data, me, today, deleteHousekeepingVisit } = useHousehold();
   const { visits } = data.housekeeping;
-  const householdId = data.household.id;
   const todayHeadingId = useId();
-  const calendarHeadingId = useId();
-  const todayRef = useRef<HTMLHeadingElement>(null);
-  const calendarRef = useRef<HTMLElement>(null);
+  // The chosen day's heading: Today, or the day's date.
+  const dayHeadingRef = useRef<HTMLHeadingElement>(null);
   const todaysVisit = visitOn(visits, today);
   const [confirmToday, setConfirmToday] = useState(false);
-
-  const [view, setView] = useState(() =>
-    remembered?.householdId === householdId
-      ? remembered
-      : {
-          householdId,
-          month: monthOf(today),
-          selected: defaultSelectedDay(visits, today),
-        },
-  );
-  const update = (patch: Partial<Pick<NonNullable<typeof remembered>, 'month' | 'selected'>>) => {
-    setView((v) => {
-      const next = { ...v, ...patch };
-      remembered = next;
-      return next;
-    });
-  };
+  // Another household, or a new day since: start on today, in this week and month.
+  const { chosen, update, reset } = useChosenDay(remembered, data.household.id, today);
+  const date = chosen.selected;
 
   // What was saved, read out politely. A new key re-announces the same words.
   const [said, setSaid] = useState({ text: '', key: 0 });
   const announce = useCallback((text: string) => setSaid((s) => ({ text, key: s.key + 1 })), []);
 
-  // A day was chosen: once it shows, bring its details up if they are low on the screen
-  // (focus stays in the calendar).
+  // A day was chosen: once it shows, bring it up if it is low on the screen, as far as
+  // DAY_ROOM of the screen under its heading (focus stays in the calendar).
   const [reveal, setReveal] = useState(0);
   useEffect(() => {
     if (!reveal) return;
-    const heading = calendarRef.current?.querySelector<HTMLElement>('[data-day-detail] h3');
-    heading?.scrollIntoView?.({ block: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
+    const heading = dayHeadingRef.current;
+    const section = heading?.closest('section');
+    if (heading && section) revealDay(section, heading, window.innerHeight * DAY_ROOM);
   }, [reveal]);
 
-  const select = (date: ISODate) => {
-    update({ selected: date });
-    announce(daySelectedAnnouncement(date, today, visitOn(visits, date)));
+  const select = (day: ISODate) => {
+    update({ selected: day, week: mondayOf(day) });
+    announce(daySelectedAnnouncement(day, today, visitOn(visits, day)));
     setReveal((n) => n + 1);
   };
 
-  // Another month: show its latest visit, or nothing (the hint), never a day from elsewhere.
-  const changeMonth = (month: YearMonth) => {
-    update({
-      month,
-      selected: view.selected && monthOf(view.selected) === month ? view.selected : defaultSelectedDay(visits, today, month),
-    });
-  };
-
-  const showToday = () => {
-    const heading = todayRef.current;
-    if (!heading) return;
-    heading.scrollIntoView({
-      block: 'start',
-      behavior: reducedMotion() ? 'auto' : 'smooth',
-    });
-    heading.focus({ preventScroll: true });
-  };
-
-  // A day from Home's calendar: choose it (in its month), then once it shows, bring its
-  // details into view and put focus on its heading, so VoiceOver carries on from there.
+  // A day from Home's calendar: choose it (in its week and month), then once it shows, bring
+  // its heading to the top and put focus on it, so VoiceOver carries on from there.
   const [shownDay, setShownDay] = useState<ISODate | null>(null);
-  const shownDayRef = useRef({ onDayShown, showToday });
-  shownDayRef.current = { onDayShown, showToday };
+  const onDayShownRef = useRef(onDayShown);
+  onDayShownRef.current = onDayShown;
   useEffect(() => {
     if (!showDay) return;
-    update({ month: monthOf(showDay), selected: showDay });
+    update({ selected: showDay, month: monthOf(showDay), week: mondayOf(showDay) });
     setShownDay(showDay);
     // `update` only sets state.
   }, [showDay]);
   useEffect(() => {
-    if (!shownDay || view.selected !== shownDay) return;
+    if (!shownDay || date !== shownDay) return;
     setShownDay(null);
-    if (shownDay === today) {
-      shownDayRef.current.showToday();
-    } else {
-      const heading = calendarRef.current?.querySelector<HTMLElement>('[data-day-detail] h3');
-      if (heading) {
-        heading.scrollIntoView?.({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });
-        heading.focus({ preventScroll: true });
-      }
+    const heading = dayHeadingRef.current;
+    if (heading) {
+      heading.scrollIntoView?.({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });
+      heading.focus({ preventScroll: true });
     }
-    shownDayRef.current.onDayShown?.();
-  }, [shownDay, view.selected, today]);
+    onDayShownRef.current?.();
+  }, [shownDay, date]);
 
   const deleteToday = () => {
     setConfirmToday(false);
     if (!todaysVisit) return;
     // Today's section stays, unticked: carry on from its heading.
-    todayRef.current?.focus({ preventScroll: true });
+    dayHeadingRef.current?.focus({ preventScroll: true });
     void deleteHousekeepingVisit(todaysVisit.id)
       .then(() => announce('Visit deleted'))
       .catch(() => {});
@@ -163,65 +123,55 @@ export function HousekeepingScreen({ tabs, onOpenProfile, onEditTasks, showDay, 
       label="Housekeeping"
       title="Housekeeping"
       subtitle={housekeepingSubtitle(visits, today)}
+      eyebrow={<time dateTime={today}>{longDay(today)}</time>}
       avatarEmoji={me.emoji}
       onAvatar={onOpenProfile}
       tabs={tabs}
       withAdd={false}
     >
+      <Calendar chosen={chosen} onChange={update} onReset={reset} onSelect={select} today={today} visits={visits} />
+
       <NoteSection announce={announce} />
 
-      <section aria-labelledby={todayHeadingId}>
-        <div className={styles.headerRow}>
-          <h2 id={todayHeadingId} ref={todayRef} className={`${styles.header} ${styles.target}`} tabIndex={-1}>
-            Today
-          </h2>
-          <button
-            type="button"
-            className={styles.headerAction}
-            aria-label="Edit task list"
-            onClick={(e) => onEditTasks(e.currentTarget)}
-          >
-            Edit
-          </button>
-        </div>
-        <VisitEditor
-          key={today}
-          date={today}
-          legend="Tasks today"
-          level={3}
-          announce={announce}
-          onEditTasks={onEditTasks}
-        />
-        {todaysVisit && isRecorded(todaysVisit) ? (
-          <>
-            <div className={styles.gap} />
-            <DeleteVisitButton onPress={() => setConfirmToday(true)} />
-          </>
-        ) : null}
-        <DeleteVisitSheet
-          open={confirmToday && !!todaysVisit}
-          title="Delete today's visit?"
-          onConfirm={deleteToday}
-          onCancel={() => setConfirmToday(false)}
-        />
-      </section>
-
-      <section ref={calendarRef} aria-labelledby={calendarHeadingId}>
-        <div className={styles.headerRow}>
-          <h2 id={calendarHeadingId} className={styles.header}>
-            Calendar
-          </h2>
-        </div>
-        <Calendar
-          month={view.month}
-          onMonth={changeMonth}
-          selected={view.selected}
-          onSelect={select}
-          today={today}
-          visits={visits}
-        />
-        <DayDetail date={view.selected} announce={announce} onShowToday={showToday} />
-      </section>
+      {date === today ? (
+        <section aria-labelledby={todayHeadingId}>
+          <div className={styles.headerRow}>
+            <h2 id={todayHeadingId} ref={dayHeadingRef} className={`${styles.header} ${styles.target}`} tabIndex={-1}>
+              Today
+            </h2>
+            <button
+              type="button"
+              className={styles.headerAction}
+              aria-label="Edit task list"
+              onClick={(e) => onEditTasks(e.currentTarget)}
+            >
+              Edit
+            </button>
+          </div>
+          <VisitEditor
+            key={today}
+            date={today}
+            legend="Tasks today"
+            announce={announce}
+            onEditTasks={onEditTasks}
+          />
+          {todaysVisit && isRecorded(todaysVisit) ? (
+            <>
+              <div className={styles.gap} />
+              <DeleteVisitButton onPress={() => setConfirmToday(true)} />
+            </>
+          ) : null}
+        </section>
+      ) : (
+        <DayDetail date={date} announce={announce} headingRef={dayHeadingRef} />
+      )}
+      {/* Beside the section, not in it: it can slide away whichever day shows. */}
+      <DeleteVisitSheet
+        open={confirmToday && !!todaysVisit}
+        title="Delete today's visit?"
+        onConfirm={deleteToday}
+        onCancel={() => setConfirmToday(false)}
+      />
 
       <div className="visually-hidden" aria-live="polite" data-announcer="">
         <span key={said.key}>{said.text}</span>

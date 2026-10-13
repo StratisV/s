@@ -93,55 +93,41 @@ export function calendarDayLabel(
 }
 
 /**
- * The day the calendar shows under it for `month`: the latest recorded visit (isRecorded())
- * in that month before today (today's visit has its own section above); null when there is
- * none (nothing selected, the hint shows). `month` defaults to today's: the day chosen
- * when the tab opens; changing month picks that month's.
- * Tests: the e2e seed (today Thu 8 Oct, visits 1 Oct and earlier) gives 2026-10-01; only a
- * visit today gives null; only visits last month give null; no visits gives null; a visit
- * with nothing recorded is passed over; September of the seed gives 2026-09-24; a month
- * without visits gives null.
- */
-export function defaultSelectedDay(
-  visits: HousekeepingVisit[],
-  today: ISODate,
-  month: YearMonth = monthOf(today),
-): ISODate | null {
-  let best: ISODate | null = null;
-  for (const v of visits) {
-    if (
-      v.visit_date < today &&
-      monthOf(v.visit_date) === month &&
-      isRecorded(v) &&
-      (best === null || v.visit_date > best)
-    ) {
-      best = v.visit_date;
-    }
-  }
-  return best;
-}
-
-/**
  * What the screen says (politely) when a day is chosen in the calendar, since its details
- * show under the calendar, out of sight on a small screen: `'Thursday 1 October: 6 of 7
- * done, £60.00. Details below the calendar.'`, `'Tuesday 6 October: no visit recorded.
- * Details below the calendar.'`, `'Tuesday 6 October: nothing recorded yet. Details below
- * the calendar.'` (a visit with nothing recorded), and for today `'Thursday 8 October:
- * today's visit is above the calendar.'`.
- * Tests: each example; a visit without a price.
+ * show under the calendar (and the message), out of sight on a small screen: `'Thursday 1
+ * October: 6 of 7 done, £60.00. Details below the calendar.'`, `'Tuesday 6 October: no visit
+ * recorded. Details below the calendar.'`, `'Tuesday 6 October: nothing recorded yet.
+ * Details below the calendar.'` (a visit with nothing recorded), and for today, `', today'`
+ * after the date and `'not started yet'` until something is recorded: `'Thursday 8 October,
+ * today: not started yet. Details below the calendar.'`, `'Thursday 8 October, today: 1 of 7
+ * done. Details below the calendar.'`.
+ * Tests: each example; a visit without a price; today with a visit with nothing recorded.
  */
 export function daySelectedAnnouncement(date: ISODate, today: ISODate, visit: HousekeepingVisit | undefined): string {
-  const day = longDay(date, today);
-  if (date === today) return `${day}: today's visit is above the calendar.`;
+  const isToday = date === today;
+  const day = isToday ? `${longDay(date, today)}, today` : longDay(date, today);
   let what: string;
-  if (!visit) what = 'no visit recorded';
-  else if (!isRecorded(visit)) what = 'nothing recorded yet';
-  else {
+  if (visit && isRecorded(visit)) {
     const { done, total } = doneCount(visit);
     what = `${done} of ${total} done`;
     if (visit.price_pence !== null) what += `, ${formatPrice(visit.price_pence)}`;
-  }
+  } else if (isToday) what = 'not started yet';
+  else what = visit ? 'nothing recorded yet' : 'no visit recorded';
   return `${day}: ${what}. Details below the calendar.`;
+}
+
+/**
+ * The line beside the calendar while today is chosen and shown, as Home's says what is due
+ * today: `'No visit yet today'` until something is recorded (isRecorded()), then `'6 of 7
+ * done today'`, with the price when there is one (`'6 of 7 done today · £60.00'`);
+ * `'Visit today'` for a visit without tasks (`'Visit today · £60.00'`).
+ * Tests: no visit; a visit with nothing recorded; ticks; ticks and a price; no tasks.
+ */
+export function todayLine(visit: HousekeepingVisit | undefined): string {
+  if (!visit || !isRecorded(visit)) return 'No visit yet today';
+  const { done, total } = doneCount(visit);
+  const line = total ? `${done} of ${total} done today` : 'Visit today';
+  return visit.price_pence === null ? line : `${line} · ${formatPrice(visit.price_pence)}`;
 }
 
 // ── Visits ────────────────────────────────────────────────
@@ -166,12 +152,15 @@ export function visitOn(visits: HousekeepingVisit[], date: ISODate): Housekeepin
 }
 
 /**
- * The days in `month` that have a recorded visit (isRecorded(); to mark them in the grid).
- * Tests: visits in the month, the month before and after (only the month's count); none; a
- * visit with nothing recorded is left out.
+ * The days that have a recorded visit (isRecorded(); to mark them in the grid), in `month`
+ * when given, else in any month (a week strip may show two).
+ * Tests: visits in the month, the month before and after (only the month's count); without
+ * a month, all of them; none; a visit with nothing recorded is left out.
  */
-export function visitDays(visits: HousekeepingVisit[], month: YearMonth): Set<ISODate> {
-  return new Set(visits.filter((v) => monthOf(v.visit_date) === month && isRecorded(v)).map((v) => v.visit_date));
+export function visitDays(visits: HousekeepingVisit[], month?: YearMonth): Set<ISODate> {
+  return new Set(
+    visits.filter((v) => (month === undefined || monthOf(v.visit_date) === month) && isRecorded(v)).map((v) => v.visit_date),
+  );
 }
 
 export interface MonthTotals {

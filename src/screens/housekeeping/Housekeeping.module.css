@@ -13,11 +13,6 @@
   padding: 30px 20px 8px;
 }
 
-/* The first section sits 24px under the tab switch, as Stats' period control does. */
-.headerRowFirst {
-  padding-top: 14px;
-}
-
 .header {
   flex: 1 1 auto;
   min-width: 0;
@@ -29,7 +24,10 @@
   overflow-wrap: anywhere;
 }
 
-/* Today's heading takes focus from "Show": clear of the sticky tab switch when scrolled to. */
+/*
+ * The chosen day's heading (Today, or the day's date): clear of the sticky tab switch when
+ * Home's calendar opens the day here.
+ */
 .target {
   scroll-margin-top: calc(var(--top-inset) + 64px);
   border-radius: 8px;
@@ -76,19 +74,6 @@
   line-height: 25px;
   font-weight: 600;
   letter-spacing: -0.3px;
-}
-
-/* The chosen day's heading under the calendar. Choosing a day low on the screen scrolls it
-   up until this much of the screen is left under it for the day's details. */
-.dayHeader {
-  margin: 0;
-  padding: 24px 20px 8px;
-  font-size: 20px;
-  line-height: 25px;
-  font-weight: 600;
-  letter-spacing: -0.3px;
-  overflow-wrap: anywhere;
-  scroll-margin-bottom: 45vh;
 }
 
 /* ── Cards ─────────────────────────────────────────────── */
@@ -143,16 +128,6 @@
   letter-spacing: -0.1px;
   color: var(--label-secondary);
   overflow-wrap: anywhere;
-}
-
-/* "Tap a day to see its visit." */
-.hint {
-  margin: 0;
-  padding: 14px 20px 0;
-  font-size: 15px;
-  line-height: 20px;
-  letter-spacing: -0.2px;
-  color: var(--label-secondary);
 }
 
 /* ── Price for the day ─────────────────────────────────── */
@@ -283,45 +258,6 @@
   outline: 2px solid var(--tint);
   outline-offset: -2px;
   border-radius: var(--r-card);
-}
-
-/* "Today's visit is above."  ·  Show */
-.cardRow {
-  min-height: 52px;
-  padding: 0 8px 0 18px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.cardRowText {
-  flex: 1;
-  min-width: 0;
-  padding: 15px 0;
-  font-size: 17px;
-  line-height: 22px;
-  letter-spacing: -0.4px;
-  color: var(--label-secondary);
-}
-
-.inlineAction {
-  flex: none;
-  min-width: 44px;
-  height: 44px;
-  padding: 0 10px;
-  font-size: 17px;
-  line-height: 22px;
-  letter-spacing: -0.4px;
-  color: var(--tint);
-  border-radius: 12px;
-}
-
-.inlineAction:active {
-  opacity: 0.5;
-}
-
-.inlineAction:focus-visible {
-  outline-offset: -2px;
 }
 
 .deleteButton {

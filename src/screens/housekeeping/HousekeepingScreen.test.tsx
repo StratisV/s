@@ -13,6 +13,7 @@ import type {
   ISODate,
   Member,
 } from '../../lib/types';
+import { HOUSEKEEPING_CALENDAR_VIEW_KEY } from './Calendar';
 import { HousekeepingScreen } from './HousekeepingScreen';
 import { PRICE_ERROR } from './PriceField';
 import { TaskListSheet } from './TaskListSheet';
@@ -287,24 +288,34 @@ let latest: HouseholdData;
 /** Sets the fake provider's data (a reload bringing what is stored). */
 let latestSet: Dispatch<SetStateAction<HouseholdData>>;
 
-function setup(housekeeping: HousekeepingData = seed(), { sheet = false } = {}) {
+function setup(
+  housekeeping: HousekeepingData = seed(),
+  { sheet = false, showDay = null }: { sheet?: boolean; showDay?: ISODate | null } = {},
+) {
   let setData!: Dispatch<SetStateAction<HouseholdData>>;
   const actions = makeActions(() => setData);
   const onEditTasks = vi.fn();
+  const onDayShown = vi.fn();
   render(
     <FakeHome initial={householdData(housekeeping)} actions={actions} bind={(set) => (setData = set)}>
-      <HousekeepingScreen onOpenProfile={() => {}} onEditTasks={onEditTasks} />
+      <HousekeepingScreen onOpenProfile={() => {}} onEditTasks={onEditTasks} showDay={showDay} onDayShown={onDayShown} />
       {sheet ? <TaskListSheet open onClose={() => {}} /> : null}
     </FakeHome>,
   );
   const data = () => latest;
-  return { actions, onEditTasks, data };
+  return { actions, onEditTasks, onDayShown, data };
 }
 
 const section = (name: string) => screen.getByRole('region', { name });
 const today = () => section('Today');
 const calendar = () => screen.getByRole('grid');
 const day = (name: string | RegExp) => within(calendar()).getByRole('button', { name });
+/** A button of the calendar's bar or card: Today, Show month, Previous week… */
+const control = (name: string) => within(section('Calendar')).getByRole('button', { name });
+/** The line beside the calendar while today is chosen and shown. */
+const line = () => section('Calendar').querySelector('[data-today-summary]')?.textContent ?? null;
+/** The chosen day before today, in place of the Today section. */
+const detail = () => document.querySelector<HTMLElement>('[data-day-detail]');
 /** The polite live region that says what was saved. */
 const said = () => document.querySelector('[data-announcer]')!.textContent;
 /** Matches the element whose whole text is `text`, also when EmojiText has drawn its 🦆 or 🦔 in a span. */
@@ -316,6 +327,8 @@ const wholeText = (text: string | RegExp) => {
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
+  // The week strip or the month is remembered on this device.
+  localStorage.clear();
 });
 
 afterEach(() => {
@@ -324,14 +337,18 @@ afterEach(() => {
 });
 
 describe('HousekeepingScreen', () => {
-  it('shows the message, today’s checklist and the calendar, in that order', () => {
+  it('shows today’s date, the calendar, the message and today’s checklist, in that order', () => {
     setup();
     expect(screen.getByRole('heading', { level: 1, name: 'Housekeeping' })).toBeTruthy();
     expect(screen.getByText('Last visit Thu 1 Oct')).toBeTruthy();
+    // Today's date over the title, as on Home.
+    const date = document.querySelector('time')!;
+    expect(date.textContent).toBe('Thursday 8 October');
+    expect(date.getAttribute('dateTime')).toBe(TODAY);
     expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual([
+      'Calendar',
       'Message for the housekeeper',
       'Today',
-      'Calendar',
     ]);
 
     const message = screen.getByRole('textbox', {
@@ -361,11 +378,14 @@ describe('HousekeepingScreen', () => {
     expect(price.value).toBe('');
     expect(within(today()).getByRole('button', { name: 'Edit task list' })).toBeTruthy();
 
-    // The calendar opens on this month with the last visit chosen.
-    expect(within(section('Calendar')).getByText('October 2026')).toBeTruthy();
-    expect(within(section('Calendar')).getByText('1 visit · £60.00')).toBeTruthy();
-    expect(screen.getByRole('heading', { level: 3, name: 'Thursday 1 October' })).toBeTruthy();
-    expect(screen.getByText('Please leave the ironing for next week.')).toBeTruthy();
+    // The calendar opens on this week with today chosen, and a line on how today's visit is going.
+    expect(calendar().getAttribute('aria-label')).toBe('Week of Monday 5 October');
+    expect(within(section('Calendar')).getByText('5 to 11 October')).toBeTruthy();
+    expect(day('Thursday 8 October, today, selected').hasAttribute('data-today')).toBe(true);
+    expect(line()).toBe('No visit yet today');
+    expect(within(section('Calendar')).queryByRole('button', { name: 'Today' })).toBeNull();
+    expect(control('Show month')).toBeTruthy();
+    expect(detail()).toBeNull();
   });
 
   it('ticks and unticks a task at once and says so', async () => {
@@ -670,103 +690,148 @@ describe("Today's visit", () => {
     expect(within(today()).getByText(NOT_STARTED)).toBeTruthy();
     expect(within(today()).queryByText(/^Recorded by/)).toBeNull();
     expect(within(today()).queryByRole('button', { name: 'Delete Visit' })).toBeNull();
-    expect(within(section('Calendar')).getByText('1 visit · £60.00')).toBeTruthy();
-    const todayButton = day('Thursday 8 October, today');
+    expect(line()).toBe('No visit yet today');
+    const todayButton = day('Thursday 8 October, today, selected');
     expect(todayButton.hasAttribute('data-visit')).toBe(false);
+    fireEvent.click(control('Show month'));
+    expect(within(section('Calendar')).getByText('1 visit · £60.00')).toBeTruthy();
   });
 
   it('comments alone count as a visit', () => {
     setup({ ...seed(), visits: [todayVisit(0, { comments: 'Out of bin bags.' }), OCT_1] });
     expect(screen.getByText("Today's visit")).toBeTruthy();
-    expect(day('Thursday 8 October, today, visit, 0 of 7 done').hasAttribute('data-visit')).toBe(true);
+    expect(day('Thursday 8 October, today, visit, 0 of 7 done, selected').hasAttribute('data-visit')).toBe(true);
+    expect(line()).toBe('0 of 7 done today');
     expect(within(today()).getByRole('button', { name: 'Delete Visit' })).toBeTruthy();
   });
 });
 
 describe('Calendar', () => {
-  it('names every day, marks visits and today, and keeps the future out of reach', () => {
+  it('is Home’s date picker: this week, today chosen, visits marked, the future out of reach', () => {
     setup();
     const grid = calendar();
-    expect(grid.getAttribute('aria-labelledby')).toBeTruthy();
-    expect(document.getElementById(grid.getAttribute('aria-labelledby')!)!.textContent).toBe('October 2026');
+    expect(grid.getAttribute('aria-label')).toBe('Week of Monday 5 October');
     expect(
       within(grid)
         .getAllByRole('columnheader')
         .map((th) => th.getAttribute('abbr')),
     ).toEqual(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']);
-    // The chosen day says so on its button, where focus goes (not just on its cell).
-    const oct1 = day('Thursday 1 October, visit, 6 of 7 done, £60.00, selected');
-    expect(oct1.hasAttribute('data-visit')).toBe(true);
-    expect(oct1.closest('[role="gridcell"]')!.getAttribute('aria-selected')).toBe('true');
-    expect(oct1.tabIndex).toBe(0);
-    const today = day('Thursday 8 October, today');
-    expect(today.hasAttribute('data-today')).toBe(true);
-    expect(today.tabIndex).toBe(-1);
+    expect(
+      within(grid)
+        .getAllByRole('button')
+        .map((b) => b.getAttribute('data-date')),
+    ).toEqual(['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10', '2026-10-11']);
+    // Today is chosen, says so on its button (where focus goes) and is the one in the tab order.
+    const todayButton = day('Thursday 8 October, today, selected');
+    expect(todayButton.closest('[role="gridcell"]')!.getAttribute('aria-selected')).toBe('true');
+    expect(todayButton.tabIndex).toBe(0);
+    // No visit can be ahead: the days to come and next week can't be chosen.
     expect((day('Friday 9 October') as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole('button', { name: 'Next month' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((control('Next week') as HTMLButtonElement).disabled).toBe(true);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Previous month' }));
+    // Last week: the visit has the dot in its circle and says what was done.
+    fireEvent.click(control('Previous week'));
+    expect(calendar().getAttribute('aria-label')).toBe('Week of Monday 28 September');
+    expect(within(section('Calendar')).getByText('28 Sep to 4 Oct')).toBeTruthy();
+    const oct1 = day('Thursday 1 October, visit, 6 of 7 done, £60.00');
+    expect(oct1.hasAttribute('data-visit')).toBe(true);
+    expect(oct1.hasAttribute('data-dot')).toBe(true);
+    expect(day('Friday 2 October').hasAttribute('data-visit')).toBe(false);
+    expect((control('Next week') as HTMLButtonElement).disabled).toBe(false);
+    // Today is still chosen but out of sight: the line gives way to Today, which comes back.
+    expect(line()).toBeNull();
+    expect(screen.getByRole('heading', { level: 2, name: 'Today' })).toBeTruthy();
+    fireEvent.click(control('Today'));
+    expect(calendar().getAttribute('aria-label')).toBe('Week of Monday 5 October');
+    expect(line()).toBe('No visit yet today');
+  });
+
+  it('Show month: each month with its total, remembered on this device apart from Home’s', () => {
+    setup();
+    fireEvent.click(control('Show month'));
+    const grid = calendar();
+    expect(document.getElementById(grid.getAttribute('aria-labelledby')!)!.textContent).toBe('October 2026');
+    expect(within(section('Calendar')).getByText('1 visit · £60.00')).toBeTruthy();
+    expect((control('Next month') as HTMLButtonElement).disabled).toBe(true);
+    expect(day('Thursday 1 October, visit, 6 of 7 done, £60.00').hasAttribute('data-visit')).toBe(true);
+    expect(localStorage.getItem(HOUSEKEEPING_CALENDAR_VIEW_KEY)).toBe('month');
+    expect(localStorage.getItem('homeos.calendar')).toBeNull();
+
+    fireEvent.click(control('Previous month'));
     expect(within(section('Calendar')).getByText('September 2026')).toBeTruthy();
     expect(within(section('Calendar')).getByText('1 visit · £65.00')).toBeTruthy();
-    // Another month shows its own latest visit under it, never October's day.
-    const sep24 = day('Thursday 24 September, visit, 7 of 7 done, £65.00, selected');
-    expect(sep24.tabIndex).toBe(0);
-    expect(screen.getByRole('heading', { level: 3, name: 'Thursday 24 September' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
-    expect(within(section('Calendar')).getByText('October 2026')).toBeTruthy();
-    expect(screen.getByRole('heading', { level: 3, name: 'Thursday 1 October' })).toBeTruthy();
-
-    // A month without visits: nothing chosen, the hint, and the 1st is the way in.
-    fireEvent.click(screen.getByRole('button', { name: 'Previous month' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Previous month' }));
-    expect(within(section('Calendar')).getByText('August 2026')).toBeTruthy();
+    // Another month keeps the chosen day.
+    expect(screen.getByRole('heading', { level: 2, name: 'Today' })).toBeTruthy();
+    fireEvent.click(control('Previous month'));
     expect(within(section('Calendar')).getByText('No visits')).toBeTruthy();
-    expect(screen.getByText('Tap a day to see its visit.')).toBeTruthy();
-    expect(document.querySelector('[data-day-detail] h3')).toBeNull();
-    expect(day('Saturday 1 August').tabIndex).toBe(0);
+    // Show week, away from the chosen day: this week, today chosen.
+    fireEvent.click(control('Show week'));
+    expect(calendar().getAttribute('aria-label')).toBe('Week of Monday 5 October');
+    expect(localStorage.getItem(HOUSEKEEPING_CALENDAR_VIEW_KEY)).toBeNull();
+
+    // Opened again in the month once it was chosen.
+    cleanup();
+    localStorage.setItem(HOUSEKEEPING_CALENDAR_VIEW_KEY, 'month');
+    setup();
+    expect(document.getElementById(calendar().getAttribute('aria-labelledby')!)!.textContent).toBe('October 2026');
   });
 
   it('moves with the arrow keys, Home and End, and Page Up and Down, never into the future', () => {
     setup();
-    const start = day(/^Thursday 1 October/);
+    const start = day(/^Thursday 8 October/);
     act(() => start.focus());
-    fireEvent.keyDown(start, { key: 'ArrowRight' });
-    expect(document.activeElement).toBe(day('Friday 2 October'));
-    fireEvent.keyDown(document.activeElement!, { key: 'End' });
-    expect(document.activeElement).toBe(day('Sunday 4 October'));
+    fireEvent.keyDown(start, { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(day('Wednesday 7 October'));
     fireEvent.keyDown(document.activeElement!, { key: 'Home' });
-    expect(document.activeElement).toBe(day('Monday 28 September'));
-    expect(within(section('Calendar')).getByText('September 2026')).toBeTruthy();
+    expect(document.activeElement).toBe(day('Monday 5 October'));
+    // Past the strip's edge, into the week before.
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(day('Sunday 4 October'));
+    expect(calendar().getAttribute('aria-label')).toBe('Week of Monday 28 September');
     expect((document.activeElement as HTMLElement).tabIndex).toBe(0);
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
-    expect(document.activeElement).toBe(day('Monday 21 September'));
+    expect(document.activeElement).toBe(day('Sunday 27 September'));
     fireEvent.keyDown(document.activeElement!, { key: 'PageDown' });
-    // 21 October is still to come: as far as today.
-    expect(document.activeElement).toBe(day('Thursday 8 October, today'));
+    // 27 October is still to come: as far as today.
+    expect(document.activeElement).toBe(day('Thursday 8 October, today, selected'));
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
-    expect(document.activeElement).toBe(day('Thursday 8 October, today'));
+    expect(document.activeElement).toBe(day('Thursday 8 October, today, selected'));
+    fireEvent.keyDown(document.activeElement!, { key: 'End' });
+    expect(document.activeElement).toBe(day('Thursday 8 October, today, selected'));
     fireEvent.keyDown(document.activeElement!, { key: 'PageUp' });
     expect(document.activeElement).toBe(day('Tuesday 8 September'));
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
-    expect(document.activeElement).toBe(day('Tuesday 15 September'));
-    // Choosing a day shows its visit under the calendar.
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(day(/^Thursday 24 September, visit/));
+    // Choosing a day shows its visit in place of today's.
     fireEvent.click(document.activeElement!);
-    expect(screen.getByRole('heading', { level: 3, name: 'Thursday 24 September' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 2, name: 'Thursday 24 September' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Today' })).toBeNull();
   });
 });
 
 describe('The chosen day', () => {
-  it('shows a past visit, editable, with its message', async () => {
+  /** The week before, with the visit on Thursday 1 October. */
+  const lastWeek = () => fireEvent.click(control('Previous week'));
+
+  it('a past visit shows in place of today’s, editable, with its message; Today comes back', async () => {
     const { actions } = setup();
-    const detail = screen.getByRole('heading', {
-      level: 3,
-      name: 'Thursday 1 October',
-    }).parentElement!;
-    expect(within(detail).getByText('Message that day')).toBeTruthy();
-    const tasks = within(detail).getByRole('group', {
+    lastWeek();
+    fireEvent.click(day(/^Thursday 1 October/));
+    expect(screen.queryByRole('region', { name: 'Today' })).toBeNull();
+    const visit = section('Thursday 1 October');
+    expect(visit).toBe(detail());
+    // Under the calendar and the message, as today's is.
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual([
+      'Calendar',
+      'Message for the housekeeper',
+      'Thursday 1 October',
+    ]);
+    expect(within(visit).getByText('Message that day')).toBeTruthy();
+    expect(within(visit).getByText('Please leave the ironing for next week.')).toBeTruthy();
+    const tasks = within(visit).getByRole('group', {
       name: 'Tasks on Thursday 1 October',
     });
     expect(
@@ -774,62 +839,69 @@ describe('The chosen day', () => {
         .getAllByRole('checkbox')
         .filter((b) => (b as HTMLInputElement).checked),
     ).toHaveLength(6);
-    expect(within(detail).getByRole('heading', { level: 4, name: 'Comments' })).toBeTruthy();
+    expect(within(visit).getByRole('heading', { level: 3, name: 'Comments' })).toBeTruthy();
     // Named with their day, so they can't be mistaken for today's.
     expect(
       (
-        within(detail).getByRole('textbox', {
+        within(visit).getByRole('textbox', {
           name: 'Comments, Thursday 1 October',
         }) as HTMLTextAreaElement
       ).value,
     ).toBe('Ironing left for next week as asked.');
     expect(
       (
-        within(detail).getByRole('textbox', {
+        within(visit).getByRole('textbox', {
           name: 'Price for the day, Thursday 1 October',
         }) as HTMLInputElement
       ).value,
     ).toBe('60.00');
-    expect(screen.getAllByRole('textbox', { name: 'Comments' })).toHaveLength(1);
-    expect(screen.getAllByRole('textbox', { name: 'Price for the day' })).toHaveLength(1);
+    expect(screen.queryAllByRole('textbox', { name: 'Comments' })).toHaveLength(0);
     expect(
-      within(detail).getByText(/^Recorded by 🦊 Ela · Thu 1 Oct 10:05 · Updated by 🦊 Ela · Thu 1 Oct 10:12$/),
+      within(visit).getByText(/^Recorded by 🦊 Ela · Thu 1 Oct 10:05 · Updated by 🦊 Ela · Thu 1 Oct 10:12$/),
     ).toBeTruthy();
     const ironing = within(tasks).getByRole('checkbox', { name: 'Ironing' });
     await act(async () => {
       fireEvent.click(ironing);
     });
     expect(actions.setHousekeepingTaskDone).toHaveBeenCalledWith('2026-10-01', { taskId: 't7' }, true);
+
+    // Today, from the bar: today's section again, and the line.
+    fireEvent.click(control('Today'));
+    expect(within(today()).getByRole('group', { name: 'Tasks today' })).toBeTruthy();
+    expect(detail()).toBeNull();
+    expect(line()).toBe('No visit yet today');
   });
 
   it('adds a visit to a past day without one', async () => {
     const { actions } = setup();
     fireEvent.click(day('Tuesday 6 October'));
-    expect(screen.getByRole('heading', { level: 3, name: 'Tuesday 6 October' })).toBeTruthy();
-    expect(screen.getByText('No visit recorded.')).toBeTruthy();
+    const visit = section('Tuesday 6 October');
+    expect(within(visit).getByText('No visit recorded.')).toBeTruthy();
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Add a visit' }));
+      fireEvent.click(within(visit).getByRole('button', { name: 'Add a visit' }));
     });
     expect(actions.addHousekeepingVisit).toHaveBeenCalledWith('2026-10-06');
-    const tasks = await screen.findByRole('group', {
+    const tasks = await within(visit).findByRole('group', {
       name: 'Tasks on Tuesday 6 October',
     });
     await waitFor(() => expect(document.activeElement).toBe(within(tasks).getAllByRole('checkbox')[0]));
     await waitFor(() => expect(said()).toBe('Visit added'));
     // Nothing recorded on it yet: not counted as a visit until something is.
-    expect(within(screen.getByRole('heading', { level: 3, name: 'Tuesday 6 October' }).parentElement!).getByText(NOTHING_RECORDED)).toBeTruthy();
+    expect(within(visit).getByText(NOTHING_RECORDED)).toBeTruthy();
     expect(day('Tuesday 6 October, selected').hasAttribute('data-visit')).toBe(false);
-    expect(within(section('Calendar')).getByText('1 visit · £60.00')).toBeTruthy();
     await act(async () => {
       fireEvent.click(within(tasks).getByRole('checkbox', { name: 'Ironing' }));
     });
     expect(day('Tuesday 6 October, visit, 1 of 7 done, selected').hasAttribute('data-visit')).toBe(true);
+    fireEvent.click(control('Show month'));
     expect(within(section('Calendar')).getByText('2 visits · £60.00')).toBeTruthy();
   });
 
   it('deletes a visit after asking', async () => {
     const { actions } = setup();
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Visit' }));
+    lastWeek();
+    fireEvent.click(day(/^Thursday 1 October/));
+    fireEvent.click(within(detail()!).getByRole('button', { name: 'Delete Visit' }));
     const confirm = await screen.findByRole('alertdialog', {
       name: 'Delete the visit on Thu 1 Oct?',
     });
@@ -838,58 +910,74 @@ describe('The chosen day', () => {
       fireEvent.click(within(confirm).getByRole('button', { name: 'Delete Visit' }));
     });
     expect(actions.deleteHousekeepingVisit).toHaveBeenCalledWith('v1');
-    expect(screen.getByText('No visit recorded.')).toBeTruthy();
+    expect(within(detail()!).getByText('No visit recorded.')).toBeTruthy();
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Add a visit' })));
     await waitFor(() => expect(said()).toBe('Visit deleted'));
+    expect(day('Thursday 1 October, selected').hasAttribute('data-visit')).toBe(false);
+    fireEvent.click(control('Show month'));
     expect(within(section('Calendar')).getByText('No visits')).toBeTruthy();
   });
 
-  it('points back up to Today for today', () => {
+  it('choosing a day low on the screen brings it up and says what is there; focus stays on the day', () => {
     setup();
-    fireEvent.click(day('Thursday 8 October, today'));
-    expect(screen.getByText("Today's visit is above.")).toBeTruthy();
-    const heading = within(today()).getByRole('heading', {
-      level: 2,
-      name: 'Today',
+    // The tab's scroll area: 874px tall, 60px kept clear at the bottom, in an 800px window.
+    const scroller = screen.getByRole('region', { name: 'Housekeeping' }).firstElementChild as HTMLElement;
+    scroller.style.overflowY = 'auto';
+    scroller.style.paddingBottom = '60px';
+    const scrollBy = vi.fn();
+    scroller.scrollBy = scrollBy as typeof scroller.scrollBy;
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800);
+    // Where the chosen day's heading is (its section runs 800px on).
+    let top = 700;
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      const box = (from: number, to: number) =>
+        ({ top: from, bottom: to, left: 0, right: 402, width: 402, height: to - from, x: 0, y: from, toJSON() {} }) as DOMRect;
+      if (this === scroller) return box(0, 874);
+      if (this.matches('h2[tabindex="-1"]')) return box(top, top + 25);
+      if (this.matches('section') && this.querySelector(':scope > div > h2[tabindex="-1"]')) return box(top, top + 800);
+      return box(0, 0);
     });
-    heading.scrollIntoView = vi.fn();
-    fireEvent.click(screen.getByRole('button', { name: "Show today's visit" }));
-    expect(document.activeElement).toBe(heading);
-    expect(heading.scrollIntoView).toHaveBeenCalled();
-  });
-
-  it('choosing a day brings its details into view and says what is there; focus stays on the day', () => {
-    setup();
-    const scrolled: { el: Element; opts: unknown }[] = [];
-    const proto = Element.prototype as { scrollIntoView?: unknown };
-    const before = proto.scrollIntoView;
-    proto.scrollIntoView = function (this: Element, opts: unknown) {
-      scrolled.push({ el: this, opts });
-    };
     try {
-      const sep = day('Tuesday 6 October');
-      act(() => sep.focus());
-      fireEvent.click(sep);
-      const heading = screen.getByRole('heading', { level: 3, name: 'Tuesday 6 October' });
-      expect(scrolled.map((s) => s.el)).toEqual([heading]);
-      expect(scrolled[0].opts).toMatchObject({ block: 'nearest' });
+      const oct6 = day('Tuesday 6 October');
+      act(() => oct6.focus());
+      fireEvent.click(oct6);
+      // Up until 45% of the window (360px) is left under its heading: 725 + 360 comes up to 814.
+      expect(scrollBy).toHaveBeenCalledTimes(1);
+      expect(scrollBy.mock.calls[0][0].top).toBeCloseTo(271);
+      expect(scrollBy.mock.calls[0][0].behavior).toBe('smooth');
       expect(said()).toBe('Tuesday 6 October: no visit recorded. Details below the calendar.');
       expect(document.activeElement).toBe(day('Tuesday 6 October, selected'));
 
+      // High enough already: it stays.
+      top = 300;
+      lastWeek();
       fireEvent.click(day(/^Thursday 1 October/));
+      expect(scrollBy).toHaveBeenCalledTimes(1);
       expect(said()).toBe('Thursday 1 October: 6 of 7 done, £60.00. Details below the calendar.');
+      fireEvent.click(control('Today'));
       fireEvent.click(day(/^Thursday 8 October/));
-      expect(said()).toBe("Thursday 8 October: today's visit is above the calendar.");
-      expect(scrolled).toHaveLength(3);
+      expect(said()).toBe('Thursday 8 October, today: not started yet. Details below the calendar.');
     } finally {
-      proto.scrollIntoView = before;
+      vi.restoreAllMocks();
     }
   });
 
-  it('says how to see a visit when nothing is chosen', () => {
-    setup({ ...seed(), visits: [SEP_24] });
-    expect(screen.getByText('Tap a day to see its visit.')).toBeTruthy();
-    expect(within(section('Calendar')).getByText('No visits')).toBeTruthy();
+  it('a day from Home’s calendar is chosen in its week, brought to the top and focused', async () => {
+    // jsdom has no scrolling.
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    try {
+      const { onDayShown } = setup(seed(), { showDay: '2026-09-24' });
+      const heading = screen.getByRole('heading', { level: 2, name: 'Thursday 24 September' });
+      await waitFor(() => expect(document.activeElement).toBe(heading));
+      expect(scrollIntoView.mock.contexts).toContain(heading);
+      expect(scrollIntoView).toHaveBeenLastCalledWith(expect.objectContaining({ block: 'start' }));
+      expect(onDayShown).toHaveBeenCalledTimes(1);
+      expect(calendar().getAttribute('aria-label')).toBe('Week of Monday 21 September');
+      expect(day('Thursday 24 September, visit, 7 of 7 done, £65.00, selected')).toBeTruthy();
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
   });
 });
 

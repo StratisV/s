@@ -8,7 +8,6 @@ import {
   canHaveVisit,
   checklistFor,
   daySelectedAnnouncement,
-  defaultSelectedDay,
   doneByline,
   doneCount,
   emptyHousekeeping,
@@ -29,6 +28,7 @@ import {
   priceInputValue,
   shiftMonth,
   snapshotNote,
+  todayLine,
   visitByline,
   visitDays,
   visitOn,
@@ -265,24 +265,6 @@ describe('calendar', () => {
     );
   });
 
-  it('defaultSelectedDay: the latest visit this month before today', () => {
-    expect(defaultSelectedDay(SEED_VISITS, TODAY)).toBe('2026-10-01');
-    // Order does not matter.
-    expect(defaultSelectedDay([...SEED_VISITS, visit('2026-10-05', { price_pence: 0 })].reverse(), TODAY)).toBe(
-      '2026-10-05',
-    );
-    // A visit with nothing recorded is passed over.
-    expect(defaultSelectedDay([...SEED_VISITS, visit('2026-10-05')], TODAY)).toBe('2026-10-01');
-    expect(defaultSelectedDay([ticked(visit(TODAY), [0])], TODAY)).toBeNull();
-    expect(defaultSelectedDay(SEED_VISITS.slice(1), TODAY)).toBeNull();
-    expect(defaultSelectedDay([], TODAY)).toBeNull();
-    // A future visit (bad data) is never chosen.
-    expect(defaultSelectedDay([ticked(visit('2026-10-20'), [0])], TODAY)).toBeNull();
-    // Another month: its latest visit.
-    expect(defaultSelectedDay(SEED_VISITS, TODAY, '2026-09')).toBe('2026-09-24');
-    expect(defaultSelectedDay(SEED_VISITS, TODAY, '2026-05')).toBeNull();
-  });
-
   it('daySelectedAnnouncement: a visit, no visit, nothing recorded, today', () => {
     expect(daySelectedAnnouncement('2026-10-01', TODAY, SEED_VISITS[0])).toBe(
       'Thursday 1 October: 6 of 7 done, £60.00. Details below the calendar.',
@@ -296,9 +278,25 @@ describe('calendar', () => {
     expect(daySelectedAnnouncement('2026-10-06', TODAY, visit('2026-10-06'))).toBe(
       'Tuesday 6 October: nothing recorded yet. Details below the calendar.',
     );
-    expect(daySelectedAnnouncement(TODAY, TODAY, ticked(visit(TODAY), [0]))).toBe(
-      "Thursday 8 October: today's visit is above the calendar.",
+    // Today's details are under the calendar too, once a visit starts.
+    expect(daySelectedAnnouncement(TODAY, TODAY, undefined)).toBe(
+      'Thursday 8 October, today: not started yet. Details below the calendar.',
     );
+    expect(daySelectedAnnouncement(TODAY, TODAY, visit(TODAY))).toBe(
+      'Thursday 8 October, today: not started yet. Details below the calendar.',
+    );
+    expect(daySelectedAnnouncement(TODAY, TODAY, ticked(visit(TODAY), [0]))).toBe(
+      'Thursday 8 October, today: 1 of 7 done. Details below the calendar.',
+    );
+  });
+
+  it('todayLine: no visit, nothing recorded, ticks, a price, no tasks', () => {
+    expect(todayLine(undefined)).toBe('No visit yet today');
+    expect(todayLine(visit(TODAY))).toBe('No visit yet today');
+    expect(todayLine(ticked(visit(TODAY), [0, 1, 2]))).toBe('3 of 7 done today');
+    expect(todayLine(ticked(visit(TODAY, { price_pence: 6000 }), [0]))).toBe('1 of 7 done today · £60.00');
+    expect(todayLine(visit(TODAY, { tasks: [], comments: 'Out of bin bags.' }))).toBe('Visit today');
+    expect(todayLine(visit(TODAY, { tasks: [], price_pence: 4550 }))).toBe('Visit today · £45.50');
   });
 });
 
@@ -319,7 +317,7 @@ describe('visits', () => {
     expect(isRecorded(visit(TODAY, { tasks: [] }))).toBe(false);
   });
 
-  it('visitDays: only the month’s days, and only visits with something recorded', () => {
+  it('visitDays: only the month’s days (all of them without one), and only visits with something recorded', () => {
     const visits = [
       ticked(visit('2026-08-31'), [0]),
       ticked(visit('2026-09-03'), [0]),
@@ -330,6 +328,9 @@ describe('visits', () => {
     expect([...visitDays(visits, '2026-09')].sort()).toEqual(['2026-09-03', '2026-09-30']);
     expect(visitDays(visits, '2026-11').size).toBe(0);
     expect(visitDays([], '2026-09').size).toBe(0);
+    // A week strip across two months asks for any month.
+    expect([...visitDays(visits)].sort()).toEqual(['2026-08-31', '2026-09-03', '2026-09-30', '2026-10-01']);
+    expect(visitDays([]).size).toBe(0);
   });
 
   it('monthTotals: the e2e seed, unpriced and free visits, neighbours left out, none', () => {

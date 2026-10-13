@@ -36,11 +36,14 @@ Supabase), picks an emoji for their profile, and **can edit everything**.
   long they stay), anyone can react to a message with emoji (long-press it, or tap a reaction
   to add yours), and a dot on the Chat tab shows unread messages.
 - **Housekeeping**: the weekly visit by the housekeeper (a household member like everyone
-  else). A message for the housekeeper at the top, today's checklist from the household's task
-  list (edit it with Edit: add, rename, reorder, delete), who ticked what, comments and the
-  price for the day in pounds, all saved as you go, and a calendar of every visit (Monday
-  first): what was asked, what was done, the comments and the price, with each month's total.
-  Any past day's visit can be opened, corrected or deleted, and a missed one added.
+  else). Today's date over the title, as on Home. Under the tab switch, Home's calendar: this
+  week as a strip (or the whole month, with each month's total), a blue dot on the days the
+  housekeeper came, a line on how today's visit is going, and **Today** to come back. Then a
+  message for the housekeeper, then the day chosen in the calendar: today's checklist from the
+  household's task list (edit it with Edit: add, rename, reorder, delete), who ticked what,
+  comments and the price for the day in pounds, all saved as you go; or, for a past day, what
+  was asked, what was done, the comments and the price. Any past day's visit can be corrected
+  or deleted, and a missed one added.
 - **Stats**: who has done what.
 - **Share**: send an item (from its sheet, as the sheet shows it) or a whole area (the share
   button in its header) to WhatsApp, Messages or Mail as a short summary with a link. The

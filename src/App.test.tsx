@@ -275,12 +275,14 @@ describe('a housekeeping visit on Home’s calendar', () => {
 
     await screen.findByRole('heading', { name: 'Housekeeping', level: 1 });
     expect(within(screen.getByRole('navigation', { name: 'Tabs' })).getByRole('button', { name: 'Housekeeping' }).getAttribute('aria-current')).toBe('page');
-    const heading = await screen.findByRole('heading', { level: 3, name });
+    // In place of the Today section, under the calendar's week strip, with the day chosen there.
+    const heading = await screen.findByRole('heading', { level: 2, name });
     await waitFor(() => expect(document.activeElement).toBe(heading));
     const grid = within(screen.getByRole('region', { name: 'Housekeeping' })).getByRole('grid');
     const chosen = grid.querySelector<HTMLElement>(`[data-date="${date}"]`)!;
     expect(chosen.getAttribute('aria-label')).toMatch(/, selected$/);
-    expect(within(heading.parentElement!).getByText('Message that day')).toBeTruthy();
+    expect(within(heading.closest('section')!).getByText('Message that day')).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Today' })).toBeNull();
   });
 });
 
@@ -305,7 +307,11 @@ describe('today’s housekeeping visit on Home’s calendar', () => {
       const heading = screen.getByRole('heading', { level: 2, name: 'Today' });
       await waitFor(() => expect(document.activeElement).toBe(heading));
       expect(scrollIntoView.mock.contexts).toContain(heading);
-      expect(screen.getByText("Today's visit is above.")).toBeTruthy();
+      const housekeeping = screen.getByRole('region', { name: 'Housekeeping' });
+      expect(within(housekeeping).getByRole('grid').querySelector('[data-today]')!.getAttribute('aria-label')).toMatch(
+        /, today, visit, 1 of 7 done, selected$/,
+      );
+      expect(within(heading.closest('section')!).getByRole('group', { name: 'Tasks today' })).toBeTruthy();
     } finally {
       delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
     }

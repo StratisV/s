@@ -149,19 +149,21 @@ describe('Housekeeping with the provider', () => {
   it('a tick taken back leaves no visit counted, and today can be deleted', async () => {
     const { backend, hid } = await open();
     const calendar = screen.getByRole('region', { name: 'Calendar' });
-    expect(within(calendar).getByText('1 visit · £60.00')).toBeTruthy();
+    // The line beside the calendar says how today's visit is going.
+    expect(within(calendar).getByText('No visit yet today')).toBeTruthy();
     const box = () => within(today()).getByRole('checkbox', { name: 'Change the bed sheets' });
     await act(async () => {
       fireEvent.click(box());
     });
-    await waitFor(() => expect(within(calendar).getByText('2 visits · £60.00')).toBeTruthy());
+    await waitFor(() => expect(within(calendar).getByText('1 of 7 done today')).toBeTruthy());
     expect(screen.getByText("Today's visit")).toBeTruthy();
+    expect(day(/^Thursday 8 October/).hasAttribute('data-visit')).toBe(true);
     await act(async () => {
       fireEvent.click(box());
     });
-    await waitFor(() => expect(within(calendar).getByText('1 visit · £60.00')).toBeTruthy());
+    await waitFor(() => expect(within(calendar).getByText('No visit yet today')).toBeTruthy());
     expect(screen.getByText('Last visit Thu 1 Oct')).toBeTruthy();
-    expect(day(/^Thursday 8 October/).getAttribute('aria-label')).toBe('Thursday 8 October, today');
+    expect(day(/^Thursday 8 October/).getAttribute('aria-label')).toBe('Thursday 8 October, today, selected');
     expect(day(/^Thursday 8 October/).hasAttribute('data-visit')).toBe(false);
 
     // Something recorded again: today's visit can be deleted for good.

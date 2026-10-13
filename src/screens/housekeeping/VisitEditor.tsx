@@ -29,8 +29,6 @@ interface VisitEditorProps {
    * are named with it, so they can be told from today's (VoiceOver's form controls list).
    */
   dayName?: string;
-  /** Level of the "Comments" heading: under Today (h2) it is 3, under a day (h3) 4. */
-  level: 3 | 4;
   /** Says what was saved, politely (the screen's live region). */
   announce(text: string): void;
   /** Opens the task list sheet (offered when today has no tasks), from the button pressed. */
@@ -48,9 +46,9 @@ export const NOTHING_RECORDED = 'Nothing recorded yet.';
  * for the day, and who recorded it. A day with no visit yet shows the task list unticked;
  * the first tick (or comments, or a price) records the visit. Comments and the price say
  * "✓ Saved" for a moment when saved, and keep what was typed with "Not saved. Try again"
- * when a save fails.
+ * when a save fails. Its "Comments" heading is an h3, under the day's h2 (Today, or the date).
  */
-export function VisitEditor({ date, legend, dayName, level, announce, onEditTasks }: VisitEditorProps) {
+export function VisitEditor({ date, legend, dayName, announce, onEditTasks }: VisitEditorProps) {
   const { data, today, setHousekeepingTaskDone, saveHousekeepingVisit } = useHousehold();
   const housekeeping = data.housekeeping;
   const { members } = data;
@@ -59,7 +57,6 @@ export function VisitEditor({ date, legend, dayName, level, announce, onEditTask
   const rows = checklistFor(housekeeping, date);
   const now = new Date();
   const commentsId = useId();
-  const Heading = level === 3 ? 'h3' : 'h4';
   const [priceSaved, flashPriceSaved] = useSavedFlash();
 
   const comments = useSavedText(visit?.comments ?? '', (text) =>
@@ -121,9 +118,9 @@ export function VisitEditor({ date, legend, dayName, level, announce, onEditTask
       )}
 
       <div className={styles.subheaderRow}>
-        <Heading id={commentsId} className={styles.subheader}>
+        <h3 id={commentsId} className={styles.subheader}>
           Comments
-        </Heading>
+        </h3>
         {comments.state === 'saved' ? (
           <span className={styles.headerStatus}>
             <SavedFlag />

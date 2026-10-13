@@ -1,57 +1,10 @@
-/* Home's calendar (HomeCalendar.tsx): the card is src/ui/MonthCalendar; these are its marks and the day under it. */
+/*
+ * Home's calendar (HomeCalendar.tsx): the bar and the card are src/ui/DatePicker and
+ * src/ui/MonthCalendar; these are its marks and the day under it.
+ */
 
 .section {
   padding-top: 0;
-}
-
-/*
- * Above the card, in place of a visible "Calendar" header: on the left, Today (when today
- * isn't the chosen day or isn't shown) or, for today at first, a line saying what is due;
- * Show month / Show week on the right. 44px tall.
- */
-.bar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  min-height: 44px;
-  padding: 0 20px;
-}
-
-.summary {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin: 0;
-  padding: 12px 0;
-  font-size: 15px;
-  line-height: 20px;
-  letter-spacing: -0.2px;
-  color: var(--label-secondary);
-}
-
-/* Today, and Show month / Show week: tint text, each its own 44px tap target. */
-.barAction {
-  flex: none;
-  min-height: 44px;
-  padding: 0 4px;
-  margin: 0 -4px;
-  font-size: 15px;
-  line-height: 20px;
-  letter-spacing: -0.2px;
-  color: var(--tint);
-  border-radius: 8px;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.barAction:active {
-  opacity: 0.5;
-}
-
-.barAction:focus-visible {
-  outline-offset: -2px;
-}
-
-.toggle {
-  margin-left: auto;
 }
 
 /* ── Marks under a day's number ────────────────────────── */

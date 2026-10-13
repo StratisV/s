@@ -9,18 +9,15 @@ import {
   repeatMeta,
   todaySummary,
   visitSummary,
-  weekName,
-  weekTitle,
   type CalendarDay,
-  type CalendarView,
 } from '../../lib/logic/calendar';
 import { doneCount, formatPrice } from '../../lib/logic/housekeeping';
 import { itemMeta, memberLabel } from '../../lib/logic/items';
-import { fullDay, monthOf, weekOf, type YearMonth } from '../../lib/logic/months';
+import { fullDay } from '../../lib/logic/months';
 import type { HousekeepingVisit, ISODate, Item, Member } from '../../lib/types';
+import { DatePicker, mondayOf, revealDay, useChosenDay, type ChosenDay } from '../../ui/DatePicker';
 import { EmojiText } from '../../ui/EmojiText';
 import { BroomIcon, ChevronRightIcon } from '../../ui/icons';
-import { MonthCalendar } from '../../ui/MonthCalendar';
 import { ItemRow } from './ItemRow';
 import type { PersonFilter } from './personFilter';
 import rowStyles from './ItemRow.module.css';
@@ -29,81 +26,19 @@ import styles from './HomeCalendar.module.css';
 /** Where this device remembers the week strip or the month: 'month', or nothing for the week. */
 export const CALENDAR_VIEW_KEY = 'homeos.calendar';
 
-function readView(): CalendarView {
-  try {
-    return localStorage.getItem(CALENDAR_VIEW_KEY) === 'month' ? 'month' : 'week';
-  } catch {
-    return 'week';
-  }
-}
-
-function writeView(view: CalendarView): void {
-  try {
-    if (view === 'month') localStorage.setItem(CALENDAR_VIEW_KEY, 'month');
-    else localStorage.removeItem(CALENDAR_VIEW_KEY);
-  } catch {
-    /* private mode or storage full: it just isn't remembered */
-  }
-}
-
-interface Chosen {
-  householdId: string;
-  /** The day it was chosen on: once midnight passes, today is chosen again. */
-  today: ISODate;
-  selected: ISODate;
+interface Chosen extends ChosenDay {
   /**
    * The chosen day's list shows under the calendar. False for today at first: a line says
    * what is due (its rows are in the areas just below) until today is chosen.
    */
   opened: boolean;
-  /** The month shown (month view). */
-  month: YearMonth;
-  /** The Monday of the week the strip shows (week view). */
-  week: ISODate;
 }
 
 /** The chosen day and the month and week shown, remembered while the app runs (Home comes and goes with its tab). */
-let remembered: Chosen | null = null;
+const remembered: { current: Chosen | null } = { current: null };
 
-const mondayOf = (date: ISODate): ISODate => weekOf(date)[0];
-
-const reducedMotion = () => {
-  try {
-    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  } catch {
-    return false;
-  }
-};
-
-/** The nearest ancestor that scrolls (the tab's scroll area). */
-function scrollParent(el: HTMLElement): HTMLElement | null {
-  for (let p = el.parentElement; p; p = p.parentElement) {
-    const { overflowY } = getComputedStyle(p);
-    if (overflowY === 'auto' || overflowY === 'scroll') return p;
-  }
-  return null;
-}
-
-/**
- * Brings a chosen day's details up when they are low on the screen: as much of them as
- * fits above the floating + (the scroll area's bottom padding keeps that room), without
- * taking the day's heading up under the docked tab switch (the scroll area's
- * scroll-padding-top). Measured, as `scrollIntoView` with `block: 'nearest'` ignores the
- * room wanted under the heading.
- */
-function revealDay(panel: HTMLElement): void {
-  const heading = panel.querySelector('h3');
-  const scroller = scrollParent(panel);
-  if (!heading || !scroller) return;
-  const style = getComputedStyle(scroller);
-  const box = scroller.getBoundingClientRect();
-  const top = box.top + (parseFloat(style.scrollPaddingTop) || 0);
-  const bottom = box.bottom - (parseFloat(style.paddingBottom) || 0);
-  const below = panel.getBoundingClientRect().bottom - bottom;
-  const above = heading.getBoundingClientRect().top - top;
-  const delta = Math.min(below, above);
-  if (delta > 1) scroller.scrollBy?.({ top: delta, behavior: reducedMotion() ? 'auto' : 'smooth' });
-}
+/** Today, at first, is not opened. */
+const notOpened = (fresh: ChosenDay): Chosen => ({ ...fresh, opened: false });
 
 interface HomeCalendarProps {
   householdId: string;
@@ -126,12 +61,12 @@ interface HomeCalendarProps {
 /**
  * Home's calendar (docs/ARCHITECTURE.md "Home: the calendar"), under the person filter: the
  * week as a strip, or the whole month (Show month / Show week, remembered on this device),
- * on the calendar card Housekeeping uses too, with Previous and Next for the week or the
- * month and Today to come back. Each day shows the To do items due (status dots, up to three
- * and "+2"; the number in red when something was missed), the later repeats of repeating
- * items (faint hollow dots) and the housekeeping visit (a dot in the circle, as in
- * Housekeeping). Today is chosen at first, with a line saying what is due; a chosen day's
- * items show under the calendar, as Home's rows.
+ * with Previous and Next for the week or the month and Today to come back: the date picker
+ * Housekeeping uses too (src/ui/DatePicker.tsx). Each day shows the To do items due (status
+ * dots, up to three and "+2"; the number in red when something was missed), the later
+ * repeats of repeating items (faint hollow dots) and the housekeeping visit (a dot in the
+ * circle, as in Housekeeping). Today is chosen at first, with a line saying what is due; a
+ * chosen day's items show under the calendar, as Home's rows.
  */
 export function HomeCalendar({
   householdId,
@@ -147,25 +82,8 @@ export function HomeCalendar({
 }: HomeCalendarProps) {
   const headingId = useId();
   const sectionRef = useRef<HTMLElement>(null);
-  const todayRef = useRef<HTMLButtonElement>(null);
-  const [view, setView] = useState<CalendarView>(readView);
-  const fresh = (): Chosen => ({
-    householdId,
-    today,
-    selected: today,
-    opened: false,
-    month: monthOf(today),
-    week: mondayOf(today),
-  });
-  const valid = (c: Chosen | null): c is Chosen => !!c && c.householdId === householdId && c.today === today;
-  const [state, setState] = useState<Chosen>(() => (valid(remembered) ? remembered : fresh()));
   // Another household, or a new day since: start on today, in this week and month.
-  const chosen = valid(state) ? state : fresh();
-  const save = (next: Chosen) => {
-    remembered = next;
-    setState(next);
-  };
-  const update = (patch: Partial<Omit<Chosen, 'householdId' | 'today'>>) => save({ ...chosen, ...patch });
+  const { chosen, update, reset } = useChosenDay(remembered, householdId, today, notOpened);
 
   const lookup = useMemo(() => calendarLookup(items, visits, today), [items, visits, today]);
 
@@ -179,16 +97,9 @@ export function HomeCalendar({
   useEffect(() => {
     if (!reveal) return;
     const panel = sectionRef.current?.querySelector<HTMLElement>('[data-calendar-day]');
-    if (panel) revealDay(panel);
+    const heading = panel?.querySelector('h3');
+    if (panel && heading) revealDay(panel, heading);
   }, [reveal]);
-
-  // Today was pressed from the keyboard (or by VoiceOver): the button goes, so focus goes to today.
-  const focusToday = useRef(false);
-  useEffect(() => {
-    if (!focusToday.current) return;
-    focusToday.current = false;
-    sectionRef.current?.querySelector<HTMLElement>(`[role="grid"] [data-date="${today}"]`)?.focus();
-  });
 
   const select = (date: ISODate) => {
     update({ selected: date, opened: true, week: mondayOf(date) });
@@ -196,31 +107,6 @@ export function HomeCalendar({
     setReveal((n) => n + 1);
   };
 
-  const goToday = () => {
-    focusToday.current = document.activeElement === todayRef.current;
-    save(fresh());
-  };
-
-  const toggleView = () => {
-    const next: CalendarView = view === 'week' ? 'month' : 'week';
-    if (next === 'month') {
-      // The month of the chosen day if the strip shows it, else of today, else of the week's Monday.
-      const days = weekOf(chosen.week);
-      const anchor = days.includes(chosen.selected) ? chosen.selected : days.includes(today) ? today : days[0];
-      update({ month: monthOf(anchor) });
-    } else if (monthOf(chosen.selected) === chosen.month) {
-      // The week of the chosen day, when it is in the month shown.
-      update({ week: mondayOf(chosen.selected) });
-    } else {
-      // Otherwise this week, today chosen.
-      save(fresh());
-    }
-    setView(next);
-    writeView(next);
-  };
-
-  const shownDays = view === 'week' ? weekOf(chosen.week) : null;
-  const todayShown = shownDays ? shownDays.includes(today) : monthOf(today) === chosen.month;
   const opened = chosen.opened || chosen.selected !== today;
 
   const marks = (date: ISODate) => {
@@ -266,44 +152,20 @@ export function HomeCalendar({
       <h2 id={headingId} className="visually-hidden">
         Calendar
       </h2>
-      <div className={styles.bar} data-calendar-bar="">
-        {!todayShown || chosen.selected !== today ? (
-          <button ref={todayRef} type="button" className={styles.barAction} onClick={goToday}>
-            Today
-          </button>
-        ) : !opened ? (
-          <p className={styles.summary} data-today-summary="">
-            {todaySummary(lookup(today), nothingDue(true))}
-          </p>
-        ) : null}
-        <button
-          type="button"
-          className={`${styles.barAction} ${styles.toggle}`}
-          data-calendar-toggle=""
-          onClick={toggleView}
-        >
-          {view === 'week' ? 'Show month' : 'Show week'}
-        </button>
-      </div>
-      <MonthCalendar
-        // A fresh grid for each view: where the keys were in the other one is forgotten.
-        key={view}
-        month={chosen.month}
-        onMonth={(month) => update({ month })}
-        week={chosen.week}
-        onWeek={(week) => update({ week })}
-        weekTitle={(days) => weekTitle(days, today)}
-        selected={chosen.selected}
-        onSelect={select}
+      <DatePicker
+        viewKey={CALENDAR_VIEW_KEY}
         today={today}
-        view={view}
+        chosen={chosen}
+        onChange={update}
+        onReset={reset}
+        onSelect={select}
+        line={opened ? null : todaySummary(lookup(today), nothingDue(true))}
         dayName={(date, isSelected) => calendarDayName(date, today, lookup(date), isSelected)}
-        weekName={(monday) => weekName(monday, today)}
         alert={(date) => lookup(date).missed.length > 0}
         dot={(date) => lookup(date).visit !== null}
         marks={marks}
         dayData={dayData}
-        legend={view === 'month' ? <Legend /> : undefined}
+        legend={<Legend />}
       />
       {opened ? (
         <DayPanel
