@@ -12,6 +12,8 @@ interface DonutProps {
   total: number;
   /** Text alternative for the whole chart. */
   label: string;
+  /** A tap on one person's slice (the whole circle is a button around it). */
+  onSegment?(memberId: string): void;
 }
 
 /**
@@ -19,7 +21,7 @@ interface DonutProps {
  * runs clockwise in member order, round caps, 9px visual gaps. With no
  * completions it shows a faint full track and 0.
  */
-export function Donut({ rows, total, label }: DonutProps) {
+export function Donut({ rows, total, label, onSegment }: DonutProps) {
   const shown = useTweenedRows(rows);
   const { radius, segments } = donutSegments(shown, { size: SIZE, stroke: STROKE, gap: GAP });
   const c = SIZE / 2;
@@ -49,6 +51,16 @@ export function Donut({ rows, total, label }: DonutProps) {
               strokeLinecap="round"
               strokeDasharray={s.dasharray}
               strokeDashoffset={s.dashoffset}
+              data-member={s.memberId}
+              className={onSegment ? styles.tappable : undefined}
+              onClick={
+                onSegment
+                  ? (e) => {
+                      e.stopPropagation();
+                      onSegment(s.memberId);
+                    }
+                  : undefined
+              }
             />
           ))}
         </g>

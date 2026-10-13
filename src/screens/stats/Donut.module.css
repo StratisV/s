@@ -57,3 +57,9 @@
     transition: none;
   }
 }
+
+/* A slice that opens its person's tasks: only its painted stroke takes the tap. */
+.tappable {
+  pointer-events: stroke;
+  cursor: pointer;
+}

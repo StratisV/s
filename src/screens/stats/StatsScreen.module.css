@@ -50,3 +50,52 @@
   flex: none;
   font-weight: 600;
 }
+
+/* The circle opens the tasks behind it. */
+.donutButton {
+  display: block;
+  padding: 0;
+  border-radius: 50%;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.15s ease;
+}
+
+.donutButton:active {
+  transform: scale(0.97);
+}
+
+.donutButton:focus-visible {
+  outline-offset: 6px;
+}
+
+.hint {
+  margin: -16px 32px 16px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--label-secondary);
+}
+
+/* A person's row opens their tasks: the whole row is the button. */
+.rowButton {
+  flex: 1;
+  min-width: 0;
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+.rowButton:active {
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .donutButton {
+    transition: none;
+  }
+}

@@ -11,6 +11,7 @@ import { ErrorScreen } from './screens/onboarding/ErrorScreen';
 import { Onboarding } from './screens/onboarding/Onboarding';
 import { ProfileScreen } from './screens/profile/ProfileScreen';
 import { useSharedLink } from './screens/share/useSharedLink';
+import { DoneSheet, type DoneTarget } from './screens/stats/DoneSheet';
 import { StatsScreen } from './screens/stats/StatsScreen';
 import type { ISODate } from './lib/types';
 import type { ItemSheetTarget, Tab } from './screens/types';
@@ -145,7 +146,15 @@ function MainShell() {
     taskListOpener.current = opener;
     setTaskListOpen(true);
   }, []);
-  const pushed = sheetOpen || taskListOpen;
+  // Stats' tasks behind the circle (a page sheet too), and what opened it.
+  const [doneOpen, setDoneOpen] = useState(false);
+  const [doneTarget, setDoneTarget] = useState<DoneTarget>({ period: 'month', memberId: null });
+  const openDone = useCallback((target: DoneTarget, opener: HTMLElement) => {
+    taskListOpener.current = opener;
+    setDoneTarget(target);
+    setDoneOpen(true);
+  }, []);
+  const pushed = sheetOpen || taskListOpen || doneOpen;
   // The area an item was just saved into, for Home to expand if it is collapsed.
   const [revealArea, setRevealArea] = useState<string | null>(null);
   const clearReveal = useCallback(() => setRevealArea(null), []);
@@ -266,7 +275,7 @@ function MainShell() {
             onDayShown={clearHousekeepingDay}
           />
         ) : (
-          <StatsScreen tabs={tabs} onOpenProfile={() => setProfileOpen(true)} />
+          <StatsScreen tabs={tabs} onOpenProfile={() => setProfileOpen(true)} onOpenDone={openDone} />
         )}
         <AddButton tab={tab} onAdd={() => openSheet({ kind: 'new' })} />
         <div className={styles.dim} aria-hidden="true" />
@@ -282,6 +291,7 @@ function MainShell() {
         />
       ) : null}
       <TaskListSheet open={taskListOpen} onClose={() => setTaskListOpen(false)} />
+      <DoneSheet open={doneOpen} target={doneTarget} onClose={() => setDoneOpen(false)} />
       <ProfileScreen open={profileOpen} onClose={() => setProfileOpen(false)} />
     </div>
   );

@@ -4,6 +4,7 @@ import type { StatsPeriod } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
 import { Avatar } from '../../ui/Avatar';
 import { Screen } from '../../ui/Screen';
+import type { DoneTarget } from './DoneSheet';
 import { Donut } from './Donut';
 import { SegmentedControl } from './SegmentedControl';
 import styles from './StatsScreen.module.css';
@@ -16,8 +17,19 @@ const PERIODS: { value: StatsPeriod; label: string }[] = [
 // Remembered while the app runs, so switching tabs keeps the chosen period.
 let lastPeriod: StatsPeriod = 'month';
 
-/** Stats: tasks done per person, this month or ever (README "3. Stats"). */
-export function StatsScreen({ onOpenProfile, tabs }: { onOpenProfile(): void; tabs?: ReactNode }) {
+/**
+ * Stats: tasks done per person, this month or ever (README "3. Stats"). Tap the circle for the
+ * tasks behind it, or a slice or a person for theirs (`onOpenDone`, App's DoneSheet).
+ */
+export function StatsScreen({
+  onOpenProfile,
+  tabs,
+  onOpenDone,
+}: {
+  onOpenProfile(): void;
+  tabs?: ReactNode;
+  onOpenDone?(target: DoneTarget, opener: HTMLElement): void;
+}) {
   const { data, me, today } = useHousehold();
   const [period, setPeriodState] = useState<StatsPeriod>(lastPeriod);
   const setPeriod = (p: StatsPeriod) => {
@@ -55,18 +67,53 @@ export function StatsScreen({ onOpenProfile, tabs }: { onOpenProfile(): void; ta
         compact
       />
       <div className={styles.donut}>
-        <Donut rows={rows} total={total} label={summary} />
+        {onOpenDone ? (
+          <button
+            type="button"
+            className={styles.donutButton}
+            aria-label={`Show the tasks: ${summary}`}
+            onClick={(e) => onOpenDone({ period, memberId: null }, e.currentTarget)}
+          >
+            <Donut
+              rows={rows}
+              total={total}
+              label={summary}
+              onSegment={(memberId) => onOpenDone({ period, memberId }, document.activeElement as HTMLElement)}
+            />
+          </button>
+        ) : (
+          <Donut rows={rows} total={total} label={summary} />
+        )}
       </div>
+      {onOpenDone ? <p className={styles.hint}>Tap the circle or a name to see the tasks.</p> : null}
       <ul className={styles.legend} aria-label="Done per person">
-        {rows.map(({ member, count }) => (
-          <li key={member.id} className={styles.row}>
-            <span className={styles.who}>
-              <Avatar emoji={member.emoji} size={36} emojiSize={20} background="var(--bg)" ring={member.color} />
-              <span className={styles.name}>{member.name}</span>
-            </span>
-            <span className={styles.count}>{count}</span>
-          </li>
-        ))}
+        {rows.map(({ member, count }) => {
+          const who = (
+            <>
+              <span className={styles.who}>
+                <Avatar emoji={member.emoji} size={36} emojiSize={20} background="var(--bg)" ring={member.color} />
+                <span className={styles.name}>{member.name}</span>
+              </span>
+              <span className={styles.count}>{count}</span>
+            </>
+          );
+          return (
+            <li key={member.id} className={styles.row}>
+              {onOpenDone ? (
+                <button
+                  type="button"
+                  className={styles.rowButton}
+                  aria-label={`${member.name}, ${count} done. Show the tasks`}
+                  onClick={(e) => onOpenDone({ period, memberId: member.id }, e.currentTarget)}
+                >
+                  {who}
+                </button>
+              ) : (
+                who
+              )}
+            </li>
+          );
+        })}
       </ul>
     </Screen>
   );

@@ -35,6 +35,31 @@ export function countCompletions(
   return { rows, total: rows.reduce((n, r) => n + r.count, 0) };
 }
 
+/**
+ * The tasks behind the counts: completions in the period credited to someone still in the home
+ * (to `memberId` alone when given), newest first. The same rules as countCompletions.
+ */
+export function doneInPeriod(
+  members: Member[],
+  completions: Completion[],
+  period: StatsPeriod,
+  timeZone: string,
+  now: Date | ISODate = new Date(),
+  memberId: string | null = null,
+): Completion[] {
+  const current = typeof now === 'string' ? now.slice(0, 7) : monthKey(now, timeZone);
+  const people = new Set(members.map((m) => m.id));
+  return completions
+    .filter(
+      (c) =>
+        c.credited_to !== null &&
+        people.has(c.credited_to) &&
+        (memberId === null || c.credited_to === memberId) &&
+        (period === 'lifetime' || monthKey(c.completed_at, timeZone) === current),
+    )
+    .sort((a, b) => Date.parse(b.completed_at) - Date.parse(a.completed_at));
+}
+
 export interface DonutSegment {
   memberId: string;
   color: string;
