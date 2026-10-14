@@ -99,6 +99,13 @@ describe('Welcome in server mode', () => {
     expect((screen.getByLabelText('Email') as HTMLInputElement).type).toBe('email');
     expect((screen.getByLabelText('Password') as HTMLInputElement).autocomplete).toBe('new-password');
     expect(screen.getByRole('button', { name: 'Create Account' })).toBeTruthy();
+    // Every field keeps a label in view above it (not only a placeholder that goes as you type).
+    for (const text of ['Your name', 'Email', 'Password']) {
+      const label = screen.getByText(text, { selector: 'label' });
+      expect(label.className).not.toMatch(/visually-hidden/);
+      expect(label.textContent).toBe(text);
+    }
+    expect(screen.getByText('6 or more characters.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Have an account? Sign In' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Google/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Have a code?' }));

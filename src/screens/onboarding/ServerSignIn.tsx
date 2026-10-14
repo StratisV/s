@@ -309,13 +309,15 @@ function Account({ google, notice, onCode }: { google: boolean; notice: ServerWe
     }
   };
 
-  const field = (id: string, label: string, input: JSX.Element) => (
-    <>
+  // Each field's label stays in view above it (a placeholder alone goes away as you type).
+  const field = (id: string, label: string, input: JSX.Element, hint?: string) => (
+    <div className={styles.fieldGroup}>
       <label htmlFor={id} className={styles.fieldLabel}>
         {label}
       </label>
       {input}
-    </>
+      {hint ? <p className={styles.fieldHint}>{hint}</p> : null}
+    </div>
   );
 
   return (
@@ -338,7 +340,7 @@ function Account({ google, notice, onCode }: { google: boolean; notice: ServerWe
                 type="text"
                 autoComplete="name"
                 autoCapitalize="words"
-                placeholder="Your name"
+                placeholder="e.g. Alex"
                 value={name}
                 maxLength={60}
                 disabled={busy}
@@ -361,7 +363,7 @@ function Account({ google, notice, onCode }: { google: boolean; notice: ServerWe
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
-            placeholder="Email"
+            placeholder="name@example.com"
             value={email}
             maxLength={254}
             disabled={busy}
@@ -379,7 +381,7 @@ function Account({ google, notice, onCode }: { google: boolean; notice: ServerWe
             className={styles.field}
             type="password"
             autoComplete={creating ? 'new-password' : 'current-password'}
-            placeholder={creating ? 'Password (6 or more characters)' : 'Password'}
+            placeholder={creating ? 'Choose a password' : 'Your password'}
             value={password}
             maxLength={200}
             disabled={busy}
@@ -390,6 +392,7 @@ function Account({ google, notice, onCode }: { google: boolean; notice: ServerWe
               setError(null);
             }}
           />,
+          creating ? '6 or more characters.' : undefined,
         )}
         {error ? (
           <p id={errorId} className={styles.codeError} role="alert">

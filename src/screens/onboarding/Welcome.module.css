@@ -319,16 +319,33 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 10px;
+  gap: 14px;
+}
+
+/* A label above each field, always in view; a short hint under it where it helps. */
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  text-align: left;
 }
 
 .fieldLabel {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
+  padding: 0 4px;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  color: var(--label);
+}
+
+.fieldHint {
+  margin: 0;
+  padding: 0 4px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--label-secondary);
 }
 
 /* A white field as tall as the buttons, in ordinary type (the code field's look, not its spacing). */
