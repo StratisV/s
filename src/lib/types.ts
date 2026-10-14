@@ -534,3 +534,47 @@ export interface ServerSetupSummary extends DemoHomeSummary {
    */
   lastChanged?: ISOTimestamp | null;
 }
+
+/**
+ * A reminder someone set for themselves in Profile > Notifications (server mode): a phone
+ * notification on the days chosen, in the morning ("Take the bins out", Sundays). Only its
+ * person sees it. docs/ARCHITECTURE.md "Server mode (no setup)", "Notifications".
+ */
+export interface Reminder {
+  id: string;
+  /** Trimmed, 1 to TEXT_LIMITS.reminderTitle characters. */
+  title: string;
+  /** The weekdays it comes on: 0 = Sunday … 6 = Saturday, ascending, at least one. */
+  days: number[];
+}
+
+/** A reminder as Profile saves it: a new one without `id`, a change to one with it. */
+export interface ReminderInput {
+  id?: string;
+  title: string;
+  days: number[];
+}
+
+/** What a person gets on their phones (server mode). Each is off until they tick it. */
+export interface NotifyPrefs {
+  /** Monday morning: what is due this week, what is overdue, what was done last week. */
+  weeklyStatus: boolean;
+  /** The morning after a housekeeping visit: what was ticked, the comments, the price, the message. */
+  housekeeping: boolean;
+  /** Their own reminders, on the days they chose. */
+  reminders: boolean;
+}
+
+/** Profile > Notifications in server mode: the signed-in person's choices, and this device. */
+export interface NotifySettings {
+  prefs: NotifyPrefs;
+  /** Their reminders, oldest first. */
+  reminders: Reminder[];
+  /**
+   * The server's public key for Web Push (VAPID, base64url): what this browser subscribes
+   * with. Null when the server has no keys, so phones can't be sent notifications.
+   */
+  publicKey: string | null;
+  /** The server holds a push subscription for this device (this browser). */
+  subscribed: boolean;
+}

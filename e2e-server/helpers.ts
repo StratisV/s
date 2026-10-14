@@ -11,6 +11,9 @@ import type { HouseholdData } from '../src/lib/types';
 /** HOMEOS_SETUP_CODE of the local server the suite runs (playwright.server.config.ts). */
 export const SETUP_CODE = 'TEST-SETU-PCDE-2345-6789';
 
+/** CRON_SECRET of the local server the suite runs (playwright.server.config.ts): the morning run's. */
+export const CRON_SECRET = 'e2e-cron-secret-not-a-real-one';
+
 /** How long a change on one phone may take to show on another (a 3 s poll, the debounce, the load). */
 export const SYNC_MS = 5_000;
 

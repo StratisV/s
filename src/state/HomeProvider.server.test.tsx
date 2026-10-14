@@ -383,6 +383,44 @@ describe('signed in', () => {
     expect(home().readOnly).toBe(true);
     expect(home().toast?.message).toBe('Couldn’t save. Saving is paused until next month.');
   });
+
+  it('keeps notification choices and reminders on the server, the same on every phone of the person', async () => {
+    const h = createHarness();
+    const { other } = await homeElsewhere(h);
+    const home = mount(other.backend);
+    await waitFor(() => expect(home().phase.kind).toBe('ready'));
+    let settings!: Awaited<ReturnType<HomeContextValue['notifySettings']>>;
+    await act(async () => {
+      settings = await home().notifySettings();
+    });
+    expect(settings).toEqual({ prefs: { weeklyStatus: false, housekeeping: false, reminders: false }, reminders: [], publicKey: null, subscribed: false });
+    await act(async () => {
+      await home().setNotifyPrefs({ housekeeping: true, reminders: true });
+      settings = await home().saveReminder({ title: 'Take the bins out', days: [0] });
+    });
+    expect(settings.reminders).toEqual([{ id: expect.any(String), title: 'Take the bins out', days: [0] }]);
+    // His tablet: a second device, the same choices.
+    const { code } = await other.backend.createCode(home().me!.id);
+    const tablet = phone(h);
+    await tablet.backend.redeemCode(code);
+    expect(await tablet.backend.notifySettings()).toEqual({ ...settings, prefs: { weeklyStatus: false, housekeeping: true, reminders: true } });
+    await act(async () => {
+      settings = await home().deleteReminder(settings.reminders[0].id);
+    });
+    expect(settings.reminders).toEqual([]);
+  });
+
+  it('says saving is paused when a notification choice meets the month’s limit', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const h = createHarness({ env: { HOMEOS_BLOB_WRITES_PER_MONTH: '3' } });
+    const { other } = await homeElsewhere(h);
+    const home = mount(other.backend);
+    await waitFor(() => expect(home().phase.kind).toBe('ready'));
+    await act(async () => {
+      await expect(home().setNotifyPrefs({ weeklyStatus: true })).rejects.toMatchObject({ code: 'read_only' });
+    });
+    expect(home().readOnly).toBe(true);
+  });
 });
 
 describe('outside server mode', () => {
@@ -404,7 +442,16 @@ describe('outside server mode', () => {
     await waitFor(() => expect(home().phase.kind).toBe('ready'));
     expect(home().serverWelcome).toBeNull();
     expect(home().readOnly).toBe(false);
-    for (const run of [() => home().redeemCode('ABCD-EFGH'), () => home().createCode('x'), () => home().listDevices(), () => home().bringHomeOnline('x')]) {
+    for (const run of [
+      () => home().redeemCode('ABCD-EFGH'),
+      () => home().createCode('x'),
+      () => home().listDevices(),
+      () => home().bringHomeOnline('x'),
+      () => home().notifySettings(),
+      () => home().setNotifyPrefs({ weeklyStatus: true }),
+      () => home().saveReminder({ title: 'x', days: [1] }),
+      () => home().deleteReminder('x'),
+    ]) {
       await expect(run()).rejects.toBeInstanceOf(BackendError);
     }
   });

@@ -71,7 +71,7 @@ test('items: create, edit, What good looks like, kind, done, undo and delete sho
   await sheet.getByRole('radiogroup', { name: 'Status' }).getByText('Red', { exact: true }).click();
   await sheet.getByLabel('Assigned to', { exact: true }).selectOption({ label: '🦔 Shea' });
   await sheet.getByLabel('Due', { exact: true }).fill(due);
-  // Nothing sends notifications in server mode, so the sheet doesn't offer them.
+  // Server mode sends no per-item reminders (only Profile's notifications), so the sheet doesn't offer them.
   await expect(sheet.getByText('Notify', { exact: true })).toHaveCount(0);
   await sheet.getByRole('button', { name: 'Save' }).click();
   await expect(sheet).toHaveCount(0);

@@ -4,6 +4,10 @@
 //
 // This only manages the device. Whether a member wants pushes at all is members.push_enabled,
 // which the UI sets with updateMember().
+//
+// Server mode (docs/ARCHITECTURE.md "Server mode (no setup)", "Notifications") has no build-time
+// key: the server hands its VAPID public key to Profile (NotifySettings.publicKey), which passes
+// it to pushState() and enablePush(); ServerBackend keeps the subscription with this device.
 import type { Backend } from './backend/types';
 import type { PushSubscriptionInput } from './types';
 
@@ -53,10 +57,13 @@ function hasPushApis(): boolean {
   );
 }
 
-/** Never throws. */
-export function pushState(): PushState {
+/**
+ * Never throws. `publicKey`: the VAPID public key to subscribe with (default the build's,
+ * VITE_VAPID_PUBLIC_KEY; server mode passes the server's); none: 'unsupported'.
+ */
+export function pushState(publicKey: string = VAPID_PUBLIC_KEY): PushState {
   try {
-    if (!PUSH_CONFIGURED || typeof window === 'undefined' || typeof navigator === 'undefined') {
+    if (!publicKey || typeof window === 'undefined' || typeof navigator === 'undefined') {
       return 'unsupported';
     }
     // Checked before the APIs: Safari tabs on iOS don't expose PushManager at all.
@@ -76,18 +83,19 @@ export function pushState(): PushState {
  * that goes wrong resolves false (and is logged).
  *
  * Safari only shows the permission prompt while it still counts as part of the
- * tap, so call this before awaiting anything else in the handler.
+ * tap, so call this before awaiting anything else in the handler. `publicKey` as
+ * pushState()'s.
  */
-export async function enablePush(backend: Backend, memberId: string): Promise<boolean> {
+export async function enablePush(backend: Backend, memberId: string, publicKey: string = VAPID_PUBLIC_KEY): Promise<boolean> {
   try {
-    const state = pushState();
+    const state = pushState(publicKey);
     if (state === 'unsupported' || state === 'needs-install' || state === 'denied') return false;
     // The first await: nothing may come before the prompt.
     const permission = state === 'granted' ? 'granted' : await requestPermission();
     if (permission !== 'granted') return false;
 
     const registration = await readyRegistration();
-    const key = base64UrlToBytes(VAPID_PUBLIC_KEY);
+    const key = base64UrlToBytes(publicKey);
     let sub = await registration.pushManager.getSubscription();
     if (sub && !sameKey(sub.options?.applicationServerKey ?? null, key)) {
       // Subscribed with an old VAPID key: the server can't send to it any more.

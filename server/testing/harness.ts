@@ -32,6 +32,8 @@ export interface HarnessOptions {
   sleep?: (ms: number) => Promise<void>;
   /** Google's signing keys, for Continue with Google (default: none, so it answers 'failed'). */
   googleKeys?: import('../core/google').GoogleKeys;
+  /** Sends a phone notification (default: one that fails the test: nothing goes to the network). */
+  push?: import('../core/notify').PushSender;
 }
 
 export interface TestClock {
@@ -82,6 +84,11 @@ export function createHarness(opts: HarnessOptions = {}): Harness {
       keyMisses: new AttemptLimiter(DEFAULT_KEY_MISS_LIMITS, now),
       deps: { now: () => new Date(now()), randomBytes: (n) => new Uint8Array(randomBytes(n)), newId: () => randomUUID() },
       googleKeys: opts.googleKeys,
+      push:
+        opts.push ??
+        (() => {
+          throw new Error('a test sent a notification without a push sender');
+        }),
     };
   };
   const ctx = makeContext();

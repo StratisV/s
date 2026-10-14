@@ -8,7 +8,8 @@
 //     Writes .vercel/output (Build Output API v3), which Vercel then deploys instead of dist/:
 //       static/                         a copy of dist/
 //       functions/api/home.func/        server/entry/vercel.ts bundled (index.mjs) + .vc-config.json
-//       config.json                     vercel.json's headers as routes, then the filesystem
+//       config.json                     vercel.json's headers as routes, then the filesystem;
+//                                       vercel.json's crons (the morning notifications run)
 //     HOMEOS_FUNCTION_REGION (optional) pins the function to the Blob store's region.
 //   node scripts/build-server.mjs --local    (npm run build:server)
 //     server/entry/local.ts bundled into dist-server/local.mjs.

@@ -34,12 +34,23 @@
 //    signOut  removes this device when the key is valid (a write), always 200, clears the cookie
 //    release  store.write(doc => runAs(doc.home, caller, b => b.releaseClaim(), 'write')),
 //             pruneAuth then drops their devices; clears the cookie
+//    notify   notifySettings() (./notify.ts): the caller's choices and reminders, the VAPID
+//             public key (never the private one), whether this device has a subscription
+//    pushSubscribe, pushUnsubscribe   this device's subscription (subscribeDevice, unsubscribeDevice)
+//    setNotify, saveReminder, deleteReminder   the caller's own row; answer notifySettings()
+//             (all five are 'meta' writes: browsers do not reload for them)
+//    tick     (GET, from Vercel Cron: no X-HomeOS header, `Authorization: Bearer <CRON_SECRET>`,
+//             else 403 'forbidden') the morning run: takeDue() in one 'meta' write (what it
+//             plans is recorded as sent before anything goes out), then deliver(); endpoints a
+//             push service says are gone are forgotten. A GET of /api/home with no op and the
+//             x-vercel-cron-schedule header counts as tick too.
 //    Every signed-in request marks its device as used (DeviceRow.seenAt) once: inside the
 //    write for a write, else with a 'meta' write of its own (one put per device, ever).
 // 6. Errors: toApiError(err) → { error: { code, message } } with API_ERROR_STATUS[code]
 //    (Retry-After for too_many_attempts). A 5xx logs the error (never a key, code or body).
 // Every response: Content-Type application/json; charset=utf-8, Cache-Control no-store.
 
+import { createHash, timingSafeEqual } from 'node:crypto';
 import {
   API_ERROR_STATUS,
   API_HEADER,
@@ -55,12 +66,14 @@ import {
   type ApiErrorBody,
   type CodeResponse,
   type DevicesResponse,
+  type NotifyResponse,
   type OkResponse,
   type RpcResponse,
   type SessionResponse,
   type SetupRequest,
   type GoogleReturn,
   type StatusResponse,
+  type TickResponse,
   type VersionResponse,
 } from '../../src/lib/backend/serverApi';
 import { BackendError } from '../../src/lib/backend/types';
@@ -97,6 +110,19 @@ import { runAs, type Caller } from './runAs';
 import type { DeviceRow, ServerDoc } from './serverDoc';
 import { setupHome } from './setup';
 import { googleAuthUrl, verifyGoogleIdToken, type GoogleKeys } from './google';
+import {
+  deleteReminder,
+  deliver,
+  forgetEndpoints,
+  notifySettings,
+  saveReminder,
+  setNotifyPrefs,
+  subscribeDevice,
+  takeDue,
+  unsubscribeDevice,
+  webPushSender,
+  type PushSender,
+} from './notify';
 
 /** A copy checked within this long counts as up to date for a bare key it does not hold. */
 export const RECHECK_MS = 2000;
@@ -138,6 +164,8 @@ export interface ServerContext {
   deps: AuthDeps;
   /** Google's signing keys (Continue with Google); none: Google sign-in answers 'failed'. */
   googleKeys?: GoogleKeys;
+  /** Sends one phone notification; default webPushSender (tests give their own). */
+  push?: PushSender;
 }
 
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } as const;
@@ -353,9 +381,25 @@ function deviceInfo(device: DeviceRow, memberId: string, current: boolean): Devi
 
 const isId = (v: unknown): v is string => typeof v === 'string' && v.length >= 1 && v.length <= 100;
 
-const POST_OPS = ['setup', 'redeem', 'signUp', 'signIn', 'resetAccount', 'rpc', 'createCode', 'removeDevice', 'signOut', 'release'] as const;
+const POST_OPS = [
+  'setup',
+  'redeem',
+  'signUp',
+  'signIn',
+  'resetAccount',
+  'rpc',
+  'createCode',
+  'removeDevice',
+  'signOut',
+  'release',
+  'pushSubscribe',
+  'pushUnsubscribe',
+  'setNotify',
+  'saveReminder',
+  'deleteReminder',
+] as const;
 type PostOp = (typeof POST_OPS)[number];
-const GET_OPS = ['status', 'session', 'version', 'devices'] as const;
+const GET_OPS = ['status', 'session', 'version', 'devices', 'notify'] as const;
 type GetOp = (typeof GET_OPS)[number];
 
 function bodyLimit(op: PostOp): number {
@@ -391,6 +435,10 @@ async function route(request: ApiRequest, ctx: ServerContext): Promise<ApiRespon
   const navOp = url.searchParams.get('op');
   if (method === 'GET' && navOp === 'googleStart') return googleStart(request, ctx);
   if (method === 'POST' && navOp === 'google') return googleReturn(request, ctx);
+  // The morning run, from Vercel Cron (which sends no X-HomeOS header): CRON_SECRET guards it.
+  if (method === 'GET' && (navOp === 'tick' || (navOp === null && headers['x-vercel-cron-schedule'] !== undefined))) {
+    return tick(request, ctx);
+  }
   if (headers[API_HEADER.toLowerCase()] !== API_HEADER_VALUE) throw new ApiError('forbidden', 'Missing the X-HomeOS header');
   const info: RequestInfo = { ip: request.ip || 'unknown', userAgent: headers['user-agent'] };
 
@@ -451,6 +499,8 @@ async function get(op: GetOp, request: ApiRequest, ctx: ServerContext): Promise<
     }
     case 'devices':
       return json(200, { devices: deviceInfos(doc, me.device.id) } satisfies DevicesResponse);
+    case 'notify':
+      return json(200, notifySettings(doc, me.caller.memberId, me.device.id, ctx.config.push?.publicKey ?? null) satisfies NotifyResponse);
   }
 }
 
@@ -650,7 +700,92 @@ async function post(
       );
       return json(200, { ok: true } satisfies OkResponse, { 'Set-Cookie': keyCookie(null, secure) });
     }
+
+    case 'pushSubscribe': {
+      const me = await signedIn(ctx, request, { markUsed: false });
+      if (!me) throw new ApiError('not_signed_in');
+      if (!ctx.config.push) throw new ApiError('invalid_input', 'invalid_input: notifications are not set up');
+      await ctx.store.write(
+        (doc) => {
+          callerIn(doc, me.device.id, now());
+          subscribeDevice(doc, me.device.id, body.subscription, now());
+        },
+        { kind: 'meta', pure: true },
+      );
+      return json(200, { ok: true } satisfies OkResponse);
+    }
+
+    case 'pushUnsubscribe': {
+      const me = await signedIn(ctx, request, { markUsed: false });
+      if (!me) throw new ApiError('not_signed_in');
+      await ctx.store.write(
+        (doc) => {
+          callerIn(doc, me.device.id, now());
+          unsubscribeDevice(doc, me.device.id);
+        },
+        { kind: 'meta', pure: true },
+      );
+      return json(200, { ok: true } satisfies OkResponse);
+    }
+
+    case 'setNotify':
+    case 'saveReminder':
+    case 'deleteReminder': {
+      const me = await signedIn(ctx, request, { markUsed: false });
+      if (!me) throw new ApiError('not_signed_in');
+      const publicKey = ctx.config.push?.publicKey ?? null;
+      const done = await ctx.store.write(
+        (doc) => {
+          const caller = callerIn(doc, me.device.id, now());
+          if (op === 'setNotify') setNotifyPrefs(doc, caller.memberId, body.prefs);
+          else if (op === 'saveReminder') saveReminder(doc, caller.memberId, body.reminder, ctx.deps);
+          else deleteReminder(doc, caller.memberId, body.id);
+          return notifySettings(doc, caller.memberId, me.device.id, publicKey);
+        },
+        { kind: 'meta', pure: true },
+      );
+      return json(200, done.result satisfies NotifyResponse);
+    }
   }
+}
+
+// ── The morning run (notify.ts) ─────────────────────────
+
+/** Whether `given` is the cron secret, in time that does not depend on where they differ. */
+function isCronSecret(given: string, secret: string): boolean {
+  const a = createHash('sha256').update(given, 'utf8').digest();
+  const b = createHash('sha256').update(secret, 'utf8').digest();
+  return timingSafeEqual(a, b) && given.length > 0;
+}
+
+/**
+ * GET ?op=tick from Vercel Cron, once a day: what is due now is planned and recorded as sent
+ * in one write (takeDue), then sent. Without the right `Authorization: Bearer <CRON_SECRET>`
+ * (or with no CRON_SECRET set): 403, and nothing is read. Without VAPID keys, or with no home
+ * online yet: nothing to do. Answers counts only.
+ */
+async function tick(request: ApiRequest, ctx: ServerContext): Promise<ApiResponse> {
+  const secret = ctx.config.cronSecret;
+  const given = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.authorization ?? '')?.[1] ?? '';
+  if (!secret || !isCronSecret(given, secret)) throw new ApiError('forbidden', 'Only the scheduled run may do this');
+  const nothing: TickResponse = { ok: true, sent: 0, failed: 0, gone: 0 };
+  const keys = ctx.config.push;
+  if (!keys) return json(200, nothing);
+  const now = ctx.deps.now();
+  let planned;
+  try {
+    planned = (await ctx.store.write((doc) => takeDue(doc, now), { kind: 'meta', pure: true })).result;
+  } catch (err) {
+    if (err instanceof BackendError && err.code === 'not_found') return json(200, nothing);
+    throw err;
+  }
+  const delivery = await deliver(planned, keys, ctx.push ?? webPushSender);
+  if (delivery.gone.size) {
+    await ctx.store
+      .write((doc) => void forgetEndpoints(doc, delivery.gone), { kind: 'meta', pure: true })
+      .catch((err) => console.error(`home.os api: could not forget gone subscriptions: ${toApiError(err).code}`));
+  }
+  return json(200, { ok: true, sent: delivery.sent, failed: delivery.failed, gone: delivery.gone.size } satisfies TickResponse);
 }
 
 // ── Continue with Google (google.ts) ────────────────────

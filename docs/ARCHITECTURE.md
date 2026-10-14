@@ -8,9 +8,10 @@ and a private Blob store; see "Server mode (no setup)"). The design spec is `des
 ## Product rules that shape the code
 
 - **Server mode** (no Supabase configured, a Blob store connected): the home lives on the
-  deployment's own server and people sign in with codes, not Google; push and the weekly email
-  are hidden. See "Server mode (no setup)". The rules below hold there too, except where that
-  section says otherwise.
+  deployment's own server and people sign in with codes, not Google; the weekly email is
+  hidden, and phone notifications are the server's own (weekly status, housekeeping report,
+  your reminders; see "Notifications" there). See "Server mode (no setup)". The rules below
+  hold there too, except where that section says otherwise.
 - Sign in with **Google** only. **One home** per deployment (see "One home"), kept by the
   database: after sign-in the server says where the person belongs. Someone already in the home
   goes straight in; someone a housemate added with their Google email (Profile > Household >
@@ -715,8 +716,9 @@ The household wants their home shared across phones with nothing to set up by ha
 Supabase project, no Google Cloud console. Server mode keeps the home on the deployment's own
 server: one Vercel Function (`/api/home`) over a **private Vercel Blob store** connected to the
 same Vercel project, and people sign in with **codes** instead of Google. Supabase and Google
-sign-in stay in the code, unused while Supabase is not configured. Push notifications and the
-weekly email need other services, so they are hidden in server mode.
+sign-in stay in the code, unused while Supabase is not configured. The weekly email needs
+another service, so it is hidden in server mode; phone notifications (Web Push) come from the
+same function, once a day from Vercel Cron (see "Notifications").
 
 The server holds the same document the demo backend keeps in localStorage and runs the
 **DemoBackend's own code** on it for every call, as the signed-in person, so the data rules
@@ -748,7 +750,8 @@ Only the presence of the token decides it; its value never goes into the client 
   ESM file, `index.mjs`, with `.vc-config.json`: `nodejs22.x`, launcher `Nodejs`, helpers off,
   `maxDuration` 15, and `regions: [HOMEOS_FUNCTION_REGION]` when that is set) and `config.json`
   (vercel.json's `headers` as routes, in order, each with `continue`, then
-  `{ "handle": "filesystem" }`; `buildOutputConfig()` in `scripts/build-output.mjs`, tested).
+  `{ "handle": "filesystem" }`, and vercel.json's `crons` as they are, since a Build Output
+  declares its cron jobs there; `buildOutputConfig()` in `scripts/build-output.mjs`, tested).
   Vercel deploys `.vercel/output` instead of `dist/` when the build command leaves one, so the
   app is served as before and the function answers at `/api/home`. Without a Blob store nothing
   changes: Vercel deploys `dist/` as today.
@@ -776,6 +779,9 @@ Only the presence of the token decides it; its value never goes into the client 
   | `HOMEOS_BLOB_READS_PER_MONTH` | read budget (default 9000; `0` = no limit) |
   | `HOMEOS_BLOB_PATH` | optional: where the home's blob lives (default `homeos/<VERCEL_ENV>/home.json`, so previews never touch production's home) |
   | `HOMEOS_FUNCTION_REGION` | optional: the region to pin the function to (the Blob store's) |
+  | `HOMEOS_VAPID_PUBLIC_KEY`, `HOMEOS_VAPID_PRIVATE_KEY` | the Web Push key pair (web-push format, base64url: a 65-byte P-256 point and its 32-byte scalar; `npx web-push generate-vapid-keys` makes one). Missing or malformed: phone notifications are off (Profile says "Notifications aren't set up yet.") and the server logs once which one is wrong, never its value. Only the public key leaves the server |
+  | `HOMEOS_VAPID_SUBJECT` | the contact push services see: `mailto:…` or an https URL; default `https://<VERCEL_PROJECT_PRODUCTION_URL>` |
+  | `CRON_SECRET` | 16 or more characters; Vercel sends it to the cron job as `Authorization: Bearer <secret>`. Unset (or shorter): the morning run answers 403 and nothing is sent |
 
 ### The stored document
 
@@ -791,7 +797,14 @@ One private blob, `ServerDoc` in `server/core/serverDoc.ts`, format `homeos.serv
   `codes` (`CodeRow`: id, `codeHash`, `memberId`, `createdBy`, `createdAt`, `expiresAt`, and once
   used `usedAt`, `usedBy` (the device it signed in) and `usedClaimed`, kept `CODE_REPLAY_MS`, 15
   minutes); `secret` (32 random bytes made at setup: signs device tokens) and `setupHash` (the
-  setup code that brought the home online). Only hashes of keys and codes are stored.
+  setup code that brought the home online). Only hashes of keys and codes are stored. A
+  device's Web Push subscription is kept on its row (`push`: endpoint, p256dh, auth), so it goes
+  when the device goes (removed, signed out, its person released).
+- `notify` (server only; missing in documents made before notifications): `people`, one
+  `NotifyPersonRow` per person who has joined (`memberId`, the three choices `weeklyStatus`,
+  `housekeeping` and `reminders`, `list`: their reminders, at most 20, and `sent`: what the
+  morning run sent them last). Each person only ever sees their own (GET notify).
+  `pruneAuth()` drops the rows of people who are gone or no longer joined.
 - `rev` (1 when the home came online, +1 with every stored change of data), `chatRev` (+1 when
   the chat changed in a stored change), `meta` (`createdAt`, `writes`: the last 50 put ids,
   `usage`: Blob operations this UTC month).
@@ -906,6 +919,13 @@ limits: setup 4 MiB, rpc 256 KiB, else 4 KiB (413 `too_large`).
 | `POST removeDevice` | yes | `{ deviceId }` | `{ ok }` (clears the cookie when it was this one) |
 | `POST signOut` | either | | `{ ok }` always; revokes this device if signed in; clears the cookie |
 | `POST release` | yes | | `{ ok }` ("Not Shea?"); clears the cookie |
+| `GET ?op=notify` | yes | | `NotifySettings`: `{ prefs, reminders, publicKey, subscribed }` (this person's; `subscribed` is this device) |
+| `POST pushSubscribe` | yes | `{ subscription: { endpoint, keys: { p256dh, auth } } }` | `{ ok }` (400 without VAPID keys, or for an endpoint not on a known push service) |
+| `POST pushUnsubscribe` | yes | | `{ ok }` |
+| `POST setNotify` | yes | `{ prefs: { weeklyStatus?, housekeeping?, reminders? } }` | `NotifySettings` |
+| `POST saveReminder` | yes | `{ reminder: { id?, title, days } }` | `NotifySettings` (404 for an id that is not theirs) |
+| `POST deleteReminder` | yes | `{ id }` | `NotifySettings` |
+| `GET ?op=tick` | `Authorization: Bearer <CRON_SECRET>`, no X-HomeOS | | `{ ok, sent, failed, gone }` (403 otherwise) |
 
 `user` is `{ id: user id, email: '', name }`, `entry` a `HomeEntry` (`member`; `claimed` from a
 redeem that made someone join). `app` (`AppMode`): `'standalone'` when the page runs as an
@@ -977,8 +997,8 @@ else the session's), `subscribe`, `subscribeChat` and `reconnect` (polling), `cr
 (rejects `home_exists`: a home comes online only through setup), `joinHousehold` and
 `createInvite` (reject `invalid_invite`: codes replace invite links), `getInvitePreview` (null),
 `releaseClaim` (POST release), `importHousehold` (rejects: setup does it), `setPersonEmail`
-(rejects `invalid_input: email`), `savePushSubscription` (rejects), `deletePushSubscription`
-(resolves).
+(rejects `invalid_input: email`), `savePushSubscription` (POST pushSubscribe, this device's),
+`deletePushSubscription` (POST pushUnsubscribe).
 
 ### Signing in (`server/core/auth.ts`, `server/core/limits.ts`)
 
@@ -1188,8 +1208,8 @@ claim). New in `HomeContextValue`:
   could not be made because the person signed in meanwhile says "{name} signed in meanwhile, so
   only they can add a device now." in a toast.
 - **Profile**: the account line reads "This device · {label}" instead of "Signed in with
-  Google"; **Add another device** (a code for me); **Sign Out** as now. Push notifications,
-  weekly email and "Invite someone" are hidden.
+  Google"; **Notifications** (see "Notifications" below); **Add another device** (a code for
+  me); **Sign Out** as now. The weekly email and "Invite someone" are hidden.
 - **People > a person**: not joined: no Google Email field; **Invite {name}** (code sheet), and
   Remove as now. Joined: **Devices**, each "{label} · Signed in {date}" with **Remove** (asks
   "Remove this device?" / "It will need a new code to get back in." / **Remove**, destructive;
@@ -1210,6 +1230,93 @@ both are open and online (a 3 s poll, the 250 ms debounce, the load), and within
 coming back into view or online. A browser polls only while visible and in use (after 3 minutes
 without input once a minute, after 15 not until the next input, which polls at once). Writes
 resolve as soon as they are stored, and the writer reloads at once (with `minRev`).
+
+### Notifications (`server/core/notify.ts`, Profile)
+
+Phone notifications through Web Push, set by each person for themselves in Profile and kept
+by the server, so they apply to all of that person's devices. No email, nothing to set up by
+hand beyond the four settings (see "Deploying").
+
+- **What there is.** Three choices, each off until ticked: **Weekly status** (Monday morning:
+  what is overdue, what is due from today to Sunday, what was done Monday to Sunday last week;
+  To do items only), **Housekeeping report** (the morning after a visit: what was ticked out of
+  how many, the comments, the price and the message left for the housekeeper), and **My
+  reminders** (each person's own: a title of up to 80 characters and one or more weekdays; at
+  most 20). A notification goes only to someone who has joined, ticked it, and has at least one
+  device with notifications on.
+- **The morning run.** `vercel.json` has `"crons": [{ "path": "/api/home?op=tick",
+  "schedule": "0 7 * * *" }]` (also written into the Build Output's `config.json`). Vercel's
+  Hobby plan allows cron jobs **once a day** at most, invoked anywhere within the hour (an
+  expression that runs more often fails the deployment; vercel.com/docs/cron-jobs/usage-and-pricing:
+  Hobby "Once per day", "Per-hour (±59 min)"; Pro and Enterprise once a minute). Cron times are
+  UTC, so the run comes 07:00 to 07:59 in London in winter (GMT) and 08:00 to 08:59 in summer
+  (BST): Profile says reminders come "in the morning, between 7 and 9", and a reminder has days
+  but no time ("Morning"). On Pro the same daily run works; a time per reminder would need an
+  hourly cron and a time field. Vercel calls the path with a GET, no X-HomeOS header, and
+  `Authorization: Bearer <CRON_SECRET>`; the handler checks that in constant time (403 otherwise,
+  and nothing is read). A GET of `/api/home` with no op and the `x-vercel-cron-schedule` header
+  counts as the run too, should the query not come through.
+- **What it sends** (`planMorning()`, in each household's time zone, `today` from the run's time):
+  the weekly status on Monday, or on Tuesday when Monday's run did not send it (once per week:
+  `sent.weekly` is the Monday); the household's latest visit with something recorded, dated
+  before today and at most 7 days ago, once per visit (`sent.housekeeping`), so a visit is
+  reported the morning after its day, or the morning after it was saved when that was later,
+  and an older visit is never reported once a newer one has been (the morning after, rather
+  than weekly on Monday: the run is daily anyway, and the report is useful while the visit is
+  fresh); each reminder whose days include today's weekday (at most 10 a morning; once per day,
+  `sent.reminders`; a day the run missed is not made up). Payloads `{ title, body, url: '/',
+  tag }` for `public/sw.js`, cut to fit Web Push's 4 KB: "This week at {household}" with
+  "Overdue (n): A, B and 2 more", "Due this week (n): Bins (today), Boiler service (Thu)" (or
+  "Nothing due this week."), "Done last week (n): …" (or "Nothing done last week."); "Housekeeping,
+  Thu 8 Oct" with "Done 2 of 3: Kitchen and Bathrooms", "Comments: …", "Price: £45.00",
+  "Message left: …"; a reminder's own title with "Reminder for Sunday".
+- **At most once.** `takeDue()` plans and records what it plans in `notify.people[].sent` in
+  one `'meta'` write (the rev stays: browsers do not reload), and only then are the pushes sent
+  (`deliver()`, all at once, 8 s each, TTL 12 hours). The write is applied to the latest
+  document like every write, so Vercel calling twice, or two instances running at once, send
+  each notification once; a push that fails is not tried again. A push service that answers 404
+  or 410 makes the run forget that subscription (another `'meta'` write). Nothing due: no write.
+  Read-only (write budget used up): nothing is sent, since nothing could be recorded.
+- **Sending** reuses `supabase/functions/_shared/webpush.ts` (VAPID ES256 JWT and aes128gcm
+  payload encryption with WebCrypto, no npm package; esbuild bundles it into the function, which
+  stays one self-contained file). Subscriptions are only stored, and endpoints only contacted,
+  for https on the known push services (Apple, Google, Mozilla, Microsoft), up to 1,024
+  characters, with a 65-byte P-256 key and a 16-byte secret. The same endpoint sent from another
+  device moves there (a browser that signed in again), so a phone never gets one twice.
+- **Budget.** A morning with something to send costs one put (the claim), plus one read when the
+  instance is cold; a morning with nothing to send costs no put. Choices and reminders cost a
+  put each when changed. About 30 to 60 puts a month of the Hobby plan's 2,000.
+- **Profile** (`ServerNotifications.tsx`, `ReminderPage.tsx`, `useNotify.tsx`; copy is exact):
+  under **Notifications**, a card with **On this device** and a switch (named "Notifications on
+  this device"): on when the browser allows notifications, holds a subscription and the server
+  has it for this device. Turning it on asks permission from the tap itself (Safari only prompts
+  then), subscribes with the server's public key (GET notify's `publicKey`, so the build needs
+  no key) and saves it; off unsubscribes this browser and forgets it on the server. Under it,
+  when it needs saying: on an iPhone or iPad outside the Home Screen app (switch off) "On
+  iPhone, add home.os to your Home Screen first: Share, then Add to Home Screen."; blocked: the
+  same lines as the Supabase build's; no keys on the server: "Notifications aren't set up yet.";
+  a browser without Web Push: "This browser can't show notifications.". Then a card of three
+  ticks (rows with a checkmark, `role="checkbox"`, each with what it sends under it): **Weekly
+  status** "Mondays: what's due this week, what's overdue, what was done last week",
+  **Housekeeping report** "The morning after a visit: what was done, comments, price, your
+  message", **My reminders** "Your own, on the days you choose"; caption "Sent to each device
+  where you turn notifications on." A tick shows at once and is put back, with the not-saved
+  toast, when it can't be saved. With My reminders ticked, a **My reminders** section: a row per
+  reminder (its title over "Every Sunday · Morning", "Weekdays", "Weekends", "Every day" or the
+  days Monday first, "Mon, Wed, Fri"), then **Add Reminder**; caption "Reminders come in the
+  morning, between 7 and 9." (at 20: "You have 20 reminders, the most there can be."). A
+  reminder's page is pushed from Profile like Household: "New Reminder" or "Edit Reminder",
+  **Save** in the bar (off until there is a title and a day), **Remind me to** (placeholder
+  "Take the bins out"), **Days** (seven round buttons, Monday first, "Pick the days it should
+  come on." while none is chosen), **Time** "Morning" with the same caption, and **Delete
+  Reminder** for one that exists. Saving or deleting closes it (focus back on its row, or Add
+  Reminder); a failure keeps it, with a toast. Loading failed: "Couldn't load your
+  notifications." with **Try Again**. Settings load when Profile opens and when the app comes
+  back into view.
+- `HomeContextValue` gains `notifySettings()`, `setNotifyPrefs()`, `saveReminder()` and
+  `deleteReminder()` (ServerAccess's, the same names; a `read_only` refusal sets `readOnly`);
+  `src/lib/push.ts`'s `pushState()` and `enablePush()` take the key to use (the build's
+  `VITE_VAPID_PUBLIC_KEY` by default).
 
 ### Local server and tests
 
@@ -1284,6 +1391,21 @@ resolve as soon as they are stored, and the writer reloads at once (with `minRev
   `app` hint, the one-off `claimed` entry. HomeProvider and the screens' server-mode behaviour in
   `src` (links that need a choice, a setup link where the home is not, Copy Code, Paste, the
   last-changed line, People's rule for Sign in on a new phone).
+- Notifications: `server/core/notify.test.ts` (what goes out when: Monday, a missed Monday made
+  up on Tuesday and never later, the visit the morning after and once, reminders on their days
+  only, once per period however often the run comes, the household's day in London, the
+  wording, payloads under 4 KB; the choices' and reminders' checks; subscriptions on known push
+  services only, moved between devices, gone with their device), `server/core/notifyApi.test.ts`
+  (the ops through the handler, the private key never in a response, the run answering only
+  `Bearer <CRON_SECRET>` and nothing without it, two instances at once sending once, a second
+  run storing nothing, 410 forgetting the subscription, and real Web Push to a fake network that
+  the phone's key decrypts), `server/core/config.test.ts`, the pure rollback of `notify` in
+  `homeStore.test.ts`, HomeProvider's pass-throughs in `HomeProvider.server.test.tsx`, Profile in
+  `src/screens/profile/ServerNotifications.test.tsx`, and `e2e-server/notifications.spec.ts`
+  (choices and a reminder made on the phone are on the tablet, changed there, deleted on the
+  phone, Shea sees none of them; the iPhone Safari line; the run refused without the secret and
+  answering with it). The e2e servers get a VAPID key pair made for the run and
+  `CRON_SECRET=e2e-cron-secret-not-a-real-one`; nothing is pushed (service workers are blocked).
 - `scripts/vercel-function.test.ts` (Vitest): `server/entry/vercel.ts` bundled with the same
   esbuild options as `build-server.mjs`, loaded by Node's own loader from a temporary folder
   outside the repository (nothing resolvable from there), its default export served with
@@ -1297,13 +1419,14 @@ resolve as soon as they are stored, and the writer reloads at once (with `minRev
   new rev, and no token, setup code or key hash in any response.
 - `npm run test:build` (`scripts/check-build.mjs`): with every mode variable emptied, a build is
   demo mode and `build-server.mjs --vercel` publishes nothing (no `.vercel/output`: Vercel
-  deploys `dist/` as before); with a random made-up `BLOB_READ_WRITE_TOKEN` and setup code,
-  `vercel.json`'s own `buildCommand` succeeds, the app is server mode, `.vercel/output` holds
-  `static/` (the built `dist/`), `config.json` (v3, the headers, then the filesystem) and
-  `functions/api/home.func` with exactly `.vc-config.json` (Node 22, `index.mjs`, launcher
-  `Nodejs`) and a self-contained `index.mjs` with a default export; neither secret nor any part
-  of the token is in any deployed file or the build log, and the browser's files don't name
-  `BLOB_READ_WRITE_TOKEN` or `HOMEOS_SETUP_CODE`. It removes `.vercel/output` afterwards.
+  deploys `dist/` as before); with a random made-up `BLOB_READ_WRITE_TOKEN`, setup code, VAPID
+  private key and `CRON_SECRET`, `vercel.json`'s own `buildCommand` succeeds, the app is server
+  mode, `.vercel/output` holds `static/` (the built `dist/`), `config.json` (v3, the headers,
+  then the filesystem, and the morning cron) and `functions/api/home.func` with exactly
+  `.vc-config.json` (Node 22, `index.mjs`, launcher `Nodejs`) and a self-contained `index.mjs`
+  with a default export; no secret nor any part of the token is in any deployed file or the
+  build log, and the browser's files don't name `BLOB_READ_WRITE_TOKEN`, `HOMEOS_SETUP_CODE`,
+  `HOMEOS_VAPID_PRIVATE_KEY` or `CRON_SECRET`. It removes `.vercel/output` afterwards.
 
 ### Verifying a deployment
 
@@ -1409,6 +1532,15 @@ notice `codeHere`; `HomeContextValue.chooseSetupHere`; `HomeStore.write(change, 
 `recheck()`, `knowsHome()`, `checkedAt()` and `Pressure.recheckMs` and `ceiling`;
 `ServerContext.keyMisses`; `AttemptLimiter.begin()` and `AttemptLimits.trustedPerIp`; `newServerDoc`'s
 third argument; `deviceLabel`'s second.
+
+Added for notifications (additive; the architect to confirm): `ApiGetOp` `notify`, the POST ops
+`pushSubscribe`, `pushUnsubscribe`, `setNotify`, `saveReminder` and `deleteReminder` with their
+request types, `NotifyResponse`, `TickResponse`, `REMINDERS_MAX` and the cron-only GET `tick`;
+`NOT_RPC`'s push entries; `ServerAccess.notifySettings()`, `setNotifyPrefs()`, `saveReminder()`
+and `deleteReminder()` and the same four on `HomeContextValue`; `Reminder`, `ReminderInput`,
+`NotifyPrefs` and `NotifySettings` (`src/lib/types.ts`); `ServerDoc.notify`, `DeviceRow.push`;
+`ServerConfig.push` and `cronSecret`; `ServerContext.push`; a pure write's rollback restoring
+`notify` too; `pushState()`'s and `enablePush()`'s key argument.
 
 `server/entry/vercel.ts` comes with `@vercel/blob` (the integrator installs it and adds `esbuild`
 as an explicit devDependency at the version Vite already brings):
