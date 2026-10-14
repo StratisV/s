@@ -1,0 +1,135 @@
+/* A pull-down menu (Menu.tsx): frosted glass, grown out of the button that opened it. */
+
+.layer {
+  position: fixed;
+  inset: 0;
+  z-index: 950;
+  font-family: var(--font-text);
+}
+
+/* Takes the tap that closes the menu, as on iOS (it never reaches what is underneath). */
+.backdrop {
+  position: absolute;
+  inset: 0;
+}
+
+.menu {
+  position: absolute;
+  min-width: 232px;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 6px;
+  border-radius: 24px;
+  background: var(--menu-glass);
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  box-shadow: var(--shadow-menu);
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  transform: scale(0.86);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.layer[data-open] .menu {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 0.18s ease,
+    transform 0.36s var(--spring);
+}
+
+.item {
+  position: relative;
+  min-height: 46px;
+  padding: 0 14px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.menu[data-radio] .item {
+  padding-left: 10px;
+}
+
+/* A new group: a hairline above it, inset from the rounded edge. */
+.item[data-group-start] {
+  margin-top: 7px;
+}
+
+.item[data-group-start]::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 12px;
+  right: 12px;
+  border-top: 0.5px solid var(--menu-separator);
+}
+
+.item:active,
+.item:focus-visible {
+  background: var(--fill-secondary);
+  outline: none;
+}
+
+.check {
+  flex: none;
+  width: 20px;
+  display: grid;
+  place-items: center;
+  color: var(--label);
+}
+
+.lead {
+  flex: none;
+  width: 24px;
+  display: grid;
+  place-items: center;
+  font-size: 19px;
+  line-height: 1;
+}
+
+.label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.item[aria-checked='true'] .label {
+  font-weight: 600;
+}
+
+.detail {
+  flex: none;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.icon {
+  flex: none;
+  width: 22px;
+  display: grid;
+  place-items: center;
+  color: var(--label);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu,
+  .layer[data-open] .menu {
+    transform: none;
+    transition: opacity 0.12s ease;
+  }
+}

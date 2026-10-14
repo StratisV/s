@@ -10,24 +10,41 @@ never gets done and stays on the list, and says **What good looks like** for it,
 a **code** from someone at home on this deployment's own server, or with **Google** on
 Supabase), picks an emoji for their profile, and **can edit everything**.
 
-- **Home**: today's date, then every area and its items, with how many are red, amber and green.
-  A row of people at the top (Everyone, you, each person, Unassigned, with counts) shows just
-  one person's items, so everyone can see what they need to do; the phone remembers the choice.
-  Each item is one slim row: its title, then who, when and its note on one line. Areas fold away with a
-  tap (or all at once) and stay that way on that phone. Add an item with the round + at the
-  bottom right, or with the small + in an area's header, which starts the item in that area.
-- **Calendar** (on Home, under the row of people): this week as a strip, or the whole month
+The colour always comes with a word. For a To do it is how urgent it is: red is **Urgent**,
+amber is **Within the month**, green is **Not urgent**. For a To maintain item it is the
+condition it is in: **Poor**, **Fair** or **Good**.
+
+- **Home**: today's date, then one plain sentence on what needs doing ("2 things need attention
+  and 1 is due today. Everything else can wait."), then three views of the same items, and
+  whose items they are (Everyone, you, each person or Unassigned, from one menu; the phone
+  remembers the choice and the view):
+  - **Up next** (the default): every room's items in one list, by when: **Needs attention**
+    (anything late or urgent, and anything looked after that is in fair or poor condition),
+    **Today**, **Next 7 days**, then **Later** (three rows, then "Show 10 more"). Each group
+    puts the most urgent first. Things looked after and in good condition close the page as
+    small tiles under **Looking after**.
+  - **Rooms**: room by room, in the household's order. Each room folds away with a tap and
+    stays that way on that phone; a room with nothing open is just its name and "All clear".
+    Its "..." menu adds an item to it, shares it, or folds every room at once.
+  - **Calendar**: see below.
+
+  Each item is one row: a plain grey ring (tap it to tick the job off), its title, and one
+  quiet line with its urgency in words, when it is due ("Tomorrow", "In 4 days", "2 days
+  late" in red), and its room; the person it is for is their emoji at the end. A thing looked
+  after has a small gauge instead of a ring (three bars for Good, two for Fair, one for Poor).
+  Add an item with the round + at the bottom right, or from a room's menu.
+- **Calendar** (Home's third view): this week as a strip, or the whole month
   with **Show month** (the phone remembers which). The arrows either side of its title go back
   and forward a week (or a month), and **Today** brings you back. Each day shows what is due as
   red, amber and green dots (up to three, then "+2"), a missed day's date in red, a repeating
   job's later rounds as faint hollow dots, and the small blue dot Housekeeping's calendar uses
-  on the days the housekeeper came. It follows the row of people: pick Shea and only Shea's
-  jobs mark it (the housekeeper's visits stay). Today is chosen at first, with one line above
-  the calendar saying how much is due today (those jobs are in the areas just below); tap any
-  day, today too, to see underneath what is due that day, most urgent first, ticked off with
+  on the days the housekeeper came. It follows the person chosen: pick Shea and only Shea's
+  jobs mark it (the housekeeper's visits stay). Today is chosen at first, and what is due that
+  day shows underneath; tap any day to see what is due then, most urgent first, ticked off with
   the ring just like on Home, the repeats coming round that day, and that day's housekeeping
   visit, which opens it on the Housekeeping tab. To maintain items have no date, so they are
   never on it. Housekeeping's calendar is the same one.
+- **Dark mode**: the whole app follows the phone's appearance (the hero keeps its own sky).
 - **The hero**: every tab opens on an illustration that runs to the very top of the screen: the
   house in its garden, with a green duck and a brown hedgehog, under the sky as it is in London
   right now (sunrise, daytime, sunset, dusk or a starry night). The Home / Chat / Housekeeping /
@@ -45,9 +62,10 @@ Supabase), picks an emoji for their profile, and **can edit everything**.
   was asked, what was done, the comments and the price. Any past day's visit can be corrected
   or deleted, and a missed one added.
 - **Stats**: who has done what.
-- **Share**: send an item (from its sheet, as the sheet shows it) or a whole area (the share
-  button in its header) to WhatsApp, Messages or Mail as a short summary with a link. The
-  link opens that item, or that area on Home, in home.os for anyone in the household (after
+- **Share**: send an item (from its sheet, as the sheet shows it) or a whole area (Share Room
+  in its "..." menu) to WhatsApp, Messages or Mail as a short summary with a link, which says
+  each item's urgency or condition in words. The
+  link opens that item, or that area on Home (in Rooms), in home.os for anyone in the household (after
   signing in if need be; on iPhone, links open in Safari rather than the Home Screen app).
   Where there is no share sheet, the text is copied instead.
 - A **weekly email** with the full status, and **push notifications** before deadlines and when

@@ -17,6 +17,20 @@ export const RAG_ORDER: Rag[] = ['red', 'amber', 'green'];
 
 export const RAG_LABEL: Record<Rag, string> = { red: 'Red', amber: 'Amber', green: 'Green' };
 
+/**
+ * What a To do item's colour means, in words (the household's own rule): red is urgent,
+ * amber is to be done within the month, green is not urgent. Shown wherever the colour is.
+ */
+export const URGENCY_LABEL: Record<Rag, string> = { red: 'Urgent', amber: 'Within the month', green: 'Not urgent' };
+
+/** What a To maintain item's colour means, in words: the condition it is in. */
+export const CONDITION_LABEL: Record<Rag, string> = { red: 'Poor', amber: 'Fair', green: 'Good' };
+
+/** The word for an item's colour: its urgency (To do) or its condition (To maintain). */
+export function ragWord(kind: ItemKind | undefined, rag: Rag): string {
+  return kind === 'state' ? CONDITION_LABEL[rag] : URGENCY_LABEL[rag];
+}
+
 /** Ring/dot colour. */
 export const RAG_RING: Record<Rag, string> = { red: '#FF3B30', amber: '#FF9500', green: '#34C759' };
 /** Ring fill on Home. */

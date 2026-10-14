@@ -59,7 +59,7 @@
 .save:disabled {
   background: var(--card);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  color: rgba(60, 60, 67, 0.3);
+  color: var(--label-quaternary);
   cursor: default;
 }
 
@@ -126,7 +126,7 @@
 
 .title::placeholder,
 .note::placeholder {
-  color: rgba(60, 60, 67, 0.3);
+  color: var(--label-quaternary);
   opacity: 1;
 }
 
@@ -172,7 +172,7 @@
 }
 
 .goodText::placeholder {
-  color: rgba(60, 60, 67, 0.3);
+  color: var(--label-quaternary);
   opacity: 1;
 }
 

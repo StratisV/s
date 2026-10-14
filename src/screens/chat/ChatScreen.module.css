@@ -131,7 +131,7 @@
   font-weight: 600;
   letter-spacing: -0.2px;
   color: var(--tint-text);
-  background: rgba(255, 255, 255, 0.82);
+  background: var(--glass-strong);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border: 0.5px solid rgba(0, 0, 0, 0.06);

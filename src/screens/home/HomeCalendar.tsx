@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { RAG_LABEL, RAG_RING, RAG_TEXT } from '../../lib/constants';
+import { RAG_RING, RAG_TEXT, ragWord } from '../../lib/constants';
 import {
   calendarDayAnnouncement,
   calendarDayName,
@@ -12,7 +12,6 @@ import {
   type CalendarDay,
 } from '../../lib/logic/calendar';
 import { doneCount, formatPrice } from '../../lib/logic/housekeeping';
-import { itemMeta, memberLabel } from '../../lib/logic/items';
 import { fullDay } from '../../lib/logic/months';
 import type { HousekeepingVisit, ISODate, Item, Member } from '../../lib/types';
 import { DatePicker, mondayOf, revealDay, useChosenDay, type ChosenDay } from '../../ui/DatePicker';
@@ -37,8 +36,11 @@ interface Chosen extends ChosenDay {
 /** The chosen day and the month and week shown, remembered while the app runs (Home comes and goes with its tab). */
 const remembered: { current: Chosen | null } = { current: null };
 
-/** Today, at first, is not opened. */
-const notOpened = (fresh: ChosenDay): Chosen => ({ ...fresh, opened: false });
+/**
+ * Today, at first, is opened: the calendar is a view of its own on Home (Up next, Rooms,
+ * Calendar), so what is due today shows under it straight away.
+ */
+const openedToday = (fresh: ChosenDay): Chosen => ({ ...fresh, opened: true });
 
 interface HomeCalendarProps {
   householdId: string;
@@ -52,6 +54,8 @@ interface HomeCalendarProps {
   timeZone: string;
   /** Whose items they are, for an empty day ("Nothing due for Shea."). */
   who: PersonFilter;
+  /** A room's name, from its id (a day's rows mix rooms). */
+  roomOf(areaId: string): string;
   onOpenItem(itemId: string): void;
   onComplete(itemId: string): Promise<void>;
   /** Shows that day in the Housekeeping tab. */
@@ -76,6 +80,7 @@ export function HomeCalendar({
   today,
   timeZone,
   who,
+  roomOf,
   onOpenItem,
   onComplete,
   onOpenHousekeeping,
@@ -83,7 +88,7 @@ export function HomeCalendar({
   const headingId = useId();
   const sectionRef = useRef<HTMLElement>(null);
   // Another household, or a new day since: start on today, in this week and month.
-  const { chosen, update, reset } = useChosenDay(remembered, householdId, today, notOpened);
+  const { chosen, update, reset } = useChosenDay(remembered, householdId, today, openedToday);
 
   const lookup = useMemo(() => calendarLookup(items, visits, today), [items, visits, today]);
 
@@ -175,6 +180,7 @@ export function HomeCalendar({
           today={today}
           timeZone={timeZone}
           members={members}
+          roomOf={roomOf}
           empty={`${nothingDue(chosen.selected === today)}.`}
           onOpenItem={onOpenItem}
           onComplete={onComplete}
@@ -222,6 +228,7 @@ interface DayPanelProps {
   today: ISODate;
   timeZone: string;
   members: Member[];
+  roomOf(areaId: string): string;
   /** What an empty day says. */
   empty: string;
   onOpenItem(itemId: string): void;
@@ -234,10 +241,21 @@ interface DayPanelProps {
  * the row opens the Item sheet) in the order of its marks (missed first, then red, amber,
  * green), then the repeats coming round that day (opened, not completed), then its
  * housekeeping visit, which opens that day in Housekeeping. A row due that day leaves its
- * date out (the heading says it); a missed one keeps "Missed · Tue 6 Oct". Every row leaves
- * the list once completed, a repeating one too (it moves on to a later day).
+ * date out (the heading says it); a late one keeps "2 days late". Every row leaves the list
+ * once completed, a repeating one too (it moves on to a later day).
  */
-function DayPanel({ date, day, today, timeZone, members, empty, onOpenItem, onComplete, onOpenHousekeeping }: DayPanelProps) {
+function DayPanel({
+  date,
+  day,
+  today,
+  timeZone,
+  members,
+  roomOf,
+  empty,
+  onOpenItem,
+  onComplete,
+  onOpenHousekeeping,
+}: DayPanelProps) {
   const { rows, repeats } = dayRows(day);
   const visit = day.visit;
   let visitName = '';
@@ -255,21 +273,29 @@ function DayPanel({ date, day, today, timeZone, members, empty, onOpenItem, onCo
       <div className={styles.card}>
         {rows.length || repeats.length ? (
           <ul className={styles.list} role="list">
-            {rows.map((item) => {
-              const meta = itemMeta(item, members, today, timeZone);
-              return (
-                <ItemRow
-                  key={item.id}
-                  item={item}
-                  meta={meta.missed ? meta : { ...meta, date: null }}
-                  leavesOnComplete
-                  onOpen={onOpenItem}
-                  onComplete={onComplete}
-                />
-              );
-            })}
+            {rows.map((item) => (
+              <ItemRow
+                key={item.id}
+                item={item}
+                members={members}
+                today={today}
+                timeZone={timeZone}
+                room={roomOf(item.area_id)}
+                hideWhen
+                leavesOnComplete
+                onOpen={onOpenItem}
+                onComplete={onComplete}
+              />
+            ))}
             {repeats.map((item) => (
-              <RepeatRow key={`repeat:${item.id}`} item={item} members={members} today={today} onOpen={onOpenItem} />
+              <RepeatRow
+                key={`repeat:${item.id}`}
+                item={item}
+                members={members}
+                today={today}
+                room={roomOf(item.area_id)}
+                onOpen={onOpenItem}
+              />
             ))}
           </ul>
         ) : (
@@ -303,46 +329,45 @@ interface RepeatRowProps {
   item: Item;
   members: Member[];
   today: ISODate;
+  room: string;
   onOpen(itemId: string): void;
 }
 
 /**
  * A repeat coming round on the chosen day: drawn like Home's row, with a faint dashed ring
  * that is not a button (it isn't due yet, so it can't be marked done), and "Repeat of Tue 13
- * Oct · Every week" after who it is for (how often gives way first). The row opens the item.
+ * Oct · Every week" (how often gives way first). The row opens the item.
  */
-function RepeatRow({ item, members, today, onOpen }: RepeatRowProps) {
-  const who = memberLabel(members.find((m) => m.id === item.assignee_id));
+function RepeatRow({ item, members, today, room, onOpen }: RepeatRowProps) {
+  const member = members.find((m) => m.id === item.assignee_id);
   const { when, every } = repeatMeta(item, today);
   return (
     <li className={rowStyles.row} data-repeat="">
-      <span className={styles.repeatSlot} aria-hidden="true">
-        <span className={styles.repeatRing} style={{ '--ring': RAG_RING[item.rag] } as CSSProperties} />
-      </span>
-      <button
-        type="button"
-        className={rowStyles.open}
-        data-item-open=""
-        onClick={() => onOpen(item.id)}
-      >
-        <span className={`${rowStyles.title} ${styles.repeatTitle}`}>
-          {item.title}
-          <span className="visually-hidden">{`, ${RAG_LABEL[item.rag]}, repeat.`}</span>
+      <div className={rowStyles.inner}>
+        <span className={styles.repeatSlot} aria-hidden="true">
+          <span className={styles.repeatRing} />
         </span>
-        <span className={rowStyles.meta}>
-          <span data-meta="" className={rowStyles.lead}>
-            <span className={rowStyles.who}>
-              <EmojiText text={who} />
+        <button type="button" className={rowStyles.open} data-item-open="" onClick={() => onOpen(item.id)}>
+          <span className={rowStyles.text}>
+            <span className={`${rowStyles.title} ${styles.repeatTitle}`}>
+              <span className={rowStyles.titleText}>
+                {item.title}
+                <span className="visually-hidden">{`, ${ragWord(item.kind, item.rag)}, repeat, ${when}, ${every}, ${room}, ${member ? member.name : 'Unassigned'}.`}</span>
+              </span>
             </span>
-            {' · '}
-            <span className={styles.repeatMeta}>{when}</span>
+            <span className={rowStyles.meta} aria-hidden="true">
+              <span className={styles.repeatMeta}>{when}</span>
+              <span className={rowStyles.sep}>·</span>
+              <span className={rowStyles.part}>{every}</span>
+            </span>
           </span>
-          <span className={rowStyles.note}>
-            {' · '}
-            {every}
-          </span>
-        </span>
-      </button>
+          {member ? (
+            <span className={rowStyles.who} aria-hidden="true">
+              <EmojiText text={member.emoji} />
+            </span>
+          ) : null}
+        </button>
+      </div>
     </li>
   );
 }

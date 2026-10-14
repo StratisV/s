@@ -6,7 +6,7 @@ import { formatDay } from '../../lib/logic/dates';
 import { HomeProvider, useHome, type HomeContextValue } from '../../state/HomeProvider';
 import { ConfettiProvider } from '../../ui/Confetti';
 import { COPIED_TOAST } from '../share/useShare';
-import { collapsedKey, HomeScreen, splitLast, statusCounts } from './HomeScreen';
+import { collapsedKey, HOME_VIEW_KEY, HomeScreen, roomStatus, splitLast, type HomeView } from './HomeScreen';
 
 class MemoryStorage implements StorageLike {
   private map = new Map<string, string>();
@@ -58,8 +58,13 @@ function Ready({ onOpenProfile, onAddItem, onRevealed, onLinkedAreaShown, expose
   );
 }
 
-/** Renders Home for the seeded household; pass its storage back to reopen the same one. */
-async function setup(storage?: StorageLike) {
+/**
+ * Renders Home for the seeded household; pass its storage back to reopen the same one. Most of
+ * these tests are about the areas, so Home opens on its Rooms view unless `view` says otherwise.
+ */
+async function setup(storage?: StorageLike, view: HomeView = 'rooms') {
+  if (view === 'next') localStorage.removeItem(HOME_VIEW_KEY);
+  else localStorage.setItem(HOME_VIEW_KEY, view);
   const reopen = !!storage;
   storage ??= new MemoryStorage();
   const backend = new DemoBackend({ storage, search: reopen ? '' : '?demo-seed=1', latency: 0 });
@@ -245,40 +250,20 @@ describe('HomeScreen areas', () => {
     }
   });
 
-  it('shows red, amber and green counts per area, with one label, open or collapsed', async () => {
+  it('says "1 urgent" on a room with something late or urgent, and nothing on a calm open room', async () => {
     const { home } = await setup();
     const data = home().data!;
-    for (const a of data.areas) {
-      const open = data.items.filter((it) => it.area_id === a.id && it.status === 'open');
-      const { region } = area(a.name);
-      const { label } = statusCounts(open);
-      if (!open.length) {
-        expect(within(region).queryByRole('img')).toBeNull();
-        continue;
-      }
-      const counts = within(region).getByRole('img', { name: label });
-      // Red first, then amber, then green; only the non-zero ones.
-      const chips = Array.from(counts.querySelectorAll('[data-rag]'));
-      expect(chips.map((c) => c.getAttribute('data-rag'))).toEqual(
-        (['red', 'amber', 'green'] as const).filter((rag) => open.some((it) => it.rag === rag)),
-      );
-      expect(chips.map((c) => Number(c.textContent))).toEqual(
-        chips.map((c) => open.filter((it) => it.rag === c.getAttribute('data-rag')).length),
-      );
-    }
-    // Hallway has the one urgent item.
-    expect(within(area('Hallway').region).getByRole('img').getAttribute('aria-label')).toBe('1 urgent');
+    const hallway = area('Hallway').region;
+    expect(within(hallway).getByText('1 urgent')).toBeTruthy();
+    expect(within(area('Kitchen').region).queryByText(/^\d+ (urgent|open)$/)).toBeNull();
 
-    // Still there when collapsed.
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse All' }));
-    expect(within(area('Hallway').region).getByRole('img', { name: '1 urgent' })).toBeTruthy();
-
-    // Completing an item updates the counts.
+    // Completing the late item clears it: the room has nothing open, so it reads All clear.
     const heaters = data.items.find((it) => it.title === 'Heaters not working')!;
     await act(async () => {
       await home().completeItem(heaters.id);
     });
-    await waitFor(() => expect(within(area('Hallway').region).queryByRole('img')).toBeNull());
+    await waitFor(() => expect(within(hallway).queryByText('1 urgent')).toBeNull());
+    expect(within(hallway).getByText('All clear')).toBeTruthy();
   });
 
   it('the + on an area header adds an item to that area', async () => {
@@ -578,19 +563,21 @@ describe('HomeScreen To maintain rows', () => {
   });
 });
 
-describe('statusCounts', () => {
-  it('counts red, then amber, then green, leaving out zeros', () => {
-    const items = (rags: string) => rags.split('').map((c) => ({ rag: ({ r: 'red', a: 'amber', g: 'green' } as const)[c as 'r'] }));
-    expect(statusCounts(items('gagrg'))).toEqual({
-      counts: [
-        { rag: 'red', count: 1 },
-        { rag: 'amber', count: 1 },
-        { rag: 'green', count: 3 },
-      ],
-      label: '1 urgent, 1 at risk, 3 on track',
+describe('roomStatus', () => {
+  const TODAY = '2026-10-08';
+  const it_ = (rag: 'red' | 'amber' | 'green', due: string | null, kind: 'task' | 'state' = 'task') =>
+    ({ rag, due_date: due, kind, status: 'open' }) as Parameters<typeof roomStatus>[0][number];
+  it('counts late or urgent To dos, else says All clear, or how many are open while collapsed', () => {
+    expect(roomStatus([it_('red', '2026-10-20'), it_('green', '2026-10-01'), it_('amber', null)], TODAY, false)).toEqual({
+      text: '2 urgent',
+      urgent: true,
     });
-    expect(statusCounts(items('aa')).label).toBe('2 at risk');
-    expect(statusCounts([])).toEqual({ counts: [], label: '' });
+    expect(roomStatus([], TODAY, false)).toEqual({ text: 'All clear', urgent: false });
+    expect(roomStatus([it_('amber', '2026-10-20'), it_('red', null, 'state')], TODAY, false)).toBeNull();
+    expect(roomStatus([it_('amber', '2026-10-20'), it_('red', null, 'state')], TODAY, true)).toEqual({
+      text: '2 open',
+      urgent: false,
+    });
   });
 });
 

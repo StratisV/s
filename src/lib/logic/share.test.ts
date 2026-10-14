@@ -82,7 +82,7 @@ describe('itemShareMessage: To do', () => {
       title: 'Heaters not working',
       text: [
         'Heaters not working',
-        'Hallway · Red · Missed · Tue 6 Oct',
+        'Hallway · Urgent · Missed · Tue 6 Oct',
         'Assigned to Shea',
         'No heat since the weekend. Engineer needs booking.',
         '',
@@ -95,19 +95,19 @@ describe('itemShareMessage: To do', () => {
     const oil = item({ title: 'Olive oil', area_id: KITCHEN.id, rag: 'green', due_date: '2026-11-13', assignee_id: ELA.id });
     expect(lines(itemShareMessage(oil, AREAS, CTX).text).slice(0, 3)).toEqual([
       'Olive oil',
-      'Kitchen · Green · Due Fri 13 Nov',
+      'Kitchen · Not urgent · Due Fri 13 Nov',
       'Assigned to Ela',
     ]);
   });
 
   it('due today is not missed', () => {
     const today = item({ due_date: TODAY });
-    expect(lines(itemShareMessage(today, AREAS, CTX).text)[1]).toBe('Hallway · Amber · Due Thu 8 Oct');
+    expect(lines(itemShareMessage(today, AREAS, CTX).text)[1]).toBe('Hallway · Within the month · Due Thu 8 Oct');
   });
 
   it('a date in another year carries the year', () => {
     const later = item({ due_date: '2027-01-05' });
-    expect(lines(itemShareMessage(later, AREAS, CTX).text)[1]).toBe('Hallway · Amber · Due Tue 5 Jan 2027');
+    expect(lines(itemShareMessage(later, AREAS, CTX).text)[1]).toBe('Hallway · Within the month · Due Tue 5 Jan 2027');
   });
 
   it.each<[Repeat, string]>([
@@ -118,17 +118,17 @@ describe('itemShareMessage: To do', () => {
     ['yearly', 'Every year'],
   ])('a %s repeat reads "%s" after the date', (repeat, label) => {
     const repeating = item({ repeat, due_date: '2026-11-13', rag: 'green' });
-    expect(lines(itemShareMessage(repeating, AREAS, CTX).text)[1]).toBe(`Hallway · Green · Due Fri 13 Nov · ${label}`);
+    expect(lines(itemShareMessage(repeating, AREAS, CTX).text)[1]).toBe(`Hallway · Not urgent · Due Fri 13 Nov · ${label}`);
   });
 
   it('a repeat without a due date still shows', () => {
     const repeating = item({ repeat: 'monthly', due_date: null });
-    expect(lines(itemShareMessage(repeating, AREAS, CTX).text)[1]).toBe('Hallway · Amber · Every month');
+    expect(lines(itemShareMessage(repeating, AREAS, CTX).text)[1]).toBe('Hallway · Within the month · Every month');
   });
 
   it('no due date: just the area and status', () => {
     const undated = item({ title: 'Mirror lights not level', due_date: null, area_id: 'a-kitchen' });
-    expect(lines(itemShareMessage(undated, AREAS, CTX).text)[1]).toBe('Kitchen · Amber');
+    expect(lines(itemShareMessage(undated, AREAS, CTX).text)[1]).toBe('Kitchen · Within the month');
   });
 
   it('unassigned, or looked after by someone who has left: "Unassigned"', () => {
@@ -144,11 +144,11 @@ describe('itemShareMessage: To do', () => {
 
   it('no note: no empty line before the link but the one', () => {
     const { text } = itemShareMessage(item({ id: 'x', title: 'Fix the gate' }), AREAS, CTX);
-    expect(text).toBe('Fix the gate\nHallway · Amber · Due Tue 20 Oct\nUnassigned\n\nhttps://home.example/?item=x');
+    expect(text).toBe('Fix the gate\nHallway · Within the month · Due Tue 20 Oct\nUnassigned\n\nhttps://home.example/?item=x');
   });
 
   it('an area that is gone is left out', () => {
-    expect(lines(itemShareMessage(item({ area_id: 'a-gone' }), AREAS, CTX).text)[1]).toBe('Amber · Due Tue 20 Oct');
+    expect(lines(itemShareMessage(item({ area_id: 'a-gone' }), AREAS, CTX).text)[1]).toBe('Within the month · Due Tue 20 Oct');
   });
 
   it('a task never shows "What good looks like" (it keeps it for when it is To maintain)', () => {
@@ -163,7 +163,7 @@ describe('itemShareMessage: To do', () => {
     expect(message.title).toBe('Fix the gate');
     expect(lines(message.text)).toEqual([
       'Fix the gate',
-      'Hallway · Amber · Due Tue 20 Oct',
+      'Hallway · Within the month · Due Tue 20 Oct',
       'Unassigned',
       'Latch sticks.',
       'Needs oil.',
@@ -214,7 +214,7 @@ describe('itemShareMessage: To maintain', () => {
     expect(itemShareMessage(firepit, AREAS, CTX).text).toBe(
       [
         'Firepit',
-        'Garden · Green · Updated Tue 6 Oct',
+        'Garden · Good · Updated Tue 6 Oct',
         'Looked after by Ela',
         "New one installed. Keep the cover on when it's not in use.",
         'What good looks like: Cover on when not in use, ash cleared out, logs dry and stacked under the bench.',
@@ -227,28 +227,28 @@ describe('itemShareMessage: To maintain', () => {
   it('the "Updated" day is in the household time zone', () => {
     // 23:30 UTC on the 6th is half past midnight on the 7th in London (BST).
     const late = { ...firepit, updated_at: '2026-10-06T23:30:00.000Z' };
-    expect(lines(itemShareMessage(late, AREAS, CTX).text)[1]).toBe('Garden · Green · Updated Wed 7 Oct');
+    expect(lines(itemShareMessage(late, AREAS, CTX).text)[1]).toBe('Garden · Good · Updated Wed 7 Oct');
     expect(lines(itemShareMessage(late, AREAS, { ...CTX, timeZone: 'UTC' }).text)[1]).toBe(
-      'Garden · Green · Updated Tue 6 Oct',
+      'Garden · Good · Updated Tue 6 Oct',
     );
   });
 
   it('no date when the update time is unreadable', () => {
     const odd = { ...firepit, updated_at: 'not a date' };
-    expect(lines(itemShareMessage(odd, AREAS, CTX).text)[1]).toBe('Garden · Green');
+    expect(lines(itemShareMessage(odd, AREAS, CTX).text)[1]).toBe('Garden · Good');
   });
 
   it('never a due date or repeat, whatever the row says', () => {
     const odd = { ...firepit, due_date: '2026-10-01', repeat: 'monthly' as const };
     const second = lines(itemShareMessage(odd, AREAS, CTX).text)[1];
-    expect(second).toBe('Garden · Green · Updated Tue 6 Oct');
+    expect(second).toBe('Garden · Good · Updated Tue 6 Oct');
   });
 
   it('unassigned, and without a note or what good looks like', () => {
     const bare = { ...firepit, assignee_id: null, note: '', good: '  ' };
     expect(lines(itemShareMessage(bare, AREAS, CTX).text)).toEqual([
       'Firepit',
-      'Garden · Green · Updated Tue 6 Oct',
+      'Garden · Good · Updated Tue 6 Oct',
       'Unassigned',
       '',
       'https://home.example/?item=i-fire',
@@ -288,11 +288,11 @@ describe('areaShareMessage', () => {
       title: 'Kitchen',
       text: [
         'Kitchen (5 items)',
-        '• Bins · Red · Missed · Tue 6 Oct',
-        '• Kitchen paper · Green · Due Thu 5 Nov',
-        '• Olive oil · Green · Due Fri 13 Nov',
-        '• Dripping tap · Amber',
-        '• Fridge · Amber · Updated Tue 6 Oct',
+        '• Bins · Urgent · Missed · Tue 6 Oct',
+        '• Kitchen paper · Not urgent · Due Thu 5 Nov',
+        '• Olive oil · Not urgent · Due Fri 13 Nov',
+        '• Dripping tap · Within the month',
+        '• Fridge · Fair · Updated Tue 6 Oct',
         '',
         'https://home.example/?area=a-kitchen',
       ].join('\n'),
@@ -318,7 +318,7 @@ describe('areaShareMessage', () => {
     expect(shown[0]).toBe('Kitchen (25 items)');
     const bullets = shown.filter((l) => l.startsWith('• '));
     expect(bullets).toHaveLength(SHARE_AREA_MAX - 1);
-    expect(bullets[0]).toBe('• Job 1 · Amber · Due Sun 1 Nov');
+    expect(bullets[0]).toBe('• Job 1 · Within the month · Due Sun 1 Nov');
     expect(shown[SHARE_AREA_MAX]).toBe(`…and ${25 - (SHARE_AREA_MAX - 1)} more`);
   });
 

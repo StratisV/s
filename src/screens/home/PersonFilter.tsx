@@ -1,7 +1,8 @@
-import { useRef, type KeyboardEvent } from 'react';
 import { hasJoined } from '../../lib/logic/people';
 import type { Member } from '../../lib/types';
 import { EmojiText } from '../../ui/EmojiText';
+import { ChevronDownIcon, PeopleIcon } from '../../ui/icons';
+import { Menu, type MenuItem } from '../../ui/Menu';
 import type { PersonFilter as Filter } from './personFilter';
 import styles from './PersonFilter.module.css';
 
@@ -14,72 +15,68 @@ interface PersonFilterProps {
   onChange(value: Filter): void;
 }
 
+const items = (n: number) => `${n} ${n === 1 ? 'item' : 'items'}`;
+
 /**
- * The row of people at the top of Home: Everyone, then each person (you first) and
- * Unassigned, each with how many open items they have. A radio group: arrow keys
- * move the choice. Scrolls sideways when the household is big.
+ * Whose tasks Home shows: one quiet button with the choice on it ("Everyone", or "🦆 Shea"),
+ * which opens a menu of Everyone, you, each person and Unassigned, each with how many open
+ * items they have (Apple Reminders' and Linear's scopes, in place of a row of chips).
  */
 export function PersonFilter({ members, meId, value, counts, onChange }: PersonFilterProps) {
   const people = [...members].sort((a, b) => (a.id === meId ? -1 : b.id === meId ? 1 : 0));
-  const options: { value: Filter; emoji?: string; label: string; notJoined?: boolean }[] = [
-    { value: 'all', label: 'Everyone' },
-    ...people.map((m) => ({
-      value: m.id,
-      emoji: m.emoji,
-      label: m.id === meId ? `${m.name} (you)` : m.name,
-      // Shown like anyone else; VoiceOver adds that they haven't signed in yet.
-      notJoined: !hasJoined(m),
-    })),
-    { value: 'none', label: 'Unassigned' },
-  ];
-  const refs = useRef<(HTMLButtonElement | null)[]>([]);
-  const index = Math.max(0, options.findIndex((o) => o.value === value));
+  const chosen = members.find((m) => m.id === value);
+  const name = value === 'all' ? 'Everyone' : value === 'none' ? 'Unassigned' : (chosen?.name ?? 'Everyone');
 
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const n = options.length;
-    let next: number;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (index + 1) % n;
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (index - 1 + n) % n;
-    else if (e.key === 'Home') next = 0;
-    else if (e.key === 'End') next = n - 1;
-    else return;
-    e.preventDefault();
-    onChange(options[next].value);
-    refs.current[next]?.focus();
-    refs.current[next]?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
-  };
+  const options: MenuItem[] = [
+    {
+      key: 'all',
+      label: 'Everyone',
+      lead: <PeopleIcon size={19} />,
+      detail: String(counts.all ?? 0),
+      ariaLabel: `Everyone, ${items(counts.all ?? 0)}`,
+      checked: value === 'all',
+      onSelect: () => onChange('all'),
+    },
+    ...people.map((m, i) => ({
+      key: m.id,
+      label: m.id === meId ? `${m.name} (you)` : m.name,
+      lead: <EmojiText text={m.emoji} />,
+      detail: String(counts[m.id] ?? 0),
+      ariaLabel: `${m.id === meId ? `${m.name} (you)` : m.name}, ${items(counts[m.id] ?? 0)}${hasJoined(m) ? '' : ', not joined yet'}`,
+      checked: value === m.id,
+      groupStart: i === 0,
+      onSelect: () => onChange(m.id),
+    })),
+    {
+      key: 'none',
+      label: 'Unassigned',
+      lead: <span className={styles.nobody} />,
+      detail: String(counts.none ?? 0),
+      ariaLabel: `Unassigned, ${items(counts.none ?? 0)}`,
+      checked: value === 'none',
+      groupStart: true,
+      onSelect: () => onChange('none'),
+    },
+  ];
 
   return (
-    <div className={styles.row} role="radiogroup" aria-label="Show tasks for" onKeyDown={onKeyDown}>
-      {options.map((o, i) => {
-        const on = i === index;
-        const count = counts[o.value] ?? 0;
-        return (
-          <button
-            key={o.value}
-            ref={(el) => {
-              refs.current[i] = el;
-            }}
-            type="button"
-            role="radio"
-            aria-checked={on}
-            aria-label={`${o.label}, ${count} ${count === 1 ? 'item' : 'items'}${o.notJoined ? ', not joined yet' : ''}`}
-            tabIndex={on ? 0 : -1}
-            className={styles.chip}
-            onClick={() => onChange(o.value)}
-          >
-            {o.emoji ? (
-              <span className={styles.emoji} aria-hidden="true">
-                <EmojiText text={o.emoji} />
-              </span>
-            ) : null}
-            <span className={styles.name}>{o.label.replace(' (you)', '')}</span>
-            <span className={styles.count} aria-hidden="true">
-              {count}
-            </span>
-          </button>
-        );
-      })}
-    </div>
+    <Menu label="Show tasks for" items={options}>
+      {({ ref, ...trigger }) => (
+        <button
+          ref={ref}
+          type="button"
+          className={styles.button}
+          data-filtered={value !== 'all' || undefined}
+          aria-label={`Show tasks for: ${name}`}
+          {...trigger}
+        >
+          <span className={styles.lead} aria-hidden="true">
+            {chosen ? <EmojiText text={chosen.emoji} /> : value === 'none' ? <span className={styles.nobody} /> : <PeopleIcon size={18} />}
+          </span>
+          <span className={styles.name}>{name}</span>
+          <ChevronDownIcon className={styles.chevron} size={11} strokeWidth={2.6} />
+        </button>
+      )}
+    </Menu>
   );
 }

@@ -120,7 +120,7 @@
 }
 
 .dock[data-stuck] {
-  background: rgba(242, 242, 247, 0.97);
+  background: var(--bar-glass);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   box-shadow: 0 0.5px 0 var(--separator);

@@ -104,6 +104,7 @@ function setup({ items = ITEMS, who = 'all', today = TODAY, householdId }: Optio
     visits: VISITS,
     members: MEMBERS,
     timeZone: 'Europe/London',
+    roomOf: () => 'Kitchen',
     onOpenItem: vi.fn(),
     onComplete: vi.fn(() => Promise.resolve()),
     onOpenHousekeeping: vi.fn(),

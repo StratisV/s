@@ -1,31 +1,35 @@
-/* "Collapse All" / "Expand All", right-aligned above the first area. */
-.toolbar {
-  display: flex;
-  justify-content: flex-end;
-  padding: 10px 16px 0;
+/*
+ * Home (HomeScreen.tsx, UpNextView.tsx). One page gutter: cards sit 16px in, text 20px in.
+ * One accent (the tint) for what can be tapped; colour otherwise only where it means
+ * something (Urgent, Within the month, a late date, a condition).
+ */
+
+/* ── The summary sentence ──────────────────────────────── */
+
+/*
+ * What needs doing, in words, right under the tab switch: the lead in the label colour and
+ * the rest in grey, both bold, as Apple sets a headline and its follow-on.
+ */
+.summary {
+  margin: 0;
+  padding: 10px 20px 0;
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: var(--label);
+  text-wrap: pretty;
 }
 
-.toggleAll {
-  position: relative;
-  font-size: 15px;
-  line-height: 20px;
-  letter-spacing: -0.2px;
-  color: var(--tint);
-  border-radius: 6px;
+.summaryLead {
+  color: var(--label);
 }
 
-/* 44px tall tap target, reaching up towards the scene and clear of the + below. */
-.toggleAll::before {
-  content: '';
-  position: absolute;
-  inset: -20px -8px -4px;
+.summaryRest {
+  color: var(--label-secondary);
 }
 
-.toggleAll:active {
-  opacity: 0.5;
-}
-
-/* Server mode: saving is paused until next month. One quiet line under the person filter. */
+/* Server mode: saving is paused until next month. One quiet line under the summary. */
 .readOnly {
   margin: 0;
   padding: 8px 20px 0;
@@ -35,9 +39,303 @@
   color: var(--label-secondary);
 }
 
-/* The filter picked someone with nothing open. */
+/* ── View switch and whose items ───────────────────────── */
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 16px 0;
+}
+
+/* Up next, Rooms, Calendar: smaller and quieter than the tab switch above. */
+.views {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 34px;
+  padding: 2px;
+  border-radius: 17px;
+  background: var(--fill-tertiary);
+  display: grid;
+  grid-template-columns: repeat(var(--count), minmax(0, 1fr));
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.viewThumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / var(--count));
+  border-radius: 15px;
+  background: var(--thumb);
+  box-shadow: var(--shadow-segment);
+  transform: translateX(calc(100% * var(--index)));
+  transition: transform 0.34s var(--sheet-ease);
+}
+
+.viewOption {
+  position: relative;
+  min-width: 0;
+  height: 30px;
+  border-radius: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  font-size: 14px;
+  line-height: 18px;
+  letter-spacing: -0.15px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--label);
+}
+
+/* 44px tall tap target. */
+.viewOption::before {
+  content: '';
+  position: absolute;
+  inset: -7px 0;
+}
+
+.viewOption[aria-checked='true'] {
+  font-weight: 600;
+}
+
+.viewOption:not([aria-checked='true']):active {
+  opacity: 0.6;
+}
+
+.viewOption:focus-visible {
+  outline-offset: -2px;
+}
+
+/* ── Groups (Up next) ──────────────────────────────────── */
+
+.view {
+  padding-bottom: 8px;
+}
+
+.group {
+  padding-top: 26px;
+}
+
+.groupTitle {
+  margin: 0;
+  padding: 0 20px 10px;
+  font-size: 20px;
+  line-height: 25px;
+  font-weight: 700;
+  letter-spacing: -0.45px;
+  color: var(--label);
+}
+
+/* Focused (tabIndex -1) when the last row of a group is completed from the keyboard. */
+.groupTitle:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.groupNote {
+  margin: -6px 0 12px;
+  padding: 0 20px;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
+}
+
+.card {
+  margin: 0 16px;
+  background: var(--card);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Later, folded: "Show 10 more", lined up with the titles above it. */
+.more {
+  position: relative;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 16px 0 54px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  font-weight: 500;
+  color: var(--tint);
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+  scroll-margin: 8px 0 calc(104px + var(--bottom-inset));
+}
+
+.more::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 54px;
+  right: 0;
+  border-top: 0.5px solid var(--separator);
+}
+
+.more:active {
+  background: var(--fill-tertiary);
+}
+
+.more:focus-visible {
+  outline: 2px solid var(--tint);
+  outline-offset: -2px;
+  border-radius: 22px;
+}
+
+.moreChevron {
+  transition: transform 0.28s var(--sheet-ease);
+}
+
+.more[aria-expanded='true'] .moreChevron {
+  transform: rotate(180deg);
+}
+
+/* ── Looking after (Up next): tiles ────────────────────── */
+
+.tiles {
+  list-style: none;
+  margin: 0;
+  padding: 0 16px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.tileCell {
+  display: flex;
+  min-width: 0;
+}
+
+.tile {
+  flex: 1;
+  min-width: 0;
+  min-height: 108px;
+  padding: 14px 14px 14px 16px;
+  border-radius: 22px;
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.15s ease;
+  scroll-margin: 8px 0 calc(104px + var(--bottom-inset));
+}
+
+.tile:active {
+  transform: scale(0.97);
+}
+
+.tile:focus-visible {
+  outline: 2px solid var(--tint);
+  outline-offset: 2px;
+}
+
+.tileTop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+}
+
+.tileRoom {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.05px;
+  font-weight: 500;
+  color: var(--label-secondary);
+}
+
+.tileWho {
+  flex: none;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.tileTitle {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  font-weight: 600;
+  color: var(--label);
+}
+
+.tileState {
+  margin-top: auto;
+  padding-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--label-secondary);
+}
+
+/* ── Nothing open ──────────────────────────────────────── */
+
+.clear {
+  margin: 26px 16px 0;
+  padding: 22px 20px;
+  border-radius: var(--r-card);
+  background: var(--card);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.clearIcon {
+  flex: none;
+  color: var(--rag-green);
+}
+
+.clearText {
+  margin: 0;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
+}
+
+.clearText strong {
+  display: block;
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  color: var(--label);
+}
+
+/* The filter picked someone with nothing open (Rooms). */
 .nobody {
-  margin: 16px 16px 0;
+  margin: 26px 16px 0;
   padding: 14px 18px;
   border-radius: var(--r-card);
   background: var(--card);
@@ -47,13 +345,14 @@
   color: var(--label-secondary);
 }
 
-/* The first area sits closer: the toolbar line takes the space above it. */
-.toolbar + section .headerRow {
-  padding-top: 14px;
+/* ── Rooms ─────────────────────────────────────────────── */
+
+.section {
+  padding-top: 22px;
 }
 
 /*
- * Area name (a disclosure button), then the status counts, Share and the + on
+ * The room's name (a disclosure button), one quiet word on its state, and its "..." menu on
  * the right. Above the card so the controls' tap targets win over its first row.
  */
 .headerRow {
@@ -61,8 +360,9 @@
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 24px 16px 0 20px;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 14px 8px 20px;
 }
 
 .header {
@@ -71,9 +371,30 @@
   margin: 0;
   font-size: 20px;
   line-height: 25px;
-  font-weight: 600;
-  letter-spacing: -0.3px;
+  font-weight: 700;
+  letter-spacing: -0.45px;
   overflow-wrap: anywhere;
+}
+
+.header:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* A room with nothing open: smaller and grey, like an idle accessory on Apple Home. */
+.section[data-empty] {
+  padding-top: 14px;
+}
+
+.section[data-empty] .headerRow {
+  padding-bottom: 0;
+}
+
+.section[data-empty] .header {
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  color: var(--label-secondary);
 }
 
 .disclosure {
@@ -90,7 +411,7 @@
 .disclosure::before {
   content: '';
   position: absolute;
-  inset: -11px -8px -8px -6px;
+  inset: -10px -8px -8px -6px;
 }
 
 .disclosure:active {
@@ -98,7 +419,7 @@
 }
 
 /* Focused for a shared link (HomeScreen.tsx quietFocus): no ring until a key is pressed. */
-.disclosure[data-quiet-focus]:focus-visible {
+[data-quiet-focus]:focus-visible {
   outline: none;
 }
 
@@ -109,9 +430,9 @@
 
 .chevron {
   display: inline-block;
-  margin-left: 7px;
-  vertical-align: 0;
-  color: var(--label-secondary);
+  margin-left: 8px;
+  vertical-align: 1px;
+  color: var(--label-quaternary);
   transform: rotate(90deg);
   transition: transform 0.28s var(--sheet-ease);
 }
@@ -120,100 +441,50 @@ section[data-collapsed] .chevron {
   transform: none;
 }
 
-/*
- * One small badge per status: the number in the RAG text colour on the RAG tint
- * (like the person filter's counts). No dot, so three of them leave the name the
- * room it had before Share joined the row. A tap on them opens or closes the
- * area, like the name (HomeScreen.tsx StatusCounts).
- */
-.counts {
+/* "1 urgent" in red; "All clear" or, collapsed, "3 open" in grey. */
+.roomStatus {
   flex: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  -webkit-tap-highlight-color: transparent;
-  -webkit-user-select: none;
-  user-select: none;
-}
-
-.count {
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 10px;
-  display: inline-grid;
-  place-items: center;
-  background: var(--chip);
   font-size: 13px;
-  line-height: 16px;
+  line-height: 18px;
+  font-weight: 500;
+  letter-spacing: -0.05px;
+  color: var(--label-secondary);
+  white-space: nowrap;
+}
+
+.roomStatus[data-urgent] {
   font-weight: 600;
-  letter-spacing: 0;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
+  color: var(--rag-red-text);
 }
 
-/*
- * Share: the bare glyph in the tint colour, as in an iOS toolbar, so the tinted
- * + stays the main action. The button itself is the 44px-wide tap target (44px
- * tall with ::before), so it covers neither the counts nor the name: it starts
- * where the counts end, or 8px after the name, clear of the disclosure's own
- * target. It ends where the +'s target begins. The glyph sits with the same
- * space on either side of it.
- */
-.share {
+/* The room's menu: a small round "..." with a 44px target. */
+.roomMenu {
   position: relative;
   flex: none;
-  width: 44px;
-  height: 28px;
-  margin: -2px 0 -2px -8px;
-  padding-left: 16px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  color: var(--tint);
-  scroll-margin: calc(var(--top-inset) + 16px) 0 112px;
-}
-
-/* Nothing open, so no counts: keep the 8px after the name for the disclosure's target. */
-.header + .share {
-  margin-left: 0;
-}
-
-.share::before {
-  content: '';
-  position: absolute;
-  inset: -8px 0;
-}
-
-.share:active {
-  opacity: 0.5;
-}
-
-/* A small tinted + that keeps the header line at 25px; the tap target is 44px. */
-.add {
-  position: relative;
-  flex: none;
-  width: 28px;
-  height: 28px;
-  margin: -2px 0;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: rgba(0, 122, 255, 0.12);
-  color: var(--tint);
+  color: var(--label-secondary);
+  background: var(--fill-tertiary);
   scroll-margin: calc(var(--top-inset) + 16px) 0 112px;
-  transition: transform 0.12s ease;
+  transition:
+    transform 0.12s ease,
+    background-color 0.2s ease;
 }
 
-.add::before {
+.roomMenu::before {
   content: '';
   position: absolute;
-  inset: -8px;
+  inset: -6px;
   border-radius: 50%;
 }
 
-.add:active {
-  transform: scale(0.88);
+.roomMenu:active,
+.roomMenu[aria-expanded='true'] {
+  background: var(--fill-secondary);
+  transform: scale(0.94);
 }
 
 /*
@@ -241,11 +512,7 @@ section[data-collapsed] .chevron {
   overflow: hidden;
 }
 
-.card {
-  margin: 8px 16px 0;
-  background: var(--card);
-  border-radius: var(--r-card);
-  overflow: hidden;
+.panel .card {
   transition: opacity 0.24s ease;
 }
 
@@ -253,42 +520,58 @@ section[data-collapsed] .chevron {
   opacity: 0;
 }
 
+/* The things a room looks after (To maintain), under its To dos. */
+.looking[data-has-tasks] {
+  position: relative;
+}
+
+.looking[data-has-tasks]::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  border-top: 0.5px solid var(--separator);
+}
+
+.lookingLabel {
+  margin: 0;
+  padding: 12px 16px 0 54px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  letter-spacing: -0.05px;
+  color: var(--label-secondary);
+}
+
+.looking .list > li:first-child [data-item-open] {
+  border-top-color: transparent;
+}
+
 /*
  * Opened from a shared link: a tint ring that fades out, so it is clear which
  * area was meant. An outline inside the edge (the panel clips anything outside).
  */
-.section[data-linked] .card {
+.section[data-linked] .card,
+.section[data-linked][data-empty] .headerRow {
   outline: 3px solid transparent;
   outline-offset: -3px;
+  border-radius: var(--r-card);
   animation: linked 2.4s ease-out;
 }
 
 @keyframes linked {
   0%,
   45% {
-    outline-color: rgba(0, 122, 255, 0.5);
+    outline-color: color-mix(in srgb, var(--tint) 50%, transparent);
   }
   100% {
-    outline-color: rgba(0, 122, 255, 0);
+    outline-color: transparent;
   }
 }
 
-.list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
+/* ── No areas left: one card with a way to add one ─────── */
 
-.empty {
-  margin: 0;
-  padding: 11px 18px;
-  font-size: 17px;
-  line-height: 20px;
-  letter-spacing: 0;
-  color: var(--label-secondary);
-}
-
-/* No areas left: one white card with a way to add one. */
 .noAreas {
   margin: 24px 16px 0;
   background: var(--card);
@@ -350,18 +633,34 @@ section[data-collapsed] .chevron {
   border-radius: 14px;
 }
 
+/* Narrow phones: the view switch keeps its words by giving up a little padding. */
+@media (max-width: 359px) {
+  .controls {
+    gap: 8px;
+  }
+
+  .viewOption {
+    padding: 0 3px;
+    font-size: 13px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .viewThumb,
   .panel,
   .panel[data-collapsed],
-  .card,
+  .panel .card,
   .chevron,
-  .add {
+  .moreChevron,
+  .tile,
+  .roomMenu {
     transition: none;
   }
 
   /* No fade: the ring is simply there for a moment. */
-  .section[data-linked] .card {
+  .section[data-linked] .card,
+  .section[data-linked][data-empty] .headerRow {
     animation: none;
-    outline-color: rgba(0, 122, 255, 0.5);
+    outline-color: color-mix(in srgb, var(--tint) 50%, transparent);
   }
 }

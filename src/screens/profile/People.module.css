@@ -90,7 +90,7 @@
 }
 
 .navAction:disabled {
-  color: rgba(60, 60, 67, 0.3);
+  color: var(--label-quaternary);
   cursor: default;
 }
 
@@ -128,7 +128,7 @@
 }
 
 .email::placeholder {
-  color: rgba(60, 60, 67, 0.3);
+  color: var(--label-quaternary);
   opacity: 1;
 }
 

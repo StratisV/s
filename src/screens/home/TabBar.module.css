@@ -24,7 +24,7 @@
   left: 0;
   width: 0;
   border-radius: 100px;
-  background: #fff;
+  background: var(--thumb);
   box-shadow: var(--shadow-segment);
   visibility: hidden;
 }
