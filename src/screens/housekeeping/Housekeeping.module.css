@@ -115,7 +115,7 @@
 }
 
 .textField::placeholder {
-  color: rgba(60, 60, 67, 0.3);
+  color: var(--label-quaternary);
   opacity: 1;
 }
 
@@ -165,7 +165,7 @@
 }
 
 .priceValue:has(.priceInput:placeholder-shown) .pound {
-  color: rgba(60, 60, 67, 0.3);
+  color: var(--label-quaternary);
 }
 
 .priceInput {
@@ -197,7 +197,7 @@
 }
 
 .priceInput::placeholder {
-  color: rgba(60, 60, 67, 0.3);
+  color: var(--label-quaternary);
 }
 
 .priceInput[aria-invalid='true'] {
@@ -372,7 +372,7 @@
 
 /* Clear with no message to clear: kept in place (so focus and VoiceOver stay), dimmed. */
 .headerAction[aria-disabled='true'] {
-  color: rgba(60, 60, 67, 0.3);
+  color: var(--label-quaternary);
   cursor: default;
 }
 

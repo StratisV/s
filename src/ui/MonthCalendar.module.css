@@ -31,7 +31,7 @@
 }
 
 .navButton:disabled {
-  color: rgba(60, 60, 67, 0.3);
+  color: var(--label-quaternary);
   cursor: default;
 }
 

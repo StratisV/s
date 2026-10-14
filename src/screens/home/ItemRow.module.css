@@ -1,20 +1,49 @@
-/* Its own stacking context so the row's tap layer sits under the text but above the card. */
+/*
+ * A Home row (ItemRow.tsx). The li folds away when the item leaves its list: its grid row
+ * goes from 1fr to 0fr while it fades.
+ */
 .row {
-  position: relative;
-  z-index: 0;
-  display: flex;
-  gap: 14px;
-  padding: 0 18px 0 16px;
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows 0.26s var(--sheet-ease),
+    opacity 0.2s ease;
 }
 
+.row[data-leaving] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+/* Its own stacking context so the row's tap layer sits under the text but above the card. */
+.inner {
+  position: relative;
+  z-index: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  gap: 14px;
+  padding: 0 16px 0 16px;
+}
+
+/*
+ * Two lines: the title with the person's emoji at its end, then the quiet line under both,
+ * so the words on it get the full width.
+ */
 .open {
   flex: 1;
   min-width: 0;
-  padding: 8px 0 9px;
+  min-height: 64px;
+  padding: 10px 0 11px;
   border-top: 0.5px solid var(--separator);
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'title who'
+    'meta meta';
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 4px;
   text-align: left;
   user-select: none;
   -webkit-user-select: none;
@@ -51,67 +80,152 @@
   box-shadow: inset 0 0 0 2px var(--tint);
 }
 
+.text {
+  display: contents;
+}
+
+/* The title, then a note glyph when it has one. */
 .title {
-  display: block;
-  /* One line: the full title is in the Item sheet. */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  grid-area: title;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 17px;
   line-height: 22px;
   letter-spacing: -0.4px;
   color: var(--label);
 }
 
-/*
- * One line: who and when, then the note. A long name gives way first (cut short),
- * the date always shows in full, and the note takes whatever room is left.
- */
-.meta {
-  display: flex;
+.titleText {
   min-width: 0;
-  white-space: pre;
+  /* One line: the full title is in the Item sheet. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* One quiet line: the urgency in words, when, where. The room gives way first. */
+.meta {
+  grid-area: meta;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+  white-space: nowrap;
   font-size: 13px;
   line-height: 18px;
-  letter-spacing: 0;
+  letter-spacing: -0.05px;
   color: var(--label-secondary);
 }
 
-.lead {
-  display: flex;
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
-.who {
-  flex: 0 1 auto;
-  min-width: 2.5em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.note {
-  flex: 1 1 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.date {
+.when {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
-.date[data-updated] {
-  font-weight: 400;
-}
-
-.date[data-missed] {
+/* Late: the only red date on the page. */
+.when[data-late] {
   color: var(--destructive);
-  font-weight: 700;
+  font-weight: 600;
+}
+
+.part {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sep {
+  flex: none;
+  color: var(--label-secondary);
+  opacity: 0.6;
+  margin: 0 -1px;
+}
+
+.glyph {
+  flex: none;
+  color: var(--label-secondary);
+  opacity: 0.6;
+}
+
+/* The person it is for: their emoji in a small circle at the end of the title's line. */
+.who {
+  grid-area: who;
+  width: 26px;
+  height: 26px;
+  margin: -2px 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--fill-tertiary);
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* ── The urgency (or condition) label ──────────────────── */
+
+/*
+ * Strongest for Urgent (a red pill), softer for Within the month (an amber pill), quietest
+ * for Not urgent (a green dot and grey text). The same for To maintain: Poor, Fair, Good.
+ */
+.badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 8px 0 7px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.badgeDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.badge[data-rag='red'] {
+  background: var(--rag-red-tint);
+  color: var(--rag-red-text);
+}
+
+.badge[data-rag='red'] .badgeDot {
+  background: var(--rag-red);
+}
+
+.badge[data-rag='amber'] {
+  background: var(--rag-amber-tint);
+  color: var(--rag-amber-text);
+}
+
+.badge[data-rag='amber'] .badgeDot {
+  background: var(--rag-amber);
+}
+
+.badge[data-rag='green'] {
+  padding: 0;
+  font-weight: 500;
+  color: var(--label-secondary);
+}
+
+.badge[data-rag='green'] .badgeDot {
+  background: var(--rag-green);
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .row,
   .open::after {
     transition: none;
   }

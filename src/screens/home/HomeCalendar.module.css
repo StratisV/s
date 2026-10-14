@@ -99,18 +99,18 @@
 
 /* ── The chosen day ────────────────────────────────────── */
 
-/* 10px under the last card: Collapse All's tap target reaches that far up. */
 .day {
   padding-bottom: 10px;
 }
 
+/* The chosen day, as Home's group headings are drawn (HomeScreen.module.css .groupTitle). */
 .dayHeader {
   margin: 0;
-  padding: 18px 20px 8px;
-  font-size: 17px;
-  line-height: 22px;
-  font-weight: 600;
-  letter-spacing: -0.4px;
+  padding: 26px 20px 10px;
+  font-size: 20px;
+  line-height: 25px;
+  font-weight: 700;
+  letter-spacing: -0.45px;
   overflow-wrap: anywhere;
 }
 
@@ -145,23 +145,23 @@
   color: var(--label-secondary);
 }
 
-/* A repeat's ring: dashed, faint, in its status colour; not a button. */
+/* A repeat's ring: dashed and faint, in the ring's place; not a button. */
 .repeatSlot {
   pointer-events: none;
   flex: none;
-  width: 22px;
-  height: 22px;
-  margin-top: 8px;
+  width: 24px;
+  height: 24px;
+  margin-top: 11px;
   display: grid;
   place-items: center;
 }
 
 .repeatRing {
-  width: 22px;
-  height: 22px;
-  border: 2px dashed var(--ring);
+  width: 24px;
+  height: 24px;
+  border: 1.6px dashed var(--ring-idle);
   border-radius: 50%;
-  opacity: 0.55;
+  opacity: 0.7;
 }
 
 .repeatTitle {
@@ -230,5 +230,5 @@
 
 .visitChevron {
   flex: none;
-  color: rgba(60, 60, 67, 0.3);
+  color: var(--label-quaternary);
 }

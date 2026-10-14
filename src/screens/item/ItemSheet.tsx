@@ -336,7 +336,7 @@ export function ItemSheet({ target, open, onClose, onExited, onSaved }: ItemShee
             </div>
           ) : null}
 
-          <RagPicker value={draft.rag} onChange={(rag) => update({ rag })} />
+          <RagPicker value={draft.rag} kind={draft.kind} onChange={(rag) => update({ rag })} />
 
           <DetailsCard>
             <SelectRow

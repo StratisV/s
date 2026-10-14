@@ -1,79 +1,89 @@
-/* One line of pills under the tab switch, scrolling sideways (edge to edge) when it is long. */
-.row {
-  display: flex;
-  gap: 8px;
-  padding: 4px 16px 2px;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
-}
-
-.row::-webkit-scrollbar {
-  display: none;
-}
-
-.chip {
+/* Whose tasks Home shows (PersonFilter.tsx): one quiet pill that opens a menu. */
+.button {
+  position: relative;
   flex: none;
-  height: 36px;
-  padding: 0 12px;
-  border-radius: 18px;
+  max-width: 50%;
+  height: 34px;
+  padding: 0 12px 0 9px;
+  border-radius: 17px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: var(--card);
+  background: var(--fill-tertiary);
   color: var(--label);
   font-size: 15px;
   line-height: 20px;
   letter-spacing: -0.2px;
-  font-weight: 500;
-  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  font-weight: 600;
+  -webkit-tap-highlight-color: transparent;
   transition:
     background-color 0.2s ease,
-    color 0.2s ease;
+    transform 0.12s ease;
 }
 
-.chip[aria-checked='true'] {
-  background: var(--tint);
-  color: #fff;
-  font-weight: 600;
-  box-shadow: none;
+/* 44px tall tap target. */
+.button::before {
+  content: '';
+  position: absolute;
+  inset: -5px -2px;
 }
 
-.chip:not([aria-checked='true']):active {
-  background: #e5e5ea;
+.button:active {
+  transform: scale(0.96);
 }
 
-.chip:focus-visible {
-  outline-offset: 2px;
+/* Someone chosen: a tint wash says the list is narrowed. */
+.button[data-filtered] {
+  background: var(--tint-wash);
+  color: var(--tint-text);
 }
 
-.emoji {
+.lead {
+  flex: none;
+  width: 22px;
+  display: grid;
+  place-items: center;
   font-size: 18px;
   line-height: 1;
 }
 
-.count {
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 10px;
-  display: inline-grid;
-  place-items: center;
-  font-size: 13px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  background: var(--fill-tertiary);
-  color: var(--label-secondary);
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.chip[aria-checked='true'] .count {
-  background: rgba(255, 255, 255, 0.24);
-  color: #fff;
+.chevron {
+  flex: none;
+  margin-left: 1px;
+  opacity: 0.7;
+}
+
+/* Unassigned: an empty dashed circle, nobody in it. */
+.nobody {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px dashed currentColor;
+  opacity: 0.7;
+}
+
+/* Narrow phones: just the emoji (or the people glyph) and the chevron; the name is still spoken. */
+@media (max-width: 379px) {
+  .button {
+    padding: 0 10px 0 8px;
+    gap: 4px;
+  }
+
+  .name {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chip {
+  .button {
     transition: none;
   }
 }

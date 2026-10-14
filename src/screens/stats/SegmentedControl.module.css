@@ -17,7 +17,7 @@
   left: 3px;
   width: calc((100% - 6px) / var(--count));
   border-radius: 100px;
-  background: #fff;
+  background: var(--thumb);
   box-shadow: var(--shadow-segment);
   transform: translateX(calc(100% * var(--index)));
   transition: transform 0.34s var(--sheet-ease);
