@@ -115,7 +115,7 @@ function restoreFocus({ target, nearby, section }: FocusReturn, stage: HTMLEleme
   const next =
     [target, ...nearby].find(reachable) ??
     [rowFallback(section)].find(reachable) ??
-    stage.querySelector<HTMLElement>('button[aria-label="New item"]');
+    stage.querySelector<HTMLElement>('button[data-add-button]');
   next?.focus({ preventScroll: true });
 }
 
@@ -131,6 +131,7 @@ function MainApp() {
 
 function MainShell() {
   const { unread } = useChat();
+  const { data } = useHousehold();
   // The tab last open on this device (the housekeeper reopens on Housekeeping).
   const [tab, setTab] = useState<Tab>(loadTab);
   useEffect(() => storeTab(tab), [tab]);
@@ -161,6 +162,9 @@ function MainShell() {
   // The area a shared link (?area=) points at, for Home to open and scroll to.
   const [linkedArea, setLinkedArea] = useState<string | null>(null);
   const clearLinkedArea = useCallback(() => setLinkedArea(null), []);
+  // The room the round + adds to (the one a shared link opened on Home), if any.
+  const [addRoom, setAddRoom] = useState<string | null>(null);
+  const addRoomName = addRoom ? (data.areas.find((a) => a.id === addRoom)?.name ?? null) : null;
   // A day Home's calendar sends to Housekeeping (its visit), for Housekeeping to show.
   const [housekeepingDay, setHousekeepingDay] = useState<ISODate | null>(null);
   const clearHousekeepingDay = useCallback(() => setHousekeepingDay(null), []);
@@ -262,6 +266,7 @@ function MainShell() {
             onRevealed={clearReveal}
             linkedArea={linkedArea}
             onLinkedAreaShown={clearLinkedArea}
+            onRoomContext={setAddRoom}
             onOpenHousekeeping={openHousekeepingDay}
           />
         ) : tab === 'chat' ? (
@@ -277,7 +282,11 @@ function MainShell() {
         ) : (
           <StatsScreen tabs={tabs} onOpenProfile={() => setProfileOpen(true)} onOpenDone={openDone} />
         )}
-        <AddButton tab={tab} onAdd={() => openSheet({ kind: 'new' })} />
+        <AddButton
+          tab={tab}
+          room={tab === 'home' && addRoom && addRoomName ? addRoomName : null}
+          onAdd={() => openSheet(tab === 'home' && addRoom && addRoomName ? { kind: 'new', areaId: addRoom } : { kind: 'new' })}
+        />
         <div className={styles.dim} aria-hidden="true" />
       </div>
       {sheetTarget ? (

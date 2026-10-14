@@ -18,9 +18,9 @@ import {
   type Page,
 } from './fixtures';
 
-// "To do" (task) and "To maintain" (state) items. A state has a solid dot instead of the
-// ring, is never completed, has no due date, repeat or reminder, and reads
-// "<who> · Updated <day>" on Home.
+// "To do" (task) and "To maintain" (state) items. A state has a condition gauge instead of
+// the ring, is never completed, has no due date, repeat or reminder, and reads
+// "<condition> · Updated <day>" on Home.
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
 
@@ -31,11 +31,11 @@ test.beforeEach(async ({ page }) => {
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
- * A state's row button, by its accessible name "<title>, Green, to maintain. …" (Chromium
+ * A state's row button, by its accessible name "<title>, to maintain, Good, …" (Chromium
  * puts a space before the comma, as it does for to-do rows).
  */
 function stateName(title: string): RegExp {
-  return new RegExp(`^${escape(title)} ?, (Red|Amber|Green), to maintain\\.`);
+  return new RegExp(`^${escape(title)} ?, to maintain, (Needs work|Okay|Good),`);
 }
 
 function stateButton(page: Page, title: string): Locator {
@@ -47,20 +47,22 @@ function stateRow(page: Page, title: string): Locator {
   return homeScreen(page).getByRole('listitem').filter({ has: page.getByRole('button', { name: stateName(title) }) });
 }
 
-/** The meta line of a state's row: `🦊 Ela · Updated Thu 8 Oct`. */
+/** The quiet line of a state's row: `Good·Updated today`, its condition in words. */
 function stateMeta(page: Page, title: string): Locator {
   return stateButton(page, title).locator('[data-meta]');
 }
 
 /** Focuses a control as the keyboard would (so it matches :focus-visible). */
 async function keyboardFocus(control: Locator): Promise<void> {
+  // A key press first, so focus is shown even after a tap (Home's view switch, say).
+  await control.page().keyboard.press('Shift');
   await control.focus();
   await expect.poll(() => control.evaluate((el) => el.matches(':focus-visible'))).toBe(true);
 }
 
-/** The solid dot in a state's row. */
-function dot(page: Page, title: string): Locator {
-  return stateRow(page, title).locator('[data-rag]');
+/** The condition gauge in a state's row, in the ring's place: three bars, as many filled as it is good. */
+function gauge(page: Page, title: string): Locator {
+  return stateRow(page, title).locator('[data-variant="row"]');
 }
 
 /** Opens a state from its Home row; resolves once the sheet is in place. */
@@ -74,13 +76,19 @@ async function openState(page: Page, title: string): Promise<Locator> {
 /** Row titles in an area, top to bottom, tasks and states alike. */
 async function rowTitlesIn(page: Page, areaName: string): Promise<string[]> {
   return area(page, areaName)
-    .locator('[data-item-open] > span:first-child')
-    .evaluateAll((els) => els.map((el) => el.firstChild?.textContent ?? ''));
+    .locator('[data-item-open]')
+    .evaluateAll((els) => els.map((el) => (el.textContent ?? '').split(',')[0].trim()));
 }
 
 const GREEN = 'rgb(52, 199, 89)';
 const RED = 'rgb(255, 59, 48)';
 const AMBER = 'rgb(255, 149, 0)';
+
+/** The colour of a gauge's filled bars, and how many there are. */
+async function filled(g: Locator): Promise<{ colour: string; bars: number }> {
+  const on = g.locator('[data-on]');
+  return { colour: await on.first().evaluate((el) => getComputedStyle(el).backgroundColor), bars: await on.count() };
+}
 
 /** The rows a To do has and a To maintain does not (Mark as Done only once it exists). */
 async function expectTaskRows(sheet: Locator, shown: boolean, saved = true): Promise<void> {
@@ -92,26 +100,29 @@ async function expectTaskRows(sheet: Locator, shown: boolean, saved = true): Pro
 }
 
 test.describe('To maintain', () => {
-  test('the seeded Firepit is a state in the Garden: a solid dot, after the to-dos, "Updated"', async ({ page }) => {
+  test('the seeded Firepit is a state in the Garden: a gauge, under "Looking after", "Good", "Updated"', async ({ page }) => {
     const firepit = stateRow(page, 'Firepit');
     await expect(firepit).toBeVisible();
-    await expect(firepit).toContainText("New one installed. Keep the cover on when it's not in use.");
-    await expect(stateMeta(page, 'Firepit')).toHaveText('🦊 Ela · Updated Thu 8 Oct');
-    // A solid dot in its RAG colour, not a ring and not a button.
-    await expect(dot(page, 'Firepit')).toHaveCSS('background-color', GREEN);
+    // The note is a glyph on Home, not text.
+    await expect(firepit).not.toContainText('New one installed');
+    await expect(stateMeta(page, 'Firepit')).toHaveText('Good·Updated today');
+    await expect(stateButton(page, 'Firepit').locator('[data-who]')).toHaveText('🦊Ela');
+    // A gauge in its colour, all three bars for Good: not a ring and not a button.
+    expect(await filled(gauge(page, 'Firepit'))).toEqual({ colour: GREEN, bars: 3 });
     await expect(firepit.getByRole('button')).toHaveCount(1);
     await expect(ring(page, 'Firepit')).toHaveCount(0);
-    // Assistive tech hears the status and the kind after the title.
+    // Assistive tech hears the kind and the condition after the title.
     await expect(stateButton(page, 'Firepit')).toHaveAccessibleName(
-      /^Firepit ?, Green, to maintain\. 🦊 Ela · Updated Thu 8 Oct · New one installed/,
+      /^Firepit ?, to maintain, Good, Ela, updated today, has a note\.$/,
     );
-    // To-dos first (by date), then states (by title).
-    expect(await rowTitlesIn(page, 'Garden')).toEqual(['Give away the old firepit', 'Garden room wall panel', 'Firepit']);
-    expect(await titlesIn(page, 'Garden')).toEqual(['Give away the old firepit', 'Garden room wall panel']);
+    // To-dos first (most urgent first), then, under "Looking after", the things it looks after.
+    expect(await rowTitlesIn(page, 'Garden')).toEqual(['Garden room wall panel', 'Give away the old firepit', 'Firepit']);
+    expect(await titlesIn(page, 'Garden')).toEqual(['Garden room wall panel', 'Give away the old firepit']);
+    await expect(area(page, 'Garden').getByText('Looking after', { exact: true })).toBeVisible();
   });
 
-  test('cannot be completed from Home: tapping the dot opens it instead', async ({ page }) => {
-    await dot(page, 'Firepit').click({ force: true });
+  test('cannot be completed from Home: tapping the gauge opens it instead', async ({ page }) => {
+    await gauge(page, 'Firepit').click({ force: true });
     const sheet = itemSheet(page);
     await settled(sheet.getByRole('button', { name: 'Close' }));
     await expect(sheet.getByLabel('Title', { exact: true })).toHaveValue('Firepit');
@@ -139,9 +150,12 @@ test.describe('To maintain', () => {
     const kinds = sheet.getByRole('radiogroup', { name: 'Type' });
     await expect(kinds.getByRole('radio')).toHaveText(['To do', 'To maintain']);
     await expect(kinds.getByRole('radio', { name: 'To maintain' })).toHaveAttribute('aria-checked', 'true');
-    await expect(sheet.getByRole('radiogroup', { name: 'Status' }).getByRole('radio')).toHaveCount(3);
-    await expect(sheet.getByRole('radio', { name: 'Green' })).toBeChecked();
-    await expect(sheet.getByRole('radiogroup', { name: 'Status' })).toContainText('RedAmberGreen');
+    // Its condition, in words, each with what it means.
+    const condition = sheet.getByRole('radiogroup', { name: 'Condition' });
+    await expect(condition.getByRole('radio')).toHaveCount(3);
+    await expect(sheet.getByRole('radio', { name: 'Good' })).toBeChecked();
+    await expect(condition).toContainText(/Needs work.*Not as it should be.*Okay.*Fine for now, keep an eye on it.*Good.*Just as it should be/);
+    await expect(sheet.getByRole('radio', { name: 'Okay' })).toHaveAccessibleDescription('Fine for now, keep an eye on it');
     await expectTaskRows(sheet, false);
     await expect(detailValue(sheet, 'Looked after by')).toHaveText('🦊 Ela');
     await expect(detailValue(sheet, 'Area')).toHaveText('Garden');
@@ -162,15 +176,17 @@ test.describe('To maintain', () => {
       await expect(sheet.getByLabel(label, { exact: true }), label).toHaveCount(0);
     }
     await sheet.getByLabel('Area', { exact: true }).selectOption({ label: 'Jacuzzi' });
-    await sheet.getByRole('radiogroup', { name: 'Status' }).getByText('Red', { exact: true }).click();
+    await sheet.getByRole('radiogroup', { name: 'Condition' }).getByText('Needs work', { exact: true }).click();
     await sheet.getByLabel('Looked after by', { exact: true }).selectOption({ label: '🦆 Shea' });
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
 
     const created = stateRow(page, 'Jacuzzi water');
-    await expect(created).toContainText('Cloudy after the party.');
-    await expect(stateMeta(page, 'Jacuzzi water')).toHaveText('🦆 Shea · Updated Thu 8 Oct');
-    await expect(dot(page, 'Jacuzzi water')).toHaveCSS('background-color', RED);
+    await expect(created).toBeVisible();
+    await expect(stateMeta(page, 'Jacuzzi water')).toHaveText('Needs workUpdated today');
+    expect(await filled(gauge(page, 'Jacuzzi water'))).toEqual({ colour: RED, bars: 1 });
+    // It needs work: the room says so, in red.
+    await expect(area(page, 'Jacuzzi').locator('h2 + span')).toHaveText('1 needs work');
     await expect(ring(page, 'Jacuzzi water')).toHaveCount(0);
     expect(await rowTitlesIn(page, 'Jacuzzi')).toEqual(['Water test strips running low', 'Change the filter', 'Jacuzzi water']);
 
@@ -196,9 +212,9 @@ test.describe('To maintain', () => {
 
     // Now a to-do: the ring is back, with a due date, sorted with the other to-dos.
     await expect(stateRow(page, 'Firepit')).toHaveCount(0);
-    await expect(ring(page, 'Firepit')).toHaveCSS('border-top-color', GREEN);
-    await expect(meta(page, 'Firepit')).toHaveText('🦊 Ela · Thu 15 Oct');
-    expect(await titlesIn(page, 'Garden')).toEqual(['Give away the old firepit', 'Firepit', 'Garden room wall panel']);
+    await expect(ring(page, 'Firepit')).toBeVisible();
+    await expect(meta(page, 'Firepit')).toHaveText('Not urgent·In 7 days');
+    expect(await titlesIn(page, 'Garden')).toEqual(['Garden room wall panel', 'Give away the old firepit', 'Firepit']);
 
     // And it can be completed like any to-do.
     await ring(page, 'Firepit').click();
@@ -215,9 +231,10 @@ test.describe('To maintain', () => {
     await expect(sheet).toHaveCount(0);
 
     await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
-    await expect(dot(page, 'Mirror lights not level')).toHaveCSS('background-color', AMBER);
-    await expect(stateMeta(page, 'Mirror lights not level')).toHaveText('Unassigned · Updated Thu 8 Oct');
-    await expect(area(page, 'Living Room').getByText('Nothing to do')).toHaveCount(0);
+    // Its colour carries over as its condition: amber is Okay, two bars.
+    expect(await filled(gauge(page, 'Mirror lights not level'))).toEqual({ colour: AMBER, bars: 2 });
+    await expect(stateMeta(page, 'Mirror lights not level')).toHaveText('OkayUpdated today');
+    await expect(area(page, 'Living Room').getByText('All clear')).toHaveCount(0);
   });
 
   test('switching kinds back and forth without saving changes nothing', async ({ page }) => {
@@ -230,7 +247,7 @@ test.describe('To maintain', () => {
     // Nothing to discard.
     await expect(sheet).toHaveCount(0);
     await expect(page.getByRole('alertdialog')).toHaveCount(0);
-    await expect(meta(page, 'Olive oil')).toHaveText('🦔 Stratis · Thu 12 Nov');
+    await expect(meta(page, 'Olive oil')).toHaveText('Not urgent·In 5 weeks');
   });
 });
 
@@ -241,7 +258,7 @@ test.describe('What good looks like', () => {
     return sheet.getByRole('textbox', { name: 'What good looks like', exact: true });
   }
 
-  test('the seeded Firepit shows it between the type and the RAG picker; a To do has none', async ({ page }) => {
+  test('the seeded Firepit shows it between the type and the condition picker; a To do has none', async ({ page }) => {
     const sheet = await openState(page, 'Firepit');
     const field = goodField(sheet);
     await expect(field).toBeVisible();
@@ -251,7 +268,7 @@ test.describe('What good looks like', () => {
     // Laid out top to bottom: type, header, field, RAG picker.
     const header = sheet.getByText('What good looks like', { exact: true });
     const boxes = await Promise.all(
-      [sheet.getByRole('radiogroup', { name: 'Type' }), header, field, sheet.getByRole('radiogroup', { name: 'Status' })].map(
+      [sheet.getByRole('radiogroup', { name: 'Type' }), header, field, sheet.getByRole('radiogroup', { name: 'Condition' })].map(
         async (l) => (await l.boundingBox())!,
       ),
     );

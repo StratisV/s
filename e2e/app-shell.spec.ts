@@ -93,7 +93,7 @@ test.describe('App shell', () => {
   test('swiping the sheet down with a finger dismisses it', async ({ page, context }) => {
     await openSeeded(page);
     const sheet = await openItem(page, 'Olive oil');
-    const status = sheet.getByRole('radiogroup', { name: 'Status' });
+    const status = sheet.getByRole('radiogroup', { name: 'How urgent?' });
     await status.hover(); // waits for the sheet to finish sliding up
     const box = (await status.boundingBox())!;
     const cdp = await context.newCDPSession(page);

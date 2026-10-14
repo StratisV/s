@@ -91,7 +91,8 @@ describe('opening a shared area link', () => {
       return `?frame&area=${areaId(data, 'Hallway')}`;
     });
     expect(window.location.search).toBe('?frame');
-    const hallway = screen.getByRole('button', { name: 'Hallway' });
+    // Home switches to its Rooms view for the link.
+    const hallway = await screen.findByRole('button', { name: 'Hallway' });
     await waitFor(() => expect(hallway.getAttribute('aria-expanded')).toBe('true'));
     await waitFor(() => expect(scrolled).toEqual([hallway.closest('section')]));
     expect(hallway.closest('section')!.getAttribute('data-area-id')).toBe(areaId(data, 'Hallway'));

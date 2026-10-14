@@ -36,10 +36,77 @@ export const test = base.extend({
 export { expect };
 export type { Locator, Page };
 
-/** Signed in as Stratis in the prototype household (Shea, Ela, seeded items and history). */
-export async function openSeeded(page: Page): Promise<void> {
+/** Home's three views, as the view switch names them. */
+export type HomeViewName = 'Up next' | 'Rooms' | 'Calendar';
+
+/**
+ * Signed in as Stratis in the prototype household (Shea, Ela, seeded items and history). Most
+ * tests are about the rooms and their rows, so Home is switched to its Rooms view (the phone
+ * then remembers it) unless `view` says otherwise; Up next is what Home opens on at first.
+ */
+export async function openSeeded(page: Page, view: HomeViewName = 'Rooms'): Promise<void> {
   await page.goto('/?demo-seed=1');
   await expect(homeScreen(page).getByRole('heading', { name: 'Home', level: 1 })).toBeVisible();
+  if (view !== 'Up next') await showView(page, view);
+}
+
+/** The view switch under Home's summary sentence (a radio group "View"). */
+export function views(page: Page): Locator {
+  return homeScreen(page).getByRole('radiogroup', { name: 'View' });
+}
+
+/** Chooses one of Home's views. */
+export async function showView(page: Page, name: HomeViewName): Promise<void> {
+  const radio = views(page).getByRole('radio', { name, exact: true });
+  await radio.click();
+  await expect(radio).toHaveAttribute('aria-checked', 'true');
+}
+
+/** Home's one sentence on what needs doing. */
+export function summary(page: Page): Locator {
+  return homeScreen(page).locator('[data-home-summary]');
+}
+
+/** A group of Up next ('attention', 'today', 'week', 'later', 'looking'). */
+export function group(page: Page, id: 'attention' | 'today' | 'week' | 'later' | 'looking'): Locator {
+  return homeScreen(page).locator(`section[data-group="${id}"]`);
+}
+
+/** Mine: one tap for only your items. */
+export function mine(page: Page): Locator {
+  return homeScreen(page).getByRole('button', { name: 'Mine', exact: true });
+}
+
+/** The people menu's button, "Show tasks for: Everyone" (or whoever is chosen). */
+export function peopleButton(page: Page): Locator {
+  return homeScreen(page).getByRole('button', { name: /^Show tasks for: / });
+}
+
+/** Chooses whose items Home shows from the people menu ("Everyone", "Shea", "Unassigned"...). */
+export async function chooseWho(page: Page, name: RegExp): Promise<void> {
+  await peopleButton(page).click();
+  await page.getByRole('menu', { name: 'Show tasks for' }).getByRole('menuitemradio', { name }).click();
+  await expect(page.getByRole('menu')).toHaveCount(0);
+}
+
+/**
+ * Opens a room's "..." menu; resolves to the menu. A scroll closes a menu, so while rooms are
+ * still folding (the page shrinking under it) it may take a second tap.
+ */
+export async function openRoomMenu(page: Page, room: string): Promise<Locator> {
+  const button = homeScreen(page).getByRole('button', { name: `${room} options`, exact: true });
+  const menu = page.getByRole('menu', { name: room, exact: true });
+  await expect(async () => {
+    if (!(await menu.isVisible())) await button.click();
+    await expect(menu).toBeVisible({ timeout: 1_000 });
+  }).toPass();
+  return menu;
+}
+
+/** Chooses `item` in a room's "..." menu ("Add item to Garden", "Share Garden", "Collapse All Rooms"). */
+export async function roomMenu(page: Page, room: string, item: string): Promise<void> {
+  const menu = await openRoomMenu(page, room);
+  await menu.getByRole('menuitem', { name: item, exact: true }).click();
 }
 
 /** Signed out with nothing stored. */
@@ -142,9 +209,9 @@ export function row(page: Page, title: string): Locator {
   return areas(page).getByRole('listitem').filter({ has: ringButton });
 }
 
-/** Home's calendar section (the week strip or the month, and the chosen day under it). */
+/** Home's calendar section, its own view (the week strip or the month, and the chosen day under it). */
 export function calendar(page: Page): Locator {
-  return homeScreen(page).getByRole('region', { name: 'Calendar', exact: true });
+  return homeScreen(page).locator('section[data-calendar]');
 }
 
 /** The part of a row that opens the Item sheet. */
@@ -159,10 +226,14 @@ export async function titlesIn(page: Page, areaName: string): Promise<string[]> 
   return labels.map((l) => l.replace(/^Mark /, '').replace(/ as done$/, ''));
 }
 
-/** The meta line of a row: `🦆 Shea · Tue 20 Oct`. */
+/** The quiet line under a row's title: `Within the month In 6 days`, its urgency in words and when. */
 export function meta(page: Page, title: string): Locator {
-  // Who and when, at the start of the row's second line (the note follows it).
   return rowButton(page, title).locator('[data-meta]');
+}
+
+/** Who a row is for, at the end of its title's line: `🦆 Shea` (their emoji and first name). */
+export function who(page: Page, title: string): Locator {
+  return rowButton(page, title).locator('[data-who]');
 }
 
 /** The undo / error toast showing `message`. */

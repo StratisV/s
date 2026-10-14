@@ -1,41 +1,71 @@
-/* Whose tasks Home shows (PersonFilter.tsx): one quiet pill that opens a menu. */
+/*
+ * Whose tasks Home shows (PersonFilter.tsx): Mine, a one-tap toggle, and a small pill that
+ * opens the people menu. Both 32px tall (44px to a finger), quiet grey until they narrow the
+ * list, then a tint wash (never a solid fill).
+ */
+.mine,
 .button {
   position: relative;
   flex: none;
-  max-width: 50%;
-  height: 34px;
-  padding: 0 12px 0 9px;
-  border-radius: 17px;
+  height: 32px;
+  border-radius: 16px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   background: var(--fill-tertiary);
   color: var(--label);
-  font-size: 15px;
-  line-height: 20px;
-  letter-spacing: -0.2px;
+  font-size: 14px;
+  line-height: 18px;
+  letter-spacing: -0.15px;
   font-weight: 600;
   -webkit-tap-highlight-color: transparent;
   transition:
     background-color 0.2s ease,
+    color 0.2s ease,
     transform 0.12s ease;
 }
 
-/* 44px tall tap target. */
+/* 44px tall tap targets. */
+.mine::before,
 .button::before {
   content: '';
   position: absolute;
-  inset: -5px -2px;
+  inset: -6px -3px;
 }
 
+.mine:active,
 .button:active {
-  transform: scale(0.96);
+  transform: scale(0.95);
 }
 
-/* Someone chosen: a tint wash says the list is narrowed. */
+.mine:focus-visible,
+.button:focus-visible {
+  outline-offset: 2px;
+}
+
+/* On: Home shows only your items. */
+.mine[aria-pressed='true'],
 .button[data-filtered] {
   background: var(--tint-wash);
   color: var(--tint-text);
+}
+
+.mine {
+  gap: 5px;
+  padding: 0 12px 0 7px;
+}
+
+.mineEmoji {
+  flex: none;
+  width: 22px;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.button {
+  gap: 3px;
+  padding: 0 10px 0 8px;
 }
 
 .lead {
@@ -47,17 +77,9 @@
   line-height: 1;
 }
 
-.name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .chevron {
   flex: none;
-  margin-left: 1px;
-  opacity: 0.7;
+  opacity: 0.6;
 }
 
 /* Unassigned: an empty dashed circle, nobody in it. */
@@ -70,19 +92,21 @@
   opacity: 0.7;
 }
 
-/* Narrow phones: just the emoji (or the people glyph) and the chevron; the name is still spoken. */
-@media (max-width: 379px) {
-  .button {
-    padding: 0 10px 0 8px;
-    gap: 4px;
+/* Narrow phones: Mine is just your emoji (VoiceOver still hears "Mine"). */
+@media (max-width: 369px) {
+  .mine {
+    width: 32px;
+    padding: 0;
+    justify-content: center;
   }
 
-  .name {
+  .mineWord {
     display: none;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .mine,
   .button {
     transition: none;
   }

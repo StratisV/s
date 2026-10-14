@@ -24,7 +24,16 @@ export const RAG_LABEL: Record<Rag, string> = { red: 'Red', amber: 'Amber', gree
 export const URGENCY_LABEL: Record<Rag, string> = { red: 'Urgent', amber: 'Within the month', green: 'Not urgent' };
 
 /** What a To maintain item's colour means, in words: the condition it is in. */
-export const CONDITION_LABEL: Record<Rag, string> = { red: 'Poor', amber: 'Fair', green: 'Good' };
+export const CONDITION_LABEL: Record<Rag, string> = { red: 'Needs work', amber: 'Okay', green: 'Good' };
+
+/**
+ * What each word means, under it in the Item sheet's picker: how soon (To do) or what shape
+ * it is in (To maintain).
+ */
+export const RAG_HINT: Record<ItemKind, Record<Rag, string>> = {
+  task: { red: 'Needs doing now', amber: 'Some time in the next few weeks', green: 'Whenever there is time' },
+  state: { red: 'Not as it should be', amber: 'Fine for now, keep an eye on it', green: 'Just as it should be' },
+};
 
 /** The word for an item's colour: its urgency (To do) or its condition (To maintain). */
 export function ragWord(kind: ItemKind | undefined, rag: Rag): string {

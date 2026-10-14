@@ -27,7 +27,7 @@ export interface UpNextGroup {
 export interface UpNext {
   /** Only the groups with something in them, in order. */
   groups: UpNextGroup[];
-  /** To maintain items in good condition (green), for "Looking after" at the foot. */
+  /** To maintain items that are Good or Okay, for "Looking after" at the foot (Okay first). */
   looking: Item[];
   /** How many need attention, are due today, and everything else open (not counting `looking`). */
   counts: { attention: number; today: number; rest: number };
@@ -35,42 +35,67 @@ export interface UpNext {
 
 const rank = (rag: Rag) => RAG_ORDER.indexOf(rag);
 
-/** Late or urgent To do, or a To maintain item in fair or poor condition. */
+/** Late or urgent To do, or a To maintain item that needs work. */
 export function needsAttention(item: Item, today: ISODate): boolean {
-  if (isState(item)) return item.rag !== 'green';
+  if (isState(item)) return item.rag === 'red';
   return item.rag === 'red' || (item.due_date !== null && item.due_date < today);
+}
+
+/** Late To dos (due before today); never a To maintain item, which has no date. */
+const isLate = (item: Item, today: ISODate) => !isState(item) && item.due_date !== null && item.due_date < today;
+
+/** The earlier date first; an item without one goes after every dated one. */
+function byDate(a: Item, b: Item): number {
+  if (a.due_date === b.due_date) return 0;
+  if (a.due_date === null) return 1;
+  if (b.due_date === null) return -1;
+  return a.due_date < b.due_date ? -1 : 1;
+}
+
+/** The oldest first, then by title: a steady order for items that tie on everything else. */
+function byAge(a: Item, b: Item): number {
+  if (a.created_at !== b.created_at) return a.created_at < b.created_at ? -1 : 1;
+  return a.title.localeCompare(b.title);
 }
 
 /**
  * Urgency first (red, amber, green), then the earliest date (none last), then the oldest.
- * Late items come before everything else and To maintain items last. Up next sorts each
- * group this way, and Rooms each room, so the most urgent row is always at the top.
+ * Late items come before everything else and To maintain items last. Needs attention and
+ * Later sort this way, and Rooms each room, so the most urgent row is always at the top.
  */
 export function compareByUrgency(today: ISODate) {
   return (a: Item, b: Item): number => {
     const aState = isState(a);
     const bState = isState(b);
     if (aState !== bState) return aState ? 1 : -1;
-    const aLate = !aState && a.due_date !== null && a.due_date < today;
-    const bLate = !bState && b.due_date !== null && b.due_date < today;
-    if (aLate !== bLate) return aLate ? -1 : 1;
-    const byRag = rank(a.rag) - rank(b.rag);
-    if (byRag) return byRag;
-    if (a.due_date !== b.due_date) {
-      if (a.due_date === null) return 1;
-      if (b.due_date === null) return -1;
-      return a.due_date < b.due_date ? -1 : 1;
-    }
-    if (a.created_at !== b.created_at) return a.created_at < b.created_at ? -1 : 1;
-    return a.title.localeCompare(b.title);
+    const aLate = isLate(a, today);
+    if (aLate !== isLate(b, today)) return aLate ? -1 : 1;
+    return rank(a.rag) - rank(b.rag) || byDate(a, b) || byAge(a, b);
+  };
+}
+
+/**
+ * The earliest date first, then urgency, then the oldest: Today and Next 7 days, so the days
+ * read in order ("In 2 days" never sits under "In 6 days") and, on one day, the most urgent
+ * comes first.
+ */
+export function compareByDate(today: ISODate) {
+  return (a: Item, b: Item): number => {
+    const aState = isState(a);
+    const bState = isState(b);
+    if (aState !== bState) return aState ? 1 : -1;
+    const aLate = isLate(a, today);
+    if (aLate !== isLate(b, today)) return aLate ? -1 : 1;
+    return byDate(a, b) || rank(a.rag) - rank(b.rag) || byAge(a, b);
   };
 }
 
 /**
  * The open items as Up next shows them: Needs attention (late or urgent To dos, and To
- * maintain items in fair or poor condition), Today, Next 7 days, Later (later than that, or
- * no date), each sorted urgency first, then date. To maintain items in good condition go to
- * `looking`. Empty groups are left out.
+ * maintain items that need work), Today, Next 7 days, Later (later than that, or no date).
+ * Needs attention and Later are sorted urgency first, then date; Today and Next 7 days date
+ * first, then urgency. To maintain items that are Good or Okay go to `looking`, Okay first.
+ * Empty groups are left out.
  */
 export function upNext(items: Item[], today: ISODate): UpNext {
   const buckets: Record<UpNextGroupId, Item[]> = { attention: [], today: [], week: [], later: [] };
@@ -84,12 +109,13 @@ export function upNext(items: Item[], today: ISODate): UpNext {
     else if (item.due_date !== null && item.due_date <= weekEnd) buckets.week.push(item);
     else buckets.later.push(item);
   }
-  const order = compareByUrgency(today);
+  const urgency = compareByUrgency(today);
+  const date = compareByDate(today);
   const ids: UpNextGroupId[] = ['attention', 'today', 'week', 'later'];
   const groups = ids
-    .map((id) => ({ id, title: UP_NEXT_TITLE[id], items: buckets[id].sort(order) }))
+    .map((id) => ({ id, title: UP_NEXT_TITLE[id], items: buckets[id].sort(id === 'today' || id === 'week' ? date : urgency) }))
     .filter((g) => g.items.length > 0);
-  looking.sort((a, b) => a.title.localeCompare(b.title));
+  looking.sort((a, b) => rank(a.rag) - rank(b.rag) || a.title.localeCompare(b.title));
   return {
     groups,
     looking,
@@ -133,26 +159,44 @@ export function relativeUpdated(day: ISODate, today: ISODate): string {
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 /**
- * The plain-language summary at the top of Home: a lead sentence and a quieter one after it.
- * "2 things need attention and 1 is due today." "Everything else can wait."
+ * Whose items the summary is about, when the person filter narrows Home: "you", a person's
+ * name, or the unassigned ones. Everyone's when left out.
  */
-export function homeSummary(view: UpNext, today: ISODate): { lead: string; rest: string } {
+export type SummaryScope = { kind: 'me' } | { kind: 'person'; name: string } | { kind: 'none' };
+
+/** "For you, " and "For Shea, ", or "Unassigned: ", before a sentence that then starts in lower case. */
+function scoped(sentence: string, scope: SummaryScope | undefined): string {
+  if (!scope) return sentence;
+  const lower = sentence.charAt(0).toLowerCase() + sentence.slice(1);
+  if (scope.kind === 'none') return `Unassigned: ${lower}`;
+  return `For ${scope.kind === 'me' ? 'you' : scope.name}, ${/^\d/.test(sentence) ? sentence : lower}`;
+}
+
+/**
+ * The plain-language summary at the top of Home: a lead sentence and a quieter one after it.
+ * "2 things need attention and 1 is due today." "Everything else can wait." With the person
+ * filter on, it says whose they are: "For Shea, 1 thing needs attention."
+ */
+export function homeSummary(view: UpNext, today: ISODate, scope?: SummaryScope): { lead: string; rest: string } {
   const { attention, today: dueToday, rest } = view.counts;
   if (attention && dueToday) {
     return {
-      lead: `${attention} ${plural(attention, 'thing needs', 'things need')} attention and ${dueToday} ${plural(dueToday, 'is', 'are')} due today.`,
+      lead: scoped(
+        `${attention} ${plural(attention, 'thing needs', 'things need')} attention and ${dueToday} ${plural(dueToday, 'is', 'are')} due today.`,
+        scope,
+      ),
       rest: rest ? 'Everything else can wait.' : '',
     };
   }
   if (attention) {
     return {
-      lead: `${attention} ${plural(attention, 'thing needs', 'things need')} attention.`,
+      lead: scoped(`${attention} ${plural(attention, 'thing needs', 'things need')} attention.`, scope),
       rest: rest ? 'Everything else can wait.' : '',
     };
   }
   if (dueToday) {
     return {
-      lead: `${dueToday} ${plural(dueToday, 'thing is', 'things are')} due today.`,
+      lead: scoped(`${dueToday} ${plural(dueToday, 'thing is', 'things are')} due today.`, scope),
       rest: 'Nothing urgent or late.',
     };
   }
@@ -160,9 +204,11 @@ export function homeSummary(view: UpNext, today: ISODate): { lead: string; rest:
   if (next) {
     const when = relativeDue(next.due_date, today);
     return {
-      lead: 'Nothing urgent today.',
+      lead: scoped('Nothing urgent today.', scope),
       rest: `Next up: ${next.title.trim()}${when ? `, ${when.text.toLowerCase()}` : ''}.`,
     };
   }
-  return { lead: 'All clear.', rest: 'Nothing to do right now.' };
+  if (!scope) return { lead: 'All clear.', rest: 'Nothing to do right now.' };
+  if (scope.kind === 'none') return { lead: 'Nothing unassigned to do.', rest: 'Everything open has someone on it.' };
+  return { lead: `All clear for ${scope.kind === 'me' ? 'you' : scope.name}.`, rest: 'Nothing to do right now.' };
 }

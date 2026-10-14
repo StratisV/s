@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Item, Member } from '../../lib/types';
 import { ConfettiProvider } from '../../ui/Confetti';
-import { COMPLETE_FEEDBACK_MS, ItemRow, LEAVE_MS } from './ItemRow';
+import { COMPLETE_FEEDBACK_MS, firstName, ItemRow, LEAVE_MS, splitLastWord } from './ItemRow';
 
 const TODAY = '2026-10-08';
 
@@ -42,7 +42,7 @@ const member = (id: string, name: string, emoji: string): Member => ({
 
 const MEMBERS = [member('m1', 'Shea', '🦆'), member('m2', 'Ela', '🦊')];
 
-function setup(overrides: Partial<Item> = {}, extra: { room?: string; hideWhen?: boolean } = {}) {
+function setup(overrides: Partial<Item> = {}, extra: { room?: string; hideWhen?: boolean; showWho?: boolean } = {}) {
   const onOpen = vi.fn();
   const onComplete = vi.fn(() => Promise.resolve());
   const props = {
@@ -97,6 +97,20 @@ describe('ItemRow', () => {
     expect(soon.meta.textContent).toBe('Within the monthIn 4 days');
   });
 
+  it('puts the room after the words in a part of its own that can take the next line, its dot with it', () => {
+    const { meta } = setup({}, { room: 'Hallway' });
+    const part = meta.querySelector('[data-room]')!.parentElement!;
+    // Its own flex item, after the urgency and when (so a short line moves it down whole)...
+    expect(part.parentElement).toBe(meta);
+    expect(part.firstElementChild!.textContent).toBe('·');
+    expect(meta.firstElementChild!.textContent).toBe('Urgent2 days late');
+    cleanup();
+    // ...but straight after a coloured label, with nothing said between, it stays beside it, without a dot.
+    const state = setup({ kind: 'state', rag: 'red', due_date: null }, { room: 'Garden' });
+    expect(state.meta.textContent).toBe('Needs workGarden');
+    expect(state.meta.querySelector('[data-room]')!.parentElement).toBe(state.meta.firstElementChild);
+  });
+
   it('leaves out the date where the list says it, but never a late one', () => {
     const today = setup({ rag: 'green', due_date: TODAY }, { hideWhen: true, room: 'Garden' });
     expect(today.meta.textContent).toBe('Not urgent·Garden');
@@ -116,6 +130,30 @@ describe('ItemRow', () => {
     expect(nobody.row.querySelector('.visually-hidden')!.textContent).toBe(', Not urgent, Unassigned.');
   });
 
+  it('shows who it is for, their emoji and first name, unless one person’s items are shown', () => {
+    const { row } = setup({}, { room: 'Hallway' });
+    expect(row.querySelector('[data-who]')!.textContent).toBe('🦆Shea');
+    cleanup();
+    const filtered = setup({}, { room: 'Hallway', showWho: false });
+    expect(filtered.row.querySelector('[data-who]')).toBeNull();
+    // VoiceOver still hears who it is for.
+    expect(filtered.row.querySelector('.visually-hidden')!.textContent).toContain('Shea');
+    cleanup();
+    const nobody = setup({ assignee_id: null });
+    expect(nobody.row.querySelector('[data-who]')).toBeNull();
+  });
+
+  it('keeps the note glyph on the line of the title’s last word', () => {
+    const { row } = setup({ title: 'Heaters not working' });
+    const tail = row.querySelector('svg')!.parentElement!;
+    expect(tail.textContent).toBe('working');
+    expect(splitLastWord('Clear the gutters ')).toEqual(['Clear the ', 'gutters']);
+    expect(splitLastWord('Oven')).toEqual(['', 'Oven']);
+    // A last word too long to keep whole is left where it falls.
+    expect(splitLastWord('See https://example.com/a-long-link')).toEqual(['See https://example.com/a-long-link', '']);
+    expect(firstName('  Shea Byrne ')).toBe('Shea');
+  });
+
   it('opens the item when the row is tapped', () => {
     const { row, onOpen, onComplete } = setup();
     fireEvent.click(row);
@@ -128,6 +166,8 @@ describe('ItemRow', () => {
     fireEvent.click(ring!);
     fireEvent.click(ring!);
     expect(ring!.hasAttribute('data-done')).toBe(true);
+    // The title is struck through while the check shows, so it is clear which one was ticked.
+    expect(view.container.querySelector('li')!.hasAttribute('data-completing')).toBe(true);
     expect(document.querySelectorAll('[data-confetti] > div > *')).toHaveLength(14);
     // A row tap during the feedback must not open the sheet.
     fireEvent.click(row);
@@ -190,11 +230,11 @@ describe('ItemRow', () => {
       expect(view.container.querySelector('li')!.dataset.kind).toBe('state');
     });
 
-    it('says its condition in words: Good, Fair, Poor, with fewer bars filled', () => {
+    it('says its condition in words: Good, Okay, Needs work, with fewer bars filled', () => {
       for (const [rag, word, bars] of [
         ['green', 'Good', 3],
-        ['amber', 'Fair', 2],
-        ['red', 'Poor', 1],
+        ['amber', 'Okay', 2],
+        ['red', 'Needs work', 1],
       ] as const) {
         const { meta, view } = setup({ ...firepit, rag });
         expect(meta.querySelector('[data-rag]')!.textContent).toBe(word);
@@ -204,11 +244,15 @@ describe('ItemRow', () => {
     });
 
     it('reads "<title>, to maintain, Good, ... updated 2 days ago" and when it was last updated', () => {
+      const { row, meta } = setup(firepit);
+      expect(meta.textContent).toBe('Good·Updated 2 days ago');
+      expect(row.querySelector('.visually-hidden')!.textContent).toBe(', to maintain, Good, Ela, updated 2 days ago, has a note.');
+    });
+
+    it('says its room instead of when it was updated where the list mixes rooms', () => {
       const { row, meta } = setup(firepit, { room: 'Garden' });
-      expect(meta.textContent).toBe('Good·Updated 2 days ago·Garden');
-      expect(row.querySelector('.visually-hidden')!.textContent).toBe(
-        ', to maintain, Good, Garden, Ela, updated 2 days ago, has a note.',
-      );
+      expect(meta.textContent).toBe('Good·Garden');
+      expect(row.querySelector('.visually-hidden')!.textContent).toBe(', to maintain, Good, Garden, Ela, has a note.');
     });
 
     it('opens on a tap or from the keyboard, and never completes', async () => {

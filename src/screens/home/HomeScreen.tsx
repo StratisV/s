@@ -1,18 +1,31 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import { longDay } from '../../lib/logic/dates';
 import { isState, itemsByArea } from '../../lib/logic/items';
 import { areaShareMessage } from '../../lib/logic/share';
-import { compareByUrgency, homeSummary, needsAttention, upNext } from '../../lib/logic/upNext';
+import { compareByUrgency, homeSummary, upNext, type SummaryScope } from '../../lib/logic/upNext';
 import { appBaseUrl } from '../../lib/sharedLink';
 import type { Area, ISODate, Item, Member } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
-import { ChevronRightIcon, EllipsisIcon, FoldIcon, PlusIcon, ShareIcon } from '../../ui/icons';
+import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon, FoldIcon, PlusIcon, ShareIcon } from '../../ui/icons';
 import { Menu } from '../../ui/Menu';
 import { Screen } from '../../ui/Screen';
 import { useShare } from '../share/useShare';
 import { HomeCalendar } from './HomeCalendar';
 import { ItemRow } from './ItemRow';
 import { PersonFilter } from './PersonFilter';
+import { RoomIcon } from './RoomIcon';
 import { countsFor, isFor, personFilterKey, validFilter, type PersonFilter as Who } from './personFilter';
 import { UpNextView } from './UpNextView';
 import styles from './HomeScreen.module.css';
@@ -36,6 +49,11 @@ interface HomeScreenProps {
    */
   linkedArea?: string | null;
   onLinkedAreaShown?(): void;
+  /**
+   * The room the round + adds to, or null: the room a shared link opened, while Rooms is
+   * shown (the + then reads "New item in Garden"). Cleared on another view or another tab.
+   */
+  onRoomContext?(areaId: string | null): void;
   /** A housekeeping visit under the calendar: shows that day in the Housekeeping tab. */
   onOpenHousekeeping?(date: ISODate): void;
 }
@@ -165,6 +183,7 @@ export function HomeScreen({
   onRevealed,
   linkedArea,
   onLinkedAreaShown,
+  onRoomContext,
   onOpenHousekeeping,
 }: HomeScreenProps) {
   const { data, me, today, completeItem, readOnly } = useHousehold();
@@ -188,15 +207,34 @@ export function HomeScreen({
     [sections, who],
   );
   const shownIds = shown.map((s) => s.area.id);
+  // Rooms that can fold (a room with nothing open is one line already).
+  const foldableIds = shown.filter((s) => s.items.length > 0).map((s) => s.area.id);
   // The items shown, in Home's order (for the calendar's marks and Up next).
   const shownItems = useMemo(() => shown.flatMap((s) => s.items), [shown]);
-  const allCollapsed = shownIds.length > 0 && shownIds.every((id) => collapsed.has(id));
+  const allCollapsed = foldableIds.length > 0 && foldableIds.every((id) => collapsed.has(id));
   const next = useMemo(() => upNext(shownItems, today), [shownItems, today]);
-  const summary = homeSummary(next, today);
+  const scope: SummaryScope | undefined =
+    who === 'all'
+      ? undefined
+      : who === 'none'
+        ? { kind: 'none' }
+        : who === me.id
+          ? { kind: 'me' }
+          : { kind: 'person', name: data.members.find((m) => m.id === who)?.name ?? 'them' };
+  const summary = homeSummary(next, today, scope);
+  // Who each row is for, at the end of its title: only while everyone's items show.
+  const showWho = who === 'all';
   const roomNames = useMemo(() => new Map(data.areas.map((a) => [a.id, a.name])), [data.areas]);
   const roomOf = useCallback((id: string) => roomNames.get(id) ?? '', [roomNames]);
   const whoName = who === 'all' || who === 'none' ? null : (data.members.find((m) => m.id === who)?.name ?? 'them');
-  const nobody = who === 'all' ? null : who === 'none' ? 'Nothing unassigned right now.' : `Nothing for ${whoName} right now.`;
+  const nobody =
+    who === 'all'
+      ? null
+      : who === 'none'
+        ? 'Nothing unassigned right now.'
+        : who === me.id
+          ? 'Nothing for you right now.'
+          : `Nothing for ${whoName} right now.`;
 
   // An item was saved into a collapsed area: open it so the item shows (the sheet closes over it).
   // If the filter hides that area, show everyone's again.
@@ -216,8 +254,19 @@ export function HomeScreen({
   // opened, and light its card up for a moment (near the bottom of the page it can't reach the
   // top). Focus goes to its name, so VoiceOver reads it ("Garden, expanded") and carries on.
   const [flashArea, setFlashArea] = useState<string | null>(null);
-  const linkedRef = useRef({ collapsed, setCollapsed, onLinkedAreaShown, who, setWho, sections, shown, view, setView });
-  linkedRef.current = { collapsed, setCollapsed, onLinkedAreaShown, who, setWho, sections, shown, view, setView };
+  const linkedRef = useRef({
+    collapsed,
+    setCollapsed,
+    onLinkedAreaShown,
+    onRoomContext,
+    who,
+    setWho,
+    sections,
+    shown,
+    view,
+    setView,
+  });
+  linkedRef.current = { collapsed, setCollapsed, onLinkedAreaShown, onRoomContext, who, setWho, sections, shown, view, setView };
   useEffect(() => {
     if (!linkedArea) return;
     const now = linkedRef.current;
@@ -247,6 +296,7 @@ export function HomeScreen({
       const name = section?.querySelector<HTMLElement>('button[aria-expanded], h2[tabindex]');
       if (name) quietFocus(name);
       setFlashArea(linkedArea);
+      linkedRef.current.onRoomContext?.(linkedArea);
       linkedRef.current.onLinkedAreaShown?.();
     }, delay);
     return () => clearTimeout(timer);
@@ -256,6 +306,12 @@ export function HomeScreen({
     const timer = setTimeout(() => setFlashArea(null), AREA_FLASH_MS);
     return () => clearTimeout(timer);
   }, [flashArea]);
+
+  // The + adds to a room only while Rooms shows it: another view, or leaving Home, drops it.
+  useEffect(() => {
+    if (view !== 'rooms') onRoomContext?.(null);
+  }, [view, onRoomContext]);
+  useEffect(() => () => onRoomContext?.(null), [onRoomContext]);
 
   const shareArea = (area: Area) =>
     share(
@@ -273,7 +329,7 @@ export function HomeScreen({
     else nextIds.add(areaId);
     setCollapsed(nextIds);
   };
-  const toggleAll = () => setCollapsed(allCollapsed ? new Set() : new Set(shownIds));
+  const toggleAll = () => setCollapsed(allCollapsed ? new Set() : new Set(foldableIds));
 
   return (
     <Screen
@@ -304,6 +360,7 @@ export function HomeScreen({
               today={today}
               timeZone={timeZone}
               nobody={nobody}
+              showWho={showWho}
               onOpenItem={onOpenItem}
               onComplete={completeItem}
             />
@@ -321,6 +378,7 @@ export function HomeScreen({
                   collapsed={collapsed.has(area.id)}
                   allCollapsed={allCollapsed}
                   linked={flashArea === area.id}
+                  showWho={showWho}
                   onToggle={toggle}
                   onToggleAll={toggleAll}
                   onAddItem={onAddItem}
@@ -470,14 +528,28 @@ export function splitLast(name: string): [string, string] {
   return [parts.join(''), tail];
 }
 
-/** "1 urgent" (late or urgent To dos), else nothing; collapsed, how many are open too. */
-export function roomStatus(items: Item[], today: ISODate, collapsed: boolean): { text: string; urgent: boolean } | null {
-  const urgent = items.filter((it) => !isState(it) && needsAttention(it, today)).length;
-  if (urgent) return { text: `${urgent} urgent`, urgent: true };
-  if (!items.length) return { text: 'All clear', urgent: false };
-  if (collapsed) return { text: `${items.length} open`, urgent: false };
+/**
+ * A room's one quiet word, after its name: "1 late", "1 urgent", "1 needs work" (a thing it
+ * looks after), or more than one of them ("1 late, 1 urgent"), in red; else "All clear" when
+ * nothing is open, or, folded, how many are ("3 open"); else nothing. `alert`: the red ones.
+ */
+export function roomStatus(items: Item[], today: ISODate, collapsed: boolean): { text: string; alert: boolean } | null {
+  const tasks = items.filter((it) => !isState(it));
+  const isLate = (it: Item) => it.due_date !== null && it.due_date < today;
+  const late = tasks.filter(isLate).length;
+  const urgent = tasks.filter((it) => it.rag === 'red' && !isLate(it)).length;
+  const work = items.filter((it) => isState(it) && it.rag === 'red').length;
+  if (late || urgent || work) {
+    const words = [late ? `${late} late` : '', urgent ? `${urgent} urgent` : '', work ? `${work} ${work === 1 ? 'needs' : 'need'} work` : ''];
+    return { text: words.filter(Boolean).join(', '), alert: true };
+  }
+  if (!items.length) return { text: 'All clear', alert: false };
+  if (collapsed) return { text: `${items.length} open`, alert: false };
   return null;
 }
+
+/** A room shows this many To dos, then "Show 2 more" (when two or more are left). */
+export const ROOM_PREVIEW = 3;
 
 interface AreaSectionProps {
   area: Area;
@@ -491,6 +563,8 @@ interface AreaSectionProps {
   allCollapsed: boolean;
   /** Just opened from a shared link: lit up for a moment. */
   linked: boolean;
+  /** Who each row is for, at the end of its title (off while one person's items show). */
+  showWho: boolean;
   onToggle(areaId: string): void;
   onToggleAll(): void;
   onAddItem(areaId: string): void;
@@ -501,11 +575,12 @@ interface AreaSectionProps {
 }
 
 /**
- * A room in the Rooms view: its name (a disclosure that folds the card away, remembered on
- * this device), one quiet word on its state ("1 urgent" in red, "All clear"), and one "..."
- * button whose menu holds Add Item, Share Room and Collapse All. Its To dos, then the things it
- * looks after (gauges, never rings) under a hairline. A room with nothing open is just its
- * name and "All clear", with no card.
+ * A room in the Rooms view, as one card (Apple Home's rooms): its drawing, its name (a
+ * disclosure that folds the card to one line, remembered on this device), one quiet word on
+ * its state ("1 urgent" in red, "3 open" while folded, "All clear"), and one "..." whose menu
+ * holds Add Item, Share Room and Collapse All. Then its To dos, most urgent first, three of
+ * them and "Show 2 more" when there are more; then the things it looks after (gauges, never
+ * rings). A room with nothing open is one quiet line, in its place in the household's order.
  */
 function AreaSection({
   area,
@@ -516,6 +591,7 @@ function AreaSection({
   collapsed,
   allCollapsed,
   linked,
+  showWho,
   onToggle,
   onToggleAll,
   onAddItem,
@@ -525,18 +601,39 @@ function AreaSection({
 }: AreaSectionProps) {
   const headingId = useId();
   const panelId = useId();
+  const statusId = useId();
+  const listId = useId();
   const [head, tail] = splitLast(area.name);
   const empty = items.length === 0;
   // Late and urgent first, as in Up next.
   const tasks = items.filter((it) => !isState(it)).sort(compareByUrgency(today));
   const states = items.filter(isState);
   const status = roomStatus(items, today, collapsed);
+  const [more, setMore] = useState(false);
+  const folds = tasks.length > ROOM_PREVIEW + 1;
+  const shownTasks = folds && !more ? tasks.slice(0, ROOM_PREVIEW) : tasks;
   // Out of reach as soon as it starts closing (visibility only switches once it has).
   const panelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (panelRef.current) panelRef.current.inert = collapsed;
   }, [collapsed]);
-  const rowProps = { members, today, timeZone, onOpen: onOpenItem, onComplete };
+  const rowProps = { members, today, timeZone, showWho, onOpen: onOpenItem, onComplete };
+  // The last row ticked off from the keyboard moved focus to the room's name; once the room is
+  // empty that button goes (the name is a plain heading then), so focus moves to the heading
+  // rather than being lost.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const nameFocused = useRef(false);
+  useLayoutEffect(() => {
+    if (!empty || !nameFocused.current) return;
+    nameFocused.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body) headingRef.current?.focus({ preventScroll: true });
+  }, [empty]);
+  const icon = (
+    <span className={styles.roomIcon} data-alert={status?.alert || undefined} aria-hidden="true">
+      <RoomIcon name={area.name} size={19} />
+    </span>
+  );
   return (
     <section
       aria-labelledby={headingId}
@@ -546,95 +643,135 @@ function AreaSection({
       data-linked={linked || undefined}
       data-empty={empty || undefined}
     >
-      <div className={styles.headerRow}>
-        {empty ? (
-          <h2 id={headingId} className={styles.header} tabIndex={-1}>
-            <span className={styles.headerText}>{area.name}</span>
-          </h2>
-        ) : (
-          <h2 id={headingId} className={styles.header}>
-            <button
-              type="button"
-              className={styles.disclosure}
-              // The name is split in two below; this keeps it one word in every engine.
-              aria-label={area.name}
-              aria-expanded={!collapsed}
-              aria-controls={panelId}
-              onClick={() => onToggle(area.id)}
-            >
-              {head}
-              {/* The chevron never wraps onto a line of its own: it stays with the last letter. */}
-              <span className={styles.nameTail}>
-                {tail}
-                <ChevronRightIcon className={styles.chevron} size={12} strokeWidth={2.6} />
-              </span>
-            </button>
-          </h2>
-        )}
-        {status ? (
-          <span className={styles.roomStatus} data-urgent={status.urgent || undefined}>
-            {status.text}
-          </span>
-        ) : null}
-        <Menu
-          label={area.name}
-          items={[
-            {
-              key: 'add',
-              label: 'Add Item',
-              ariaLabel: `Add item to ${area.name}`,
-              icon: <PlusIcon size={20} strokeWidth={2.2} />,
-              onSelect: () => onAddItem(area.id),
-            },
-            {
-              key: 'share',
-              label: 'Share Room',
-              ariaLabel: `Share ${area.name}`,
-              icon: <ShareIcon size={20} strokeWidth={1.9} />,
-              onSelect: () => onShare(area),
-            },
-            {
-              key: 'fold',
-              label: allCollapsed ? 'Expand All Rooms' : 'Collapse All Rooms',
-              icon: <FoldIcon size={20} open={allCollapsed} />,
-              groupStart: true,
-              onSelect: onToggleAll,
-            },
-          ]}
-        >
-          {({ ref, ...trigger }) => (
-            <button ref={ref} type="button" className={styles.roomMenu} aria-label={`${area.name} options`} {...trigger}>
-              <EllipsisIcon size={20} />
-            </button>
+      <div className={styles.roomCard} data-room-card="">
+        <div className={styles.headerRow}>
+          {empty ? (
+            <h2 ref={headingRef} id={headingId} className={styles.header} tabIndex={-1}>
+              {icon}
+              <span className={styles.headerText}>{area.name}</span>
+            </h2>
+          ) : (
+            <h2 ref={headingRef} id={headingId} className={styles.header}>
+              <button
+                type="button"
+                className={styles.disclosure}
+                onFocus={() => (nameFocused.current = true)}
+                // Only when focus moved on: a button taken out of the page loses focus to nothing.
+                onBlur={(e) => {
+                  if (e.relatedTarget) nameFocused.current = false;
+                }}
+                // The name is split in two below; this keeps it one word in every engine.
+                aria-label={area.name}
+                aria-expanded={!collapsed}
+                aria-controls={panelId}
+                aria-describedby={status ? statusId : undefined}
+                onClick={() => onToggle(area.id)}
+              >
+                {icon}
+                <span className={styles.headerText}>
+                  {head}
+                  {/* The chevron never wraps onto a line of its own: it stays with the last letter. */}
+                  <span className={styles.nameTail}>
+                    {tail}
+                    <ChevronRightIcon className={styles.chevron} size={12} strokeWidth={2.6} />
+                  </span>
+                </span>
+              </button>
+            </h2>
           )}
-        </Menu>
-      </div>
-      {empty ? null : (
-        /* Collapsed, the card shrinks to nothing and is out of reach (visibility: hidden). */
-        <div id={panelId} ref={panelRef} className={styles.panel} data-area-panel="" data-collapsed={collapsed || undefined}>
-          <div className={styles.panelInner}>
-            <div className={styles.card}>
-              {tasks.length ? (
-                <ul className={styles.list} role="list">
-                  {tasks.map((item) => (
-                    <ItemRow key={item.id} item={item} {...rowProps} />
-                  ))}
-                </ul>
-              ) : null}
-              {states.length ? (
-                <div className={styles.looking} data-has-tasks={tasks.length > 0 || undefined}>
-                  <p className={styles.lookingLabel}>Looking after</p>
-                  <ul className={styles.list} role="list">
-                    {states.map((item) => (
+          {status ? (
+            // A tap on the word opens or folds the room, as on its name (the name's button
+            // carries it for the keyboard and VoiceOver, so it is no button of its own).
+            <span
+              id={statusId}
+              className={styles.roomStatus}
+              data-alert={status.alert || undefined}
+              data-toggles={empty ? undefined : ''}
+              onClick={empty ? undefined : () => onToggle(area.id)}
+            >
+              {/* Where room is short, it wraps between its parts ("1 late," then "1 needs work"), never inside one. */}
+              <span className={styles.statusText}>
+                {status.text.split(', ').map((part, i, parts) => (
+                  <Fragment key={part}>
+                    {i ? ' ' : null}
+                    <span className={styles.statusPart}>{i < parts.length - 1 ? `${part},` : part}</span>
+                  </Fragment>
+                ))}
+              </span>
+            </span>
+          ) : null}
+          <Menu
+            label={area.name}
+            items={[
+              {
+                key: 'add',
+                label: 'Add Item',
+                ariaLabel: `Add item to ${area.name}`,
+                icon: <PlusIcon size={20} strokeWidth={2.2} />,
+                onSelect: () => onAddItem(area.id),
+              },
+              {
+                key: 'share',
+                label: 'Share Room',
+                ariaLabel: `Share ${area.name}`,
+                icon: <ShareIcon size={20} strokeWidth={1.9} />,
+                onSelect: () => onShare(area),
+              },
+              {
+                key: 'fold',
+                label: allCollapsed ? 'Expand All Rooms' : 'Collapse All Rooms',
+                icon: <FoldIcon size={20} open={allCollapsed} />,
+                groupStart: true,
+                onSelect: onToggleAll,
+              },
+            ]}
+          >
+            {({ ref, ...trigger }) => (
+              <button ref={ref} type="button" className={styles.roomMenu} aria-label={`${area.name} options`} {...trigger}>
+                <EllipsisIcon size={20} />
+              </button>
+            )}
+          </Menu>
+        </div>
+        {empty ? null : (
+          /* Collapsed, the rows shrink to nothing and are out of reach (visibility: hidden). */
+          <div id={panelId} ref={panelRef} className={styles.panel} data-area-panel="" data-collapsed={collapsed || undefined}>
+            <div className={styles.panelInner}>
+              <div className={styles.roomBody}>
+                {tasks.length ? (
+                  <ul id={listId} className={styles.list} role="list">
+                    {shownTasks.map((item) => (
                       <ItemRow key={item.id} item={item} {...rowProps} />
                     ))}
                   </ul>
-                </div>
-              ) : null}
+                ) : null}
+                {folds ? (
+                  <button
+                    type="button"
+                    className={styles.more}
+                    aria-expanded={more}
+                    aria-controls={listId}
+                    onClick={() => setMore((m) => !m)}
+                  >
+                    {more ? 'Show fewer' : `Show ${tasks.length - ROOM_PREVIEW} more`}
+                    <ChevronDownIcon className={styles.moreChevron} size={11} strokeWidth={2.6} />
+                  </button>
+                ) : null}
+                {states.length ? (
+                  <div className={styles.looking} data-has-tasks={tasks.length > 0 || undefined}>
+                    <p className={styles.lookingLabel}>Looking after</p>
+                    <ul className={styles.list} role="list">
+                      {states.map((item) => (
+                        <ItemRow key={item.id} item={item} {...rowProps} />
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </section>
   );
 }

@@ -7,8 +7,10 @@ import {
   expect,
   homeScreen,
   itemSheet,
+  openRoomMenu,
   openSeeded,
   reopen,
+  roomMenu,
   ring,
   rowButton,
   settled,
@@ -25,13 +27,20 @@ test.beforeEach(async ({ page }) => {
   await openSeeded(page);
 });
 
-/** The area name: a disclosure button that collapses or expands the area's card. */
+/** The room's name: a disclosure button that folds or opens the room's card. */
 function disclosure(page: Page, name: string) {
   return area(page, name).getByRole('button', { name, exact: true });
 }
 
-function toggleAll(page: Page, label: 'Collapse All' | 'Expand All') {
-  return homeScreen(page).getByRole('button', { name: label, exact: true });
+/** The chevron after a room's name (the last glyph in its button; the room's drawing comes first). */
+function chevron(page: Page, name: string) {
+  return disclosure(page, name).locator('svg').last();
+}
+
+/** The rooms with something open (a room with nothing open has nothing to fold). */
+async function roomsWithItems(page: Page): Promise<string[]> {
+  const doc = await stored(page);
+  return doc.areas.filter((a) => doc.items.some((it) => it.area_id === a.id && it.status === 'open')).map((a) => a.name);
 }
 
 interface StoredDoc {
@@ -43,20 +52,8 @@ async function stored(page: Page): Promise<StoredDoc> {
   return page.evaluate((key) => JSON.parse(localStorage.getItem(key)!), DEMO_STORAGE_KEY);
 }
 
-/** "1 urgent, 2 at risk, 3 on track" for the open items stored in an area ('' when none). */
-function expectedLabel(doc: StoredDoc, areaName: string): string {
-  const areaId = doc.areas.find((a) => a.name === areaName)!.id;
-  const open = doc.items.filter((it) => it.area_id === areaId && it.status === 'open');
-  const words = { red: 'urgent', amber: 'at risk', green: 'on track' } as const;
-  return (['red', 'amber', 'green'] as const)
-    .map((rag) => [open.filter((it) => it.rag === rag).length, words[rag]] as const)
-    .filter(([n]) => n > 0)
-    .map(([n, word]) => `${n} ${word}`)
-    .join(', ');
-}
-
-test.describe('Collapsible areas', () => {
-  test('tapping an area name collapses and expands just that area', async ({ page }) => {
+test.describe('Collapsible rooms', () => {
+  test('tapping a room’s name folds and opens just that room', async ({ page }) => {
     const kitchen = disclosure(page, 'Kitchen');
     await expect(kitchen).toHaveAttribute('aria-expanded', 'true');
     const panelId = await kitchen.getAttribute('aria-controls');
@@ -67,19 +64,20 @@ test.describe('Collapsible areas', () => {
     await expect(kitchen).toHaveAttribute('aria-expanded', 'false');
     await expect(ring(page, 'Kitchen paper')).toBeHidden();
     await expect(ring(page, 'Olive oil')).toBeHidden();
-    // The card shrinks away (animated), leaving the header.
+    // The rows shrink away (animated), leaving the header: one line, with how many are open.
     await expect.poll(async () => (await panel.boundingBox())?.height ?? 0).toBe(0);
     await expect(area(page, 'Kitchen').getByRole('heading', { level: 2, name: 'Kitchen' })).toBeVisible();
-    // The chevron turns from down to right.
-    await expect(kitchen.locator('svg')).toHaveCSS('transform', 'none');
-    // Other areas stay open.
+    await expect(area(page, 'Kitchen').getByText('2 open', { exact: true })).toBeVisible();
+    // The chevron turns from down to pointing at the name.
+    await expect(chevron(page, 'Kitchen')).toHaveCSS('transform', 'none');
+    // Other rooms stay open.
     await expect(ring(page, 'Mirror lights not level')).toBeVisible();
 
     await kitchen.click();
     await expect(kitchen).toHaveAttribute('aria-expanded', 'true');
     await expect(ring(page, 'Kitchen paper')).toBeVisible();
     expect(await titlesIn(page, 'Kitchen')).toEqual(['Kitchen paper', 'Olive oil']);
-    await expect(kitchen.locator('svg')).not.toHaveCSS('transform', 'none');
+    await expect(chevron(page, 'Kitchen')).not.toHaveCSS('transform', 'none');
   });
 
   test('works from the keyboard', async ({ page }) => {
@@ -87,11 +85,9 @@ test.describe('Collapsible areas', () => {
     await garden.focus();
     await page.keyboard.press('Enter');
     await expect(garden).toHaveAttribute('aria-expanded', 'false');
-    // Collapsed rows are out of the tab order.
+    // Folded rows are out of the tab order: next is the room's menu, then the next room.
     await page.keyboard.press('Tab');
-    await expect(area(page, 'Garden').getByRole('button', { name: 'Share Garden' })).toBeFocused();
-    await page.keyboard.press('Tab');
-    await expect(area(page, 'Garden').getByRole('button', { name: 'Add item to Garden' })).toBeFocused();
+    await expect(area(page, 'Garden').getByRole('button', { name: 'Garden options' })).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(disclosure(page, 'Garden Lounge')).toBeFocused();
     await garden.focus();
@@ -99,30 +95,35 @@ test.describe('Collapsible areas', () => {
     await expect(garden).toHaveAttribute('aria-expanded', 'true');
   });
 
-  test('Collapse All and Expand All', async ({ page }) => {
-    const names = (await stored(page)).areas.map((a) => a.name);
-    await expect(toggleAll(page, 'Collapse All')).toBeVisible();
-    await expect(toggleAll(page, 'Collapse All')).toHaveCSS('color', 'rgb(0, 122, 255)');
-    await expect(toggleAll(page, 'Collapse All')).toHaveCSS('font-size', '15px');
-
-    await toggleAll(page, 'Collapse All').click();
+  test('Collapse All Rooms and Expand All Rooms, in any room’s menu: an overview, one line a room', async ({ page }) => {
+    const names = await roomsWithItems(page);
+    await roomMenu(page, 'Kitchen', 'Collapse All Rooms');
     for (const name of names) await expect(disclosure(page, name)).toHaveAttribute('aria-expanded', 'false');
-    // Every area's rows (the calendar's chosen day keeps its own).
+    // Every room's rows (the calendar is a view of its own).
     await expect(areas(page).getByRole('button', { name: /^Mark .* as done$/ })).toHaveCount(0);
-    await expect(toggleAll(page, 'Collapse All')).toHaveCount(0);
+    // Each room one line: its name and how many are open, or what is late.
+    await expect(area(page, 'Garden').getByText('3 open', { exact: true })).toBeVisible();
+    await expect(area(page, 'Hallway').getByText('1 late', { exact: true })).toBeVisible();
+    await expect(area(page, 'Bedroom Small').getByText('All clear', { exact: true })).toBeVisible();
+    for (const name of ['Kitchen', 'Garden', 'Bedroom Small']) {
+      const card = area(page, name).locator(':scope > div');
+      expect((await card.boundingBox())!.height, name).toBeLessThanOrEqual(58);
+    }
 
-    await toggleAll(page, 'Expand All').click();
+    await roomMenu(page, 'Garden', 'Expand All Rooms');
     for (const name of names) await expect(disclosure(page, name)).toHaveAttribute('aria-expanded', 'true');
     await expect(ring(page, 'Heaters not working')).toBeVisible();
 
-    // With one area still open, the button offers Collapse All.
-    await toggleAll(page, 'Collapse All').click();
+    // With one room still open, the menu offers Collapse All Rooms.
+    await roomMenu(page, 'Garden', 'Collapse All Rooms');
     await disclosure(page, 'Hallway').click();
-    await expect(toggleAll(page, 'Collapse All')).toBeVisible();
+    const menu = await openRoomMenu(page, 'Kitchen');
+    await expect(menu.getByRole('menuitem', { name: 'Collapse All Rooms' })).toBeVisible();
+    await page.keyboard.press('Escape');
     await expect(ring(page, 'Heaters not working')).toBeVisible();
   });
 
-  test('collapsed areas are remembered on this device', async ({ page }) => {
+  test('folded rooms are remembered on this device', async ({ page }) => {
     await disclosure(page, 'Kitchen').click();
     await disclosure(page, 'Garden').click();
     const doc = await stored(page);
@@ -143,111 +144,94 @@ test.describe('Collapsible areas', () => {
     await expect(disclosure(page, 'Garden')).toHaveAttribute('aria-expanded', 'false');
   });
 
-  test('looks like 3a when everything is expanded', async ({ page }) => {
-    const header = area(page, 'Kitchen').getByRole('heading', { level: 2 });
-    await expect(header).toHaveCSS('font-size', '20px');
+  test('each room is one card: its drawing, its name, and its rows lined up under the name', async ({ page }) => {
+    const card = area(page, 'Living Room').locator(':scope > div');
+    const box = (await card.boundingBox())!;
+    expect(box.x).toBe(16);
+    expect(box.width).toBe(402 - 32);
+    await expect(card).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    const header = area(page, 'Living Room').getByRole('heading', { level: 2 });
+    await expect(header).toHaveCSS('font-size', '17px');
     await expect(header).toHaveCSS('font-weight', '600');
-    await expect(header).toHaveCSS('line-height', '25px');
-    // Header text 20px from the left; the card 8px under the header, 16px from each side.
-    const [h, card] = await Promise.all([
-      header.boundingBox(),
-      area(page, 'Living Room').getByRole('list').locator('xpath=..').boundingBox(),
-    ]);
-    expect(h!.x).toBe(20);
-    expect(h!.height).toBe(25);
-    expect(card!.x).toBe(16);
-    expect(card!.width).toBe(402 - 32);
-    const living = (await area(page, 'Living Room').getByRole('heading', { level: 2 }).boundingBox())!;
-    expect(card!.y - (living.y + living.height)).toBe(8);
+    // The drawing: a 32px rounded square in grey, in the card.
+    const icon = disclosure(page, 'Living Room').locator('span[aria-hidden="true"]').first();
+    const iconBox = (await icon.boundingBox())!;
+    expect(iconBox.width).toBe(32);
+    expect(iconBox.x).toBe(box.x + 12);
+    // The name starts where the rows' titles do (within a few points).
+    const name = (await disclosure(page, 'Living Room').locator(':scope > span').last().boundingBox())!;
+    const title = (await rowButton(page, 'Mirror lights not level').locator(':scope > span > span').first().boundingBox())!;
+    expect(Math.abs(name.x - title.x)).toBeLessThanOrEqual(4);
+    // The "..." has a 44px target, its glyph lined up with the rows' right edge.
+    const menu = (await area(page, 'Living Room').getByRole('button', { name: 'Living Room options' }).boundingBox())!;
+    expect(menu.width).toBe(44);
+    expect(menu.height).toBe(44);
+    expect(Math.round(box.x + box.width - (menu.x + menu.width))).toBe(4);
+  });
+
+  test('a busy room shows three jobs, then "Show 2 more"', async ({ page }) => {
+    await page.evaluate((key) => {
+      const doc = JSON.parse(localStorage.getItem(key)!);
+      const kitchen = doc.areas.find((a: { name: string }) => a.name === 'Kitchen');
+      const model = doc.items.find((i: { area_id: string }) => i.area_id === kitchen.id);
+      for (const n of [1, 2, 3]) {
+        doc.items.push({ ...model, id: `00000000-0000-4000-8000-00000000000${n}`, title: `Kitchen job ${n}`, due_date: null, repeat: 'none' });
+      }
+      localStorage.setItem(key, JSON.stringify(doc));
+    }, DEMO_STORAGE_KEY);
+    await reopen(page);
+    const more = area(page, 'Kitchen').getByRole('button', { name: 'Show 2 more' });
+    await expect(more).toBeVisible();
+    expect(await titlesIn(page, 'Kitchen')).toEqual(['Kitchen paper', 'Olive oil', 'Kitchen job 1']);
+    await expect(more).toHaveAttribute('aria-expanded', 'false');
+    await more.click();
+    expect(await titlesIn(page, 'Kitchen')).toEqual(['Kitchen paper', 'Olive oil', 'Kitchen job 1', 'Kitchen job 2', 'Kitchen job 3']);
+    await area(page, 'Kitchen').getByRole('button', { name: 'Show fewer' }).click();
+    expect(await titlesIn(page, 'Kitchen')).toHaveLength(3);
   });
 });
 
-test.describe('Status counts', () => {
-  test('each area shows its red, amber and green counts, open or collapsed', async ({ page }) => {
-    const doc = await stored(page);
-    for (const { name } of doc.areas) {
-      const label = expectedLabel(doc, name);
-      const counts = area(page, name).getByRole('img');
-      if (!label) {
-        await expect(counts, name).toHaveCount(0);
-        continue;
-      }
-      await expect(counts, name).toHaveAccessibleName(label);
-      // One badge per non-zero status, red first: just the number.
-      const numbers = label.split(', ').map((part) => part.split(' ')[0]);
-      await expect(counts.locator('[data-rag]'), name).toHaveText(numbers);
-    }
-    await expect(area(page, 'Hallway').getByRole('img')).toHaveAccessibleName('1 urgent');
-
-    // Colours: the accessible tone for the number, on the RAG tint; a 20px round badge.
-    const hallway = area(page, 'Hallway').locator('[data-rag="red"]');
-    await expect(hallway).toHaveCSS('color', 'rgb(215, 0, 21)');
-    await expect(hallway).toHaveCSS('font-size', '13px');
-    await expect(hallway).toHaveCSS('font-weight', '600');
-    await expect(hallway).toHaveCSS('background-color', 'rgba(255, 59, 48, 0.12)');
-    const badge = (await hallway.boundingBox())!;
-    expect(badge.height).toBe(20);
-    expect(badge.width).toBeGreaterThanOrEqual(20);
-    expect(badge.width).toBeLessThan(21);
-    await expect(area(page, 'Living Room').locator('[data-rag="amber"]')).toHaveCSS('color', 'rgb(201, 52, 0)');
-    await expect(area(page, 'Kitchen').locator('[data-rag="green"]')).toHaveCSS('color', 'rgb(36, 138, 61)');
-
-    // Still shown with everything collapsed.
-    await toggleAll(page, 'Collapse All').click();
-    for (const { name } of doc.areas) {
-      const label = expectedLabel(doc, name);
-      if (label) await expect(area(page, name).getByRole('img'), name).toHaveAccessibleName(label);
-    }
+test.describe('Room status', () => {
+  test('one quiet word: late or urgent in red, nothing while all is calm, All clear when empty', async ({ page }) => {
+    const status = (name: string) => area(page, name).locator('h2 + span');
+    await expect(status('Hallway')).toHaveText('1 late');
+    await expect(status('Front garden')).toHaveText('1 urgent');
+    await expect(status('Bedroom Small')).toHaveText('All clear');
+    for (const name of ['Kitchen', 'Living Room', 'Garden', 'Jacuzzi']) await expect(status(name), name).toHaveCount(0);
+    // Red and bold, with the room's drawing tinted red too.
+    await expect(status('Hallway')).toHaveCSS('color', 'rgb(215, 0, 21)');
+    await expect(status('Hallway')).toHaveCSS('font-weight', '600');
+    await expect(disclosure(page, 'Hallway').locator('[data-alert]')).toHaveCSS('background-color', 'rgba(255, 59, 48, 0.12)');
+    await expect(status('Bedroom Small')).toHaveCSS('color', 'rgb(110, 110, 115)');
+    // The word is part of what VoiceOver hears for the name.
+    await expect(disclosure(page, 'Hallway')).toHaveAccessibleDescription('1 late');
   });
 
-  test('counts follow the items: completing and adding', async ({ page }) => {
-    await expect(area(page, 'Bathroom Large').getByRole('img')).toHaveAccessibleName(
-      expectedLabel(await stored(page), 'Bathroom Large'),
-    );
+  test('follows the items: completing and adding', async ({ page }) => {
     await ring(page, 'Shower draining slowly').click();
     await expect(ring(page, 'Shower draining slowly')).toHaveCount(0);
-    // Its only item: no counts left.
-    expect(expectedLabel(await stored(page), 'Bathroom Large')).toBe('');
-    await expect(area(page, 'Bathroom Large').getByRole('img')).toHaveCount(0);
-    await ring(page, 'Kitchen paper').click();
-    await expect(area(page, 'Kitchen').getByRole('img')).toHaveAccessibleName(expectedLabel(await stored(page), 'Kitchen'));
+    // Its only item: All clear.
+    await expect(area(page, 'Bathroom Large').getByText('All clear', { exact: true })).toBeVisible();
 
-    // Add a red item to the (collapsed) Hallway from its +.
+    // Add an urgent item to the (folded) Hallway from its menu.
     await disclosure(page, 'Hallway').click();
-    await area(page, 'Hallway').getByRole('button', { name: 'Add item to Hallway' }).click();
+    await roomMenu(page, 'Hallway', 'Add item to Hallway');
     const sheet = itemSheet(page, 'New item');
     await settled(sheet.getByRole('button', { name: 'Close' }));
     await sheet.getByLabel('Title', { exact: true }).fill('Fix the coat hook');
-    await sheet.getByRole('radiogroup', { name: 'Status' }).getByText('Red', { exact: true }).click();
+    await sheet.getByRole('radiogroup', { name: 'How urgent?' }).getByText('Urgent', { exact: true }).click();
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
-    await expect(area(page, 'Hallway').getByRole('img')).toHaveAccessibleName('2 urgent');
+    await expect(area(page, 'Hallway').locator('h2 + span')).toHaveText('1 late, 1 urgent');
     // Hallway opened so the new item can be seen.
     await expect(disclosure(page, 'Hallway')).toHaveAttribute('aria-expanded', 'true');
     await expect(ring(page, 'Fix the coat hook')).toBeVisible();
   });
 });
 
-test.describe('Add to an area', () => {
-  test('the + on an area header opens the new-item sheet with that area', async ({ page }) => {
-    const add = area(page, 'Garden').getByRole('button', { name: 'Add item to Garden' });
-    // A small tinted circle with a 44 × 44 tap target.
-    await expect(add).toHaveCSS('color', 'rgb(0, 122, 255)');
-    await add.evaluate((el) => el.scrollIntoView({ block: 'center' }));
-    const box = (await add.boundingBox())!;
-    const hit = await page.evaluate(
-      ({ x, y }) =>
-        [
-          [x - 21, y],
-          [x + 21, y],
-          [x, y - 21],
-          [x, y + 21],
-        ].map(([px, py]) => document.elementFromPoint(px, py)?.closest('button')?.getAttribute('aria-label')),
-      { x: box.x + box.width / 2, y: box.y + box.height / 2 },
-    );
-    expect(hit).toEqual(Array(4).fill('Add item to Garden'));
-
-    await add.click();
+test.describe('Add to a room', () => {
+  test('Add Item in a room’s menu opens the new-item sheet with that room', async ({ page }) => {
+    await roomMenu(page, 'Garden', 'Add item to Garden');
     const sheet = itemSheet(page, 'New item');
     await settled(sheet.getByRole('button', { name: 'Close' }));
     await expect(detailValue(sheet, 'Area')).toHaveText('Garden');
@@ -257,18 +241,18 @@ test.describe('Add to an area', () => {
     await expect(ring(page, 'Fix the gate latch')).toBeVisible();
     expect(await titlesIn(page, 'Garden')).toContain('Fix the gate latch');
 
-    // Another area, collapsed: still that area.
+    // Another room, folded: still that room.
     await disclosure(page, 'Jacuzzi').click();
-    await area(page, 'Jacuzzi').getByRole('button', { name: 'Add item to Jacuzzi' }).click();
+    await roomMenu(page, 'Jacuzzi', 'Add item to Jacuzzi');
     const again = itemSheet(page, 'New item');
     await settled(again.getByRole('button', { name: 'Close' }));
     await expect(detailValue(again, 'Area')).toHaveText('Jacuzzi');
   });
 
-  test('saving into a collapsed area opens it; closing without saving leaves it collapsed', async ({ page }) => {
-    // Cancelled: still collapsed.
+  test('saving into a folded room opens it; closing without saving leaves it folded', async ({ page }) => {
+    // Cancelled: still folded.
     await disclosure(page, 'Garden Lounge').click();
-    await area(page, 'Garden Lounge').getByRole('button', { name: 'Add item to Garden Lounge' }).click();
+    await roomMenu(page, 'Garden Lounge', 'Add item to Garden Lounge');
     let sheet = itemSheet(page, 'New item');
     await settled(sheet.getByRole('button', { name: 'Close' }));
     await sheet.getByRole('button', { name: 'Close' }).click();
@@ -276,16 +260,17 @@ test.describe('Add to an area', () => {
     await expect(disclosure(page, 'Garden Lounge')).toHaveAttribute('aria-expanded', 'false');
 
     // Saved: opened, with the new item showing.
-    await area(page, 'Garden Lounge').getByRole('button', { name: 'Add item to Garden Lounge' }).click();
+    await roomMenu(page, 'Garden Lounge', 'Add item to Garden Lounge');
     sheet = itemSheet(page, 'New item');
     await settled(sheet.getByRole('button', { name: 'Close' }));
     await sheet.getByLabel('Title', { exact: true }).fill('Oil the bench');
+    await sheet.getByRole('radiogroup', { name: 'How urgent?' }).getByText('Urgent', { exact: true }).click();
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
     await expect(disclosure(page, 'Garden Lounge')).toHaveAttribute('aria-expanded', 'true');
     await expect(ring(page, 'Oil the bench')).toBeVisible();
 
-    // The round + in the tab bar too (it starts on the first area, Kitchen).
+    // The round + too (it starts on the first room, Kitchen).
     await disclosure(page, 'Kitchen').click();
     await addButton(page).click();
     sheet = itemSheet(page, 'New item');
@@ -296,12 +281,12 @@ test.describe('Add to an area', () => {
     await expect(sheet).toHaveCount(0);
     await expect(disclosure(page, 'Kitchen')).toHaveAttribute('aria-expanded', 'true');
     await expect(ring(page, 'Descale the kettle')).toBeVisible();
-    // Other collapsed areas stay as they were.
+    // Other folded rooms stay as they were.
     await disclosure(page, 'Jacuzzi').click();
     await expect(disclosure(page, 'Jacuzzi')).toHaveAttribute('aria-expanded', 'false');
   });
 
-  test('moving an item into a collapsed area opens that area', async ({ page }) => {
+  test('moving an item into a folded room opens that room', async ({ page }) => {
     await disclosure(page, 'Garden').click();
     await rowButton(page, 'Wardrobe door hinge').click();
     const sheet = itemSheet(page);
@@ -316,6 +301,8 @@ test.describe('Add to an area', () => {
 
 /** Focuses a control as the keyboard would (so it matches :focus-visible). */
 async function keyboardFocus(control: Locator): Promise<void> {
+  // A key press first, so focus is shown even after a tap (Home's view switch, say).
+  await control.page().keyboard.press('Shift');
   await control.focus();
   await expect.poll(() => control.evaluate((el) => el.matches(':focus-visible'))).toBe(true);
 }
@@ -326,26 +313,34 @@ async function pressKey(control: Locator): Promise<void> {
   await control.press('Enter');
 }
 
-test.describe('Keyboard focus and collapsed areas', () => {
-  test('completing from the keyboard skips rows in a collapsed area', async ({ page }) => {
+test.describe('Keyboard focus and folded rooms', () => {
+  test('completing from the keyboard skips rows in a folded room', async ({ page }) => {
     await pressKey(disclosure(page, 'Bathroom Small'));
     await keyboardFocus(ring(page, 'Mirror lights not level'));
     await page.keyboard.press('Enter');
     await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
-    // Not "Re-seal around the shower" (Bathroom Small is collapsed): the next row that can be seen.
+    // Not "Re-seal around the shower" (Bathroom Small is folded): the next row that can be seen.
     await expect(rowButton(page, 'Shower draining slowly')).toBeFocused();
   });
 
-  test('with no other row to go to, focus goes to the area’s name', async ({ page }) => {
-    await pressKey(toggleAll(page, 'Collapse All'));
+  test('with no other row to go to, focus goes to the room’s name', async ({ page }) => {
+    // Collapse All Rooms from the keyboard: the menu opens on its first item.
+    await pressKey(homeScreen(page).getByRole('button', { name: 'Kitchen options' }));
+    const menu = page.getByRole('menu', { name: 'Kitchen' });
+    await expect(menu.getByRole('menuitem').first()).toBeFocused();
+    await page.keyboard.press('End');
+    await expect(menu.getByRole('menuitem', { name: 'Collapse All Rooms' })).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(homeScreen(page).getByRole('button', { name: 'Kitchen options' })).toBeFocused();
     await pressKey(disclosure(page, 'Living Room'));
     await keyboardFocus(ring(page, 'Mirror lights not level'));
     await page.keyboard.press('Enter');
     await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
-    await expect(disclosure(page, 'Living Room')).toBeFocused();
+    // The room has nothing open now: its name is a heading, and focus is on it.
+    await expect(area(page, 'Living Room').getByRole('heading', { level: 2 })).toBeFocused();
   });
 
-  test('after deleting from the keyboard, focus skips rows in collapsed areas', async ({ page }) => {
+  test('after deleting from the keyboard, focus skips rows in folded rooms', async ({ page }) => {
     await pressKey(disclosure(page, 'Hallway'));
     await pressKey(disclosure(page, 'Front garden'));
     await keyboardFocus(rowButton(page, 'Change the filter'));
@@ -363,11 +358,11 @@ test.describe('Keyboard focus and collapsed areas', () => {
   });
 });
 
-test.describe('Area headers at 375 wide', () => {
+test.describe('Room headers at 375 wide', () => {
   test.use({ viewport: { width: 375, height: 667 } });
 
   test('the chevron stays on the line with the end of the name', async ({ page }) => {
-    // Bathroom Large with 10 red, 3 amber and 11 green: three wide chips.
+    // Bathroom Large with 10 urgent, 2 within the month and 11 not urgent.
     await page.evaluate((key) => {
       const doc = JSON.parse(localStorage.getItem(key)!);
       const target = doc.areas.find((a: { name: string }) => a.name === 'Bathroom Large');
@@ -379,22 +374,23 @@ test.describe('Area headers at 375 wide', () => {
       localStorage.setItem(key, JSON.stringify(doc));
     }, DEMO_STORAGE_KEY);
     await reopen(page);
-    await expect(area(page, 'Bathroom Large').getByRole('img')).toHaveAccessibleName('10 urgent, 3 at risk, 11 on track');
+    await expect(area(page, 'Bathroom Large').locator('h2 + span')).toHaveText('10 urgent');
     for (const name of ['Bathroom Large', 'Kitchen', 'Front garden']) {
       const button = disclosure(page, name);
-      const { lastLine, chevron } = await button.evaluate((el) => {
-        const svg = el.querySelector('svg')!;
+      const { lastLine, icon } = await button.evaluate((el) => {
+        const svgs = el.querySelectorAll('svg');
+        const svg = svgs[svgs.length - 1];
         const text = svg.previousSibling!;
         const range = document.createRange();
         range.selectNodeContents(text);
         const rects = range.getClientRects();
         const last = rects[rects.length - 1];
-        const icon = svg.getBoundingClientRect();
-        return { lastLine: { top: last.top, bottom: last.bottom }, chevron: { top: icon.top, bottom: icon.bottom } };
+        const box = svg.getBoundingClientRect();
+        return { lastLine: { top: last.top, bottom: last.bottom }, icon: { top: box.top, bottom: box.bottom } };
       });
       // The chevron sits inside the line box of the name's last letter.
-      expect(chevron.top, name).toBeGreaterThanOrEqual(lastLine.top - 1);
-      expect(chevron.bottom, name).toBeLessThanOrEqual(lastLine.bottom + 1);
+      expect(icon.top, name).toBeGreaterThanOrEqual(lastLine.top - 1);
+      expect(icon.bottom, name).toBeLessThanOrEqual(lastLine.bottom + 1);
     }
     // And the name is still read as one word.
     await expect(area(page, 'Bathroom Large').getByRole('heading', { level: 2 })).toHaveAccessibleName('Bathroom Large');

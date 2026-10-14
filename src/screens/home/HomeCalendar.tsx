@@ -17,7 +17,7 @@ import type { HousekeepingVisit, ISODate, Item, Member } from '../../lib/types';
 import { DatePicker, mondayOf, revealDay, useChosenDay, type ChosenDay } from '../../ui/DatePicker';
 import { EmojiText } from '../../ui/EmojiText';
 import { BroomIcon, ChevronRightIcon } from '../../ui/icons';
-import { ItemRow } from './ItemRow';
+import { firstName, ItemRow } from './ItemRow';
 import type { PersonFilter } from './personFilter';
 import rowStyles from './ItemRow.module.css';
 import styles from './HomeCalendar.module.css';
@@ -154,10 +154,8 @@ export function HomeCalendar({
 
   return (
     <section ref={sectionRef} aria-labelledby={headingId} className={styles.section} data-calendar="">
-      <h2 id={headingId} className="visually-hidden">
-        Calendar
-      </h2>
       <DatePicker
+        headingId={headingId}
         viewKey={CALENDAR_VIEW_KEY}
         today={today}
         chosen={chosen}
@@ -182,6 +180,7 @@ export function HomeCalendar({
           members={members}
           roomOf={roomOf}
           empty={`${nothingDue(chosen.selected === today)}.`}
+          showWho={who === 'all'}
           onOpenItem={onOpenItem}
           onComplete={onComplete}
           onOpenHousekeeping={onOpenHousekeeping}
@@ -231,6 +230,8 @@ interface DayPanelProps {
   roomOf(areaId: string): string;
   /** What an empty day says. */
   empty: string;
+  /** Who each row is for, at the end of its title (off while one person's items show). */
+  showWho: boolean;
   onOpenItem(itemId: string): void;
   onComplete(itemId: string): Promise<void>;
   onOpenHousekeeping?(date: ISODate): void;
@@ -252,6 +253,7 @@ function DayPanel({
   members,
   roomOf,
   empty,
+  showWho,
   onOpenItem,
   onComplete,
   onOpenHousekeeping,
@@ -282,6 +284,7 @@ function DayPanel({
                 timeZone={timeZone}
                 room={roomOf(item.area_id)}
                 hideWhen
+                showWho={showWho}
                 leavesOnComplete
                 onOpen={onOpenItem}
                 onComplete={onComplete}
@@ -294,6 +297,7 @@ function DayPanel({
                 members={members}
                 today={today}
                 room={roomOf(item.area_id)}
+                showWho={showWho}
                 onOpen={onOpenItem}
               />
             ))}
@@ -330,6 +334,8 @@ interface RepeatRowProps {
   members: Member[];
   today: ISODate;
   room: string;
+  /** Who it is for, at the end of the title's line (off while one person's items show). */
+  showWho: boolean;
   onOpen(itemId: string): void;
 }
 
@@ -338,7 +344,7 @@ interface RepeatRowProps {
  * that is not a button (it isn't due yet, so it can't be marked done), and "Repeat of Tue 13
  * Oct · Every week" (how often gives way first). The row opens the item.
  */
-function RepeatRow({ item, members, today, room, onOpen }: RepeatRowProps) {
+function RepeatRow({ item, members, today, room, showWho, onOpen }: RepeatRowProps) {
   const member = members.find((m) => m.id === item.assignee_id);
   const { when, every } = repeatMeta(item, today);
   return (
@@ -350,20 +356,21 @@ function RepeatRow({ item, members, today, room, onOpen }: RepeatRowProps) {
         <button type="button" className={rowStyles.open} data-item-open="" onClick={() => onOpen(item.id)}>
           <span className={rowStyles.text}>
             <span className={`${rowStyles.title} ${styles.repeatTitle}`}>
-              <span className={rowStyles.titleText}>
-                {item.title}
-                <span className="visually-hidden">{`, ${ragWord(item.kind, item.rag)}, repeat, ${when}, ${every}, ${room}, ${member ? member.name : 'Unassigned'}.`}</span>
-              </span>
+              {item.title}
+              <span className="visually-hidden">{`, ${ragWord(item.kind, item.rag)}, repeat, ${when}, ${every}, ${room}, ${member ? member.name : 'Unassigned'}.`}</span>
             </span>
-            <span className={rowStyles.meta} aria-hidden="true">
+            <span className={rowStyles.meta} data-meta="" aria-hidden="true">
               <span className={styles.repeatMeta}>{when}</span>
               <span className={rowStyles.sep}>·</span>
               <span className={rowStyles.part}>{every}</span>
             </span>
           </span>
-          {member ? (
-            <span className={rowStyles.who} aria-hidden="true">
-              <EmojiText text={member.emoji} />
+          {member && showWho ? (
+            <span className={rowStyles.who} aria-hidden="true" data-who="">
+              <span className={rowStyles.whoEmoji}>
+                <EmojiText text={member.emoji} />
+              </span>
+              <span className={rowStyles.whoName}>{firstName(member.name)}</span>
             </span>
           ) : null}
         </button>

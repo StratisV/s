@@ -382,11 +382,14 @@ describe('ItemSheet: To do and To maintain', () => {
     await setup(editing('Firepit'));
     expect(kind('To maintain').getAttribute('aria-checked')).toBe('true');
     expect((screen.getByRole('radio', { name: 'Good' }) as HTMLInputElement).checked).toBe(true);
-    expect(screen.getAllByRole('radio', { name: /^(Poor|Fair|Good)$/ }).map((r) => (r as HTMLInputElement).value)).toEqual([
-      'red',
-      'amber',
-      'green',
-    ]);
+    // Needs work, Okay, Good: red first, as the urgency list runs.
+    expect(
+      screen.getAllByRole('radio', { name: /^(Needs work|Okay|Good)$/ }).map((r) => (r as HTMLInputElement).value),
+    ).toEqual(['red', 'amber', 'green']);
+    expect(screen.getByRole('radio', { name: 'Okay' }).getAttribute('aria-describedby')).toBeTruthy();
+    expect(document.getElementById(screen.getByRole('radio', { name: 'Okay' }).getAttribute('aria-describedby')!)!.textContent).toBe(
+      'Fine for now, keep an eye on it',
+    );
     expect(value('Area')).toBe('Garden');
     expect(value('Looked after by')).toBe('🦊 Ela');
     for (const gone of ['Due', 'Assigned to', 'Repeat', 'Notify']) expect(label(gone), gone).toBeNull();
@@ -397,7 +400,7 @@ describe('ItemSheet: To do and To maintain', () => {
   it('saves edits to a state without any due date, repeat or reminder', async () => {
     const { backend, onClose } = await setup(editing('Firepit'));
     const update = vi.spyOn(backend, 'updateItem');
-    fireEvent.click(screen.getByRole('radio', { name: 'Fair' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Okay' }));
     fireEvent.change(screen.getByLabelText('Looked after by'), { target: { value: '' } });
     fireEvent.click(save());
     expect(update).toHaveBeenCalledWith(expect.any(String), { rag: 'amber', assignee_id: null });

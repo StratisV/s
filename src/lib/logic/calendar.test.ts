@@ -11,10 +11,12 @@ import {
   EMPTY_DAY,
   isDated,
   isEmptyDay,
+  monthHeading,
   repeatDates,
   repeatMeta,
   todaySummary,
   visitSummary,
+  weekHeading,
   weekName,
   weekTitle,
   type CalendarDay,
@@ -133,6 +135,27 @@ describe('weeks', () => {
     expect(weekTitle(weekOf('2026-12-30'), '2027-01-02')).toBe('28 Dec 2026 to 3 Jan');
     // The week the clocks go back in London: still Monday to Sunday.
     expect(weekTitle(weekOf('2026-10-25'), TODAY)).toBe('19 to 25 October');
+  });
+
+  it('weekHeading: this, next and last week in words, else how many weeks away', () => {
+    expect(weekHeading('2026-10-05', TODAY)).toBe('This week');
+    expect(weekHeading('2026-10-12', TODAY)).toBe('Next week');
+    expect(weekHeading('2026-09-28', TODAY)).toBe('Last week');
+    expect(weekHeading('2026-10-19', TODAY)).toBe('In 2 weeks');
+    expect(weekHeading('2026-11-30', TODAY)).toBe('In 8 weeks');
+    expect(weekHeading('2026-09-21', TODAY)).toBe('2 weeks ago');
+    // Across the clocks going back (25 Oct): still whole weeks.
+    expect(weekHeading('2026-11-02', TODAY)).toBe('In 4 weeks');
+  });
+
+  it('monthHeading: this, next and last month in words, else how many months away', () => {
+    expect(monthHeading('2026-10', TODAY)).toBe('This month');
+    expect(monthHeading('2026-11', TODAY)).toBe('Next month');
+    expect(monthHeading('2026-09', TODAY)).toBe('Last month');
+    expect(monthHeading('2026-12', TODAY)).toBe('In 2 months');
+    expect(monthHeading('2027-01', TODAY)).toBe('In 3 months');
+    expect(monthHeading('2026-07', TODAY)).toBe('3 months ago');
+    expect(monthHeading('2027-01', '2026-12-31')).toBe('Next month');
   });
 
   it('monthName: the month without its year', () => {

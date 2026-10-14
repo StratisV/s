@@ -1,18 +1,12 @@
 import { useId } from 'react';
-import { RAG_ORDER, ragWord } from '../../lib/constants';
+import { RAG_HINT, RAG_ORDER, ragWord } from '../../lib/constants';
 import type { ItemKind, Rag } from '../../lib/types';
 import { CheckIcon } from '../../ui/icons';
 import styles from './RagPicker.module.css';
 
-/** What each choice means, under its word. */
-const HINT: Record<ItemKind, Record<Rag, string>> = {
-  task: { red: 'Needs doing now', amber: 'Some time in the next few weeks', green: 'Whenever there is time' },
-  state: { red: 'Needs work soon', amber: 'Could do with some care', green: 'Just as it should be' },
-};
-
 /**
  * The colour of an item, said in words: for a To do, how urgent it is (Urgent, Within the
- * month, Not urgent); for a To maintain item, its condition (Poor, Fair, Good). A native radio
+ * month, Not urgent); for a To maintain item, its condition (Needs work, Okay, Good). A native radio
  * group drawn as a list of three, each with its dot, its word and what it means; the chosen
  * one is washed in its colour with a check.
  */
@@ -45,7 +39,7 @@ export function RagPicker({ value, kind = 'task', onChange }: { value: Rag; kind
               <span className={styles.words} aria-hidden="true">
                 <span className={styles.word}>{word}</span>
                 <span id={`${name}-${rag}`} className={styles.hint}>
-                  {HINT[kind][rag]}
+                  {RAG_HINT[kind][rag]}
                 </span>
               </span>
               <CheckIcon className={styles.check} size={20} strokeWidth={2.7} />

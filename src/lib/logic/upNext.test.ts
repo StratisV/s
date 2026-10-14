@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Item, Rag } from '../types';
-import { compareByUrgency, homeSummary, needsAttention, relativeDue, relativeUpdated, upNext } from './upNext';
+import { compareByDate, compareByUrgency, homeSummary, needsAttention, relativeDue, relativeUpdated, upNext } from './upNext';
 
 const TODAY = '2026-10-13';
 
@@ -32,19 +32,20 @@ const state = (title: string, rag: Rag) => item(title, rag, null, { kind: 'state
 const titles = (items: Item[]) => items.map((i) => i.title);
 
 describe('needsAttention', () => {
-  it('is a late or urgent To do, or a To maintain item in fair or poor condition', () => {
+  it('is a late or urgent To do, or a To maintain item that needs work', () => {
     expect(needsAttention(item('late green', 'green', '2026-10-12'), TODAY)).toBe(true);
     expect(needsAttention(item('urgent later', 'red', '2026-12-01'), TODAY)).toBe(true);
     expect(needsAttention(item('urgent, no date', 'red', null), TODAY)).toBe(true);
     expect(needsAttention(item('amber today', 'amber', TODAY), TODAY)).toBe(false);
     expect(needsAttention(state('good', 'green'), TODAY)).toBe(false);
-    expect(needsAttention(state('fair', 'amber'), TODAY)).toBe(true);
-    expect(needsAttention(state('poor', 'red'), TODAY)).toBe(true);
+    // Okay is fine for now: it waits under Looking after.
+    expect(needsAttention(state('okay', 'amber'), TODAY)).toBe(false);
+    expect(needsAttention(state('needs work', 'red'), TODAY)).toBe(true);
   });
 });
 
 describe('upNext', () => {
-  it('groups by when: Needs attention, Today, Next 7 days, Later; good To maintain items apart', () => {
+  it('groups by when: Needs attention, Today, Next 7 days, Later; things looked after apart', () => {
     const view = upNext(
       [
         item('Kitchen paper', 'green', '2026-11-10'),
@@ -58,18 +59,21 @@ describe('upNext', () => {
         item('No date', 'amber', null),
         state('Firepit', 'green'),
         state('Shower seal', 'amber'),
+        state('Grout', 'red'),
         item('Done', 'red', TODAY, { status: 'done' }),
       ],
       TODAY,
     );
     expect(view.groups.map((g) => [g.id, titles(g.items)])).toEqual([
-      ['attention', ['Heaters', 'Gutters', 'Shower seal']],
+      ['attention', ['Heaters', 'Gutters', 'Grout']],
       ['today', ['Dehumidifier']],
+      // The date first ("In 2 days" before "In 4 days"), then urgency.
+      ['week', ['Plants', 'Strips', 'Day 7']],
       // Urgency first, then the date.
-      ['week', ['Strips', 'Plants', 'Day 7']],
       ['later', ['No date', 'Day 8', 'Kitchen paper']],
     ]);
-    expect(titles(view.looking)).toEqual(['Firepit']);
+    // Okay first (keep an eye on it), then Good.
+    expect(titles(view.looking)).toEqual(['Shower seal', 'Firepit']);
     expect(view.counts).toEqual({ attention: 3, today: 1, rest: 6 });
   });
 
@@ -87,6 +91,17 @@ describe('upNext', () => {
       item('Urgent soon', 'red', '2026-10-14'),
     ].sort(compareByUrgency(TODAY));
     expect(titles(sorted)).toEqual(['Late green', 'Urgent soon', 'Urgent later', 'Amber soon', 'Seal']);
+  });
+
+  it('can sort the date first instead, then urgency (Today and Next 7 days)', () => {
+    const sorted = [
+      state('Seal', 'red'),
+      item('Green in 2', 'green', '2026-10-15'),
+      item('Red in 6', 'red', '2026-10-19'),
+      item('Amber in 2', 'amber', '2026-10-15'),
+      item('Late', 'green', '2026-10-11'),
+    ].sort(compareByDate(TODAY));
+    expect(titles(sorted)).toEqual(['Late', 'Amber in 2', 'Green in 2', 'Red in 6', 'Seal']);
   });
 });
 
@@ -131,5 +146,23 @@ describe('homeSummary', () => {
       rest: 'Next up: Water the plants, in 2 days.',
     });
     expect(summary([state('Firepit', 'green')])).toEqual({ lead: 'All clear.', rest: 'Nothing to do right now.' });
+  });
+
+  it('says whose items they are while the person filter narrows Home', () => {
+    const view = upNext([item('a', 'red', TODAY), item('c', 'green', TODAY)], TODAY);
+    expect(homeSummary(view, TODAY, { kind: 'me' }).lead).toBe('For you, 1 thing needs attention and 1 is due today.');
+    expect(homeSummary(view, TODAY, { kind: 'person', name: 'Shea' }).lead).toBe(
+      'For Shea, 1 thing needs attention and 1 is due today.',
+    );
+    expect(homeSummary(view, TODAY, { kind: 'none' }).lead).toBe('Unassigned: 1 thing needs attention and 1 is due today.');
+    const calm = upNext([item('Water the plants', 'green', '2026-10-15')], TODAY);
+    expect(homeSummary(calm, TODAY, { kind: 'person', name: 'Ela' })).toEqual({
+      lead: 'For Ela, nothing urgent today.',
+      rest: 'Next up: Water the plants, in 2 days.',
+    });
+    const empty = upNext([], TODAY);
+    expect(homeSummary(empty, TODAY, { kind: 'me' }).lead).toBe('All clear for you.');
+    expect(homeSummary(empty, TODAY, { kind: 'person', name: 'Shea' }).lead).toBe('All clear for Shea.');
+    expect(homeSummary(empty, TODAY, { kind: 'none' }).lead).toBe('Nothing unassigned to do.');
   });
 });

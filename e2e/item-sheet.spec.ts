@@ -10,17 +10,19 @@ import {
   openNewItem,
   openSeeded,
   ring,
-  row,
   rowButton,
   test,
   titlesIn,
   toast,
   type Locator,
   addButton,
+  who,
 } from './fixtures';
 
 /** Focuses a control as the keyboard would (so it matches :focus-visible). */
 async function keyboardFocus(control: Locator): Promise<void> {
+  // A key press first, so focus is shown even after a tap (Home's view switch, say).
+  await control.page().keyboard.press('Shift');
   await control.focus();
   await expect.poll(() => control.evaluate((el) => el.matches(':focus-visible'))).toBe(true);
 }
@@ -38,7 +40,14 @@ test.describe('Item sheet: edit', () => {
     await expect(sheet.getByLabel('Note', { exact: true })).toHaveValue(
       'One is 3cm higher. We need to bring someone in to make it even.',
     );
-    await expect(sheet.getByRole('radio', { name: 'Amber' })).toBeChecked();
+    // How urgent it is, in words, each with what it means.
+    const urgency = sheet.getByRole('radiogroup', { name: 'How urgent?' });
+    await expect(urgency.getByRole('radio')).toHaveCount(3);
+    await expect(sheet.getByRole('radio', { name: 'Within the month' })).toBeChecked();
+    await expect(urgency).toContainText(
+      /Urgent.*Needs doing now.*Within the month.*Some time in the next few weeks.*Not urgent.*Whenever there is time/,
+    );
+    await expect(sheet.getByRole('radio', { name: 'Urgent', exact: true })).toHaveAccessibleDescription('Needs doing now');
     await expect(sheet.getByLabel('Due', { exact: true })).toHaveValue('2026-10-20');
     await expect(detailValue(sheet, 'Due')).toHaveText('Tue 20 Oct');
     await expect(detailValue(sheet, 'Assigned to')).toHaveText('Unassigned');
@@ -75,13 +84,13 @@ test.describe('Item sheet: edit', () => {
     await expect(due).toHaveCSS('color', 'rgb(215, 0, 21)');
   });
 
-  test('saves title, note, RAG, due, assignee, repeat and notify', async ({ page }) => {
+  test('saves title, note, urgency, due, assignee, repeat and notify', async ({ page }) => {
     const sheet = await openItem(page, 'Mirror lights not level');
     await sheet.getByLabel('Title', { exact: true }).fill('Level the mirror lights');
     await sheet.getByLabel('Note', { exact: true }).fill('Electrician booked for Sunday.');
     // The label is the visible control (the radio itself is visually hidden).
-    await sheet.getByRole('radiogroup', { name: 'Status' }).getByText('Red', { exact: true }).click();
-    await expect(sheet.getByRole('radio', { name: 'Red' })).toBeChecked();
+    await sheet.getByRole('radiogroup', { name: 'How urgent?' }).getByText('Urgent', { exact: true }).click();
+    await expect(sheet.getByRole('radio', { name: 'Urgent', exact: true })).toBeChecked();
     await sheet.getByLabel('Due', { exact: true }).fill('2026-10-25');
     await expect(detailValue(sheet, 'Due')).toHaveText('Sun 25 Oct');
     await sheet.getByLabel('Assigned to', { exact: true }).selectOption({ label: '🦊 Ela' });
@@ -94,15 +103,22 @@ test.describe('Item sheet: edit', () => {
     await expect(sheet).toHaveCount(0);
 
     const title = 'Level the mirror lights';
-    await expect(row(page, title)).toContainText('Electrician booked for Sunday.');
-    await expect(meta(page, title)).toHaveText('🦊 Ela · Sun 25 Oct');
-    await expect(ring(page, title)).toHaveCSS('border-top-color', 'rgb(255, 59, 48)');
+    // Urgent, in red words, and when; who, at the end of the title; the note is a glyph.
+    await expect(meta(page, title)).toHaveText('UrgentIn 2 weeks');
+    await expect(meta(page, title).locator('[data-rag="red"]')).toHaveCSS('color', 'rgb(215, 0, 21)');
+    await expect(who(page, title)).toHaveText('🦊Ela');
+    await expect(rowButton(page, title)).toHaveAccessibleName(
+      /^Level the mirror lights ?, Urgent, In 2 weeks, Ela, repeats weekly, has a note\.$/,
+    );
     await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
+    // Urgent: the room says so, in red.
+    await expect(area(page, 'Living Room').locator('h2 + span')).toHaveText('1 urgent');
 
     // Reopening shows what was saved.
     await rowButton(page, title).click();
     const again = itemSheet(page);
-    await expect(again.getByRole('radio', { name: 'Red' })).toBeChecked();
+    await expect(again.getByLabel('Note', { exact: true })).toHaveValue('Electrician booked for Sunday.');
+    await expect(again.getByRole('radio', { name: 'Urgent', exact: true })).toBeChecked();
     await expect(detailValue(again, 'Repeat')).toHaveText('Weekly');
     await expect(detailValue(again, 'Notify')).toHaveText('On the day');
     await expect(detailValue(again, 'Assigned to')).toHaveText('🦊 Ela');
@@ -112,7 +128,7 @@ test.describe('Item sheet: edit', () => {
     const sheet = await openItem(page, 'Mirror lights not level');
     await sheet.getByLabel('Area', { exact: true }).selectOption({ label: 'Hallway' });
     await sheet.getByRole('button', { name: 'Save' }).click();
-    await expect(area(page, 'Living Room').getByText('Nothing to do')).toBeVisible();
+    await expect(area(page, 'Living Room').getByText('All clear', { exact: true })).toBeVisible();
     expect(await titlesIn(page, 'Hallway')).toEqual(['Heaters not working', 'Mirror lights not level']);
   });
 
@@ -162,7 +178,7 @@ test.describe('Item sheet: edit', () => {
     await (await confirmation(page, 'Delete this item?')).getByRole('button', { name: 'Delete Item' }).click();
     await expect(sheet).toHaveCount(0);
     await expect(ring(page, 'Wardrobe door hinge')).toHaveCount(0);
-    await expect(area(page, 'Bedroom Large').getByText('Nothing to do')).toBeVisible();
+    await expect(area(page, 'Bedroom Large').getByText('All clear', { exact: true })).toBeVisible();
   });
 
   test('Mark as Done completes the item and closes the sheet', async ({ page }) => {
@@ -181,9 +197,13 @@ test.describe('Item sheet: edit', () => {
     await sheet.getByLabel('Note', { exact: true }).fill('Use the blue cartridge.');
     await sheet.getByRole('button', { name: 'Mark as Done' }).click();
     await expect(sheet).toHaveCount(0);
-    // Monthly: still open, a month later, with the new note.
-    await expect(meta(page, 'Change the filter')).toHaveText('🦆 Shea · Fri 20 Nov');
-    await expect(row(page, 'Change the filter')).toContainText('Use the blue cartridge.');
+    // Monthly: still open, a month later (Fri 20 Nov), with the new note.
+    await expect(meta(page, 'Change the filter')).toHaveText('Not urgent·In 6 weeks');
+    await expect(who(page, 'Change the filter')).toHaveText('🦆Shea');
+    await rowButton(page, 'Change the filter').click();
+    const again = itemSheet(page);
+    await expect(detailValue(again, 'Due')).toHaveText('Fri 20 Nov');
+    await expect(again.getByLabel('Note', { exact: true })).toHaveValue('Use the blue cartridge.');
   });
 });
 
@@ -196,7 +216,7 @@ test.describe('Item sheet: new', () => {
     await expect(title).toBeFocused();
     await expect(title).toHaveAttribute('placeholder', 'Title');
     await expect(sheet.getByLabel('Note', { exact: true })).toHaveAttribute('placeholder', 'Add a note');
-    await expect(sheet.getByRole('radio', { name: 'Amber' })).toBeChecked();
+    await expect(sheet.getByRole('radio', { name: 'Within the month' })).toBeChecked();
     await expect(detailValue(sheet, 'Area')).toHaveText('Kitchen');
     await expect(sheet.getByLabel('Due', { exact: true })).toHaveValue('2026-10-15');
     await expect(detailValue(sheet, 'Due')).toHaveText('Thu 15 Oct');
@@ -214,7 +234,7 @@ test.describe('Item sheet: new', () => {
     await expect(save).toBeEnabled();
   });
 
-  test('saving adds it to Home in the chosen area, sorted by date', async ({ page }) => {
+  test('saving adds it to Home in the chosen area, most urgent first, then by date', async ({ page }) => {
     const sheet = await openNewItem(page);
     await sheet.getByLabel('Title', { exact: true }).fill('Fix the gate latch');
     await sheet.getByLabel('Note', { exact: true }).fill('It sticks when wet.');
@@ -222,25 +242,31 @@ test.describe('Item sheet: new', () => {
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
 
-    await expect(meta(page, 'Fix the gate latch')).toHaveText('Unassigned · Thu 15 Oct');
-    await expect(row(page, 'Fix the gate latch')).toContainText('It sticks when wet.');
-    await expect(ring(page, 'Fix the gate latch')).toHaveCSS('border-top-color', 'rgb(255, 149, 0)');
-    // Same day as the firepit (added earlier), before the wall panel (30 Oct).
+    await expect(meta(page, 'Fix the gate latch')).toHaveText('Within the monthIn 7 days');
+    await expect(meta(page, 'Fix the gate latch').locator('[data-rag="amber"]')).toHaveCSS('color', 'rgb(201, 52, 0)');
+    // Nobody has it: the row leaves who out (VoiceOver hears "Unassigned").
+    await expect(who(page, 'Fix the gate latch')).toHaveCount(0);
+    await expect(rowButton(page, 'Fix the gate latch')).toHaveAccessibleName(
+      /^Fix the gate latch ?, Within the month, In 7 days, Unassigned, has a note\.$/,
+    );
+    // Within the month, like the wall panel, and due sooner (15 Oct, the panel 30 Oct); the
+    // firepit is not urgent, so last, though due the same day.
     expect(await titlesIn(page, 'Garden')).toEqual([
-      'Give away the old firepit',
       'Fix the gate latch',
       'Garden room wall panel',
+      'Give away the old firepit',
     ]);
   });
 
-  test('a new item into an empty area replaces "Nothing to do"', async ({ page }) => {
+  test('a new item into an empty area replaces "All clear"', async ({ page }) => {
     const sheet = await openNewItem(page);
     await sheet.getByLabel('Title', { exact: true }).fill('Fit blackout blinds');
     await sheet.getByLabel('Area', { exact: true }).selectOption({ label: 'Bedroom Small' });
     await sheet.getByLabel('Assigned to', { exact: true }).selectOption({ label: '🦆 Shea' });
     await sheet.getByRole('button', { name: 'Save' }).click();
-    await expect(area(page, 'Bedroom Small').getByText('Nothing to do')).toHaveCount(0);
-    await expect(meta(page, 'Fit blackout blinds')).toHaveText('🦆 Shea · Thu 15 Oct');
+    await expect(area(page, 'Bedroom Small').getByText('All clear', { exact: true })).toHaveCount(0);
+    await expect(meta(page, 'Fit blackout blinds')).toHaveText('Within the monthIn 7 days');
+    await expect(who(page, 'Fit blackout blinds')).toHaveText('🦆Shea');
   });
 
   test('closing a new item with a title asks before discarding it', async ({ page }) => {
@@ -279,7 +305,9 @@ test.describe('Item sheet: keyboard', () => {
     await page.keyboard.type('Before the leaves fall.');
     await page.keyboard.press('Control+Enter');
     await expect(sheet).toHaveCount(0);
-    await expect(row(page, 'Clean the gutters')).toContainText('Before the leaves fall.');
+    await expect(rowButton(page, 'Clean the gutters')).toHaveAccessibleName(/has a note\.$/);
+    await rowButton(page, 'Clean the gutters').click();
+    await expect(itemSheet(page).getByLabel('Note', { exact: true })).toHaveValue('Before the leaves fall.');
   });
 
   test('closing the sheet with Escape puts keyboard focus back where it was', async ({ page }) => {
@@ -313,8 +341,8 @@ test.describe('Item sheet: keyboard', () => {
     await page.keyboard.press('Enter');
     await expect(sheet).toHaveCount(0);
     await expect(ring(page, 'Heaters not working')).toHaveCount(0);
-    // The first row of the next area, Front garden.
-    await expect(rowButton(page, 'Put the bins out')).toBeFocused();
+    // The first row of the next room, Front garden (its most urgent).
+    await expect(rowButton(page, 'Clear the gutters')).toBeFocused();
   });
 
   test('the delete confirmation starts on Cancel, gives focus back, and ignores a held Enter', async ({ page }) => {

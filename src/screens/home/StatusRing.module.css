@@ -5,7 +5,7 @@
   flex: none;
   width: 24px;
   height: 24px;
-  margin-top: 11px;
+  margin-top: 10px;
   border: 1.6px solid var(--ring-idle);
   border-radius: 50%;
   background: transparent;
@@ -67,9 +67,11 @@
 
 /* ── Condition gauge (To maintain) ─────────────────────── */
 
+/* Only a picture: a tap on it lands on the row under it, which opens the item. */
 .gauge {
   flex: none;
   display: inline-flex;
+  pointer-events: none;
   --on: var(--rag-green);
 }
 
@@ -95,7 +97,7 @@
 .gauge[data-variant='row'] {
   width: 24px;
   height: 24px;
-  margin-top: 11px;
+  margin-top: 10px;
   align-items: flex-end;
   justify-content: center;
   gap: 2.5px;

@@ -49,3 +49,27 @@
 .toggle {
   margin-left: auto;
 }
+
+/* Home: the calendar's heading on the left, Today and Show month on the right. */
+.bar[data-headed] {
+  gap: 18px;
+  min-height: 48px;
+}
+
+.heading {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 20px;
+  line-height: 25px;
+  font-weight: 700;
+  letter-spacing: -0.45px;
+  color: var(--label);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar[data-headed] .toggle {
+  margin-left: 0;
+}

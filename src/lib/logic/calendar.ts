@@ -7,10 +7,10 @@
 
 import { RAG_ORDER } from '../constants';
 import type { HousekeepingVisit, ISODate, Item, Rag } from '../types';
-import { formatDay, parseISODate } from './dates';
+import { daysBetween, formatDay, parseISODate } from './dates';
 import { doneCount, formatPrice, isRecorded } from './housekeeping';
 import { isState, nextDueDate } from './items';
-import { fullDay, monthName, monthOf, monthRange, type YearMonth } from './months';
+import { fullDay, monthName, monthOf, monthRange, weekOf, type YearMonth } from './months';
 import { SHARE_REPEAT } from './share';
 
 /** The compact week strip, or the whole month. */
@@ -282,6 +282,35 @@ export function weekTitle(week: ISODate[], today: ISODate): string {
   if (first.m === last.m && first.y === last.y) return `${first.d} to ${last.d} ${monthName(week[0])}${lastYear}`;
   const firstYear = first.y === year || first.y === last.y ? '' : ` ${first.y}`;
   return `${first.d} ${SHORT_MONTHS[first.m - 1]}${firstYear} to ${last.d} ${SHORT_MONTHS[last.m - 1]}${lastYear}`;
+}
+
+/**
+ * The heading over Home's week strip, always relative, so it says what the card's dates
+ * don't: `'This week'`, `'Next week'`, `'Last week'`, else `'In 3 weeks'` or `'3 weeks ago'`.
+ * `monday` is the week's first day.
+ * Tests: this, next and last week; further away both ways.
+ */
+export function weekHeading(monday: ISODate, today: ISODate): string {
+  const weeks = Math.round(daysBetween(weekOf(today)[0], monday) / 7);
+  return relative(weeks, 'week');
+}
+
+/**
+ * The heading over Home's month, always relative: `'This month'`, `'Next month'`,
+ * `'Last month'`, else `'In 2 months'` or `'2 months ago'`. The card under it names the month.
+ * Tests: this, next and last month; further away both ways; across a new year.
+ */
+export function monthHeading(month: YearMonth, today: ISODate): string {
+  const a = parseISODate(`${monthOf(today)}-01`);
+  const b = parseISODate(`${month}-01`);
+  return relative((b.y - a.y) * 12 + (b.m - a.m), 'month');
+}
+
+function relative(n: number, unit: 'week' | 'month'): string {
+  if (n === 0) return `This ${unit}`;
+  if (n === 1) return `Next ${unit}`;
+  if (n === -1) return `Last ${unit}`;
+  return n > 0 ? `In ${n} ${unit}s` : `${-n} ${unit}s ago`;
 }
 
 /**

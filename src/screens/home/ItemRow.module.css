@@ -27,23 +27,24 @@
 }
 
 /*
- * Two lines: the title with the person's emoji at its end, then the quiet line under both,
- * so the words on it get the full width.
+ * The title (two lines at most) with who it is for at the end of its first line, then the
+ * quiet line under both, so the words on it get the full width.
  */
 .open {
   flex: 1;
   min-width: 0;
   min-height: 64px;
-  padding: 10px 0 11px;
+  padding: 11px 0 11px;
   border-top: 0.5px solid var(--separator);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
     'title who'
     'meta meta';
-  align-items: center;
+  align-items: start;
+  align-content: center;
   column-gap: 10px;
-  row-gap: 4px;
+  row-gap: 3px;
   text-align: left;
   user-select: none;
   -webkit-user-select: none;
@@ -84,39 +85,91 @@
   display: contents;
 }
 
-/* The title, then a note glyph when it has one. */
+/* The title, two lines at most (the full title is in the Item sheet), then a note glyph. */
 .title {
   grid-area: title;
   min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
   font-size: 17px;
   line-height: 22px;
   letter-spacing: -0.4px;
   color: var(--label);
+  text-decoration-line: line-through;
+  text-decoration-color: transparent;
+  text-decoration-thickness: 1.5px;
+  transition:
+    color 0.2s ease,
+    text-decoration-color 0.2s ease;
 }
 
-.titleText {
-  min-width: 0;
-  /* One line: the full title is in the Item sheet. */
+/* Just ticked off: struck through for a moment, so it is clear which one it was. */
+.row[data-completing] .title {
+  color: var(--label-secondary);
+  text-decoration-color: currentColor;
+}
+
+.titleTail {
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.noteGlyph {
+  /* Inline, not inline-block: VoiceOver's name for the row reads the title straight on. */
+  display: inline;
+  margin-left: 6px;
+  vertical-align: -1px;
+  color: var(--label-secondary);
+  opacity: 0.6;
 }
 
 /* One quiet line: the urgency in words, when, where. The room gives way first. */
 .meta {
   grid-area: meta;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   min-width: 0;
-  gap: 6px;
+  /* The room's dot sits in this gap; on a line of its own the room starts flush, its dot clipped. */
+  column-gap: 16px;
+  row-gap: 2px;
+  overflow: hidden;
   white-space: nowrap;
   font-size: 13px;
   line-height: 18px;
   letter-spacing: -0.05px;
   color: var(--label-secondary);
+}
+
+/* How urgent (or its condition), when and, after a coloured label alone, the room. */
+.metaLead {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The room after the words: on this line while it can show about a word of its name, else on the next. */
+.roomPart {
+  position: relative;
+  flex: 1 1 5.5em;
+  max-width: max-content;
+  min-width: 0;
+  display: flex;
+}
+
+.roomSep {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -10px;
+  display: flex;
+  align-items: center;
+  color: var(--label-secondary);
+  opacity: 0.6;
 }
 
 .when {
@@ -141,6 +194,26 @@
   text-overflow: ellipsis;
 }
 
+/* The room, with its drawing, where the list mixes rooms. */
+.room {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.roomIcon {
+  flex: none;
+  opacity: 0.85;
+}
+
+.roomName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .sep {
   flex: none;
   color: var(--label-secondary);
@@ -154,18 +227,33 @@
   opacity: 0.6;
 }
 
-/* The person it is for: their emoji in a small circle at the end of the title's line. */
+/* Who it is for: their emoji and first name, at the end of the title's first line. */
 .who {
   grid-area: who;
-  width: 26px;
-  height: 26px;
-  margin: -2px 0;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: var(--fill-tertiary);
+  max-width: 108px;
+  min-width: 0;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.05px;
+  font-weight: 500;
+  color: var(--label-secondary);
+}
+
+.whoEmoji {
+  flex: none;
   font-size: 15px;
   line-height: 1;
+}
+
+.whoName {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* ── The urgency (or condition) label ──────────────────── */
@@ -224,9 +312,17 @@
   background: var(--rag-green);
 }
 
+/* Narrow phones: the first name gives way sooner, so the title keeps its room. */
+@media (max-width: 359px) {
+  .who {
+    max-width: 72px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .row,
-  .open::after {
+  .open::after,
+  .title {
     transition: none;
   }
 }

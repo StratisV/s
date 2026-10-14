@@ -5,9 +5,11 @@ import {
   DEMO_STORAGE_KEY,
   detailValue,
   expect,
+  group,
   homeScreen,
   keepOnlyAreas,
   meta,
+  mine,
   openFresh,
   openItem,
   openNewItem,
@@ -16,9 +18,13 @@ import {
   ring,
   row,
   rowButton,
+  showView,
+  summary,
   test,
   titlesIn,
   toast,
+  views,
+  who,
   type Locator,
   type Page,
 } from './fixtures';
@@ -42,69 +48,98 @@ test.beforeEach(async ({ page }) => {
 });
 
 test.describe('Home', () => {
-  test('shows the address and the areas in the household order', async ({ page }) => {
+  test('shows the address and the rooms in the household order', async ({ page }) => {
     const home = homeScreen(page);
     await expect(home.getByText('21 Alderbrook Road', { exact: true })).toBeVisible();
     await expect(hero(page)).toBeVisible();
     await expect(areaHeadings(page)).toHaveText(DEFAULT_AREAS);
-    await expect(area(page, 'Bedroom Small').getByText('Nothing to do', { exact: true })).toBeVisible();
+    // A room with nothing open is one quiet line.
+    await expect(area(page, 'Bedroom Small').getByText('All clear', { exact: true })).toBeVisible();
   });
 
-  test('sorts items in an area by due date, earliest first', async ({ page }) => {
-    // Seeded as "wall panel" (30 Oct) then "firepit" (15 Oct).
-    expect(await titlesIn(page, 'Garden')).toEqual(['Give away the old firepit', 'Garden room wall panel']);
+  test('lists a room’s To dos most urgent first, then by date', async ({ page }) => {
+    // The wall panel (Within the month, 30 Oct) before the firepit (Not urgent, 15 Oct).
+    expect(await titlesIn(page, 'Garden')).toEqual(['Garden room wall panel', 'Give away the old firepit']);
     expect(await titlesIn(page, 'Kitchen')).toEqual(['Kitchen paper', 'Olive oil']);
     expect(await titlesIn(page, 'Jacuzzi')).toEqual(['Water test strips running low', 'Change the filter']);
   });
 
   test('items without a due date go last', async ({ page }) => {
-    const sheet = await openItem(page, 'Give away the old firepit');
+    const sheet = await openItem(page, 'Kitchen paper');
     await sheet.getByLabel('Due', { exact: true }).fill('');
     await expect(detailValue(sheet, 'Due')).toHaveText('None');
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
-    expect(await titlesIn(page, 'Garden')).toEqual(['Garden room wall panel', 'Give away the old firepit']);
-    await expect(meta(page, 'Give away the old firepit')).toHaveText('🦊 Ela');
+    expect(await titlesIn(page, 'Kitchen')).toEqual(['Olive oil', 'Kitchen paper']);
+    await expect(meta(page, 'Kitchen paper')).toHaveText('Not urgent');
   });
 
-  test('meta lines: assignee or Unassigned, then the date; missed dates in red', async ({ page }) => {
-    await expect(meta(page, 'Kitchen paper')).toHaveText('🦔 Stratis · Thu 5 Nov');
-    await expect(meta(page, 'Shower draining slowly')).toHaveText('🦆 Shea · Wed 14 Oct');
-    await expect(meta(page, 'Give away the old firepit')).toHaveText('🦊 Ela · Thu 15 Oct');
-    await expect(meta(page, 'Mirror lights not level')).toHaveText('Unassigned · Tue 20 Oct');
-    await expect(meta(page, 'Trim the hedges')).toHaveText('Unassigned · Mon 2 Nov');
+  test('each row says its urgency in words, when it is due, and who it is for; late in red', async ({ page }) => {
+    // A quiet label (Not urgent) is text with a green dot; the others are pills.
+    await expect(meta(page, 'Kitchen paper')).toHaveText('Not urgent·In 4 weeks');
+    await expect(meta(page, 'Shower draining slowly')).toHaveText('Within the monthIn 6 days');
+    await expect(meta(page, 'Give away the old firepit')).toHaveText('Not urgent·In 7 days');
+    await expect(meta(page, 'Mirror lights not level')).toHaveText('Within the monthIn 12 days');
+    await expect(meta(page, 'Trim the hedges')).toHaveText('Not urgent·In 4 weeks');
+    await expect(who(page, 'Kitchen paper')).toHaveText('🦔Stratis');
+    await expect(who(page, 'Shower draining slowly')).toHaveText('🦆Shea');
+    await expect(who(page, 'Give away the old firepit')).toHaveText('🦊Ela');
+    // Unassigned: nothing there (VoiceOver says "Unassigned").
+    await expect(who(page, 'Mirror lights not level')).toHaveCount(0);
+    await expect(rowButton(page, 'Mirror lights not level')).toHaveAccessibleName(/, Unassigned, has a note\.$/);
 
     const heaters = meta(page, 'Heaters not working');
-    await expect(heaters).toHaveText('🦆 Shea · Missed · Tue 6 Oct');
-    const missed = heaters.getByText('Missed · Tue 6 Oct', { exact: true });
-    await expect(missed).toHaveCSS('color', 'rgb(215, 0, 21)');
-    await expect(missed).toHaveCSS('font-weight', '700');
-    // A date that is not missed stays in the secondary colour.
-    await expect(meta(page, 'Mirror lights not level').getByText('Tue 20 Oct')).toHaveCSS('color', 'rgb(110, 110, 115)');
-
-    // The note follows who and when on the second line; an item without one ends at the date.
-    await expect(row(page, 'Mirror lights not level')).toContainText('Tue 20 Oct · One is 3cm higher.');
-    await expect(rowButton(page, 'Change the filter').locator(':scope > span').last().locator(':scope > span')).toHaveCount(1);
+    await expect(heaters).toHaveText('Urgent2 days late');
+    const late = heaters.getByText('2 days late', { exact: true });
+    await expect(late).toHaveCSS('color', 'rgb(215, 0, 21)');
+    await expect(late).toHaveCSS('font-weight', '600');
+    // A date that is not late stays in the secondary colour.
+    await expect(meta(page, 'Mirror lights not level').getByText('In 12 days')).toHaveCSS('color', 'rgb(110, 110, 115)');
+    // One sentence for VoiceOver (Chromium puts a space before the visually hidden part).
+    await expect(rowButton(page, 'Heaters not working')).toHaveAccessibleName(
+      /^Heaters not working ?, Urgent, 2 days late, Shea, has a note\.$/,
+    );
+    // The note is a small glyph after the title, not text on the row.
+    await expect(row(page, 'Mirror lights not level')).not.toContainText('One is 3cm higher');
+    await expect(rowButton(page, 'Mirror lights not level').locator('svg')).toHaveCount(1);
+    // No note, no glyph (a repeat has its own, by the date).
+    await expect(rowButton(page, 'Change the filter').locator('svg')).toHaveCount(1);
+    await expect(rowButton(page, 'Change the filter').locator('[data-meta] svg')).toHaveCount(1);
   });
 
-  test('status rings are coloured by RAG', async ({ page }) => {
-    await expect(ring(page, 'Heaters not working')).toHaveCSS('border-top-color', 'rgb(255, 59, 48)');
-    await expect(ring(page, 'Mirror lights not level')).toHaveCSS('border-top-color', 'rgb(255, 149, 0)');
-    await expect(ring(page, 'Kitchen paper')).toHaveCSS('border-top-color', 'rgb(52, 199, 89)');
+  test('the ring is a neutral grey; the colour is in the words, never alone', async ({ page }) => {
+    for (const title of ['Heaters not working', 'Mirror lights not level', 'Kitchen paper']) {
+      await expect(ring(page, title)).toHaveCSS('border-top-color', 'rgb(142, 142, 147)');
+    }
+    const label = (title: string) => meta(page, title).locator('[data-rag]');
+    await expect(label('Heaters not working')).toHaveText('Urgent');
+    await expect(label('Heaters not working')).toHaveCSS('color', 'rgb(215, 0, 21)');
+    await expect(label('Mirror lights not level')).toHaveText('Within the month');
+    await expect(label('Mirror lights not level')).toHaveCSS('color', 'rgb(201, 52, 0)');
+    await expect(label('Kitchen paper')).toHaveText('Not urgent');
+    await expect(label('Kitchen paper')).toHaveCSS('color', 'rgb(110, 110, 115)');
   });
 
   test('tapping a ring completes the item, with Undo', async ({ page }) => {
     await ring(page, 'Mirror lights not level').click();
     await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
-    await expect(area(page, 'Living Room').getByText('Nothing to do')).toBeVisible();
+    await expect(area(page, 'Living Room').getByText('All clear')).toBeVisible();
     const done = toast(page, 'Marked as done');
     await expect(done).toBeVisible();
 
     await done.getByRole('button', { name: 'Undo' }).click();
     await expect(ring(page, 'Mirror lights not level')).toBeVisible();
-    await expect(meta(page, 'Mirror lights not level')).toHaveText('Unassigned · Tue 20 Oct');
-    await expect(area(page, 'Living Room').getByText('Nothing to do')).toHaveCount(0);
+    await expect(meta(page, 'Mirror lights not level')).toHaveText('Within the monthIn 12 days');
+    await expect(area(page, 'Living Room').getByText('All clear')).toHaveCount(0);
     await expect(done).toHaveCount(0);
+  });
+
+  test('a ticked row is struck through for a moment, then folds away', async ({ page }) => {
+    const item = row(page, 'Mirror lights not level');
+    await ring(page, 'Mirror lights not level').click();
+    await expect(item).toHaveAttribute('data-completing');
+    await expect(item.locator('[data-item-open] > span > span').first()).toHaveCSS('text-decoration-line', 'line-through');
+    await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
   });
 
   test('Ctrl+Z undoes a completion from the keyboard', async ({ page }) => {
@@ -151,7 +186,7 @@ test.describe('Home', () => {
           await new Promise((resolve) => setTimeout(resolve, 12));
           ringFor(b)!.click();
         }, [a, b]);
-        await page.waitForTimeout(1_000);
+        await page.waitForTimeout(1_200);
         // Checked once, without waiting: a stale load would have put a row back by now.
         expect(await ring(page, a).count(), `round ${round}: ${a}`).toBe(0);
         expect(await ring(page, b).count(), `round ${round}: ${b}`).toBe(0);
@@ -172,10 +207,11 @@ test.describe('Home', () => {
     await expect(ring(page, 'Water test strips running low')).toHaveCount(0);
   });
 
-  test('completing a missed item removes it', async ({ page }) => {
+  test('completing a late item removes it, and its room says All clear', async ({ page }) => {
+    await expect(area(page, 'Hallway').getByText('1 late', { exact: true })).toBeVisible();
     await ring(page, 'Heaters not working').click();
     await expect(ring(page, 'Heaters not working')).toHaveCount(0);
-    await expect(area(page, 'Hallway').getByText('Nothing to do')).toBeVisible();
+    await expect(area(page, 'Hallway').getByText('All clear')).toBeVisible();
   });
 
   test('a repeating item moves its date instead of disappearing', async ({ page }) => {
@@ -183,12 +219,12 @@ test.describe('Home', () => {
     await ring(page, 'Kitchen paper').click();
     await expect(toast(page, 'Done. Next due Sat 5 Dec')).toBeVisible();
     await expect(ring(page, 'Kitchen paper')).toBeVisible();
-    await expect(meta(page, 'Kitchen paper')).toHaveText('🦔 Stratis · Sat 5 Dec');
+    await expect(meta(page, 'Kitchen paper')).toHaveText('Not urgent·In 8 weeks');
     // Re-sorted: Olive oil (12 Nov) is now first.
     expect(await titlesIn(page, 'Kitchen')).toEqual(['Olive oil', 'Kitchen paper']);
 
     await toast(page, 'Done. Next due Sat 5 Dec').getByRole('button', { name: 'Undo' }).click();
-    await expect(meta(page, 'Kitchen paper')).toHaveText('🦔 Stratis · Thu 5 Nov');
+    await expect(meta(page, 'Kitchen paper')).toHaveText('Not urgent·In 4 weeks');
     expect(await titlesIn(page, 'Kitchen')).toEqual(['Kitchen paper', 'Olive oil']);
   });
 
@@ -197,10 +233,11 @@ test.describe('Home', () => {
     const sheet = await openItem(page, 'Change the filter');
     await sheet.getByLabel('Due', { exact: true }).fill('2026-09-01');
     await sheet.getByRole('button', { name: 'Save' }).click();
-    await expect(meta(page, 'Change the filter')).toHaveText('🦆 Shea · Missed · Tue 1 Sep');
+    await expect(meta(page, 'Change the filter')).toHaveText('Not urgent·37 days late');
 
     await ring(page, 'Change the filter').click();
-    await expect(meta(page, 'Change the filter')).toHaveText('🦆 Shea · Sun 8 Nov');
+    await expect(toast(page, 'Done. Next due Sun 8 Nov')).toBeVisible();
+    await expect(meta(page, 'Change the filter')).toHaveText('Not urgent·In 4 weeks');
   });
 
   test('a repeating item without a due date gets one, an interval from today', async ({ page }) => {
@@ -208,18 +245,19 @@ test.describe('Home', () => {
     const sheet = await openItem(page, 'Trim the hedges');
     await sheet.getByLabel('Due', { exact: true }).fill('');
     await sheet.getByRole('button', { name: 'Save' }).click();
-    await expect(meta(page, 'Trim the hedges')).toHaveText('Unassigned');
+    await expect(meta(page, 'Trim the hedges')).toHaveText('Not urgent');
     await ring(page, 'Trim the hedges').click();
     // Next year's dates carry the year.
-    await expect(meta(page, 'Trim the hedges')).toHaveText('Unassigned · Fri 8 Jan 2027');
+    await expect(toast(page, 'Done. Next due Fri 8 Jan 2027')).toBeVisible();
+    await expect(meta(page, 'Trim the hedges')).toHaveText('Not urgent·In 3 months');
   });
 
   test('a quick double tap on a repeating ring completes it once', async ({ page }) => {
     await ring(page, 'Change the filter').dblclick();
-    await expect(meta(page, 'Change the filter')).toHaveText('🦆 Shea · Fri 20 Nov');
+    await expect(meta(page, 'Change the filter')).toHaveText('Not urgent·In 6 weeks');
     // Give a second completion time to land, then check it did not.
     await page.waitForTimeout(1_000);
-    await expect(meta(page, 'Change the filter')).toHaveText('🦆 Shea · Fri 20 Nov');
+    await expect(meta(page, 'Change the filter')).toHaveText('Not urgent·In 6 weeks');
   });
 
   test('tapping a row (not the ring) opens the Item sheet', async ({ page }) => {
@@ -234,6 +272,68 @@ test.describe('Home', () => {
     await expect(avatar).toHaveText('🦔');
     await avatar.click();
     await expect(page.getByRole('dialog', { name: 'Profile' })).toBeVisible();
+  });
+});
+
+test.describe('Up next', () => {
+  test.beforeEach(async ({ page }) => {
+    await showView(page, 'Up next');
+  });
+
+  test('is what Home opens on: one sentence, then what needs attention, today, the next 7 days and later', async ({ page }) => {
+    await openSeeded(page, 'Up next');
+    await expect(views(page).getByRole('radio', { name: 'Up next' })).toHaveAttribute('aria-checked', 'true');
+    await expect(summary(page)).toHaveText('2 things need attention and 1 is due today. Everything else can wait.');
+    const titles = (id: 'attention' | 'today' | 'week' | 'later') =>
+      group(page, id)
+        .locator('[data-item-open]')
+        .evaluateAll((els) => els.map((el) => el.textContent!.split(',')[0].trim()));
+    await expect(group(page, 'attention').getByRole('heading', { level: 2 })).toHaveText('Needs attention');
+    expect(await titles('attention')).toEqual(['Heaters not working', 'Clear the gutters']);
+    expect(await titles('today')).toEqual(['Empty the dehumidifier']);
+    // In date order: in 2 days, in 4, in 6 (most urgent first on one day), in 7.
+    expect(await titles('week')).toEqual([
+      'Water the plants',
+      'Water test strips running low',
+      'Shower draining slowly',
+      'Cover the garden furniture',
+      'Put the bins out',
+      'Give away the old firepit',
+    ]);
+    // Later: three, then the rest behind "Show 6 more".
+    expect(await titles('later')).toHaveLength(3);
+    const more = group(page, 'later').getByRole('button', { name: 'Show 6 more' });
+    await expect(more).toHaveAttribute('aria-expanded', 'false');
+    await more.click();
+    expect(await titles('later')).toHaveLength(9);
+    // Each row says its room, as the list mixes rooms.
+    await expect(group(page, 'attention').locator('[data-room]').first()).toHaveText('Hallway');
+    // The firepit is looked after and in good shape: at the foot, out of the way.
+    await expect(group(page, 'looking').getByRole('button', { name: /^Firepit ?, to maintain, Good, Garden, Ela/ })).toBeVisible();
+  });
+
+  test('the late and urgent jobs are on the first screen', async ({ page }) => {
+    await expect(summary(page)).toBeInViewport();
+    for (const title of ['Heaters not working', 'Clear the gutters']) {
+      await expect(group(page, 'attention').getByRole('button', { name: `Mark ${title} as done` })).toBeInViewport({ ratio: 1 });
+    }
+  });
+
+  test('a ticked row leaves the list and the sentence follows', async ({ page }) => {
+    await group(page, 'today').getByRole('button', { name: 'Mark Empty the dehumidifier as done' }).click();
+    await expect(group(page, 'today')).toHaveCount(0);
+    await expect(summary(page)).toHaveText('2 things need attention. Everything else can wait.');
+    // Weekly: it comes round again in a week.
+    await expect(group(page, 'week').locator('[data-item-open]').filter({ hasText: 'Empty the dehumidifier' })).toHaveCount(1);
+  });
+
+  test('Mine shows only your items in one tap, and the sentence says whose they are', async ({ page }) => {
+    await mine(page).click();
+    await expect(mine(page)).toHaveAttribute('aria-pressed', 'true');
+    await expect(summary(page)).toHaveText('For you, nothing urgent today. Next up: Put the bins out, in 6 days.');
+    await expect(homeScreen(page).locator('[data-who]')).toHaveCount(0);
+    await mine(page).click();
+    await expect(summary(page)).toHaveText('2 things need attention and 1 is due today. Everything else can wait.');
   });
 });
 
@@ -261,10 +361,10 @@ test.describe('Without areas', () => {
 });
 
 test.describe('Confetti and motion', () => {
-  test('a ring tap fires 36 hedgehogs and ducks from the ring, gone after ~3s', async ({ page }) => {
+  test('a ring tap fires 14 hedgehogs and ducks from the ring, gone after ~3s', async ({ page }) => {
     const particles = page.locator('[data-confetti] img');
     await ring(page, 'Olive oil').click();
-    await expect(particles).toHaveCount(36);
+    await expect(particles).toHaveCount(14);
     // The scene's own drawings (green duck, brown hedgehog), not emoji.
     const kinds = await particles.evaluateAll((els) =>
       els.map((el) => [el.getAttribute('data-animal'), el.getAttribute('alt'), (el as HTMLImageElement).src.startsWith('data:image/svg+xml')]),
@@ -283,7 +383,7 @@ test.describe('Confetti and motion', () => {
   test('Mark as Done fires the confetti too', async ({ page }) => {
     const sheet = await openItem(page, 'Olive oil');
     await sheet.getByRole('button', { name: 'Mark as Done' }).click();
-    await expect(page.locator('[data-confetti] img')).toHaveCount(36);
+    await expect(page.locator('[data-confetti] img')).toHaveCount(14);
   });
 
   test.describe('with Reduce Motion', () => {
@@ -381,20 +481,20 @@ test.describe('Hero', () => {
 });
 
 test.describe('Long text', () => {
-  test('a long note is cut off at the end of its one line on Home', async ({ page }) => {
+  test('a long title wraps to two lines at most; a long note is only a glyph on Home', async ({ page }) => {
+    const long = 'Olive oil, and the big tin of tomatoes, and the rice, and the lentils for the soup next week';
     const sheet = await openItem(page, 'Olive oil');
-    await sheet.getByLabel('Note', { exact: true }).fill(
-      'Restocked, 5L tin is in the pantry. ' .repeat(8).trim(),
-    );
+    await sheet.getByLabel('Title', { exact: true }).fill(long);
+    await sheet.getByLabel('Note', { exact: true }).fill('Restocked, 5L tin is in the pantry. '.repeat(8).trim());
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
-    const line = rowButton(page, 'Olive oil').locator(':scope > span').nth(1);
-    await expect(line).toContainText('Restocked, 5L tin');
-    const box = (await line.boundingBox())!;
-    expect(box.height).toBeLessThanOrEqual(19);
-    await expect(line.locator(':scope > span').last()).toHaveCSS('text-overflow', 'ellipsis');
-    // The whole row stays two lines tall.
-    expect((await rowButton(page, 'Olive oil').boundingBox())!.height).toBeLessThan(62);
+    const button = rowButton(page, long);
+    await expect(button).not.toContainText('Restocked, 5L tin');
+    const title = button.locator(':scope > span > span').first();
+    // Two lines of 22px at most, cut with an ellipsis.
+    expect((await title.boundingBox())!.height).toBeLessThanOrEqual(44);
+    await expect(title).toHaveCSS('-webkit-line-clamp', '2');
+    // The row: two title lines and the quiet line.
+    expect((await button.boundingBox())!.height).toBeLessThan(96);
   });
 });
-

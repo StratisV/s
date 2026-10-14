@@ -1,6 +1,7 @@
 import {
   addButton,
   area,
+  chooseWho,
   confirmation,
   DEMO_STORAGE_KEY,
   expect,
@@ -8,7 +9,10 @@ import {
   itemSheet,
   openItem,
   openProfile,
+  openRoomMenu,
   openSeeded,
+  peopleButton,
+  roomMenu,
   settled,
   test,
   toast,
@@ -49,8 +53,9 @@ async function ids(page: Page): Promise<{ item(title: string): string; area(name
 }
 
 /**
- * Edits the stored demo household, then reopens the app: renames areas (`from` → `to`) and
- * gives each renamed area one more red, amber and green item when `allThree` is set.
+ * Edits the stored demo household, then reopens the app: renames areas (`from` to `to`) and
+ * gives each renamed area one more urgent, within-the-month and not-urgent item when
+ * `allThree` is set.
  */
 async function reshapeAreas(page: Page, renames: Record<string, string>, allThree = false): Promise<void> {
   await page.evaluate(
@@ -71,10 +76,10 @@ async function reshapeAreas(page: Page, renames: Record<string, string>, allThre
   await expect(homeScreen(page).getByRole('heading', { name: 'Home', level: 1 })).toBeVisible();
 }
 
-/** Lines an area name takes, and whether any word is broken across two of them. */
+/** Lines a room's name takes, and whether any word is broken across two of them. */
 async function nameLines(page: Page, name: string): Promise<{ lines: number; brokenWord: boolean }> {
   return area(page, name)
-    .getByRole('button', { name, exact: true })
+    .getByRole('heading', { level: 2 })
     .evaluate((button) => {
       const range = document.createRange();
       const walker = document.createTreeWalker(button, NodeFilter.SHOW_TEXT);
@@ -119,7 +124,7 @@ test.describe('Sharing an item', () => {
       title: 'Heaters not working',
       text: [
         'Heaters not working',
-        'Hallway · Red · Missed · Tue 6 Oct',
+        'Hallway · Urgent · Missed · Tue 6 Oct',
         'Assigned to Shea',
         'No heat since the weekend. Engineer needs booking.',
         '',
@@ -134,9 +139,9 @@ test.describe('Sharing an item', () => {
   test('a To maintain item carries what good looks like', async ({ page }) => {
     await stubShareSheet(page);
     await openSeeded(page);
-    // A To maintain row has no ring: its button is named "Firepit, Green, to maintain. …" (Chromium
-    // puts a space before the comma).
-    await homeScreen(page).getByRole('button', { name: /^Firepit ?, Green, to maintain\./ }).click();
+    // A To maintain row has no ring: its button is named "Firepit, to maintain, Good, ..."
+    // (Chromium puts a space before the comma).
+    await homeScreen(page).getByRole('button', { name: /^Firepit ?, to maintain, Good,/ }).click();
     const sheet = itemSheet(page);
     await settled(sheet.getByRole('button', { name: 'Close' }));
     await sheet.getByRole('button', { name: 'Share item' }).click();
@@ -144,7 +149,7 @@ test.describe('Sharing an item', () => {
     const [{ text }] = await sharedPayloads(page);
     expect(text!.split('\n').slice(0, 5)).toEqual([
       'Firepit',
-      'Garden · Green · Updated Thu 8 Oct',
+      'Garden · Good · Updated Thu 8 Oct',
       'Looked after by Ela',
       "New one installed. Keep the cover on when it's not in use.",
       'What good looks like: Cover on when not in use, ash cleared out, logs dry and stacked under the bench.',
@@ -156,8 +161,8 @@ test.describe('Sharing an item', () => {
     await openSeeded(page);
     const id = (await ids(page)).item('Heaters not working');
     const sheet = await openItem(page, 'Heaters not working');
-    await sheet.getByRole('radiogroup', { name: 'Status' }).getByText('Green', { exact: true }).click();
-    await expect(sheet.getByRole('radio', { name: 'Green' })).toBeChecked();
+    await sheet.getByRole('radiogroup', { name: 'How urgent?' }).getByText('Not urgent', { exact: true }).click();
+    await expect(sheet.getByRole('radio', { name: 'Not urgent' })).toBeChecked();
     await sheet.getByLabel('Title', { exact: true }).fill('Heaters not working (engineer booked Fri)');
     await sheet.getByRole('button', { name: 'Share item' }).click();
     await expect.poll(async () => (await sharedPayloads(page)).length).toBe(1);
@@ -165,7 +170,7 @@ test.describe('Sharing an item', () => {
       title: 'Heaters not working (engineer booked Fri)',
       text: [
         'Heaters not working (engineer booked Fri)',
-        'Hallway · Green · Missed · Tue 6 Oct',
+        'Hallway · Not urgent · Missed · Tue 6 Oct',
         'Assigned to Shea',
         'No heat since the weekend. Engineer needs booking.',
         '',
@@ -197,7 +202,7 @@ test.describe('Sharing an item', () => {
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
       [
         'Olive oil',
-        'Kitchen · Green · Due Thu 12 Nov · Every month',
+        'Kitchen · Not urgent · Due Thu 12 Nov · Every month',
         'Assigned to Stratis',
         'Restocked, 5L tin is in the pantry.',
         '',
@@ -228,160 +233,181 @@ test.describe('Sharing an item', () => {
 });
 
 test.describe('Sharing an area', () => {
-  test('the share button on an area header shares its open items', async ({ page, baseURL }) => {
+  test('Share Room in a room’s menu shares its open items', async ({ page, baseURL }) => {
     await stubShareSheet(page);
     await openSeeded(page);
     const garden = (await ids(page)).area('Garden');
-    await area(page, 'Garden').getByRole('button', { name: 'Share Garden' }).click();
+    await roomMenu(page, 'Garden', 'Share Garden');
     await expect.poll(async () => (await sharedPayloads(page)).length).toBe(1);
     expect((await sharedPayloads(page))[0]).toEqual({
       title: 'Garden',
       text: [
         'Garden (3 items)',
-        '• Give away the old firepit · Green · Due Thu 15 Oct',
-        '• Garden room wall panel · Amber · Due Fri 30 Oct',
-        '• Firepit · Green · Updated Thu 8 Oct',
+        '• Give away the old firepit · Not urgent · Due Thu 15 Oct',
+        '• Garden room wall panel · Within the month · Due Fri 30 Oct',
+        '• Firepit · Good · Updated Thu 8 Oct',
         '',
         `${baseURL}/?area=${garden}`,
       ].join('\n'),
     });
   });
 
-  test('copies where there is no share sheet; an empty area says so', async ({ page, baseURL }) => {
+  test('copies where there is no share sheet; an empty room says so', async ({ page, baseURL }) => {
     await openSeeded(page);
     const small = (await ids(page)).area('Bedroom Small');
-    await area(page, 'Bedroom Small').getByRole('button', { name: 'Share Bedroom Small' }).click();
+    await roomMenu(page, 'Bedroom Small', 'Share Bedroom Small');
     await expect(toast(page, 'Copied to share')).toBeVisible();
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
       `Bedroom Small\nNothing to do\n\n${baseURL}/?area=${small}`,
     );
   });
 
-  test('every header has one, with a 44px tap target between the counts and the +', async ({ page }) => {
+  test('every room’s "..." is a 44px target at the card’s edge, its dots lined up with the rows', async ({ page }) => {
     await openSeeded(page);
-    await expect(homeScreen(page).getByRole('button', { name: /^Share / })).toHaveCount(11);
-    const share = area(page, 'Garden').getByRole('button', { name: 'Share Garden' });
-    await expect(share).toHaveCSS('color', 'rgb(0, 122, 255)');
-    await share.evaluate((el) => el.scrollIntoView({ block: 'center' }));
-    const box = (await share.boundingBox())!;
-    const add = (await area(page, 'Garden').getByRole('button', { name: 'Add item to Garden' }).boundingBox())!;
-    const counts = (await area(page, 'Garden').getByRole('img').boundingBox())!;
+    await expect(homeScreen(page).getByRole('button', { name: / options$/ })).toHaveCount(11);
+    const section = area(page, 'Hallway');
+    const options = section.getByRole('button', { name: 'Hallway options' });
+    await options.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+    const box = (await options.boundingBox())!;
+    expect(box.width).toBe(44);
+    expect(box.height).toBe(44);
+    const card = (await section.locator('[data-room-card]').boundingBox())!;
+    // 4px in from the card's edge, so its dots end where the rows' words do (16px in).
+    expect(card.x + card.width - (box.x + box.width)).toBeCloseTo(4, 0);
+    const dots = (await options.locator('svg').boundingBox())!;
+    const meta = (await section.locator('[data-meta]').first().boundingBox())!;
+    const rowEnd = card.x + card.width - 16;
+    expect(dots.x + dots.width).toBeLessThanOrEqual(rowEnd + 2);
+    expect(dots.x + dots.width).toBeGreaterThan(rowEnd - 4);
+    expect(meta.x + meta.width).toBeLessThanOrEqual(rowEnd + 0.5);
     const cy = box.y + box.height / 2;
+    const status = (await section.locator('[data-toggles]').boundingBox())!;
     const hits = await page.evaluate(
-      (points) => points.map(([x, y]) => document.elementFromPoint(x, y)?.closest('button')?.getAttribute('aria-label')),
+      (points) => points.map(([x, y]) => document.elementFromPoint(x, y)?.closest('button')?.getAttribute('aria-label') ?? null),
       [
+        [box.x + 1, cy],
         [box.x + box.width - 1, cy],
-        [box.x + box.width - 44 + 1, cy],
-        [box.x + box.width / 2, box.y + box.height / 2 - 21],
-        [box.x + box.width / 2, box.y + box.height / 2 + 21],
-        // The +'s own target starts right where Share's ends.
-        [add.x - 7, add.y + add.height / 2],
-        // Share's starts where the counts end: they take no taps.
-        [counts.x + counts.width - 1, cy],
+        [box.x + box.width / 2, box.y + 1],
+        [box.x + box.width / 2, box.y + box.height - 1],
+        // The quiet word before it is no button.
+        [status.x + status.width / 2, cy],
       ] as [number, number][],
     );
-    expect(hits).toEqual(['Share Garden', 'Share Garden', 'Share Garden', 'Share Garden', 'Add item to Garden', undefined]);
-    expect(box.width).toBe(44);
-    expect(box.x).toBeGreaterThanOrEqual(counts.x + counts.width);
+    expect(hits).toEqual(['Hallway options', 'Hallway options', 'Hallway options', 'Hallway options', null]);
+    expect(box.x).toBeGreaterThanOrEqual(status.x + status.width);
+    // The glyph is the quiet grey of the room's other words, not the tint.
+    await expect(options).toHaveCSS('color', 'rgb(110, 110, 115)');
   });
 
   for (const width of [320, 402]) {
-    test(`tapping a count never shares: it opens or closes the area, like the name (${width}px)`, async ({ page }) => {
+    test(`tapping a room’s quiet word never opens its menu: it folds or opens the room, like the name (${width}px)`, async ({ page }) => {
       await page.setViewportSize({ width, height: 800 });
       await stubShareSheet(page);
       await openSeeded(page);
-      for (const name of ['Kitchen', 'Garden']) {
+      // Hallway says "1 late" open or folded; Garden says nothing open, "3 open" folded.
+      for (const name of ['Hallway', 'Garden']) {
         const section = area(page, name);
         const disclosure = section.getByRole('button', { name, exact: true });
         await section.evaluate((el) => el.scrollIntoView({ block: 'center' }));
-        const badges = section.getByRole('img').locator('[data-rag]');
-        expect(await badges.count(), name).toBeGreaterThan(0);
-        for (const badge of await badges.all()) {
-          const b = (await badge.boundingBox())!;
-          // Its left edge, the number, and its right edge (next to Share).
-          for (const x of [b.x + 1, b.x + b.width / 2, b.x + b.width - 1]) {
-            expect(await buttonAt(page, x, b.y + b.height / 2), name).toBeNull();
-            const before = (await disclosure.getAttribute('aria-expanded'))!;
-            await page.touchscreen.tap(x, b.y + b.height / 2);
-            await expect(disclosure, name).toHaveAttribute('aria-expanded', before === 'true' ? 'false' : 'true');
-          }
+        if (name === 'Garden') {
+          await expect(section.locator('[data-toggles]')).toHaveCount(0);
+          await disclosure.click();
+          await expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+          await expect(section.locator('[data-toggles]')).toHaveText('3 open');
+        } else {
+          await expect(section.locator('[data-toggles]')).toHaveText('1 late');
+        }
+        const word = section.locator('[data-toggles]');
+        const b = (await word.boundingBox())!;
+        // Its left edge, its middle and its right edge (next to the "...").
+        for (const x of [b.x + 1, b.x + b.width / 2, b.x + b.width - 1]) {
+          if (!(await word.count())) break;
+          expect(await buttonAt(page, x, b.y + b.height / 2), name).toBeNull();
+          const before = (await disclosure.getAttribute('aria-expanded'))!;
+          await page.touchscreen.tap(x, b.y + b.height / 2);
+          await expect(disclosure, name).toHaveAttribute('aria-expanded', before === 'true' ? 'false' : 'true');
         }
       }
       await page.waitForTimeout(300);
+      await expect(page.getByRole('menu')).toHaveCount(0);
       expect(await sharedPayloads(page)).toEqual([]);
       await expect(toast(page, /./)).toHaveCount(0);
-      // Share itself, tapped at the left end of its target.
-      const share = area(page, 'Garden').getByRole('button', { name: 'Share Garden' });
-      const s = (await share.boundingBox())!;
-      await page.touchscreen.tap(s.x + 2, s.y + s.height / 2);
-      await expect.poll(async () => (await sharedPayloads(page)).length).toBe(1);
+      // The "..." itself, tapped at the left end of its target (once Garden has finished
+      // opening: a menu closes when the page moves it).
+      const options = area(page, 'Hallway').getByRole('button', { name: 'Hallway options' });
+      const menu = page.getByRole('menu', { name: 'Hallway' });
+      await expect(async () => {
+        if (!(await menu.isVisible())) {
+          await options.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+          const o = (await options.boundingBox())!;
+          await page.touchscreen.tap(o.x + 2, o.y + o.height / 2);
+        }
+        await expect(menu).toBeVisible({ timeout: 1_000 });
+      }).toPass();
     });
   }
 
-  test('an area with nothing open: the end of a long name and its chevron still collapse it', async ({ page }) => {
+  test('a room with nothing open: one quiet line, its name a plain heading, its menu still there', async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 700 });
     await stubShareSheet(page);
     await openSeeded(page);
     await reshapeAreas(page, { 'Bedroom Small': 'Downstairs bathroom' });
     const section = area(page, 'Downstairs bathroom');
-    await expect(section.getByRole('img')).toHaveCount(0);
-    const disclosure = section.getByRole('button', { name: 'Downstairs bathroom', exact: true });
-    await disclosure.evaluate((el) => el.scrollIntoView({ block: 'center' }));
-    const chevron = (await disclosure.locator('svg').boundingBox())!;
+    await expect(section).toHaveAttribute('data-empty');
+    // Nothing to fold: no button, no rows.
+    await expect(section.getByRole('button', { name: 'Downstairs bathroom', exact: true })).toHaveCount(0);
+    await expect(section.getByRole('heading', { level: 2, name: 'Downstairs bathroom' })).toBeVisible();
+    await expect(section.getByText('All clear', { exact: true })).toBeVisible();
+    await expect(section.getByRole('listitem')).toHaveCount(0);
     const heading = (await section.getByRole('heading', { level: 2 }).boundingBox())!;
-    const cy = chevron.y + chevron.height / 2;
-    // The chevron, its right edge, and the 8px after the heading all belong to the name.
-    for (const x of [chevron.x + chevron.width / 2, chevron.x + chevron.width - 1, heading.x + heading.width + 6]) {
-      expect(await buttonAt(page, x, cy)).toBe('Downstairs bathroom');
-      const before = (await disclosure.getAttribute('aria-expanded'))!;
-      await page.touchscreen.tap(x, cy);
-      await expect(disclosure).toHaveAttribute('aria-expanded', before === 'true' ? 'false' : 'true');
-    }
-    await page.waitForTimeout(300);
-    expect(await sharedPayloads(page)).toEqual([]);
-    await expect(toast(page, /./)).toHaveCount(0);
-    // Share's target starts there.
-    const share = (await section.getByRole('button', { name: 'Share Downstairs bathroom' }).boundingBox())!;
-    expect(share.x).toBeCloseTo(heading.x + heading.width + 8, 0);
+    expect(await buttonAt(page, heading.x + heading.width / 2, heading.y + heading.height / 2)).toBeNull();
+    // At 320px the long name takes two lines, broken between its words; "All clear" and the
+    // "..." stay beside it.
+    expect(await nameLines(page, 'Downstairs bathroom')).toEqual({ lines: 2, brokenWord: false });
+    const status = (await section.getByText('All clear', { exact: true }).boundingBox())!;
+    const options = (await section.getByRole('button', { name: 'Downstairs bathroom options' }).boundingBox())!;
+    expect(heading.x + heading.width).toBeLessThanOrEqual(status.x);
+    expect(status.x + status.width).toBeLessThanOrEqual(options.x);
+    expect(options.x + options.width).toBeLessThanOrEqual(320 - 16);
+    const menu = await openRoomMenu(page, 'Downstairs bathroom');
+    await menu.getByRole('menuitem', { name: 'Share Downstairs bathroom' }).click();
+    await expect.poll(async () => (await sharedPayloads(page)).length).toBe(1);
   });
 
   for (const [width, lines] of [
     [320, { 'Children’s Bedroom': 2, 'Utility Room Upstairs': 2 }],
-    [402, { 'Children’s Bedroom': 1, 'Utility Room Upstairs': 2 }],
+    [402, { 'Children’s Bedroom': 1, 'Utility Room Upstairs': 1 }],
   ] as const) {
-    test(`long names with all three counts break only between words (${width}px)`, async ({ page }) => {
+    test(`long names break only between words, with the quiet word and "..." after (${width}px)`, async ({ page }) => {
       await page.setViewportSize({ width, height: 800 });
       await openSeeded(page);
       await reshapeAreas(page, { Kitchen: 'Children’s Bedroom', 'Living Room': 'Utility Room Upstairs' }, true);
       for (const [name, expected] of Object.entries(lines)) {
         const section = area(page, name);
-        await expect(section.getByRole('img').locator('[data-rag]')).toHaveCount(3);
+        await expect(section.locator('[data-toggles]'), name).toHaveText('1 urgent');
         expect(await nameLines(page, name), name).toEqual({ lines: expected, brokenWord: false });
         const heading = (await section.getByRole('heading', { level: 2 }).boundingBox())!;
-        const counts = (await section.getByRole('img').boundingBox())!;
-        const share = (await section.getByRole('button', { name: `Share ${name}` }).boundingBox())!;
-        const add = (await section.getByRole('button', { name: `Add item to ${name}` }).boundingBox())!;
-        expect(heading.x + heading.width, name).toBeLessThanOrEqual(counts.x);
-        expect(counts.x + counts.width, name).toBeLessThanOrEqual(share.x);
-        expect(share.x + share.width, name).toBeLessThan(add.x);
-        expect(add.x + add.width, name).toBeLessThanOrEqual(width - 16);
+        const status = (await section.locator('[data-toggles]').boundingBox())!;
+        const options = (await section.getByRole('button', { name: `${name} options` }).boundingBox())!;
+        expect(heading.x + heading.width, name).toBeLessThanOrEqual(status.x);
+        expect(status.x + status.width, name).toBeLessThanOrEqual(options.x);
+        expect(options.x + options.width, name).toBeLessThanOrEqual(width - 16);
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
     });
   }
 
-  test('at 320px every header fits: name on one line, then counts, Share and +', async ({ page }) => {
+  test('at 320px every room’s header fits: name on one line, then its word and "..."', async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 700 });
     await openSeeded(page);
-    for (const name of ['Kitchen', 'Bathroom Small', 'Bathroom Large', 'Garden Lounge', 'Garden', 'Front garden']) {
+    for (const name of ['Kitchen', 'Bathroom Small', 'Bathroom Large', 'Garden Lounge', 'Garden', 'Front garden', 'Hallway']) {
       const section = area(page, name);
+      expect(await nameLines(page, name), name).toEqual({ lines: 1, brokenWord: false });
       const heading = (await section.getByRole('heading', { level: 2 }).boundingBox())!;
-      const share = (await section.getByRole('button', { name: `Share ${name}` }).boundingBox())!;
-      const add = (await section.getByRole('button', { name: `Add item to ${name}` }).boundingBox())!;
-      expect(heading.height, name).toBeLessThanOrEqual(26);
-      expect(heading.x + heading.width, name).toBeLessThanOrEqual(share.x);
-      expect(share.x + share.width, name).toBeLessThan(add.x);
-      expect(add.x + add.width, name).toBeLessThanOrEqual(320 - 16);
+      const options = (await section.getByRole('button', { name: `${name} options` }).boundingBox())!;
+      expect(heading.height, name).toBeLessThanOrEqual(44);
+      expect(heading.x + heading.width, name).toBeLessThanOrEqual(options.x);
+      expect(options.x + options.width, name).toBeLessThanOrEqual(320 - 16);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
   });
@@ -435,12 +461,11 @@ test.describe('Opening a shared link', () => {
   test('?area= for an area the person filter hides shows everyone’s items', async ({ page }) => {
     await openSeeded(page);
     const hallway = (await ids(page)).area('Hallway');
-    const filter = homeScreen(page).getByRole('radiogroup', { name: 'Show tasks for' });
     // Hallway's only item is Shea's.
-    await filter.getByRole('radio', { name: /^Unassigned,/ }).click();
+    await chooseWho(page, /^Unassigned,/);
     await expect(area(page, 'Hallway')).toHaveCount(0);
     await page.goto(`/?area=${hallway}`);
-    await expect(filter.getByRole('radio', { name: /^Everyone,/ })).toHaveAttribute('aria-checked', 'true');
+    await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Everyone');
     await expect(area(page, 'Hallway')).toHaveAttribute('data-linked');
     await expect(page.getByRole('button', { name: 'Mark Heaters not working as done' })).toBeInViewport();
     await expect(area(page, 'Hallway').getByRole('button', { name: 'Hallway', exact: true })).toBeFocused();

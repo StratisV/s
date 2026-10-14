@@ -1,7 +1,9 @@
 import { expect, type APIRequestContext, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test';
 import { API_HEADER, API_HEADER_VALUE, API_PATH } from '../src/lib/backend/serverApi';
+import { ragWord } from '../src/lib/constants';
 import { USER_DEMO_DOC } from '../src/lib/logic/importHome.fixture';
-import type { HouseholdData } from '../src/lib/types';
+import { relativeDue } from '../src/lib/logic/upNext';
+import type { HouseholdData, Rag } from '../src/lib/types';
 
 // Helpers for the server-mode e2e suite (playwright.server.config.ts; docs/ARCHITECTURE.md
 // "Server mode (no setup)", "Local server and tests"). Each person is their own browser
@@ -19,6 +21,9 @@ export const SYNC_MS = 5_000;
 
 /** Where the demo backend keeps the phone's home. */
 export const DEMO_DOC_KEY = 'homeos.demo.v1';
+
+/** Where a phone remembers Home's view (src/screens/home/HomeScreen.tsx HOME_VIEW_KEY). */
+export const HOME_VIEW_KEY = 'homeos.homeView';
 
 /** The user's home as their phone kept it in demo mode (Stratis, Shea, Ela; 6 areas, 19 open items). */
 export const PHONE_DOC = USER_DEMO_DOC;
@@ -88,6 +93,11 @@ export interface DeviceOptions {
   signIn?: { setup: string } | { code: string };
   /** Where the app opens (a link). */
   path?: string;
+  /**
+   * Home's view on this phone (default Rooms: these tests follow rooms and their rows; Up next,
+   * Home's own default, is e2e/home.spec.ts's).
+   */
+  homeView?: 'Up next' | 'Rooms' | 'Calendar';
   viewport?: { width: number; height: number };
   /** The browser's user agent (an iPhone's Safari, say); default Chromium's. */
   userAgent?: string;
@@ -102,6 +112,14 @@ export interface DeviceOptions {
 /** Safari on an iPhone, as a ?code= link from Messages opens it. */
 export const IPHONE_SAFARI_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+
+/** What the phone keeps in localStorage before the app loads: `opts.localStorage` and Home's view. */
+function storedFor(opts: DeviceOptions): Record<string, string> {
+  const view = opts.homeView ?? 'Rooms';
+  const stored = { ...opts.localStorage };
+  if (view !== 'Up next') stored[HOME_VIEW_KEY] = view === 'Rooms' ? 'rooms' : 'calendar';
+  return stored;
+}
 
 /**
  * A phone: a fresh browser context (its own cookies and storage), opened at `path`. With
@@ -120,7 +138,7 @@ export async function openDevice(browser: Browser, baseURL: string, opts: Device
     ...(opts.userAgent ? { userAgent: opts.userAgent } : {}),
     storageState: {
       cookies: [],
-      origins: [{ origin, localStorage: Object.entries(opts.localStorage ?? {}).map(([name, value]) => ({ name, value })) }],
+      origins: [{ origin, localStorage: Object.entries(storedFor(opts)).map(([name, value]) => ({ name, value })) }],
     },
   });
   if (opts.inUse !== false) {
@@ -170,7 +188,7 @@ export async function stratisAndShea(browser: Browser, baseURL: string): Promise
   const shea = await openDevice(browser, baseURL, { signIn: { code: await codeFor(stratis.context, 'Shea') } });
   await expect(homeHeading(shea.page)).toBeVisible();
   // Stratis's phone hears that she joined.
-  await expect(chips(stratis.page).getByRole('radio', { name: /^Shea, \d+ items?$/ })).toBeVisible({ timeout: SYNC_MS });
+  await expectPerson(stratis.page, /^Shea, \d+ items?$/, SYNC_MS);
   return { stratis, shea };
 }
 
@@ -235,9 +253,15 @@ export function areaHeadings(page: Page): Locator {
   return areas(page).getByRole('heading', { level: 2 });
 }
 
-/** The part of a Home row that opens the Item sheet ("<title>, <Red|Amber|Green>." then the meta line). */
+/** The words for how urgent a To do is, and for the condition of a thing looked after. */
+const RAG_WORDS = 'Urgent|Within the month|Not urgent|Needs work|Okay|Good';
+
+/**
+ * The part of a Home row that opens the Item sheet, named "<title>, <how urgent>, ..." or
+ * "<title>, to maintain, <condition>, ..." (Chromium puts a space before the first comma).
+ */
 export function itemButton(scope: Locator, title: string): Locator {
-  return scope.getByRole('button', { name: new RegExp(`^${escapeRe(title)} ?, (Red|Amber|Green)(, to maintain)?\\.`) });
+  return scope.getByRole('button', { name: new RegExp(`^${escapeRe(title)} ?, (to maintain, )?(${RAG_WORDS}),`) });
 }
 
 export function rowFor(page: Page, title: string, areaName: string): Locator {
@@ -249,9 +273,23 @@ export function ring(scope: Locator, title: string): Locator {
   return scope.getByRole('button', { name: `Mark ${title} as done`, exact: true });
 }
 
-/** The meta line of a row: `🦔 Shea · Tue 20 Oct`. */
+/** The quiet line under a row's title: `Not urgent·In 6 days`, how urgent in words and when. */
 export function meta(scope: Locator, title: string): Locator {
   return itemButton(scope, title).locator('[data-meta]');
+}
+
+/** Who a row is for, at the end of its title's line: `🦔Shea` (none when nobody has it). */
+export function who(scope: Locator, title: string): Locator {
+  return itemButton(scope, title).locator('[data-who]');
+}
+
+/**
+ * A To do row's quiet line as Home shows it today: its urgency in words, then when it is due
+ * ("Not urgent·In 6 days", "Urgent2 days late": a quiet word takes a dot after it, a coloured
+ * one is a pill).
+ */
+export function taskMeta(rag: Rag, due: string): string {
+  return `${ragWord('task', rag)}${rag === 'green' ? '·' : ''}${relativeDue(due, londonDate())!.text}`;
 }
 
 export function tabs(page: Page): Locator {
@@ -266,8 +304,58 @@ export async function goToTab(page: Page, name: 'Home' | 'Chat' | 'Housekeeping'
   await expect(tab).toHaveAttribute('aria-current', 'page');
 }
 
-export function chips(page: Page): Locator {
-  return homeScreen(page).getByRole('radiogroup', { name: 'Show tasks for' });
+/** Home's people menu button, "Show tasks for: Everyone" (or whoever is chosen). */
+export function peopleButton(page: Page): Locator {
+  return homeScreen(page).getByRole('button', { name: /^Show tasks for: / });
+}
+
+/** Mine: one tap for only your items. */
+export function mine(page: Page): Locator {
+  return homeScreen(page).getByRole('button', { name: 'Mine', exact: true });
+}
+
+/** Opens Home's people menu (if it isn't open); resolves to it. */
+export async function peopleMenu(page: Page): Promise<Locator> {
+  const menu = page.getByRole('menu', { name: 'Show tasks for' });
+  if (!(await menu.isVisible())) await peopleButton(page).click();
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
+/**
+ * Someone in Home's people menu, named as VoiceOver hears them ("Shea, 3 items", "Kim, 0 items,
+ * not joined yet"), within `timeout` (another phone's change takes a poll); then the menu closes.
+ */
+export async function expectPerson(page: Page, name: string | RegExp, timeout?: number): Promise<void> {
+  const menu = await peopleMenu(page);
+  try {
+    await expect(menu.getByRole('menuitemradio', { name, exact: typeof name === 'string' })).toBeVisible({ timeout });
+  } finally {
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+  }
+}
+
+/** Chooses whose items Home shows from the people menu. */
+export async function chooseWho(page: Page, name: string | RegExp): Promise<void> {
+  const menu = await peopleMenu(page);
+  await menu.getByRole('menuitemradio', { name, exact: typeof name === 'string' }).click();
+  await expect(menu).toHaveCount(0);
+}
+
+/** The labels of everyone in the people menu, top to bottom; then the menu closes. */
+export async function peopleInMenu(page: Page): Promise<string[]> {
+  const menu = await peopleMenu(page);
+  const labels = await menu.getByRole('menuitemradio').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label') ?? ''));
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  return labels;
+}
+
+/** Opens every room's "Show N more", so all of its rows show. */
+export async function showAllRows(page: Page): Promise<void> {
+  const more = areas(page).getByRole('button', { name: /^Show \d+ more$/ });
+  while ((await more.count()) > 0) await more.first().click();
 }
 
 export function itemSheet(page: Page, kind: 'Edit item' | 'New item' = 'Edit item'): Locator {

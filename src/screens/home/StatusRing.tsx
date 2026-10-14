@@ -23,12 +23,12 @@ export function StatusRing({ done, label, onClick }: StatusRingProps) {
   );
 }
 
-/** How many of the gauge's three bars a condition fills: Good all three, Fair two, Poor one. */
+/** How many of the gauge's three bars a condition fills: Good all three, Okay two, Needs work one. */
 const FILLED: Record<Rag, number> = { green: 3, amber: 2, red: 1 };
 
 /**
  * A To maintain item's condition as a gauge of three bars, filled in its colour: Good fills
- * all three, Fair two, Poor one. A thing that is looked after is never "done", so it never
+ * all three, Okay two, Needs work one. A thing that is looked after is never "done", so it never
  * gets a ring. `row`: rising bars in the ring's place on a row; `tile`: a flat bar of three
  * segments. Decorative: the row or tile says the condition in words.
  */

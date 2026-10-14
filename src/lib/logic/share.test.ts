@@ -292,7 +292,7 @@ describe('areaShareMessage', () => {
         '• Kitchen paper · Not urgent · Due Thu 5 Nov',
         '• Olive oil · Not urgent · Due Fri 13 Nov',
         '• Dripping tap · Within the month',
-        '• Fridge · Fair · Updated Tue 6 Oct',
+        '• Fridge · Okay · Updated Tue 6 Oct',
         '',
         'https://home.example/?area=a-kitchen',
       ].join('\n'),

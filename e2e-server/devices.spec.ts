@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
-  chips,
+  expectPerson,
   closeProfile,
   codeField,
   codeFor,
@@ -66,7 +66,7 @@ test('Add another device signs a second phone in as Stratis; removing it from th
   await welcome(b).getByRole('button', { name: 'Join' }).click();
   await expect(homeHeading(b)).toBeVisible();
   await expect(b.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🦆');
-  await expect(chips(b).getByRole('radio', { name: /^Stratis \(you\),/ })).toBeVisible();
+  await expectPerson(b, /^Stratis \(you\),/);
   expect(await devicesOf(phone.context)).toHaveLength(2);
 
   // On the phone, Stratis's page lists both, this one first said to be this device.
@@ -130,7 +130,7 @@ test('Sign Out forgets this device; it needs a new code to get back in', async (
   await welcome(b).getByRole('button', { name: 'Join' }).click();
   // She had joined already: straight to Home, as Shea.
   await expect(homeHeading(b)).toBeVisible();
-  await expect(chips(b).getByRole('radio', { name: /^Shea \(you\),/ })).toBeVisible();
+  await expectPerson(b, /^Shea \(you\),/);
   await expect(devices.getByRole('button', { name: /^Remove / })).toHaveCount(0);
   await expectNoReload(stratis);
   await stratis.context.close();

@@ -132,6 +132,28 @@
   transition: transform 0.12s ease;
 }
 
+/* Adding to a room (opened from a shared link): a capsule that says which, "+ Garden". */
+.add[data-room] {
+  width: auto;
+  max-width: calc(100% - 32px);
+  padding: 0 24px 0 19px;
+  border-radius: 31px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.addRoom {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+}
+
 /* Back from Chat or Housekeeping: the button pops in. */
 .add[data-enter] {
   animation: add-in 0.3s var(--sheet-ease);

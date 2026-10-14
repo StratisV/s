@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { weekName, weekTitle, type CalendarView } from '../lib/logic/calendar';
+import { monthHeading, weekHeading, weekName, weekTitle, type CalendarView } from '../lib/logic/calendar';
 import { monthOf, weekOf, type YearMonth } from '../lib/logic/months';
 import type { ISODate } from '../lib/types';
 import { MonthCalendar, type DayData } from './MonthCalendar';
@@ -141,6 +141,12 @@ interface DatePickerProps {
   dayData?(date: ISODate): DayData;
   /** Under the month's grid, in the month (Home: what the marks mean). */
   legend?: ReactNode;
+  /**
+   * Home's calendar: a visible heading on the bar, relative ("This week", "In 8 weeks",
+   * "Next month"), with Today and Show month beside it on the right. The heading is an h2
+   * with this id, which names the calendar's section.
+   */
+  headingId?: string;
 }
 
 /**
@@ -169,6 +175,7 @@ export function DatePicker({
   marks,
   dayData,
   legend,
+  headingId,
 }: DatePickerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const todayRef = useRef<HTMLButtonElement>(null);
@@ -210,12 +217,17 @@ export function DatePicker({
 
   return (
     <div ref={rootRef}>
-      <div className={styles.bar} data-calendar-bar="">
+      <div className={styles.bar} data-calendar-bar="" data-headed={headingId ? '' : undefined}>
+        {headingId ? (
+          <h2 id={headingId} className={styles.heading} data-calendar-heading="">
+            {view === 'week' ? weekHeading(chosen.week, today) : monthHeading(chosen.month, today)}
+          </h2>
+        ) : null}
         {!todayShown || chosen.selected !== today ? (
           <button ref={todayRef} type="button" className={styles.barAction} onClick={goToday}>
             Today
           </button>
-        ) : line ? (
+        ) : line && !headingId ? (
           <p className={styles.line} data-today-summary="">
             {line}
           </p>

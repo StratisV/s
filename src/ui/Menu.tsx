@@ -22,6 +22,8 @@ export interface MenuItem {
   icon?: ReactNode;
   /** Quiet text at the trailing edge (a count). */
   detail?: string;
+  /** A second, quieter line under the label ("Not joined yet"). */
+  note?: string;
   /** The spoken name, when the visible text is not enough ("Shea, 6 items"). */
   ariaLabel?: string;
   /** A choice (menuitemradio): a check shows on the chosen one. */
@@ -44,6 +46,8 @@ export interface MenuTriggerProps {
 interface MenuProps {
   /** The menu's accessible name. */
   label: string;
+  /** A small grey title over the items, as iOS menus have ("Show tasks for"). It names the menu too. */
+  title?: string;
   items: MenuItem[];
   /** Renders the button that opens it. */
   children(trigger: MenuTriggerProps): ReactNode;
@@ -64,15 +68,16 @@ const GAP = 8;
  * focuses the chosen item (or the first); the arrow keys, Home and End move; Enter or Space
  * chooses; Escape or Tab closes it and focus goes back to the button. Choosing an item closes
  * it, puts focus back on the button, then runs the item (so a sheet it opens returns focus
- * there). A tap outside, a scroll or a resize closes it.
+ * there). A tap outside, a scroll that moves its button or a resize closes it.
  */
-export function Menu({ label, items, children }: MenuProps) {
+export function Menu({ label, title, items, children }: MenuProps) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [place, setPlace] = useState<{ left: number; top: number; origin: string } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
+  const titleId = useId();
   const focusFirst = useRef<'chosen' | 'last'>('chosen');
 
   const close = useCallback((returnFocus: boolean) => {
@@ -119,11 +124,16 @@ export function Menu({ label, items, children }: MenuProps) {
     target?.focus({ preventScroll: true });
   }, [open, place]);
 
-  // A scroll or a resize leaves it behind: close it (focus stays where it is).
+  // A scroll or a resize leaves it behind: close it (focus stays where it is). Only a scroll
+  // that moves the button counts: a late event from a scroll before it opened (focus bringing
+  // the button into view) or one in another part of the page leaves it where it is.
   useEffect(() => {
     if (!open) return;
+    const start = triggerRef.current?.getBoundingClientRect();
     const onScroll = (e: Event) => {
       if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return;
+      const now = triggerRef.current?.getBoundingClientRect();
+      if (start && now && Math.abs(now.top - start.top) < 1 && Math.abs(now.left - start.left) < 1) return;
       close(false);
     };
     const onResize = () => close(false);
@@ -189,7 +199,8 @@ export function Menu({ label, items, children }: MenuProps) {
                 ref={menuRef}
                 id={menuId}
                 role="menu"
-                aria-label={label}
+                aria-label={title ? undefined : label}
+                aria-labelledby={title ? titleId : undefined}
                 className={styles.menu}
                 data-radio={radio || undefined}
                 style={
@@ -199,6 +210,11 @@ export function Menu({ label, items, children }: MenuProps) {
                 }
                 onKeyDown={onMenuKeyDown}
               >
+                {title ? (
+                  <div id={titleId} className={styles.title}>
+                    {title}
+                  </div>
+                ) : null}
                 {items.map((item) => (
                   <button
                     key={item.key}
@@ -221,7 +237,14 @@ export function Menu({ label, items, children }: MenuProps) {
                         {item.lead}
                       </span>
                     ) : null}
-                    <span className={styles.label}>{item.label}</span>
+                    {item.note ? (
+                      <span className={styles.words}>
+                        <span className={styles.label}>{item.label}</span>
+                        <span className={styles.note}>{item.note}</span>
+                      </span>
+                    ) : (
+                      <span className={styles.label}>{item.label}</span>
+                    )}
                     {item.detail ? (
                       <span className={styles.detail} aria-hidden="true">
                         {item.detail}
