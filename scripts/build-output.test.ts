@@ -16,16 +16,15 @@ describe('buildOutputConfig', () => {
     expect(all?.headers).toMatchObject({ 'X-Frame-Options': 'DENY', 'X-Content-Type-Options': 'nosniff' });
   });
 
-  it("carries vercel.json's cron over: the morning notifications run, once a day (all Hobby allows)", () => {
+  it("leaves vercel.json's cron (the morning notifications run, once a day: all Hobby allows) to Vercel", () => {
     const vercelJson = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'));
     expect(vercelJson.crons).toEqual([{ path: '/api/home?op=tick', schedule: '0 7 * * *' }]);
-    expect(buildOutputConfig(vercelJson).crons).toEqual(vercelJson.crons);
+    // Vercel adds vercel.json's crons to the Build Output; listed in config.json too, the deployment fails.
+    expect(buildOutputConfig(vercelJson)).not.toHaveProperty('crons');
     // Once a day: a fixed minute and hour, every day.
     const [minute, hour, ...rest] = vercelJson.crons[0].schedule.split(' ');
     expect([/^\d+$/.test(minute), /^\d+$/.test(hour), rest]).toEqual([true, true, ['*', '*', '*']]);
     expect(buildOutputConfig({ headers: [] })).toEqual({ version: 3, routes: [{ handle: 'filesystem' }] });
-    expect(() => buildOutputConfig({ crons: [{ path: 'api/home', schedule: '0 7 * * *' }] })).toThrow();
-    expect(() => buildOutputConfig({ crons: [{ path: '/api/home', schedule: 'daily' }] })).toThrow();
   });
 
   it('turns sources into anchored regular expressions', () => {

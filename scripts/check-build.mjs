@@ -6,8 +6,9 @@
 //    before, and build-server.mjs --vercel publishes nothing (Vercel deploys dist/).
 // 2. With one: vercel.json's own buildCommand, run with a made-up token and setup code (and
 //    VAPID private key and cron secret). The app is a server-mode build, .vercel/output holds
-//    the app, /api/home and the morning cron as described, and no secret (nor any part of the
-//    token) is anywhere in what would be deployed: not in the browser's files, not in the function.
+//    the app and /api/home as described (the morning cron stays in vercel.json only), and no
+//    secret (nor any part of the token) is anywhere in what would be deployed: not in the
+//    browser's files, not in the function.
 //
 // Writes dist/, .vercel/output and a scratch build in node_modules/.tmp (all ignored by git).
 // The made-up secrets are random and never printed.
@@ -140,8 +141,8 @@ const cronSecret = randomBytes(24).toString('hex');
   const config = JSON.parse(readFileSync(path.join(output, 'config.json'), 'utf8'));
   check(config.version === 3 && config.routes.at(-1)?.handle === 'filesystem', 'config.json: Build Output v3, headers then the filesystem');
   check(
-    JSON.stringify(config.crons) === JSON.stringify(vercelJson.crons) && config.crons?.[0]?.path === '/api/home?op=tick',
-    `config.json: the morning notifications cron (${config.crons?.map((c) => `${c.schedule} ${c.path}`).join(', ')})`,
+    config.crons === undefined && vercelJson.crons?.[0]?.path === '/api/home?op=tick',
+    'the morning notifications cron is in vercel.json only (Vercel adds it; config.json too would fail the deployment)',
   );
   const vc = JSON.parse(readFileSync(path.join(func, '.vc-config.json'), 'utf8'));
   check(vc.runtime === 'nodejs22.x' && vc.handler === 'index.mjs' && vc.launcherType === 'Nodejs', 'api/home.func/.vc-config.json: Node 22, index.mjs, the Node launcher');

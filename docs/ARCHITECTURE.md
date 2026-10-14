@@ -750,8 +750,9 @@ Only the presence of the token decides it; its value never goes into the client 
   ESM file, `index.mjs`, with `.vc-config.json`: `nodejs22.x`, launcher `Nodejs`, helpers off,
   `maxDuration` 15, and `regions: [HOMEOS_FUNCTION_REGION]` when that is set) and `config.json`
   (vercel.json's `headers` as routes, in order, each with `continue`, then
-  `{ "handle": "filesystem" }`, and vercel.json's `crons` as they are, since a Build Output
-  declares its cron jobs there; `buildOutputConfig()` in `scripts/build-output.mjs`, tested).
+  `{ "handle": "filesystem" }`; not vercel.json's `crons`: Vercel adds those to the Build
+  Output itself, and the same cron listed in `config.json` too fails the deployment as
+  `duplicated_cron_job`; `buildOutputConfig()` in `scripts/build-output.mjs`, tested).
   Vercel deploys `.vercel/output` instead of `dist/` when the build command leaves one, so the
   app is served as before and the function answers at `/api/home`. Without a Blob store nothing
   changes: Vercel deploys `dist/` as today.
@@ -1245,7 +1246,7 @@ hand beyond the four settings (see "Deploying").
   most 20). A notification goes only to someone who has joined, ticked it, and has at least one
   device with notifications on.
 - **The morning run.** `vercel.json` has `"crons": [{ "path": "/api/home?op=tick",
-  "schedule": "0 7 * * *" }]` (also written into the Build Output's `config.json`). Vercel's
+  "schedule": "0 7 * * *" }]` (only there: Vercel adds it to the Build Output). Vercel's
   Hobby plan allows cron jobs **once a day** at most, invoked anywhere within the hour (an
   expression that runs more often fails the deployment; vercel.com/docs/cron-jobs/usage-and-pricing:
   Hobby "Once per day", "Per-hour (±59 min)"; Pro and Enterprise once a minute). Cron times are
