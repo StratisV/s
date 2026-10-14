@@ -13,7 +13,6 @@ import {
   ServerBackend,
 } from '../src/lib/backend/server';
 import { normaliseCode } from '../src/lib/backend/serverApi';
-import { BackendError } from '../src/lib/backend/types';
 import { USER_DEMO_DOC } from '../src/lib/logic/importHome.fixture';
 import type { AuthUser, ChatChange } from '../src/lib/types';
 import { createHarness, TEST_SETUP_CODE, type Browser, type Harness } from './testing/harness';
@@ -236,10 +235,15 @@ describe('ServerBackend: the Backend methods', () => {
     await expect(b.getInvitePreview('t')).resolves.toBeNull();
     await expect(b.importHousehold({} as never)).rejects.toMatchObject({ code: 'unknown' });
     await expect(b.setPersonEmail('x', 'a@b.co')).rejects.toMatchObject({ code: 'unknown', message: 'invalid_input: email' });
-    await expect(b.savePushSubscription('x', {} as never)).rejects.toBeInstanceOf(BackendError);
-    await expect(b.deletePushSubscription('https://push')).resolves.toBeUndefined();
     expect(b.takeAuthError()).toBeNull();
     expect(stratis.requests.length).toBe(before);
+    // Push goes to this device's own ops (this server has no VAPID keys: a subscription is refused).
+    await expect(b.savePushSubscription('x', { endpoint: 'https://fcm.googleapis.com/x', keys: { p256dh: 'a', auth: 'b' } })).rejects.toMatchObject({
+      code: 'unknown',
+      message: expect.stringMatching(/^invalid_input/),
+    });
+    await expect(b.deletePushSubscription('https://push')).resolves.toBeUndefined();
+    expect(stratis.requests.slice(before).map((r) => r.op)).toEqual(['pushSubscribe', 'pushUnsubscribe']);
   });
 
   it('never reads older than it has seen: every RPC carries the newest rev', async () => {

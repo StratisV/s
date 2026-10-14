@@ -10,6 +10,7 @@ import { InlineText } from './InlineText';
 import { cachedInvite, INVITE_TITLE, inviteUrl, rememberInvite, shareLink } from './invite';
 import { NavPage } from './NavPage';
 import { NotificationsSection } from './NotificationsSection';
+import { ServerNotifications } from './ServerNotifications';
 import { isLastDevice, useDevices } from './useDevices';
 import list from './List.module.css';
 import styles from './ProfilePage.module.css';
@@ -18,15 +19,19 @@ interface ProfilePageProps {
   onDone(): void;
   onOpenHousehold(): void;
   householdRowRef?: Ref<HTMLButtonElement>;
+  /** Server mode: opens a reminder's page (null: a new one). */
+  onOpenReminder?(id: string | null): void;
 }
 
 /**
  * Profile (README "4. Profile"): avatar, name, emoji, notifications, household, sign out.
  * Server mode (docs/ARCHITECTURE.md "Server mode (no setup)", "Screens"): the account line is
- * this device, Add another device makes a code for yourself, and push, the weekly email and
- * Invite someone are not there (people are invited from their page in People).
+ * this device, Add another device makes a code for yourself, the weekly email and Invite
+ * someone are not there (people are invited from their page in People), and Notifications are
+ * phone notifications kept by the server (ServerNotifications: this device, three choices and
+ * your reminders).
  */
-export function ProfilePage({ onDone, onOpenHousehold, householdRowRef }: ProfilePageProps) {
+export function ProfilePage({ onDone, onOpenHousehold, householdRowRef, onOpenReminder }: ProfilePageProps) {
   const { backend, data, me, updateMember, createInvite, showToast, dismissToast, signOut } = useHousehold();
   const server = backend.kind === 'server';
   const emojiHeadingId = useId();
@@ -109,7 +114,7 @@ export function ProfilePage({ onDone, onOpenHousehold, householdRowRef }: Profil
       />
       <p className={list.caption}>Shown next to your name on items and in Stats.</p>
 
-      {server ? null : <NotificationsSection />}
+      {server ? <ServerNotifications onOpenReminder={onOpenReminder ?? (() => {})} /> : <NotificationsSection />}
 
       <section aria-labelledby={householdHeadingId}>
         <h2 id={householdHeadingId} className={list.header}>

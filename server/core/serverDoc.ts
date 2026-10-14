@@ -31,7 +31,53 @@ export interface ServerDoc {
   home: DemoDoc;
   /** Server-only: never in any response. */
   auth: ServerAuth;
+  /**
+   * Phone notifications (./notify.ts): what each person ticked, their reminders, and what the
+   * morning run sent them last. Missing in documents made before notifications. Each person
+   * only ever sees their own row (GET ?op=notify).
+   */
+  notify?: ServerNotify;
   meta: ServerMeta;
+}
+
+/** docs/ARCHITECTURE.md "Server mode (no setup)", "Notifications". */
+export interface ServerNotify {
+  /** At most one row per person (member id); only people who have joined. */
+  people: NotifyPersonRow[];
+}
+
+export interface NotifyPersonRow {
+  /** members[].id */
+  memberId: string;
+  weeklyStatus: boolean;
+  housekeeping: boolean;
+  reminders: boolean;
+  /** Their reminders, oldest first (at most REMINDERS_MAX). */
+  list: ReminderRow[];
+  /**
+   * What the morning run (op tick) sent them last, so each notification goes at most once per
+   * person and period: `weekly` the Monday of the week it was for, `housekeeping` the visit's
+   * id, `reminders` the day.
+   */
+  sent: { weekly?: string; housekeeping?: string; reminders?: string };
+}
+
+export interface ReminderRow {
+  id: string;
+  title: string;
+  /** 0 = Sunday … 6 = Saturday, ascending, unique, at least one. */
+  days: number[];
+  createdAt: ISOTimestamp;
+}
+
+/** A browser's Web Push subscription, kept on its device row: it goes when the device goes. */
+export interface DevicePush {
+  /** An https URL on a known push service (isAllowedPushEndpoint). */
+  endpoint: string;
+  /** The browser's public key (base64url, 65 bytes) and auth secret (base64url, 16 bytes). */
+  p256dh: string;
+  auth: string;
+  createdAt: ISOTimestamp;
 }
 
 export interface ServerAuth {
@@ -81,6 +127,8 @@ export interface DeviceRow {
    * was lost): setup and redeem may then hand out a new one in its place.
    */
   seenAt?: ISOTimestamp;
+  /** This browser's push subscription (Profile > Notifications > On this device), if any. */
+  push?: DevicePush;
 }
 
 export interface CodeRow {
@@ -185,6 +233,9 @@ export function parseServerDoc(body: string): ServerDoc {
     (auth.accounts !== undefined && !Array.isArray(auth.accounts))
   ) {
     throw new Error('server document: bad auth');
+  }
+  if (doc.notify !== undefined && (!isRecord(doc.notify) || !Array.isArray(doc.notify.people))) {
+    throw new Error('server document: bad notify');
   }
   const meta = doc.meta;
   if (

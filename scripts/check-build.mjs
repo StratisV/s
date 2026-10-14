@@ -4,10 +4,10 @@
 //
 // 1. Without a Blob store (no BLOB_READ_WRITE_TOKEN): the app is a demo-mode build, as
 //    before, and build-server.mjs --vercel publishes nothing (Vercel deploys dist/).
-// 2. With one: vercel.json's own buildCommand, run with a made-up token and setup code. The
-//    app is a server-mode build, .vercel/output holds the app and /api/home as described, and
-//    neither secret (nor any part of the token) is anywhere in what would be deployed: not in
-//    the browser's files, not in the function.
+// 2. With one: vercel.json's own buildCommand, run with a made-up token and setup code (and
+//    VAPID private key and cron secret). The app is a server-mode build, .vercel/output holds
+//    the app, /api/home and the morning cron as described, and no secret (nor any part of the
+//    token) is anywhere in what would be deployed: not in the browser's files, not in the function.
 //
 // Writes dist/, .vercel/output and a scratch build in node_modules/.tmp (all ignored by git).
 // The made-up secrets are random and never printed.
@@ -96,19 +96,38 @@ const token = `vercel_blob_rw_${storeId}_${secretPart}`;
 const ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 const setup = Array.from(randomBytes(16), (b) => ALPHABET[b & 31]).join('');
 const setupFormatted = setup.match(/.{4}/g).join('-');
+// The notifications' secrets too (the run-time settings; a build must never pick them up).
+const vapidPrivate = randomBytes(32).toString('base64url');
+const cronSecret = randomBytes(24).toString('hex');
 {
   const vercelJson = JSON.parse(readFileSync(path.join(root, 'vercel.json'), 'utf8'));
-  const env = cleanEnv({ BLOB_READ_WRITE_TOKEN: token, HOMEOS_SETUP_CODE: setupFormatted, VERCEL: '1', VERCEL_ENV: 'production' });
+  const env = cleanEnv({
+    BLOB_READ_WRITE_TOKEN: token,
+    HOMEOS_SETUP_CODE: setupFormatted,
+    HOMEOS_VAPID_PRIVATE_KEY: vapidPrivate,
+    CRON_SECRET: cronSecret,
+    VERCEL: '1',
+    VERCEL_ENV: 'production',
+  });
   // Exactly what Vercel runs (migrate.mjs skips without a database).
   const built = spawnSync(vercelJson.buildCommand, { cwd: root, env, shell: true, encoding: 'utf8' });
   const log = `${built.stdout}\n${built.stderr}`;
   check(built.status === 0, `vercel.json buildCommand succeeds (${vercelJson.buildCommand})`);
   if (built.status !== 0) {
-    console.error(log.replaceAll(token, '<token>').replaceAll(setupFormatted, '<setup>'));
+    console.error(
+      log
+        .replaceAll(token, '<token>')
+        .replaceAll(setupFormatted, '<setup>')
+        .replaceAll(vapidPrivate, '<vapid>')
+        .replaceAll(cronSecret, '<cron>'),
+    );
     for (const line of [...notes, ...failures]) console.log(line);
     process.exit(1);
   }
-  check(!log.includes(token) && !log.includes(setup) && !log.includes(setupFormatted), 'the build log holds neither secret');
+  check(
+    [token, setup, setupFormatted, vapidPrivate, cronSecret].every((secret) => !log.includes(secret)),
+    'the build log holds no secret',
+  );
   check(builtMode(path.join(root, 'dist')) === 'server', 'with BLOB_READ_WRITE_TOKEN the app is built in server mode');
 
   const func = path.join(output, 'functions', 'api', 'home.func');
@@ -120,6 +139,10 @@ const setupFormatted = setup.match(/.{4}/g).join('-');
   );
   const config = JSON.parse(readFileSync(path.join(output, 'config.json'), 'utf8'));
   check(config.version === 3 && config.routes.at(-1)?.handle === 'filesystem', 'config.json: Build Output v3, headers then the filesystem');
+  check(
+    JSON.stringify(config.crons) === JSON.stringify(vercelJson.crons) && config.crons?.[0]?.path === '/api/home?op=tick',
+    `config.json: the morning notifications cron (${config.crons?.map((c) => `${c.schedule} ${c.path}`).join(', ')})`,
+  );
   const vc = JSON.parse(readFileSync(path.join(func, '.vc-config.json'), 'utf8'));
   check(vc.runtime === 'nodejs22.x' && vc.handler === 'index.mjs' && vc.launcherType === 'Nodejs', 'api/home.func/.vc-config.json: Node 22, index.mjs, the Node launcher');
   check(readdirSync(func).sort().join(',') === '.vc-config.json,index.mjs', 'the function is one file (everything bundled) and its config');
@@ -128,7 +151,7 @@ const setupFormatted = setup.match(/.{4}/g).join('-');
   check(!/from\s*["'](\.{1,2}\/|@vercel\/blob|undici)/.test(fn), 'index.mjs imports nothing from the repository or node_modules');
 
   // No secret anywhere that would be deployed (or left in dist/).
-  const secrets = [token, `${storeId}_${secretPart}`, secretPart, setup, setupFormatted, setup.toLowerCase()];
+  const secrets = [token, `${storeId}_${secretPart}`, secretPart, setup, setupFormatted, setup.toLowerCase(), vapidPrivate, cronSecret];
   if (secrets.some((x) => x.length < 12)) throw new Error('check-build: a made-up secret is too short to search for');
   const leaks = [];
   for (const file of [...filesUnder(path.join(root, 'dist')), ...filesUnder(output)]) {
@@ -138,8 +161,13 @@ const setupFormatted = setup.match(/.{4}/g).join('-');
   check(leaks.length === 0, `no secret in dist/ or .vercel/output (${filesUnder(output).length} files)${leaks.length ? `: ${[...new Set(leaks)].join(', ')}` : ''}`);
   // The browser's files don't even name them.
   const browserFiles = filesUnder(path.join(output, 'static')).filter((f) => /\.(js|html|css|json|webmanifest)$/.test(f));
-  const named = browserFiles.filter((f) => /BLOB_READ_WRITE_TOKEN|HOMEOS_SETUP_CODE/.test(readFileSync(f, 'utf8')));
-  check(named.length === 0, `the browser's files do not name BLOB_READ_WRITE_TOKEN or HOMEOS_SETUP_CODE${named.length ? `: ${named.join(', ')}` : ''}`);
+  const named = browserFiles.filter((f) =>
+    /BLOB_READ_WRITE_TOKEN|HOMEOS_SETUP_CODE|HOMEOS_VAPID_PRIVATE_KEY|CRON_SECRET/.test(readFileSync(f, 'utf8')),
+  );
+  check(
+    named.length === 0,
+    `the browser's files do not name BLOB_READ_WRITE_TOKEN, HOMEOS_SETUP_CODE, HOMEOS_VAPID_PRIVATE_KEY or CRON_SECRET${named.length ? `: ${named.join(', ')}` : ''}`,
+  );
   check(statSync(path.join(func, 'index.mjs')).size < 4 * 1024 * 1024, `the function bundle is small (${Math.round(statSync(path.join(func, 'index.mjs')).size / 1024)} KiB)`);
 }
 

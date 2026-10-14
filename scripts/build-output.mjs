@@ -7,6 +7,9 @@
  * vercel.json's headers do), then the filesystem (static files and the function). Sources may
  * be literal paths with `(.*)` groups only; anything else throws, so a vercel.json change that
  * this can't carry over fails the build instead of being dropped.
+ * vercel.json `crons` (the morning notifications run) come along as they are: a Build Output
+ * declares its cron jobs in config.json. A cron whose path does not start with "/" or whose
+ * schedule is not five fields throws.
  */
 export function buildOutputConfig(vercelJson) {
   const routes = [];
@@ -16,7 +19,13 @@ export function buildOutputConfig(vercelJson) {
     routes.push({ src: sourceToRegex(rule.source), headers, continue: true });
   }
   routes.push({ handle: 'filesystem' });
-  return { version: 3, routes };
+  const crons = (vercelJson.crons ?? []).map(({ path, schedule }) => {
+    if (typeof path !== 'string' || !path.startsWith('/') || typeof schedule !== 'string' || schedule.trim().split(/\s+/).length !== 5) {
+      throw new Error(`build-output: unsupported cron ${JSON.stringify({ path, schedule })}`);
+    }
+    return { path, schedule };
+  });
+  return crons.length ? { version: 3, routes, crons } : { version: 3, routes };
 }
 
 /** "/assets/(.*)" → "^/assets/(.*)$"; literal parts escaped. */

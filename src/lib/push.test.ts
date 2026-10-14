@@ -160,6 +160,17 @@ describe('configuration', () => {
     expect(push.pushState()).toBe('unsupported');
     expect(await push.enablePush(setup().asBackend, 'm1')).toBe(false);
   });
+
+  it('takes the key from the server instead (server mode has none in the build)', async () => {
+    const push = await load('');
+    const env = setup({ permission: 'default' });
+    expect(push.pushState(VAPID_KEY)).toBe('default');
+    expect(push.pushState('')).toBe('unsupported');
+    expect(await push.enablePush(env.asBackend, 'member-1', VAPID_KEY)).toBe(true);
+    const opts = env.pushManager.subscribe.mock.calls[0][0];
+    expect(Array.from(new Uint8Array(opts.applicationServerKey as ArrayBuffer))).toEqual(Array.from(KEY_BYTES));
+    expect(env.backend.savePushSubscription).toHaveBeenCalledWith('member-1', expect.objectContaining({ endpoint: 'https://push.example/new' }));
+  });
 });
 
 describe('isIOS', () => {

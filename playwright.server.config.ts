@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from 'node:crypto';
 import { defineConfig } from '@playwright/test';
 
 // Server mode end to end (docs/ARCHITECTURE.md "Server mode (no setup)", "Local server and
@@ -21,6 +22,21 @@ const NO_SUPABASE = Object.fromEntries(
     'SUPABASE_PUBLISHABLE_KEY',
   ].map((name) => [name, '']),
 );
+
+/**
+ * Phone notifications on the first server (e2e-server/notifications.spec.ts): a VAPID key pair
+ * made for this run (nothing is ever sent: no browser here subscribes, service workers are
+ * blocked), and the cron secret the morning run's test calls with (e2e-server/helpers.ts).
+ */
+const VAPID = (() => {
+  const jwk = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ format: 'jwk' });
+  const publicKey = Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x!, 'base64url'), Buffer.from(jwk.y!, 'base64url')]);
+  return {
+    HOMEOS_VAPID_PUBLIC_KEY: publicKey.toString('base64url'),
+    HOMEOS_VAPID_PRIVATE_KEY: jwk.d!,
+    HOMEOS_VAPID_SUBJECT: 'mailto:e2e@example.com',
+  };
+})();
 
 export default defineConfig({
   testDir: 'e2e-server',
@@ -56,6 +72,9 @@ export default defineConfig({
         VITE_VAPID_PUBLIC_KEY: '',
         // The setup code the tests use (e2e-server/helpers.ts SETUP_CODE); never a real one.
         HOMEOS_SETUP_CODE: 'TEST-SETU-PCDE-2345-6789',
+        ...VAPID,
+        // e2e-server/helpers.ts CRON_SECRET; never a real one.
+        CRON_SECRET: 'e2e-cron-secret-not-a-real-one',
       },
       url: `http://localhost:${PORT}/index.html`,
       // Never a server built for something else (demo mode, another checkout).

@@ -342,6 +342,43 @@ describe('HomeStore: writing', () => {
     expect(stored(blobs).auth.codes).toEqual([]);
   });
 
+  it('rolls the notifications back with a pure write that fails, as it was (or missing)', async () => {
+    const { a, blobs } = setUp();
+    await a.create(seedDoc());
+    const row = { memberId: 'm', weeklyStatus: true, housekeeping: false, reminders: false, list: [], sent: {} };
+    const fail = (doc: ServerDoc) => {
+      doc.notify = { people: [] };
+      throw new BackendError('not_found');
+    };
+    const joined = {
+      id: 'm',
+      household_id: 'h1',
+      user_id: 'u-m',
+      name: 'M',
+      email: '',
+      emoji: '🦔',
+      color: '#007AFF',
+      role: 'owner' as const,
+      weekly_email: false,
+      push_enabled: false,
+      created_at: new Date(START).toISOString(),
+    };
+    const [none, set, changed] = await Promise.allSettled([
+      a.write(fail, { pure: true }),
+      a.write(
+        (doc) => {
+          // (Choices are kept only for someone who has joined.)
+          doc.home = { ...doc.home, members: [joined] };
+          doc.notify = { people: [row] };
+        },
+        { pure: true },
+      ),
+      a.write(fail, { pure: true }),
+    ]);
+    expect([none.status, set.status, changed.status]).toEqual(['rejected', 'fulfilled', 'rejected']);
+    expect(stored(blobs).notify).toEqual({ people: [row] });
+  });
+
   it("refuses a body over MAX_DOC_BYTES ('too_large'), storing nothing", async () => {
     const { a, blobs } = setUp();
     await a.create(seedDoc());

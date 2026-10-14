@@ -31,6 +31,7 @@ import { BackendError } from '../../src/lib/backend/types';
 import type { HomeEntry, DeviceInfo } from '../../src/lib/types';
 import { DEVICE_LABEL_MAX } from './deviceLabel';
 import { ApiError } from './errors';
+import { pruneNotify } from './notify';
 import { runAs, type Caller } from './runAs';
 import type { AccountRow, CodeRow, DeviceRow, ServerDoc } from './serverDoc';
 
@@ -441,7 +442,8 @@ export function removeDevice(doc: ServerDoc, deviceId: string): boolean {
 /**
  * Run before every put: removes expired codes, used ones older than CODE_REPLAY_MS, codes for
  * people who are gone, and devices whose user id no member has any more (a person released
- * with "Not Shea?" is signed out everywhere).
+ * with "Not Shea?" is signed out everywhere, and their push subscriptions go with the
+ * devices), and the notification choices of anyone no longer joined (pruneNotify).
  */
 export function pruneAuth(doc: ServerDoc, now: Date): void {
   const members = new Set(doc.home.members.map((m) => m.id));
@@ -456,6 +458,9 @@ export function pruneAuth(doc: ServerDoc, now: Date): void {
     .map((c) => (c.createdBy !== null && !members.has(c.createdBy) ? { ...c, createdBy: null } : c));
   doc.auth.devices = doc.auth.devices.filter((d) => users.has(d.userId));
   if (doc.auth.accounts) doc.auth.accounts = doc.auth.accounts.filter((a) => users.has(a.userId));
+  // Notification choices and reminders of people who are gone (their devices, and with them
+  // their push subscriptions, went just above).
+  pruneNotify(doc);
 }
 
 // ── Accounts (email and password) ───────────────────────

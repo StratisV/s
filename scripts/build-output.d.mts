@@ -4,10 +4,19 @@ export interface BuildOutputRoute {
   continue?: boolean;
   handle?: 'filesystem';
 }
+export interface BuildOutputCron {
+  path: string;
+  schedule: string;
+}
 export interface VercelJsonHeaders {
   headers?: { source: string; headers: { key: string; value: string }[] }[];
+  crons?: BuildOutputCron[];
 }
-export declare function buildOutputConfig(vercelJson: VercelJsonHeaders): { version: 3; routes: BuildOutputRoute[] };
+export declare function buildOutputConfig(vercelJson: VercelJsonHeaders): {
+  version: 3;
+  routes: BuildOutputRoute[];
+  crons?: BuildOutputCron[];
+};
 export declare function sourceToRegex(source: string): string;
 export declare function functionConfig(opts?: { region?: string }): {
   runtime: string;

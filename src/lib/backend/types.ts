@@ -22,7 +22,10 @@ import type {
   JoinHouseholdInput,
   Member,
   NewPersonInput,
+  NotifyPrefs,
+  NotifySettings,
   PushSubscriptionInput,
+  ReminderInput,
 } from '../types';
 
 export type Unsubscribe = () => void;
@@ -395,6 +398,19 @@ export interface ServerAccess {
   removeDevice(deviceId: string): Promise<void>;
   /** Called with each status the polling brings, and once with the current one. */
   onStatus(cb: (status: ServerStatus) => void): Unsubscribe;
+
+  // ── Notifications (docs/ARCHITECTURE.md "Server mode (no setup)", "Notifications") ──
+  // Each person's own; this device's push subscription goes through savePushSubscription and
+  // deletePushSubscription (Backend). Each answers the settings as stored.
+
+  /** The signed-in person's choices and reminders, the server's push key, and this device. */
+  notifySettings(): Promise<NotifySettings>;
+  /** Ticks or unticks what they get (only the keys given). */
+  setNotifyPrefs(prefs: Partial<NotifyPrefs>): Promise<NotifySettings>;
+  /** Adds a reminder (no id; at most REMINDERS_MAX) or changes one of theirs. 'not_found': gone meanwhile. */
+  saveReminder(reminder: ReminderInput): Promise<NotifySettings>;
+  /** Deletes one of their reminders. 'not_found': gone already. */
+  deleteReminder(id: string): Promise<NotifySettings>;
 }
 
 /** The ServerAccess side of `backend` in server mode, else null. */

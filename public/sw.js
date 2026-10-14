@@ -4,7 +4,8 @@
  * - Hashed build assets under <scope>assets/: cache first (their names change with every build).
  * - Everything else (Supabase, Google, other origins, the manifest, icons) goes straight to
  *   the network and is never cached.
- * - Web Push: shows the scheduler's notifications and opens the app when one is tapped.
+ * - Web Push: shows the scheduler's notifications (Supabase), or the morning run's (server mode:
+ *   server/core/notify.ts), and opens the app when one is tapped.
  *
  * Bump VERSION when the caching rules change; activate deletes this app's older caches.
  */
@@ -150,7 +151,7 @@ self.addEventListener('push', (event) => {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
-/** The scheduler sends JSON { title, body, url, tag }; anything else becomes the body. */
+/** The scheduler and the morning run send JSON { title, body, url, tag }; anything else becomes the body. */
 function readPush(data) {
   let payload = {};
   if (data) {

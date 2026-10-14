@@ -58,6 +58,9 @@ import type {
   JoinHouseholdInput,
   Member,
   NewPersonInput,
+  NotifyPrefs,
+  NotifySettings,
+  ReminderInput,
   ServerSetupSummary,
 } from '../lib/types';
 
@@ -416,6 +419,17 @@ export interface HomeContextValue {
   signInWithPassword(email: string, password: string): Promise<void>;
   /** Saving is paused until next month (ServerStatus.readOnly): Home shows one line saying so. */
   readOnly: boolean;
+  // Notifications (server mode; docs/ARCHITECTURE.md "Server mode (no setup)", "Notifications"):
+  // the signed-in person's own, kept on the server for all their devices. Not optimistic: each
+  // resolves to the settings as stored (Profile shows them), or rejects (Profile says why).
+  /** Their choices and reminders, the server's push key, and whether this device is subscribed. */
+  notifySettings(): Promise<NotifySettings>;
+  /** Ticks or unticks Weekly status, Housekeeping report or Reminders (only the keys given). */
+  setNotifyPrefs(prefs: Partial<NotifyPrefs>): Promise<NotifySettings>;
+  /** Adds a reminder (no id) or changes one of theirs. */
+  saveReminder(reminder: ReminderInput): Promise<NotifySettings>;
+  /** Deletes one of their reminders. */
+  deleteReminder(id: string): Promise<NotifySettings>;
 
   toast: ToastState | null;
   showToast(message: string, action?: ToastState['action']): void;
@@ -1622,6 +1636,13 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         return run;
       };
 
+    /** A notification write refused because saving is paused: Home says so too. */
+    const notifyWrite = (run: Promise<NotifySettings>): Promise<NotifySettings> =>
+      run.catch((err: unknown) => {
+        if (err instanceof BackendError && err.code === 'read_only') setReadOnly(true);
+        throw err;
+      });
+
     const signOut = async () => {
       dismissToast();
       // Stop this device getting the previous person's pushes (only the owner can delete the row).
@@ -2161,6 +2182,10 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         return true;
       },
       readOnly: access ? readOnly : false,
+      notifySettings: () => (access ? access.notifySettings() : notSupported('notifySettings')),
+      setNotifyPrefs: (prefs) => (access ? notifyWrite(access.setNotifyPrefs(prefs)) : notSupported('setNotifyPrefs')),
+      saveReminder: (reminder) => (access ? notifyWrite(access.saveReminder(reminder)) : notSupported('saveReminder')),
+      deleteReminder: (id) => (access ? notifyWrite(access.deleteReminder(id)) : notSupported('deleteReminder')),
 
       toast,
       showToast,

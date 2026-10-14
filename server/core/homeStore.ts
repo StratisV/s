@@ -28,7 +28,7 @@
 // are applied in order, each to the result of the one before, on one copy of the latest
 // document (a write that throws is rolled back: a `pure` write, one that replaces doc.home
 // rather than editing it in place, as all of the handler's do, by putting back the home object
-// it replaced and a copy of auth, which costs next to nothing; any other by a copy of the whole
+// it replaced and copies of auth and notify, which cost next to nothing; any other by a copy of the whole
 // document taken before it), and stored with ONE put { ifMatch: the copy's etag } (group commit). Nothing changed (the JSON is the same):
 // no put. Before the put: rev + 1 when a 'data' write changed something (a 'meta' write, such as
 // marking a device used or storing the read count, keeps the rev, so browsers do not reload
@@ -371,8 +371,8 @@ export class HomeStore {
 
   /**
    * Runs every write of `batch` in order on a copy of `base`. A write that throws is rolled
-   * back (see the top): a pure one by putting back the home object it replaced and a copy of
-   * auth taken before it (no copy of the whole home per write); any other from a copy of the
+   * back (see the top): a pure one by putting back the home object it replaced and copies of
+   * auth and notify taken before it (no copy of the whole home per write); any other from a copy of the
    * whole document taken before it (none needed for the first: that is `base`).
    */
   private async apply(batch: Waiting[], base: Cached & { doc: ServerDoc }): Promise<Applied> {
@@ -383,6 +383,7 @@ export class HomeStore {
     for (const [i, w] of batch.entries()) {
       const home = doc.home;
       const auth = w.pure ? JSON.stringify(doc.auth) : '';
+      const notify = w.pure ? JSON.stringify(doc.notify ?? null) : '';
       const whole = !w.pure && i > 0 ? serialiseServerDoc(doc) : null;
       try {
         outcomes.push({ ok: true, value: await w.change(doc) });
@@ -392,6 +393,9 @@ export class HomeStore {
         if (w.pure) {
           doc.home = home;
           doc.auth = JSON.parse(auth) as ServerDoc['auth'];
+          const before = JSON.parse(notify) as ServerDoc['notify'] | null;
+          if (before) doc.notify = before;
+          else delete doc.notify;
         } else {
           doc = JSON.parse(whole ?? baseJson) as ServerDoc;
         }

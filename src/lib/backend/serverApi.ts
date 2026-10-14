@@ -17,6 +17,17 @@
 //   POST /api/home  {op:'signOut'}       either       → OkResponse + clears the cookie (always 200)
 //   POST /api/home  {op:'release'}       signed in    → OkResponse + clears the cookie ("Not Shea?")
 //
+// Notifications (phone notifications through Web Push; docs/ARCHITECTURE.md "Notifications"):
+//
+//   GET  /api/home?op=notify    signed in             → NotifyResponse (this person's choices, this device)
+//   POST /api/home  {op:'pushSubscribe'}    signed in → OkResponse (this device's push subscription)
+//   POST /api/home  {op:'pushUnsubscribe'}  signed in → OkResponse
+//   POST /api/home  {op:'setNotify'}        signed in → NotifyResponse
+//   POST /api/home  {op:'saveReminder'}     signed in → NotifyResponse
+//   POST /api/home  {op:'deleteReminder'}   signed in → NotifyResponse
+//   GET  /api/home?op=tick      Vercel Cron only: `Authorization: Bearer <CRON_SECRET>`, no
+//                               X-HomeOS header (a cron can't send one) → TickResponse
+//
 // Every request carries the header `X-HomeOS: 1` (API_HEADER), and every POST is
 // `Content-Type: application/json`; anything else is 403 'forbidden' (a cross-site page can't
 // send either without a CORS preflight, which the server never answers). Responses are JSON
@@ -30,7 +41,16 @@
 // signature (server/core/auth.ts), so any instance can tell a device signed in elsewhere a
 // moment ago from a made-up key. The browser app only ever uses the cookie and never sees it.
 
-import type { HomeEntry, ISOTimestamp, AuthUser, DeviceInfo } from '../types';
+import type {
+  HomeEntry,
+  ISOTimestamp,
+  AuthUser,
+  DeviceInfo,
+  NotifyPrefs,
+  NotifySettings,
+  PushSubscriptionInput,
+  ReminderInput,
+} from '../types';
 import { BackendError, type Backend, type BackendErrorCode } from './types';
 
 /** Where the API lives (always at the root of the deployment). */
@@ -96,7 +116,7 @@ export function codeLink(appUrl: string, code: string): string {
 
 // ── Requests ─────────────────────────────────────────────
 
-export type ApiGetOp = 'status' | 'session' | 'version' | 'devices';
+export type ApiGetOp = 'status' | 'session' | 'version' | 'devices' | 'notify';
 
 /**
  * How the page runs, sent with setup and redeem so the device list can tell them apart (on an
@@ -162,6 +182,29 @@ export interface SignInRequest {
   password: string;
   app?: AppMode;
 }
+/** This browser's Web Push subscription (PushSubscription.toJSON()), kept with its device. */
+export interface PushSubscribeRequest {
+  op: 'pushSubscribe';
+  subscription: PushSubscriptionInput;
+}
+/** Forget this browser's push subscription. */
+export interface PushUnsubscribeRequest {
+  op: 'pushUnsubscribe';
+}
+/** Tick or untick what the signed-in person gets (only the keys present change). */
+export interface SetNotifyRequest {
+  op: 'setNotify';
+  prefs: Partial<NotifyPrefs>;
+}
+/** Add a reminder (no id) or change one of the signed-in person's own (id). */
+export interface SaveReminderRequest {
+  op: 'saveReminder';
+  reminder: ReminderInput;
+}
+export interface DeleteReminderRequest {
+  op: 'deleteReminder';
+  id: string;
+}
 export type ApiPostRequest =
   | SetupRequest
   | RedeemRequest
@@ -171,7 +214,12 @@ export type ApiPostRequest =
   | CreateCodeRequest
   | RemoveDeviceRequest
   | SignOutRequest
-  | ReleaseRequest;
+  | ReleaseRequest
+  | PushSubscribeRequest
+  | PushUnsubscribeRequest
+  | SetNotifyRequest
+  | SaveReminderRequest
+  | DeleteReminderRequest;
 
 /** Request body limits (bytes, UTF-8). Larger is 413 'too_large'. */
 export const SETUP_BODY_MAX = 4 * 1024 * 1024;
@@ -226,6 +274,21 @@ export interface CodeResponse {
 export interface OkResponse {
   ok: true;
 }
+/** GET ?op=notify, and what setNotify, saveReminder and deleteReminder answer. */
+export type NotifyResponse = NotifySettings;
+/** What the morning run did (counts only; nothing about anyone). */
+export interface TickResponse {
+  ok: true;
+  /** Notifications a push service took. */
+  sent: number;
+  /** Notifications a push service refused or did not answer (each is still only tried once). */
+  failed: number;
+  /** Subscriptions the push service said are gone (forgotten). */
+  gone: number;
+}
+
+/** The most reminders one person may keep. */
+export const REMINDERS_MAX = 20;
 
 // ── Errors ───────────────────────────────────────────────
 
@@ -387,6 +450,6 @@ export const NOT_RPC: { [M in Exclude<keyof Backend, RpcMethod | 'kind'>]: strin
   getInvitePreview: 'resolves null: codes replace invite links',
   createInvite: "rejects 'invalid_invite': codes replace invite links (ServerAccess.createCode)",
   setPersonEmail: "rejects BackendError('unknown', 'invalid_input: email'): no Google emails in server mode",
-  savePushSubscription: 'rejects: no push notifications in server mode',
-  deletePushSubscription: 'resolves (nothing is stored)',
+  savePushSubscription: "POST {op:'pushSubscribe'}: this device's subscription (the member is whoever is signed in)",
+  deletePushSubscription: "POST {op:'pushUnsubscribe'}: this device's subscription",
 };

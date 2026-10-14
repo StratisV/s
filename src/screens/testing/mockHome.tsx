@@ -13,7 +13,7 @@ import { act } from '@testing-library/react';
 import { createContext, useContext, useState, type ReactNode } from 'react';
 import type { Backend } from '../../lib/backend/types';
 import { emptyHousekeeping } from '../../lib/logic/housekeeping';
-import type { AuthUser, HouseholdData, Item, Member } from '../../lib/types';
+import type { AuthUser, HouseholdData, Item, Member, NotifyPrefs, NotifySettings, ReminderInput } from '../../lib/types';
 import type { HomeContextValue } from '../../state/HomeProvider';
 
 const MockContext = createContext<HomeContextValue | null>(null);
@@ -160,6 +160,51 @@ export function fakeBackend(over: Partial<Backend> = {}): Backend {
   } as unknown as Backend;
 }
 
+/**
+ * Notifications as the server keeps them (server mode), in memory: the four actions of
+ * HomeContextValue as vi.fns over one NotifySettings, which `state` holds (tests read and set it).
+ */
+export function fakeNotify(initial: Partial<NotifySettings> = {}) {
+  const state: { settings: NotifySettings } = {
+    settings: {
+      prefs: { weeklyStatus: false, housekeeping: false, reminders: false },
+      reminders: [],
+      publicKey: null,
+      subscribed: false,
+      ...initial,
+    },
+  };
+  let n = 0;
+  const copy = () => structuredClone(state.settings);
+  return {
+    state,
+    notifySettings: vi.fn(async () => copy()),
+    setNotifyPrefs: vi.fn(async (prefs: Partial<NotifyPrefs>) => {
+      state.settings = { ...state.settings, prefs: { ...state.settings.prefs, ...prefs } };
+      return copy();
+    }),
+    saveReminder: vi.fn(async (input: ReminderInput) => {
+      const days = [...new Set(input.days)].sort((a, b) => a - b);
+      const title = input.title.trim();
+      const reminders = input.id
+        ? state.settings.reminders.map((r) => (r.id === input.id ? { ...r, title, days } : r))
+        : [...state.settings.reminders, { id: `r-${++n}`, title, days }];
+      state.settings = { ...state.settings, reminders };
+      return copy();
+    }),
+    deleteReminder: vi.fn(async (id: string) => {
+      state.settings = { ...state.settings, reminders: state.settings.reminders.filter((r) => r.id !== id) };
+      return copy();
+    }),
+  };
+}
+
+/** fakeNotify()'s actions without its state, to spread into a HomeContextValue. */
+export function notifyActions(fake: ReturnType<typeof fakeNotify>) {
+  const { notifySettings, setNotifyPrefs, saveReminder, deleteReminder } = fake;
+  return { notifySettings, setNotifyPrefs, saveReminder, deleteReminder };
+}
+
 /** A full HomeContextValue: signed in and in the home unless `over` says otherwise. Every action is a vi.fn. */
 export function makeHome(over: Partial<HomeContextValue> = {}): HomeContextValue {
   const data = over.data === undefined ? sampleData() : over.data;
@@ -241,6 +286,7 @@ export function makeHome(over: Partial<HomeContextValue> = {}): HomeContextValue
     createAccount: vi.fn(async () => {}),
     signInWithPassword: vi.fn(async () => {}),
     readOnly: false,
+    ...notifyActions(fakeNotify()),
     toast: null,
     showToast: vi.fn(),
     dismissToast: vi.fn(),

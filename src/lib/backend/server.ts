@@ -25,7 +25,10 @@ import type {
   JoinHouseholdInput,
   Member,
   NewPersonInput,
+  NotifyPrefs,
+  NotifySettings,
   PushSubscriptionInput,
+  ReminderInput,
 } from '../types';
 import { appMode } from '../appMode';
 import {
@@ -40,6 +43,7 @@ import {
   type ApiPostRequest,
   type CodeResponse,
   type DevicesResponse,
+  type NotifyResponse,
   type RpcMethod,
   type RpcResponse,
   type SessionResponse,
@@ -610,15 +614,15 @@ export class ServerBackend implements Backend, ServerAccess {
     await this.rpc('undoCompletion', [completionId]);
   }
 
-  // ── Push (Backend): not in server mode ─────────────────
+  // ── Push (Backend): this device's subscription ─────────
 
-  /** Rejects with BackendError('unknown', 'not supported in server mode'). */
-  savePushSubscription(_memberId: string, _sub: PushSubscriptionInput): Promise<void> {
-    return Promise.reject(notSupported());
+  /** POST {op:'pushSubscribe'}: kept with this browser's device (the member is whoever is signed in). */
+  async savePushSubscription(_memberId: string, sub: PushSubscriptionInput): Promise<void> {
+    await this.call({ post: { op: 'pushSubscribe', subscription: { endpoint: sub.endpoint, keys: sub.keys } } });
   }
-  /** Resolves (nothing is stored), so sign-out's disablePush() never fails. */
-  deletePushSubscription(_endpoint: string): Promise<void> {
-    return Promise.resolve();
+  /** POST {op:'pushUnsubscribe'}: this browser's device has no subscription any more. */
+  async deletePushSubscription(_endpoint: string): Promise<void> {
+    await this.call({ post: { op: 'pushUnsubscribe' } });
   }
 
   // ── Chat (Backend, RPC) ────────────────────────────────
@@ -776,6 +780,22 @@ export class ServerBackend implements Backend, ServerAccess {
     const mine = deviceId === this.deviceId;
     await this.call({ post: { op: 'removeDevice', deviceId } });
     if (mine) this.signedOutHere(true);
+  }
+  /** GET ?op=notify. */
+  notifySettings(): Promise<NotifySettings> {
+    return this.call<NotifyResponse>({ get: 'notify' });
+  }
+  /** POST {op:'setNotify'}. */
+  setNotifyPrefs(prefs: Partial<NotifyPrefs>): Promise<NotifySettings> {
+    return this.call<NotifyResponse>({ post: { op: 'setNotify', prefs } });
+  }
+  /** POST {op:'saveReminder'}. */
+  saveReminder(reminder: ReminderInput): Promise<NotifySettings> {
+    return this.call<NotifyResponse>({ post: { op: 'saveReminder', reminder } });
+  }
+  /** POST {op:'deleteReminder'}. */
+  deleteReminder(id: string): Promise<NotifySettings> {
+    return this.call<NotifyResponse>({ post: { op: 'deleteReminder', id } });
   }
   /** The poller's VersionResponse.readOnly, as a ServerStatus (once at once with the last known one). */
   onStatus(cb: (status: ServerStatus) => void): Unsubscribe {

@@ -4,6 +4,8 @@ import { AddPersonPage } from './AddPersonPage';
 import { HouseholdEditor } from './HouseholdEditor';
 import { PersonPage } from './PersonPage';
 import { ProfilePage } from './ProfilePage';
+import { ReminderPage } from './ReminderPage';
+import { NotifyProvider } from './useNotify';
 import { SHEET_MS, usePresence } from './usePresence';
 import styles from './ProfileScreen.module.css';
 
@@ -15,9 +17,9 @@ import styles from './ProfileScreen.module.css';
  */
 export function ProfileScreen({ open, onClose }: { open: boolean; onClose(): void }) {
   const { mounted, shown } = usePresence(open, SHEET_MS);
-  const { data, me } = useHome();
+  const { backend, data, me } = useHome();
   if (!mounted || !data || !me) return null;
-  return <ProfileCover open={open} shown={shown} onClose={onClose} />;
+  return <ProfileCover open={open} shown={shown} onClose={onClose} server={backend.kind === 'server'} />;
 }
 
 const FOCUSABLE = 'button, input, select, textarea, a[href], [tabindex]';
@@ -25,7 +27,7 @@ const FOCUSABLE = 'button, input, select, textarea, a[href], [tabindex]';
 /** The page pushed over the Household editor: someone's page, or Add Person. */
 type Pushed = { kind: 'person'; id: string } | { kind: 'add' };
 
-function ProfileCover({ open, shown, onClose }: { open: boolean; shown: boolean; onClose(): void }) {
+function ProfileCover({ open, shown, onClose, server }: { open: boolean; shown: boolean; onClose(): void; server: boolean }) {
   const [editorOpen, setEditorOpen] = useState(false);
   const editor = usePresence(editorOpen, SHEET_MS);
   // The pushed page keeps what it shows while it slides out. Each opening is a fresh page (key).
@@ -45,8 +47,18 @@ function ProfileCover({ open, shown, onClose }: { open: boolean; shown: boolean;
   const addNameRef = useRef<HTMLInputElement>(null);
   const keyboardProxyRef = useRef<HTMLInputElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
-  const state = useRef({ editorOpen, personOpen, onClose });
-  state.current = { editorOpen, personOpen, onClose };
+  // Server mode: a reminder's page, pushed from Profile's Notifications (null id: a new one).
+  // Each opening is a fresh page (key), kept while it slides out.
+  const [reminder, setReminder] = useState<{ id: string | null; open: boolean; key: number } | null>(null);
+  const reminderOpen = !!reminder?.open;
+  const reminderPage = usePresence(reminderOpen, SHEET_MS);
+  const reminderRef = useRef<HTMLDivElement>(null);
+  const reminderBackRef = useRef<HTMLButtonElement>(null);
+  const reminderTitleRef = useRef<HTMLInputElement>(null);
+  /** The reminder row that gets focus back when its page goes (null: Add Reminder). */
+  const reminderRow = useRef<string | null>(null);
+  const state = useRef({ editorOpen, personOpen, reminderOpen, onClose });
+  state.current = { editorOpen, personOpen, reminderOpen, onClose };
 
   const openPerson = useCallback((id: string) => {
     returnRow.current = id;
@@ -60,6 +72,14 @@ function ProfileCover({ open, shown, onClose }: { open: boolean; shown: boolean;
     setPerson({ page: { kind: 'add' }, open: true, key: ++pushes.current });
   }, []);
   const closePerson = useCallback(() => setPerson((p) => (p ? { ...p, open: false } : p)), []);
+  const openReminder = useCallback((id: string | null) => {
+    // A new one starts in its title: a stand-in field takes the focus inside the tap, so iOS
+    // raises the keyboard, and the title takes over once the page has slid in.
+    if (id === null) keyboardProxyRef.current?.focus({ preventScroll: true });
+    reminderRow.current = id;
+    setReminder({ id, open: true, key: ++pushes.current });
+  }, []);
+  const closeReminder = useCallback(() => setReminder((r) => (r ? { ...r, open: false } : r)), []);
   const personAdded = useCallback((id: string) => {
     returnRow.current = id;
     setPerson((p) => (p ? { ...p, open: false } : p));
@@ -86,10 +106,26 @@ function ProfileCover({ open, shown, onClose }: { open: boolean; shown: boolean;
   // The page underneath a pushed one is inert; focus follows the push and the pop.
   const wasPushed = useRef(false);
   useEffect(() => {
-    if (profileRef.current) profileRef.current.inert = editorOpen;
+    if (profileRef.current) profileRef.current.inert = editorOpen || reminderOpen;
     if (!editorOpen && wasPushed.current) householdRowRef.current?.focus({ preventScroll: true });
     wasPushed.current = editorOpen;
-  }, [editorOpen]);
+  }, [editorOpen, reminderOpen]);
+  const reminderWasOpen = useRef(false);
+  useEffect(() => {
+    if (!reminderOpen && reminderWasOpen.current) {
+      // Back to the reminder's row; Add Reminder after a new one, or when it is gone (deleted).
+      const rows = profileRef.current?.querySelectorAll<HTMLElement>('[data-reminder-row]') ?? [];
+      const row = Array.from(rows).find((r) => r.dataset.reminderRow === reminderRow.current);
+      (row ?? profileRef.current?.querySelector<HTMLElement>('[data-add-reminder]'))?.focus({ preventScroll: true });
+    }
+    reminderWasOpen.current = reminderOpen;
+  }, [reminderOpen]);
+  const newReminder = reminder?.id === null;
+  useEffect(() => {
+    if (!reminderPage.shown) return;
+    if (newReminder) reminderTitleRef.current?.focus({ preventScroll: true });
+    else reminderBackRef.current?.focus({ preventScroll: true });
+  }, [reminderPage.shown, newReminder]);
   useEffect(() => {
     if (editor.shown) backRef.current?.focus({ preventScroll: true });
   }, [editor.shown]);
@@ -122,16 +158,23 @@ function ProfileCover({ open, shown, onClose }: { open: boolean; shown: boolean;
       e.preventDefault();
       if (state.current.personOpen) closePerson();
       else if (state.current.editorOpen) setEditorOpen(false);
+      else if (state.current.reminderOpen) closeReminder();
       else state.current.onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, closePerson]);
+  }, [open, closePerson, closeReminder]);
 
   // Keep Tab inside the visible page.
   const trapTab = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'Tab') return;
-    const page = personOpen ? personRef.current : editorOpen ? editorRef.current : profileRef.current;
+    const page = personOpen
+      ? personRef.current
+      : editorOpen
+        ? editorRef.current
+        : reminderOpen
+          ? reminderRef.current
+          : profileRef.current;
     if (!page) return;
     const items = Array.from(page.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
       (el) => el.tabIndex >= 0 && !(el as HTMLButtonElement).disabled && el.getClientRects().length > 0,
@@ -160,39 +203,57 @@ function ProfileCover({ open, shown, onClose }: { open: boolean; shown: boolean;
       tabIndex={-1}
       onKeyDown={trapTab}
     >
-      <div ref={profileRef} className={styles.layer} data-covered={editor.shown || undefined}>
-        <ProfilePage onDone={onClose} onOpenHousehold={() => setEditorOpen(true)} householdRowRef={householdRowRef} />
-      </div>
-      {editor.mounted ? (
-        <div
-          ref={editorRef}
-          className={`${styles.layer} ${styles.pushed}`}
-          data-shown={editor.shown || undefined}
-          data-covered={personPage.shown || undefined}
-        >
-          <HouseholdEditor
-            onBack={() => setEditorOpen(false)}
-            onOpenPerson={openPerson}
-            onAddPerson={openAddPerson}
-            backRef={backRef}
+      <NotifyProvider enabled={server}>
+        <div ref={profileRef} className={styles.layer} data-covered={editor.shown || reminderPage.shown || undefined}>
+          <ProfilePage
+            onDone={onClose}
+            onOpenHousehold={() => setEditorOpen(true)}
+            householdRowRef={householdRowRef}
+            onOpenReminder={openReminder}
           />
         </div>
-      ) : null}
-      {editor.mounted && person && personPage.mounted ? (
-        <div ref={personRef} className={`${styles.layer} ${styles.pushed}`} data-shown={personPage.shown || undefined}>
-          {person.page.kind === 'add' ? (
-            <AddPersonPage
-              key={person.key}
-              onBack={closePerson}
-              onAdded={personAdded}
-              backRef={personBackRef}
-              nameRef={addNameRef}
+        {reminder && reminderPage.mounted ? (
+          <div ref={reminderRef} className={`${styles.layer} ${styles.pushed}`} data-shown={reminderPage.shown || undefined}>
+            <ReminderPage
+              key={reminder.key}
+              reminderId={reminder.id}
+              onBack={closeReminder}
+              backRef={reminderBackRef}
+              titleRef={reminderTitleRef}
             />
-          ) : (
-            <PersonPage key={person.key} memberId={person.page.id} onBack={closePerson} backRef={personBackRef} />
-          )}
-        </div>
-      ) : null}
+          </div>
+        ) : null}
+        {editor.mounted ? (
+          <div
+            ref={editorRef}
+            className={`${styles.layer} ${styles.pushed}`}
+            data-shown={editor.shown || undefined}
+            data-covered={personPage.shown || undefined}
+          >
+            <HouseholdEditor
+              onBack={() => setEditorOpen(false)}
+              onOpenPerson={openPerson}
+              onAddPerson={openAddPerson}
+              backRef={backRef}
+            />
+          </div>
+        ) : null}
+        {editor.mounted && person && personPage.mounted ? (
+          <div ref={personRef} className={`${styles.layer} ${styles.pushed}`} data-shown={personPage.shown || undefined}>
+            {person.page.kind === 'add' ? (
+              <AddPersonPage
+                key={person.key}
+                onBack={closePerson}
+                onAdded={personAdded}
+                backRef={personBackRef}
+                nameRef={addNameRef}
+              />
+            ) : (
+              <PersonPage key={person.key} memberId={person.page.id} onBack={closePerson} backRef={personBackRef} />
+            )}
+          </div>
+        ) : null}
+      </NotifyProvider>
       {/* Not read-only: iOS only raises the keyboard for an editable field. */}
       <input
         ref={keyboardProxyRef}

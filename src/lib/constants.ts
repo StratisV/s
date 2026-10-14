@@ -163,6 +163,8 @@ export const TEXT_LIMITS = {
   housekeepingComments: 4000,
   /** A person's Google email (members_email_length; isValidEmail() in lib/logic/people.ts). */
   email: 254,
+  /** A reminder someone set for themselves (server mode: Profile > Notifications). */
+  reminderTitle: 80,
 } as const;
 
 /** Messages per chat page (the newest page first, older ones as you scroll up). */

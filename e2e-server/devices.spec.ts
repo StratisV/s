@@ -40,12 +40,13 @@ test('Add another device signs a second phone in as Stratis; removing it from th
   const a = phone.page;
   await expect(homeHeading(a)).toBeVisible();
 
-  // Profile says which device this is; no Google, no notifications, no weekly email.
+  // Profile says which device this is; no Google, no weekly email (phone notifications are
+  // the server's own: notifications.spec.ts).
   let dialog = await openProfile(a);
   await expect(dialog.getByText(/^This device · /)).toBeVisible();
   await expect(dialog.getByText('Signed in with Google')).toHaveCount(0);
   await expect(dialog.getByRole('button', { name: 'Invite someone' })).toHaveCount(0);
-  await expect(dialog.getByText(/notifications/i)).toHaveCount(0);
+  await expect(dialog.getByText(/weekly email|push notifications/i)).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Add another device' }).click();
   const sheet = codeSheet(a, 'Code for another device');
   await expect(sheet).toContainText('On your other phone or tablet, open home.os and enter it, or open the link.');

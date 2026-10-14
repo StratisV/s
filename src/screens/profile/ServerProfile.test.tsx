@@ -94,12 +94,15 @@ async function addPersonName(): Promise<HTMLInputElement> {
 afterEach(() => cleanup());
 
 describe('Profile in server mode', () => {
-  it('names this device instead of Google, and has no push, weekly email or Invite someone', async () => {
+  it('names this device instead of Google, has phone notifications, and no weekly email or Invite someone', async () => {
     const { home } = await openProfile();
     expect(await screen.findByText('This device · iPhone · Safari')).toBeTruthy();
     expect(screen.queryByText('Signed in with Google')).toBeNull();
     expect(home.listDevices).toHaveBeenCalled();
-    expect(screen.queryByRole('heading', { name: 'Notifications' })).toBeNull();
+    // Notifications are the server's phone notifications (ServerNotifications.test.tsx), not the email.
+    expect(screen.getByRole('heading', { name: 'Notifications' })).toBeTruthy();
+    expect(screen.getByRole('switch', { name: 'Notifications on this device' })).toBeTruthy();
+    expect(home.notifySettings).toHaveBeenCalled();
     expect(screen.queryByRole('switch', { name: /Push|Weekly/ })).toBeNull();
     expect(screen.queryByText(/Weekly email|Push notifications/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Invite someone' })).toBeNull();

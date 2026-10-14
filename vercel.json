@@ -4,6 +4,7 @@
   "installCommand": "npm ci",
   "buildCommand": "node scripts/migrate.mjs && npm run build && node scripts/build-server.mjs --vercel",
   "outputDirectory": "dist",
+  "crons": [{ "path": "/api/home?op=tick", "schedule": "0 7 * * *" }],
   "headers": [
     {
       "source": "/sw.js",
