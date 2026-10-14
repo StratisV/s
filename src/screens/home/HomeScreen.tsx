@@ -14,18 +14,20 @@ import {
 import { longDay } from '../../lib/logic/dates';
 import { isState, itemsByArea } from '../../lib/logic/items';
 import { areaShareMessage } from '../../lib/logic/share';
-import { compareByUrgency, homeSummary, upNext, type SummaryScope } from '../../lib/logic/upNext';
+import { homeSummary, roomOrder, upNext, type SummaryScope } from '../../lib/logic/upNext';
 import { appBaseUrl } from '../../lib/sharedLink';
 import type { Area, ISODate, Item, Member } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
-import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon, FoldIcon, PlusIcon, ShareIcon } from '../../ui/icons';
+import { ChevronRightIcon, EllipsisIcon, PlusIcon, ShareIcon } from '../../ui/icons';
 import { Menu } from '../../ui/Menu';
 import { Screen } from '../../ui/Screen';
 import { useShare } from '../share/useShare';
 import { HomeCalendar } from './HomeCalendar';
 import { ItemRow } from './ItemRow';
 import { PersonFilter } from './PersonFilter';
+import { RevealContext } from './reveal';
 import { RoomIcon } from './RoomIcon';
+import { ShowMore, useFold } from './ShowMore';
 import { countsFor, isFor, personFilterKey, validFilter, type PersonFilter as Who } from './personFilter';
 import { UpNextView } from './UpNextView';
 import styles from './HomeScreen.module.css';
@@ -38,14 +40,17 @@ interface HomeScreenProps {
   /** Add Item in a room's menu: opens the new-item sheet with that room chosen. */
   onAddItem(areaId: string): void;
   /**
-   * An area an item was just saved into (new, or moved there): it is expanded if it was
-   * collapsed, so what was saved can be seen. Then `onRevealed` is called.
+   * An item just saved (new, or moved to another area), so the person sees where it went:
+   * once it is in the list, everyone's items show if the person filter hides it, its room
+   * opens if folded, a "Show N more" over it opens (or the calendar goes to its day), and its
+   * row comes into view, lit up for a moment. Then `onRevealed` is called.
    */
-  revealArea?: string | null;
+  revealItem?: string | null;
   onRevealed?(): void;
   /**
-   * An area opened from a shared link (`?area=`): Rooms is shown, the area expanded and
-   * scrolled to the top, under the tab switch. Then `onLinkedAreaShown` is called.
+   * An area opened from a shared link (`?area=`): Rooms is shown for this visit (the view this
+   * phone remembers stays as it was), the area expanded and scrolled to the top, under the tab
+   * switch. Then `onLinkedAreaShown` is called.
    */
   linkedArea?: string | null;
   onLinkedAreaShown?(): void;
@@ -67,7 +72,7 @@ const VIEWS: { value: HomeView; label: string }[] = [
   { value: 'calendar', label: 'Calendar' },
 ];
 
-/** Where this device remembers the view: 'rooms' or 'calendar', nothing for Up next. */
+/** Where this device remembers the view the person picked: 'rooms' or 'calendar', nothing for Up next. */
 export const HOME_VIEW_KEY = 'homeos.homeView';
 
 function readView(): HomeView {
@@ -79,18 +84,26 @@ function readView(): HomeView {
   }
 }
 
+/**
+ * The view shown. `pick`, the person's choice on the switch, is remembered on this device. A
+ * shared room link shows Rooms for this visit only (`showForLink`): it is not remembered, and
+ * it gives way as soon as the person picks a view, leaves Home or reopens the app, so a link
+ * from the chat never changes what Home opens on.
+ */
 function useHomeView() {
-  const [view, setState] = useState<HomeView>(readView);
-  const setView = useCallback((next: HomeView) => {
+  const [picked, setPicked] = useState<HomeView>(readView);
+  const [forLink, setForLink] = useState<HomeView | null>(null);
+  const pick = useCallback((next: HomeView) => {
     try {
       if (next === 'next') localStorage.removeItem(HOME_VIEW_KEY);
       else localStorage.setItem(HOME_VIEW_KEY, next);
     } catch {
       /* private mode or storage full: it just isn't remembered */
     }
-    setState(next);
+    setForLink(null);
+    setPicked(next);
   }, []);
-  return [view, setView] as const;
+  return { view: forLink ?? picked, pick, showForLink: setForLink };
 }
 
 /** Where this device remembers which areas are collapsed: a JSON list of area ids. */
@@ -179,7 +192,7 @@ export function HomeScreen({
   onOpenItem,
   onOpenProfile,
   onAddItem,
-  revealArea,
+  revealItem,
   onRevealed,
   linkedArea,
   onLinkedAreaShown,
@@ -193,7 +206,7 @@ export function HomeScreen({
   const areaIds = useMemo(() => sections.map((s) => s.area.id), [sections]);
   const [collapsed, setCollapsed] = useCollapsedAreas(data.household.id, areaIds);
   const [who, setWho] = usePersonFilter(data.household.id, data.members);
-  const [view, setView] = useHomeView();
+  const { view, pick: pickView, showForLink } = useHomeView();
   const counts = useMemo(
     () => countsFor(sections.flatMap((s) => s.items), data.members),
     [sections, data.members],
@@ -206,7 +219,6 @@ export function HomeScreen({
         : sections.map((s) => ({ ...s, items: s.items.filter((it) => isFor(it, who)) })).filter((s) => s.items.length > 0),
     [sections, who],
   );
-  const shownIds = shown.map((s) => s.area.id);
   // Rooms that can fold (a room with nothing open is one line already).
   const foldableIds = shown.filter((s) => s.items.length > 0).map((s) => s.area.id);
   // The items shown, in Home's order (for the calendar's marks and Up next).
@@ -236,19 +248,45 @@ export function HomeScreen({
           ? 'Nothing for you right now.'
           : `Nothing for ${whoName} right now.`;
 
-  // An item was saved into a collapsed area: open it so the item shows (the sheet closes over it).
-  // If the filter hides that area, show everyone's again.
+  // An item was just saved (the sheet is closing over Home). A new one is in the list after the
+  // next load, so this waits for it. Everyone's items if the filter hides it, its room opened
+  // if folded; then `lit` holds it for a moment: a "Show N more" over it opens (ShowMore.tsx),
+  // the calendar goes to its day, and its row lights up and comes into view.
+  const [lit, setLit] = useState<{ id: string; delay: number } | null>(null);
+  const saved = revealItem ? (data.items.find((it) => it.id === revealItem && it.status === 'open') ?? null) : null;
+  const revealRef = useRef({ who, setWho, collapsed, setCollapsed, onRevealed });
+  revealRef.current = { who, setWho, collapsed, setCollapsed, onRevealed };
   useEffect(() => {
-    if (!revealArea) return;
-    if (who !== 'all' && !shownIds.includes(revealArea)) setWho('all');
-    if (collapsed.has(revealArea)) {
-      const nextIds = new Set(collapsed);
-      nextIds.delete(revealArea);
-      setCollapsed(nextIds);
+    if (!saved) return;
+    const now = revealRef.current;
+    if (now.who !== 'all' && !isFor(saved, now.who)) now.setWho('all');
+    const folded = now.collapsed.has(saved.area_id);
+    if (folded) {
+      const nextIds = new Set(now.collapsed);
+      nextIds.delete(saved.area_id);
+      now.setCollapsed(nextIds);
     }
-    onRevealed?.();
-    // `who` and `shownIds` are only read when an area is revealed.
-  }, [revealArea, collapsed, setCollapsed, onRevealed]);
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    setLit({ id: saved.id, delay: folded && !still ? AREA_SLIDE_MS : AREA_REDRAW_MS });
+    now.onRevealed?.();
+  }, [saved]);
+  useEffect(() => {
+    if (!lit) return;
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    // Once its room has opened and the rows behind a fold are drawn: into view, clear of the
+    // docked tab switch and the round + (the rows' scroll margins).
+    const show = setTimeout(() => {
+      const row = Array.from(document.querySelectorAll<HTMLElement>('[data-view] [data-item-id]')).find(
+        (el) => el.dataset.itemId === lit.id,
+      );
+      row?.querySelector<HTMLElement>('[data-item-open]')?.scrollIntoView({ block: 'nearest', behavior: still ? 'auto' : 'smooth' });
+    }, lit.delay);
+    const done = setTimeout(() => setLit(null), lit.delay + ITEM_FLASH_MS);
+    return () => {
+      clearTimeout(show);
+      clearTimeout(done);
+    };
+  }, [lit]);
 
   // An area from a shared link: show Rooms, open the area, then bring it to the top once it has
   // opened, and light its card up for a moment (near the bottom of the page it can't reach the
@@ -264,14 +302,15 @@ export function HomeScreen({
     sections,
     shown,
     view,
-    setView,
+    showForLink,
   });
-  linkedRef.current = { collapsed, setCollapsed, onLinkedAreaShown, onRoomContext, who, setWho, sections, shown, view, setView };
+  linkedRef.current = { collapsed, setCollapsed, onLinkedAreaShown, onRoomContext, who, setWho, sections, shown, view, showForLink };
   useEffect(() => {
     if (!linkedArea) return;
     const now = linkedRef.current;
     const switching = now.view !== 'rooms';
-    if (switching) now.setView('rooms');
+    // Rooms for this visit; what Home opens on next time stays the person's own choice.
+    if (switching) now.showForLink('rooms');
     // The person filter hides the area, or some of its items: show everyone's, as shared.
     const all = now.sections.find((s) => s.area.id === linkedArea)?.items.length ?? 0;
     const visible = now.shown.find((s) => s.area.id === linkedArea)?.items.length;
@@ -342,14 +381,14 @@ export function HomeScreen({
       tabs={tabs}
     >
       {sections.length ? (
-        <>
+        <RevealContext.Provider value={lit?.id ?? null}>
           <p className={styles.summary} data-home-summary="">
             <span className={styles.summaryLead}>{summary.lead}</span>
             {summary.rest ? <span className={styles.summaryRest}> {summary.rest}</span> : null}
           </p>
           {readOnly ? <ReadOnlyLine /> : null}
           <div className={styles.controls}>
-            <ViewSwitch value={view} onChange={setView} />
+            <ViewSwitch value={view} onChange={pickView} />
             <PersonFilter members={data.members} meId={me.id} value={who} counts={counts} onChange={setWho} />
           </div>
           {view === 'next' ? (
@@ -366,7 +405,15 @@ export function HomeScreen({
             />
           ) : view === 'rooms' ? (
             <div className={styles.view} data-view="rooms">
-              {shown.length ? null : <p className={styles.nobody}>{nobody}</p>}
+              {shown.length ? null : <p className={`${styles.card} ${styles.nobody}`}>{nobody}</p>}
+              {foldableIds.length ? (
+                // Every room down to one line, an overview of the house, and back.
+                <div className={styles.roomsBar}>
+                  <button type="button" className={styles.foldAll} data-fold-all="" onClick={toggleAll}>
+                    {allCollapsed ? 'Expand all' : 'Collapse all'}
+                  </button>
+                </div>
+              ) : null}
               {shown.map(({ area, items }) => (
                 <AreaSection
                   key={area.id}
@@ -376,11 +423,9 @@ export function HomeScreen({
                   today={today}
                   timeZone={timeZone}
                   collapsed={collapsed.has(area.id)}
-                  allCollapsed={allCollapsed}
                   linked={flashArea === area.id}
                   showWho={showWho}
                   onToggle={toggle}
-                  onToggleAll={toggleAll}
                   onAddItem={onAddItem}
                   onShare={shareArea}
                   onOpenItem={onOpenItem}
@@ -405,7 +450,7 @@ export function HomeScreen({
               />
             </div>
           )}
-        </>
+        </RevealContext.Provider>
       ) : (
         <>
           {readOnly ? <ReadOnlyLine /> : null}
@@ -458,7 +503,8 @@ function ViewSwitch({ value, onChange }: { value: HomeView; onChange(view: HomeV
           data-view-option={v.value}
           onClick={() => onChange(v.value)}
         >
-          {v.label}
+          {/* Cut short here, inside, so the button's own 44px tap area is never clipped. */}
+          <span className={styles.viewLabel}>{v.label}</span>
         </button>
       ))}
     </div>
@@ -499,7 +545,7 @@ function quietFocus(el: HTMLElement): void {
  */
 function NoAreas({ onOpenProfile }: { onOpenProfile(): void }) {
   return (
-    <div className={styles.noAreas}>
+    <div className={`${styles.card} ${styles.noAreas}`}>
       <p className={styles.noAreasText}>
         <strong>No areas yet</strong>
         Items live in an area, like Kitchen or Garden. Add one in Profile, under Household.
@@ -517,6 +563,8 @@ const AREA_SLIDE_MS = 360;
 const AREA_REDRAW_MS = 50;
 /** How long an area opened from a shared link stays lit up (`.section[data-linked]`). */
 const AREA_FLASH_MS = 2400;
+/** How long a row just saved stays lit up (ItemRow.module.css `.row[data-lit]`). */
+const ITEM_FLASH_MS = 2400;
 
 const graphemes =
   typeof Intl !== 'undefined' && 'Segmenter' in Intl ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
@@ -559,14 +607,11 @@ interface AreaSectionProps {
   /** The household's, for a To maintain row's "Updated" day. */
   timeZone: string;
   collapsed: boolean;
-  /** Every room shown is collapsed: the menu offers Expand All. */
-  allCollapsed: boolean;
   /** Just opened from a shared link: lit up for a moment. */
   linked: boolean;
   /** Who each row is for, at the end of its title (off while one person's items show). */
   showWho: boolean;
   onToggle(areaId: string): void;
-  onToggleAll(): void;
   onAddItem(areaId: string): void;
   /** Shares the area's open items (the share sheet, or the clipboard). */
   onShare(area: Area): void;
@@ -578,9 +623,9 @@ interface AreaSectionProps {
  * A room in the Rooms view, as one card (Apple Home's rooms): its drawing, its name (a
  * disclosure that folds the card to one line, remembered on this device), one quiet word on
  * its state ("1 urgent" in red, "3 open" while folded, "All clear"), and one "..." whose menu
- * holds Add Item, Share Room and Collapse All. Then its To dos, most urgent first, three of
- * them and "Show 2 more" when there are more; then the things it looks after (gauges, never
- * rings). A room with nothing open is one quiet line, in its place in the household's order.
+ * holds Add Item and Share Room. Then its To dos, most urgent first, three of them and "Show
+ * 2 more" when there are more; then the things it looks after (gauges, never rings). A room
+ * with nothing open is one quiet line, in its place in the household's order.
  */
 function AreaSection({
   area,
@@ -589,11 +634,9 @@ function AreaSection({
   today,
   timeZone,
   collapsed,
-  allCollapsed,
   linked,
   showWho,
   onToggle,
-  onToggleAll,
   onAddItem,
   onShare,
   onOpenItem,
@@ -605,13 +648,12 @@ function AreaSection({
   const listId = useId();
   const [head, tail] = splitLast(area.name);
   const empty = items.length === 0;
-  // Late and urgent first, as in Up next.
-  const tasks = items.filter((it) => !isState(it)).sort(compareByUrgency(today));
-  const states = items.filter(isState);
+  // Late and urgent first, as in Up next (and in the same order as Share Room lists them).
+  const ordered = roomOrder(items, today);
+  const tasks = ordered.filter((it) => !isState(it));
+  const states = ordered.filter(isState);
   const status = roomStatus(items, today, collapsed);
-  const [more, setMore] = useState(false);
-  const folds = tasks.length > ROOM_PREVIEW + 1;
-  const shownTasks = folds && !more ? tasks.slice(0, ROOM_PREVIEW) : tasks;
+  const fold = useFold(tasks, ROOM_PREVIEW);
   // Out of reach as soon as it starts closing (visibility only switches once it has).
   const panelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -643,7 +685,7 @@ function AreaSection({
       data-linked={linked || undefined}
       data-empty={empty || undefined}
     >
-      <div className={styles.roomCard} data-room-card="">
+      <div className={styles.card} data-room-card="">
         <div className={styles.headerRow}>
           {empty ? (
             <h2 ref={headingRef} id={headingId} className={styles.header} tabIndex={-1}>
@@ -711,18 +753,11 @@ function AreaSection({
                 onSelect: () => onAddItem(area.id),
               },
               {
+                // Named by its words, as seen and as Voice Control hears them; the menu is named after the room.
                 key: 'share',
                 label: 'Share Room',
-                ariaLabel: `Share ${area.name}`,
                 icon: <ShareIcon size={20} strokeWidth={1.9} />,
                 onSelect: () => onShare(area),
-              },
-              {
-                key: 'fold',
-                label: allCollapsed ? 'Expand All Rooms' : 'Collapse All Rooms',
-                icon: <FoldIcon size={20} open={allCollapsed} />,
-                groupStart: true,
-                onSelect: onToggleAll,
               },
             ]}
           >
@@ -740,22 +775,13 @@ function AreaSection({
               <div className={styles.roomBody}>
                 {tasks.length ? (
                   <ul id={listId} className={styles.list} role="list">
-                    {shownTasks.map((item) => (
+                    {fold.rows.map((item) => (
                       <ItemRow key={item.id} item={item} {...rowProps} />
                     ))}
                   </ul>
                 ) : null}
-                {folds ? (
-                  <button
-                    type="button"
-                    className={styles.more}
-                    aria-expanded={more}
-                    aria-controls={listId}
-                    onClick={() => setMore((m) => !m)}
-                  >
-                    {more ? 'Show fewer' : `Show ${tasks.length - ROOM_PREVIEW} more`}
-                    <ChevronDownIcon className={styles.moreChevron} size={11} strokeWidth={2.6} />
-                  </button>
+                {fold.folds ? (
+                  <ShowMore open={fold.open} hidden={fold.hidden} controls={listId} onToggle={fold.toggle} />
                 ) : null}
                 {states.length ? (
                   <div className={styles.looking} data-has-tasks={tasks.length > 0 || undefined}>

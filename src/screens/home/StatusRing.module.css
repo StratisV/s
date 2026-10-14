@@ -20,11 +20,14 @@
     background-color 0.15s ease;
 }
 
-/* 44px tap target around the ring. */
+/*
+ * A 44px tap circle around the ring. It is placed from the padding box (20.8px, inside the
+ * 1.6px border), so it reaches 11.6px past it on every side.
+ */
 .ring::before {
   content: '';
   position: absolute;
-  inset: -10px;
+  inset: -11.6px;
   border-radius: 50%;
 }
 

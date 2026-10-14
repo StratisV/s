@@ -103,7 +103,7 @@ test.describe('To maintain', () => {
   test('the seeded Firepit is a state in the Garden: a gauge, under "Looking after", "Good", "Updated"', async ({ page }) => {
     const firepit = stateRow(page, 'Firepit');
     await expect(firepit).toBeVisible();
-    // The note is a glyph on Home, not text.
+    // The note is in the sheet, not on Home.
     await expect(firepit).not.toContainText('New one installed');
     await expect(stateMeta(page, 'Firepit')).toHaveText('Good·Updated today');
     await expect(stateButton(page, 'Firepit').locator('[data-who]')).toHaveText('🦊Ela');
@@ -233,7 +233,7 @@ test.describe('To maintain', () => {
     await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
     // Its colour carries over as its condition: amber is Okay, two bars.
     expect(await filled(gauge(page, 'Mirror lights not level'))).toEqual({ colour: AMBER, bars: 2 });
-    await expect(stateMeta(page, 'Mirror lights not level')).toHaveText('OkayUpdated today');
+    await expect(stateMeta(page, 'Mirror lights not level')).toHaveText('Okay·Updated today');
     await expect(area(page, 'Living Room').getByText('All clear')).toHaveCount(0);
   });
 

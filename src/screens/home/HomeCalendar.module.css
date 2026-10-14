@@ -1,6 +1,6 @@
 /*
  * Home's calendar (HomeCalendar.tsx): the bar and the card are src/ui/DatePicker and
- * src/ui/MonthCalendar; these are its marks and the day under it.
+ * src/ui/MonthCalendar; these are its marks, what they mean, and the day under it.
  */
 
 .section {
@@ -9,7 +9,7 @@
 
 /* ── Marks under a day's number ────────────────────────── */
 
-/* An item due (or missed): a dot in its status colour. */
+/* An item due (or missed): a dot in its urgency's colour. */
 .dot {
   flex: none;
   width: 6px;
@@ -18,16 +18,39 @@
   background: var(--dot);
 }
 
+.dot[data-rag='red'] {
+  --dot: var(--rag-red);
+}
+
+.dot[data-rag='amber'] {
+  --dot: var(--rag-amber);
+}
+
+.dot[data-rag='green'] {
+  --dot: var(--rag-green);
+}
+
 /*
- * A repeat still to come: hollow, in the darker status colour (RAG_TEXT, set by
- * HomeCalendar) at 80%, so the ring keeps 3:1 against the card (3.2:1 for green, 3.9:1 for
- * amber, 4.5:1 for red) while being clearly lighter than a solid dot. Hollow or solid is the
- * cue that doesn't rely on colour.
+ * A repeat still to come: hollow, in the darker words colour of its urgency at 80%, so the
+ * ring keeps 3:1 against the card in both appearances while being clearly lighter than a
+ * solid dot. Hollow or solid is the cue that doesn't rely on colour.
  */
 .dot[data-repeat] {
   background: transparent;
   box-shadow: inset 0 0 0 1.5px var(--dot);
   opacity: 0.8;
+}
+
+.dot[data-repeat][data-rag='red'] {
+  --dot: var(--rag-red-text);
+}
+
+.dot[data-repeat][data-rag='amber'] {
+  --dot: var(--rag-amber-text);
+}
+
+.dot[data-repeat][data-rag='green'] {
+  --dot: var(--rag-green-text);
 }
 
 /* More than three: "+2". */
@@ -41,20 +64,28 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ── What the marks mean (month view) ──────────────────── */
+/* ── What the marks mean, in words (week and month) ────── */
 
+/* Two lines: the dots' colours, then the other marks. Each line wraps between its entries. */
 .legend {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 4px 14px;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
   margin: 6px 4px 0;
   padding-top: 10px;
   border-top: 0.5px solid var(--separator);
   font-size: 13px;
   line-height: 18px;
-  letter-spacing: 0;
+  letter-spacing: -0.05px;
   color: var(--label-secondary);
+}
+
+.legendRow {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 14px;
 }
 
 .legendItem {
@@ -64,15 +95,10 @@
   white-space: nowrap;
 }
 
-.legendDots {
-  display: inline-flex;
-  gap: 2px;
-}
-
+/* "Red date": the words in the red a missed day's number takes. */
 .legendMissed {
-  font-weight: 700;
+  font-weight: 600;
   color: var(--destructive);
-  font-variant-numeric: tabular-nums;
 }
 
 /* A housekeeping visit: a day's circle with the tint dot in it, as on both calendars. */
@@ -103,14 +129,11 @@
   padding-bottom: 10px;
 }
 
-/* The chosen day, as Home's group headings are drawn (HomeScreen.module.css .groupTitle). */
+/* The chosen day, as Home's group headings are drawn. */
 .dayHeader {
+  composes: sectionTitle from '../../ui/type.module.css';
   margin: 0;
   padding: 26px 20px 10px;
-  font-size: 20px;
-  line-height: 25px;
-  font-weight: 700;
-  letter-spacing: -0.45px;
   overflow-wrap: anywhere;
 }
 
@@ -119,11 +142,19 @@
   outline: none;
 }
 
+/* The chosen day is in another week or month than the one shown: one quiet line instead. */
+.pick {
+  margin: 0;
+  padding: 26px 20px 10px;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
+}
+
+/* Home's card (HomeScreen.module.css), with a little room between two. */
 .card {
-  margin: 0 16px;
-  background: var(--card);
-  border-radius: var(--r-card);
-  overflow: hidden;
+  composes: card from './HomeScreen.module.css';
 }
 
 .card + .card {
@@ -168,7 +199,7 @@
   color: var(--label-secondary);
 }
 
-.repeatMeta {
+.repeatWhen {
   flex: none;
 }
 

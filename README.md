@@ -23,32 +23,41 @@ means under it ("Needs doing now", "Fine for now, keep an eye on it").
   - **Up next** (the default): every room's items in one list, by when: **Needs attention**
     (anything late or urgent, and anything looked after that needs work), **Today**, **Next 7
     days** (in date order), then **Later** (three rows, then "Show 6 more"). Things looked
-    after that are Good or Okay close the page as small tiles under **Looking after**.
-  - **Rooms**: one card per room, in the household's order, each with a small drawing of the
-    room (red when something there is late or urgent), its name and one quiet word ("1 late",
-    "1 urgent", "All clear"). A room shows three jobs, then "Show 2 more"; it folds away with
-    a tap and stays that way on that phone, and its "..." menu adds an item to it, shares it,
-    or folds every room at once into a one-line-per-room overview of the house.
+    after that are Good or Okay close the page as small tiles under **Looking after** ("All in
+    good shape.").
+  - **Rooms**: **Collapse all** at the top folds every room into a one-line-per-room overview
+    of the house (and **Expand all** opens them again). Then one card per room, in the
+    household's order, each with a small drawing of the room (red when something there is late
+    or urgent), its name and one quiet word ("1 late", "1 urgent", "All clear"). A room shows
+    three jobs, then "Show 2 more"; it folds away with a tap and stays that way on that phone,
+    and its "..." menu adds an item to it or shares it.
   - **Calendar**: see below.
 
   Each item is one row: a plain grey ring (tap it to tick the job off: the title is struck
-  through for a moment, then it folds away, with Undo), its title (two lines at most), who it
-  is for (their emoji and first name), and one quiet line with its urgency in words, when it
-  is due ("Tomorrow", "In 4 days", "2 days late" in red), and its room. A thing looked after
-  has a small gauge instead of a ring (three bars for Good, two for Okay, one for Needs work).
-  Add an item with the round + at the bottom right, or from a room's menu; after a shared
-  room link the + adds to that room ("+ Garden").
+  through for a moment, then it folds away, with Undo, and "Done. Next one in 8 weeks" for a
+  job that repeats), its title (two lines at most), who it is for (their emoji and first
+  name), and one quiet line with its urgency in words, when it is due ("Tomorrow", "In 4
+  days", "2 days late" in red), and its room, always whole. **Urgent** is a red pill, the
+  loudest thing on a row; **Within the month** is amber words; **Not urgent** grey words. A
+  thing looked after has a small gauge instead of a ring (three bars for Good, two for Okay,
+  one for Needs work). Add an item with the round + at the bottom right, or from a room's
+  menu; after a shared room link the + adds to that room ("+ Garden"). Once saved, Home shows
+  where it went: its room and any "Show N more" open, and its row lights up for a moment.
 - **Calendar** (Home's third view): this week as a strip ("This week", "Next week"), or the
   whole month with **Show month** (the phone remembers which). The arrows either side of the
   days go back and forward a week (or a month), and **Today** brings you back. Each day shows
   what is due as red, amber and green dots (up to three, then "+2"), a missed day's date in
   red, a repeating job's later rounds as faint hollow dots, and the small blue dot
-  Housekeeping's calendar uses on the days the housekeeper came. It follows the person chosen:
-  pick Shea and only Shea's jobs mark it (the housekeeper's visits stay). Today is chosen at
-  first, and what is due that day shows underneath; tap any day to see what is due then, most
-  urgent first, ticked off with the ring just like on Home, the repeats coming round that day,
-  and that day's housekeeping visit, which opens it on the Housekeeping tab. To maintain items
-  have no date, so they are never on it. Housekeeping's calendar is the same one.
+  Housekeeping's calendar uses on the days the housekeeper came; a legend under the days
+  says what each means in words ("Urgent", "Within the month", "Not urgent", "Repeat",
+  "Housekeeping", "Red date: missed"), and VoiceOver hears it with each day ("2 due (1
+  urgent, 1 not urgent)"). It follows the person chosen: pick Shea and only Shea's jobs mark
+  it (the housekeeper's visits stay). Today is chosen at first, and what is due that day shows
+  underneath; tap any day to see what is due then, most urgent first, ticked off with the
+  ring just like on Home, the repeats coming round that day, and that day's housekeeping
+  visit, which opens it on the Housekeeping tab. In another week or month, one line asks you
+  to pick a day. To maintain items have no date, so they are never on it. Housekeeping's
+  calendar is the same one.
 - **Dark mode**: the whole app follows the phone's appearance (the hero keeps its own sky).
 - **The hero**: every tab opens on an illustration that runs to the very top of the screen: the
   house in its garden, with a green duck and a brown hedgehog, under the sky as it is in London
@@ -70,7 +79,8 @@ means under it ("Needs doing now", "Fine for now, keep an eye on it").
 - **Share**: send an item (from its sheet, as the sheet shows it) or a whole area (Share Room
   in its "..." menu) to WhatsApp, Messages or Mail as a short summary with a link, which says
   each item's urgency or condition in words. The
-  link opens that item, or that area on Home (in Rooms), in home.os for anyone in the household (after
+  link opens that item, or that area on Home (in Rooms, for that visit only: Home still opens
+  on the view the person picked), in home.os for anyone in the household (after
   signing in if need be; on iPhone, links open in Safari rather than the Home Screen app).
   Where there is no share sheet, the text is copied instead.
 - A **weekly email** with the full status, and **push notifications** before deadlines and when

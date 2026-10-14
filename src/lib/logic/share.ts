@@ -3,7 +3,8 @@
 import { ragWord } from '../constants';
 import type { Area, ISODate, Item, Member, Repeat } from '../types';
 import { formatDay } from './dates';
-import { isMissed, isState, sortItems, updatedLabel } from './items';
+import { isMissed, isState, updatedLabel } from './items';
+import { roomOrder } from './upNext';
 
 /** A link into the app: `?item=<id>` opens that item, `?area=<id>` shows that area on Home. */
 export type SharedLink = { kind: 'item' | 'area'; id: string };
@@ -144,7 +145,8 @@ function itemLine(item: Item, ctx: ShareContext): string {
 }
 
 /**
- * An area and its open items, To do first by date, then To maintain (Home's order):
+ * An area and its open items in the order its card on Home lists them (roomOrder(): To dos
+ * most urgent first, then the things it looks after):
  *
  *     Kitchen (2 items)
  *     • Kitchen paper · Not urgent · Due Thu 5 Nov
@@ -156,7 +158,10 @@ function itemLine(item: Item, ctx: ShareContext): string {
  */
 export function areaShareMessage(area: Area, items: Item[], ctx: ShareContext): ShareMessage {
   const title = area.name.trim();
-  const open = sortItems(items.filter((it) => it.area_id === area.id && it.status === 'open'));
+  const open = roomOrder(
+    items.filter((it) => it.area_id === area.id),
+    ctx.today,
+  );
   const count = open.length;
   const heading = count ? `${title} (${count} ${count === 1 ? 'item' : 'items'})` : title;
   const shown = open.length > SHARE_AREA_MAX ? open.slice(0, SHARE_AREA_MAX - 1) : open;

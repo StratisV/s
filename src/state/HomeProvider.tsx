@@ -8,7 +8,7 @@ import {
   type MemberPatch,
 } from '../lib/backend/types';
 import { STATE_FIELDS } from '../lib/constants';
-import { formatDay, todayIn } from '../lib/logic/dates';
+import { todayIn } from '../lib/logic/dates';
 import {
   applyTick,
   applyVisitPatch,
@@ -35,6 +35,7 @@ import {
   readDemoDoc,
 } from '../lib/logic/importHome';
 import { normaliseEmail } from '../lib/logic/people';
+import { doneMessage } from '../lib/logic/upNext';
 import type {
   Area,
   AuthUser,
@@ -1577,7 +1578,7 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         (cur) => ({ next: done(cur), revert: undone }),
         () => backend.completeItem(id),
       );
-      showToast(next ? `Done. Next due ${next === today ? 'today' : formatDay(next, today)}` : 'Marked as done', {
+      showToast(doneMessage(next, today), {
         label: 'Undo',
         run: () => {
           dismissToast();

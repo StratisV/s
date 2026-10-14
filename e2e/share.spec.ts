@@ -12,10 +12,12 @@ import {
   openRoomMenu,
   openSeeded,
   peopleButton,
+  reopen,
   roomMenu,
   settled,
   test,
   toast,
+  views,
   type Page,
 } from './fixtures';
 
@@ -233,18 +235,18 @@ test.describe('Sharing an item', () => {
 });
 
 test.describe('Sharing an area', () => {
-  test('Share Room in a room’s menu shares its open items', async ({ page, baseURL }) => {
+  test('Share Room in a room’s menu shares its open items, in the order its card lists them', async ({ page, baseURL }) => {
     await stubShareSheet(page);
     await openSeeded(page);
     const garden = (await ids(page)).area('Garden');
-    await roomMenu(page, 'Garden', 'Share Garden');
+    await roomMenu(page, 'Garden', 'Share Room');
     await expect.poll(async () => (await sharedPayloads(page)).length).toBe(1);
     expect((await sharedPayloads(page))[0]).toEqual({
       title: 'Garden',
       text: [
         'Garden (3 items)',
-        '• Give away the old firepit · Not urgent · Due Thu 15 Oct',
         '• Garden room wall panel · Within the month · Due Fri 30 Oct',
+        '• Give away the old firepit · Not urgent · Due Thu 15 Oct',
         '• Firepit · Good · Updated Thu 8 Oct',
         '',
         `${baseURL}/?area=${garden}`,
@@ -255,7 +257,7 @@ test.describe('Sharing an area', () => {
   test('copies where there is no share sheet; an empty room says so', async ({ page, baseURL }) => {
     await openSeeded(page);
     const small = (await ids(page)).area('Bedroom Small');
-    await roomMenu(page, 'Bedroom Small', 'Share Bedroom Small');
+    await roomMenu(page, 'Bedroom Small', 'Share Room');
     await expect(toast(page, 'Copied to share')).toBeVisible();
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
       `Bedroom Small\nNothing to do\n\n${baseURL}/?area=${small}`,
@@ -370,7 +372,7 @@ test.describe('Sharing an area', () => {
     expect(status.x + status.width).toBeLessThanOrEqual(options.x);
     expect(options.x + options.width).toBeLessThanOrEqual(320 - 16);
     const menu = await openRoomMenu(page, 'Downstairs bathroom');
-    await menu.getByRole('menuitem', { name: 'Share Downstairs bathroom' }).click();
+    await menu.getByRole('menuitem', { name: 'Share Room' }).click();
     await expect.poll(async () => (await sharedPayloads(page)).length).toBe(1);
   });
 
@@ -469,6 +471,21 @@ test.describe('Opening a shared link', () => {
     await expect(area(page, 'Hallway')).toHaveAttribute('data-linked');
     await expect(page.getByRole('button', { name: 'Mark Heaters not working as done' })).toBeInViewport();
     await expect(area(page, 'Hallway').getByRole('button', { name: 'Hallway', exact: true })).toBeFocused();
+  });
+
+  test('?area= shows Rooms for the link only: opened again, Home is on the view the person picked', async ({ page }) => {
+    await openSeeded(page, 'Up next');
+    const garden = (await ids(page)).area('Garden');
+    await page.goto(`/?area=${garden}`);
+    await expect(area(page, 'Garden')).toHaveAttribute('data-linked');
+    await expect(views(page).getByRole('radio', { name: 'Rooms' })).toHaveAttribute('aria-checked', 'true');
+    expect(await page.evaluate(() => localStorage.getItem('homeos.homeView'))).toBeNull();
+    await reopen(page);
+    await expect(views(page).getByRole('radio', { name: 'Up next' })).toHaveAttribute('aria-checked', 'true');
+    // A view picked on the switch is remembered, as ever.
+    await views(page).getByRole('radio', { name: 'Calendar' }).click();
+    await reopen(page);
+    await expect(views(page).getByRole('radio', { name: 'Calendar' })).toHaveAttribute('aria-checked', 'true');
   });
 
   test('leaving Home before an area link has scrolled drops it', async ({ page }) => {

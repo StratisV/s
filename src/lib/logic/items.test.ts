@@ -8,7 +8,6 @@ import {
   dueDetail,
   isMissed,
   isState,
-  itemMeta,
   itemsByArea,
   memberLabel,
   newItemDraft,
@@ -161,41 +160,6 @@ describe('memberLabel', () => {
   });
 });
 
-describe('itemMeta', () => {
-  const members = [member({ id: 'm-me', name: 'Stratis', emoji: '🦔' }), member()];
-  const line = (m: { who: string; date: string | null }) => (m.date ? `${m.who} · ${m.date}` : m.who);
-
-  it('reads "🦆 Shea · Tue 20 Oct"', () => {
-    const meta = itemMeta(item({ assignee_id: 'm-shea', due_date: '2026-10-20' }), members, TODAY);
-    expect(meta).toEqual({ who: '🦆 Shea', date: 'Tue 20 Oct', missed: false });
-    expect(line(meta)).toBe('🦆 Shea · Tue 20 Oct');
-  });
-
-  it('reads "Unassigned · …" without an assignee (or with one who left)', () => {
-    expect(line(itemMeta(item({ due_date: '2026-10-12' }), members, TODAY))).toBe('Unassigned · Mon 12 Oct');
-    expect(itemMeta(item({ assignee_id: 'gone' }), members, TODAY).who).toBe('Unassigned');
-  });
-
-  it('marks missed items "Missed · Tue 6 Oct"', () => {
-    const meta = itemMeta(item({ assignee_id: 'm-shea', due_date: '2026-10-06' }), members, TODAY);
-    expect(meta).toEqual({ who: '🦆 Shea', date: 'Missed · Tue 6 Oct', missed: true });
-    expect(line(meta)).toBe('🦆 Shea · Missed · Tue 6 Oct');
-  });
-
-  it('is not missed on the due day, and shows the year when needed', () => {
-    expect(itemMeta(item({ due_date: TODAY }), members, TODAY)).toMatchObject({ date: 'Thu 8 Oct', missed: false });
-    expect(itemMeta(item({ due_date: '2027-01-05' }), members, TODAY).date).toBe('Tue 5 Jan 2027');
-  });
-
-  it('has a null date without a due date', () => {
-    expect(itemMeta(item({ due_date: null, assignee_id: 'm-me' }), members, TODAY)).toEqual({
-      who: '🦔 Stratis',
-      date: null,
-      missed: false,
-    });
-  });
-});
-
 describe('dueDetail', () => {
   it('formats the Item sheet Due row', () => {
     expect(dueDetail('2026-10-06', TODAY)).toEqual({ text: 'Tue 6 Oct · 2 days late', missed: true });
@@ -341,27 +305,16 @@ describe('kinds: To do (task) and To maintain (state)', () => {
     expect(groups[0].items.map((i) => i.id)).toEqual(['give', 'panel', 'fire']);
   });
 
-  it('a state’s meta line reads "🦊 Ela · Updated Tue 6 Oct", in the household’s zone', () => {
-    const ela = member({ id: 'm-ela', name: 'Ela', emoji: '🦊' });
-    const firepit = state({ assignee_id: 'm-ela', updated_at: '2026-10-06T09:00:00.000Z' });
-    expect(itemMeta(firepit, [ela], TODAY, 'Europe/London')).toEqual({
-      who: '🦊 Ela',
-      date: 'Updated Tue 6 Oct',
-      missed: false,
-    });
-    expect(itemMeta(state({ updated_at: '2026-10-06T09:00:00.000Z' }), [ela], TODAY, 'Europe/London').who).toBe('Unassigned');
+  it('updatedLabel reads "Updated Tue 6 Oct", the day in the household’s zone', () => {
+    expect(updatedLabel('2026-10-06T09:00:00.000Z', TODAY, 'Europe/London')).toBe('Updated Tue 6 Oct');
     // 23:30 UTC on 6 Oct is already 7 Oct in London (BST), still 6 Oct in UTC.
-    const late = state({ updated_at: '2026-10-06T23:30:00.000Z' });
-    expect(itemMeta(late, [], TODAY, 'Europe/London').date).toBe('Updated Wed 7 Oct');
-    expect(itemMeta(late, [], TODAY, 'UTC').date).toBe('Updated Tue 6 Oct');
+    const late = '2026-10-06T23:30:00.000Z';
+    expect(updatedLabel(late, TODAY, 'Europe/London')).toBe('Updated Wed 7 Oct');
+    expect(updatedLabel(late, TODAY, 'UTC')).toBe('Updated Tue 6 Oct');
     // Without a zone it uses London's.
-    expect(itemMeta(late, [], TODAY).date).toBe('Updated Wed 7 Oct');
-    // Even if a stale row still had a past due date, a state is never "Missed".
-    expect(itemMeta(state({ due_date: '2026-10-01', updated_at: '2026-10-08T08:00:00Z' }), [], TODAY)).toEqual({
-      who: 'Unassigned',
-      date: 'Updated Thu 8 Oct',
-      missed: false,
-    });
+    expect(updatedLabel(late, TODAY)).toBe('Updated Wed 7 Oct');
+    // Even if a stale row still had a past due date, a state is never missed.
+    expect(isMissed(state({ due_date: '2026-10-01' }), TODAY)).toBe(false);
   });
 
   it('updatedLabel adds the year when it is not this year, and survives a bad timestamp', () => {

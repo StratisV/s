@@ -39,6 +39,12 @@
   --glass-fill: rgba(255, 255, 255, 0.72);
   --glass-strong: rgba(255, 255, 255, 0.92);
   --glass-highlight: rgba(255, 255, 255, 0.75);
+  /* The toast (Undo, errors): dark in both appearances; in dark mode lifted off the dark cards. */
+  --toast-bg: rgba(28, 28, 30, 0.92);
+  --toast-edge: transparent;
+  --toast-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  /* The words in a field before anything is typed (Chat's "Message"). */
+  --placeholder: rgba(60, 60, 67, 0.6);
 
   --rag-red: #ff3b30;
   --rag-amber: #ff9500;
@@ -47,7 +53,8 @@
   --rag-amber-tint: rgba(255, 149, 0, 0.14);
   --rag-green-tint: rgba(52, 199, 89, 0.14);
   --rag-red-text: #d70015;
-  --rag-amber-text: #c93400;
+  /* Amber words ("Within the month", "Okay"): 5.4:1 on the card, and a hue well apart from the red. */
+  --rag-amber-text: #9a5b00;
   /* 4.8:1 on the green wash (the picker's chosen "Not urgent" or "Good"); #248a3d was 3.9:1 there. */
   --rag-green-text: #1f7a36;
 
@@ -122,6 +129,11 @@
     --glass-fill: rgba(44, 44, 46, 0.72);
     --glass-strong: rgba(44, 44, 46, 0.92);
     --glass-highlight: rgba(255, 255, 255, 0.1);
+    /* Two steps lighter than a card (#1c1c1e), with an edge, so it never sinks into one. */
+    --toast-bg: rgba(58, 58, 60, 0.96);
+    --toast-edge: rgba(255, 255, 255, 0.14);
+    --toast-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+    --placeholder: rgba(235, 235, 245, 0.6);
 
     --rag-red: #ff453a;
     --rag-amber: #ff9f0a;

@@ -95,9 +95,19 @@ test.describe('Collapsible rooms', () => {
     await expect(garden).toHaveAttribute('aria-expanded', 'true');
   });
 
-  test('Collapse All Rooms and Expand All Rooms, in any room’s menu: an overview, one line a room', async ({ page }) => {
+  test('Collapse all and Expand all, once at the top of Rooms: an overview, one line a room', async ({ page }) => {
     const names = await roomsWithItems(page);
-    await roomMenu(page, 'Kitchen', 'Collapse All Rooms');
+    const collapseAll = homeScreen(page).getByRole('button', { name: 'Collapse all', exact: true });
+    const expandAll = homeScreen(page).getByRole('button', { name: 'Expand all', exact: true });
+    // Above the first room, on the right, a 44px target; never in a room's own menu.
+    const button = (await collapseAll.boundingBox())!;
+    expect(button.y + button.height).toBeLessThanOrEqual((await area(page, 'Kitchen').boundingBox())!.y + 1);
+    expect(button.height).toBeGreaterThanOrEqual(44);
+    const menu = await openRoomMenu(page, 'Kitchen');
+    await expect(menu.getByRole('menuitem')).toHaveText(['Add Item', 'Share Room']);
+    await page.keyboard.press('Escape');
+
+    await collapseAll.click();
     for (const name of names) await expect(disclosure(page, name)).toHaveAttribute('aria-expanded', 'false');
     // Every room's rows (the calendar is a view of its own).
     await expect(areas(page).getByRole('button', { name: /^Mark .* as done$/ })).toHaveCount(0);
@@ -110,16 +120,14 @@ test.describe('Collapsible rooms', () => {
       expect((await card.boundingBox())!.height, name).toBeLessThanOrEqual(58);
     }
 
-    await roomMenu(page, 'Garden', 'Expand All Rooms');
+    await expandAll.click();
     for (const name of names) await expect(disclosure(page, name)).toHaveAttribute('aria-expanded', 'true');
     await expect(ring(page, 'Heaters not working')).toBeVisible();
 
-    // With one room still open, the menu offers Collapse All Rooms.
-    await roomMenu(page, 'Garden', 'Collapse All Rooms');
+    // With one room still open, it offers Collapse all.
+    await collapseAll.click();
     await disclosure(page, 'Hallway').click();
-    const menu = await openRoomMenu(page, 'Kitchen');
-    await expect(menu.getByRole('menuitem', { name: 'Collapse All Rooms' })).toBeVisible();
-    await page.keyboard.press('Escape');
+    await expect(collapseAll).toBeVisible();
     await expect(ring(page, 'Heaters not working')).toBeVisible();
   });
 
@@ -324,14 +332,9 @@ test.describe('Keyboard focus and folded rooms', () => {
   });
 
   test('with no other row to go to, focus goes to the room’s name', async ({ page }) => {
-    // Collapse All Rooms from the keyboard: the menu opens on its first item.
-    await pressKey(homeScreen(page).getByRole('button', { name: 'Kitchen options' }));
-    const menu = page.getByRole('menu', { name: 'Kitchen' });
-    await expect(menu.getByRole('menuitem').first()).toBeFocused();
-    await page.keyboard.press('End');
-    await expect(menu.getByRole('menuitem', { name: 'Collapse All Rooms' })).toBeFocused();
-    await page.keyboard.press('Enter');
-    await expect(homeScreen(page).getByRole('button', { name: 'Kitchen options' })).toBeFocused();
+    // Collapse all from the keyboard: it stays focused, now saying Expand all.
+    await pressKey(homeScreen(page).getByRole('button', { name: 'Collapse all', exact: true }));
+    await expect(homeScreen(page).getByRole('button', { name: 'Expand all', exact: true })).toBeFocused();
     await pressKey(disclosure(page, 'Living Room'));
     await keyboardFocus(ring(page, 'Mirror lights not level'));
     await page.keyboard.press('Enter');

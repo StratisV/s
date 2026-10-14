@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { Fragment, useContext, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { REPEAT_OPTIONS, ragWord } from '../../lib/constants';
 import { todayIn } from '../../lib/logic/dates';
 import { isState } from '../../lib/logic/items';
@@ -6,8 +6,9 @@ import { relativeDue, relativeUpdated } from '../../lib/logic/upNext';
 import type { ISODate, Item, Member, Rag } from '../../lib/types';
 import { useConfetti } from '../../ui/Confetti';
 import { EmojiText } from '../../ui/EmojiText';
-import { NoteIcon, RepeatIcon } from '../../ui/icons';
+import { RepeatIcon } from '../../ui/icons';
 import { inCollapsedArea, rowFallback, rowsBeside } from './areaPanel';
+import { RevealContext } from './reveal';
 import { RoomIcon } from './RoomIcon';
 import { ConditionGauge, StatusRing } from './StatusRing';
 import styles from './ItemRow.module.css';
@@ -39,15 +40,73 @@ const reducedMotion = () => {
 };
 
 /**
- * An item's colour in words, as a small label: "Urgent" (red, strongest), "Within the
- * month" (amber, softer), "Not urgent" (green, just a dot and grey text); for To maintain,
- * its condition: "Needs work", "Okay", "Good". Decorative: the row says it to assistive tech.
+ * An item's colour in words, at three volumes: "Urgent" is a red pill (the strongest thing on
+ * a row), "Within the month" a dot and amber words, "Not urgent" a dot and grey words. For To
+ * maintain, its condition the same way: "Needs work" a pill, "Okay" amber words, "Good" grey
+ * (no dot: the row's gauge shows it). Decorative: the row says it to assistive tech.
  */
 export function RagBadge({ kind, rag, dot = true }: { kind: Item['kind']; rag: Rag; dot?: boolean }) {
   return (
     <span className={styles.badge} data-rag={rag} aria-hidden="true">
       {dot ? <span className={styles.badgeDot} /> : null}
       {ragWord(kind, rag)}
+    </span>
+  );
+}
+
+/** Who an item is for, at the end of a row's first line or on a tile: their emoji and first name. Decorative. */
+export function Who({ member }: { member: Member }) {
+  return (
+    <span className={styles.who} aria-hidden="true" data-who="">
+      <span className={styles.whoEmoji}>
+        <EmojiText text={member.emoji} />
+      </span>
+      <span className={styles.whoName}>{firstName(member.name)}</span>
+    </span>
+  );
+}
+
+interface RowMetaProps {
+  kind: Item['kind'];
+  rag: Rag;
+  /** The label's dot; a To maintain row leaves it out (its gauge shows the condition). */
+  dot?: boolean;
+  /** What follows the label on its line, in order: when it is due, when it was updated... */
+  parts?: ReactNode[];
+  /** Its room, where a list mixes rooms. */
+  room?: string;
+}
+
+/**
+ * The quiet line under a row's title: its urgency (or condition) in words, then `parts`, then
+ * its room. After a pill the next words follow straight on; after quiet words, and before the
+ * room, a dot separates them. The room is always whole: on this line while it fits, else at
+ * the start of the next (cut short only when its name is wider than the whole line).
+ * Decorative: the row says all of it to assistive tech.
+ */
+export function RowMeta({ kind, rag, dot = true, parts = [], room }: RowMetaProps) {
+  // A pill (Urgent, Needs work) separates itself; quiet words need a dot after them.
+  const pill = rag === 'red';
+  return (
+    <span className={styles.meta} data-meta="" aria-hidden="true">
+      <span className={styles.metaLead}>
+        <RagBadge kind={kind} rag={rag} dot={dot} />
+        {parts.filter(Boolean).map((part, i) => (
+          <Fragment key={i}>
+            {i || !pill ? <span className={styles.sep}>·</span> : null}
+            {part}
+          </Fragment>
+        ))}
+      </span>
+      {room ? (
+        <span className={styles.roomPart}>
+          <span className={styles.roomSep}>·</span>
+          <span className={styles.room} data-room="">
+            <RoomIcon name={room} size={13} className={styles.roomIcon} />
+            <span className={styles.roomName}>{room}</span>
+          </span>
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -80,12 +139,12 @@ interface ItemRowProps {
 
 /**
  * A Home row: a neutral ring (a To do: tap it to mark the item done) or a condition gauge (a
- * To maintain item, never done); the title (two lines at most, a note glyph after it); then
- * one quiet line: the urgency (or condition) in words, when it is due ("In 4 days", "2 days
- * late" in red) with a repeat glyph, and its room where the list mixes rooms. Who it is for
- * (their emoji and first name) sits at the end of the title's line. Anywhere but the ring
- * opens the item. Assistive tech hears one sentence:
- * "Heaters not working, Urgent, 2 days late, Hallway, Shea, has a note."
+ * To maintain item, never done); the title (two lines at most); then one quiet line: the
+ * urgency (or condition) in words, when it is due ("In 4 days", "2 days late" in red) with a
+ * repeat glyph, and its room where the list mixes rooms. Who it is for (their emoji and first
+ * name) sits at the end of the title's line. Anywhere but the ring opens the item. Assistive
+ * tech hears one sentence: "Heaters not working, Urgent, 2 days late, Hallway, Shea, has a
+ * note." Just saved (RevealContext), it lights up for a moment.
  *
  * Ticking it off: the ring fills, the check springs in and the title is struck through for a
  * moment, then a row that leaves its list folds away (none of the motion with Reduce Motion).
@@ -103,6 +162,7 @@ export function ItemRow({
   leavesOnComplete = false,
 }: ItemRowProps) {
   const fire = useConfetti();
+  const lit = useContext(RevealContext) === item.id;
   const [completing, setCompleting] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const busy = useRef(false);
@@ -176,17 +236,7 @@ export function ItemRow({
   // Where the list mixes rooms, the room says more than when it was last updated.
   const updated = maintained && !room ? relativeUpdatedAt(item.updated_at, today, timeZone) : null;
   const note = item.note.trim();
-  const [titleHead, titleTail] = splitLastWord(item.title);
   const repeat = !maintained && item.repeat !== 'none' ? REPEAT_OPTIONS.find((o) => o.value === item.repeat)?.label : null;
-
-  // The room, where the list mixes rooms; a dot before it when something is said before it in words.
-  const roomPart = room ? (
-    <span key="room" className={styles.room} data-room="">
-      <RoomIcon name={room} size={13} className={styles.roomIcon} />
-      <span className={styles.roomName}>{room}</span>
-    </span>
-  ) : null;
-  const roomSep = Boolean(showWhen || updated || item.rag === 'green');
 
   // One sentence for assistive tech; the visible line is hidden from it.
   const spoken = [
@@ -205,6 +255,8 @@ export function ItemRow({
     <li
       className={styles.row}
       data-kind={item.kind}
+      data-item-id={item.id}
+      data-lit={lit || undefined}
       data-completing={completing || undefined}
       data-leaving={leaving || undefined}
     >
@@ -225,76 +277,34 @@ export function ItemRow({
         >
           <span className={styles.text}>
             <span className={styles.title}>
-              {note ? (
-                <>
-                  {titleHead}
-                  {/* The note glyph never wraps onto a line of its own: it stays with the last word. */}
-                  <span className={styles.titleTail}>
-                    {titleTail}
-                    <NoteIcon className={styles.noteGlyph} size={13} />
-                  </span>
-                </>
-              ) : (
-                item.title
-              )}
+              {item.title}
               <span className="visually-hidden">{`, ${spoken}.`}</span>
             </span>
-            <span className={styles.meta} data-meta="" aria-hidden="true">
-              <span className={styles.metaLead}>
-                <RagBadge kind={item.kind} rag={item.rag} dot={!maintained} />
-                {[
-                  showWhen ? (
-                    <span key="when" className={styles.when} data-late={when.late || undefined}>
-                      {when.text}
-                      {repeat ? <RepeatIcon className={styles.glyph} size={11} /> : null}
-                    </span>
-                  ) : null,
-                  updated ? (
-                    <span key="updated" className={styles.part}>
-                      {updated}
-                    </span>
-                  ) : null,
-                  // Straight after a coloured label the room stays on its line.
-                  room && !roomSep ? roomPart : null,
-                ]
-                  .filter(Boolean)
-                  // A quiet label (Not urgent, Good) is plain text: a dot separates it from what follows.
-                  .map((part, i) =>
-                    i || item.rag === 'green' ? [<span key={`sep${i}`} className={styles.sep}>·</span>, part] : part,
-                  )}
-              </span>
-              {/* Where the line is short, the room takes the next line whole rather than shrinking to a letter. */}
-              {room && roomSep ? (
-                <span className={styles.roomPart}>
-                  <span className={styles.roomSep}>·</span>
-                  {roomPart}
-                </span>
-              ) : null}
-            </span>
+            <RowMeta
+              kind={item.kind}
+              rag={item.rag}
+              dot={!maintained}
+              room={room}
+              parts={[
+                showWhen ? (
+                  <span key="when" className={styles.when} data-late={when.late || undefined}>
+                    {when.text}
+                    {repeat ? <RepeatIcon className={styles.glyph} size={11} /> : null}
+                  </span>
+                ) : null,
+                updated ? (
+                  <span key="updated" className={styles.part}>
+                    {updated}
+                  </span>
+                ) : null,
+              ]}
+            />
           </span>
-          {member && showWho ? (
-            <span className={styles.who} aria-hidden="true" data-who="">
-              <span className={styles.whoEmoji}>
-                <EmojiText text={member.emoji} />
-              </span>
-              <span className={styles.whoName}>{firstName(member.name)}</span>
-            </span>
-          ) : null}
+          {member && showWho ? <Who member={member} /> : null}
         </button>
       </div>
     </li>
   );
-}
-
-/**
- * A title split before its last word, "Clear the " and "gutters", so a glyph after it can stay
- * on its line. A last word too long to keep whole (a pasted link) is not split off.
- */
-export function splitLastWord(title: string): [string, string] {
-  const trimmed = title.trimEnd();
-  const at = trimmed.search(/\S+$/);
-  if (at < 0 || trimmed.length - at > 16) return [trimmed, ''];
-  return [trimmed.slice(0, at), trimmed.slice(at)];
 }
 
 /** "Shea" of "Shea Byrne": rows have room for a first name. */

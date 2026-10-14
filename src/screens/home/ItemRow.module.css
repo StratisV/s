@@ -85,7 +85,7 @@
   display: contents;
 }
 
-/* The title, two lines at most (the full title is in the Item sheet), then a note glyph. */
+/* The title, two lines at most (the full title and the note are in the Item sheet). */
 .title {
   grid-area: title;
   min-width: 0;
@@ -112,20 +112,7 @@
   text-decoration-color: currentColor;
 }
 
-.titleTail {
-  white-space: nowrap;
-}
-
-.noteGlyph {
-  /* Inline, not inline-block: VoiceOver's name for the row reads the title straight on. */
-  display: inline;
-  margin-left: 6px;
-  vertical-align: -1px;
-  color: var(--label-secondary);
-  opacity: 0.6;
-}
-
-/* One quiet line: the urgency in words, when, where. The room gives way first. */
+/* One quiet line: the urgency in words, when, where. The room moves to the next line whole rather than shrinking. */
 .meta {
   grid-area: meta;
   display: flex;
@@ -143,7 +130,7 @@
   color: var(--label-secondary);
 }
 
-/* How urgent (or its condition), when and, after a coloured label alone, the room. */
+/* How urgent (or its condition), then when it is due or was updated. */
 .metaLead {
   flex: 0 1 auto;
   min-width: 0;
@@ -152,11 +139,15 @@
   gap: 6px;
 }
 
-/* The room after the words: on this line while it can show about a word of its name, else on the next. */
+/*
+ * The room after the words: whole, on this line while it fits, else at the start of the next
+ * ("Bathroom Small" and "Bathroom Large" must never both read "Bathroom ..."). Cut short only
+ * when its name is wider than the whole line.
+ */
 .roomPart {
   position: relative;
-  flex: 1 1 5.5em;
-  max-width: max-content;
+  flex: 0 0 auto;
+  max-width: 100%;
   min-width: 0;
   display: flex;
 }
@@ -259,21 +250,15 @@
 /* ── The urgency (or condition) label ──────────────────── */
 
 /*
- * Strongest for Urgent (a red pill), softer for Within the month (an amber pill), quietest
- * for Not urgent (a green dot and grey text). The same for To maintain: Poor, Fair, Good.
+ * Three volumes, so red stands out: Urgent is a red pill, Within the month a dot and amber
+ * words, Not urgent a dot and grey words. The same for To maintain: Needs work, Okay, Good.
  */
 .badge {
   flex: none;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 20px;
-  padding: 0 8px 0 7px;
-  border-radius: 10px;
-  font-size: 12.5px;
-  line-height: 16px;
-  font-weight: 600;
-  letter-spacing: 0;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -285,6 +270,13 @@
 }
 
 .badge[data-rag='red'] {
+  height: 20px;
+  padding: 0 8px 0 7px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0;
   background: var(--rag-red-tint);
   color: var(--rag-red-text);
 }
@@ -293,8 +285,8 @@
   background: var(--rag-red);
 }
 
+/* Amber words, 5.4:1 on the card (9:1 in dark); a hue well apart from the red. */
 .badge[data-rag='amber'] {
-  background: var(--rag-amber-tint);
   color: var(--rag-amber-text);
 }
 
@@ -303,13 +295,28 @@
 }
 
 .badge[data-rag='green'] {
-  padding: 0;
-  font-weight: 500;
   color: var(--label-secondary);
 }
 
 .badge[data-rag='green'] .badgeDot {
   background: var(--rag-green);
+}
+
+/* ── Just saved: lit up for a moment ─────────────────────── */
+
+/* The row of an item just saved (HomeScreen.tsx revealItem): a tint wash that fades. */
+.row[data-lit] .open::after {
+  animation: lit 2.4s ease-out;
+}
+
+@keyframes lit {
+  0%,
+  45% {
+    background-color: var(--tint-wash);
+  }
+  100% {
+    background-color: transparent;
+  }
 }
 
 /* Narrow phones: the first name gives way sooner, so the title keeps its room. */
@@ -324,5 +331,11 @@
   .open::after,
   .title {
     transition: none;
+  }
+
+  /* No fade: the wash is simply there for a moment. */
+  .row[data-lit] .open::after {
+    animation: none;
+    background-color: var(--tint-wash);
   }
 }

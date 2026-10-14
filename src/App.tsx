@@ -156,9 +156,9 @@ function MainShell() {
     setDoneOpen(true);
   }, []);
   const pushed = sheetOpen || taskListOpen || doneOpen;
-  // The area an item was just saved into, for Home to expand if it is collapsed.
-  const [revealArea, setRevealArea] = useState<string | null>(null);
-  const clearReveal = useCallback(() => setRevealArea(null), []);
+  // The item just saved (new, or moved to another area), for Home to bring into view.
+  const [revealItem, setRevealItem] = useState<string | null>(null);
+  const clearReveal = useCallback(() => setRevealItem(null), []);
   // The area a shared link (?area=) points at, for Home to open and scroll to.
   const [linkedArea, setLinkedArea] = useState<string | null>(null);
   const clearLinkedArea = useCallback(() => setLinkedArea(null), []);
@@ -236,10 +236,14 @@ function MainShell() {
     },
   });
 
-  // Leaving Home drops an area link it hasn't shown yet, so it can't scroll Home on a later return.
+  // Leaving Home drops an area link or a saved item it hasn't shown yet, so neither can scroll
+  // Home on a later return.
   const switchTab = useCallback((next: Tab) => {
     setTab(next);
-    if (next !== 'home') setLinkedArea(null);
+    if (next !== 'home') {
+      setLinkedArea(null);
+      setRevealItem(null);
+    }
     if (next !== 'housekeeping') setHousekeepingDay(null);
   }, []);
   const openHousekeepingDay = useCallback(
@@ -262,7 +266,7 @@ function MainShell() {
             onOpenItem={(itemId) => openSheet({ kind: 'edit', itemId })}
             onOpenProfile={() => setProfileOpen(true)}
             onAddItem={(areaId) => openSheet({ kind: 'new', areaId })}
-            revealArea={revealArea}
+            revealItem={revealItem}
             onRevealed={clearReveal}
             linkedArea={linkedArea}
             onLinkedAreaShown={clearLinkedArea}
@@ -296,7 +300,8 @@ function MainShell() {
           open={sheetOpen}
           onClose={() => setSheetOpen(false)}
           onExited={() => setSheetTarget(null)}
-          onSaved={setRevealArea}
+          // Shown where it went when Home is behind the sheet (not later, from another tab).
+          onSaved={tab === 'home' ? setRevealItem : undefined}
         />
       ) : null}
       <TaskListSheet open={taskListOpen} onClose={() => setTaskListOpen(false)} />

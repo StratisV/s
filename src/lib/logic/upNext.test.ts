@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { Item, Rag } from '../types';
-import { compareByDate, compareByUrgency, homeSummary, needsAttention, relativeDue, relativeUpdated, upNext } from './upNext';
+import {
+  compareByDate,
+  compareByUrgency,
+  doneMessage,
+  homeSummary,
+  needsAttention,
+  relativeDue,
+  relativeUpdated,
+  roomOrder,
+  upNext,
+} from './upNext';
 
 const TODAY = '2026-10-13';
 
@@ -93,6 +103,15 @@ describe('upNext', () => {
     expect(titles(sorted)).toEqual(['Late green', 'Urgent soon', 'Urgent later', 'Amber soon', 'Seal']);
   });
 
+  it('lists a room as Rooms and Share Room do: open To dos most urgent first, then what it looks after, by name', () => {
+    const done = item('Done', 'red', '2026-10-14', { status: 'done' });
+    const room = roomOrder(
+      [state('Seal', 'green'), item('Amber soon', 'amber', '2026-10-14'), done, state('Boiler', 'red'), item('Late green', 'green', '2026-10-10')],
+      TODAY,
+    );
+    expect(titles(room)).toEqual(['Late green', 'Amber soon', 'Boiler', 'Seal']);
+  });
+
   it('can sort the date first instead, then urgency (Today and Next 7 days)', () => {
     const sorted = [
       state('Seal', 'red'),
@@ -117,6 +136,15 @@ describe('relativeDue', () => {
     expect(relativeDue('2026-11-04', TODAY)!.text).toBe('In 3 weeks');
     expect(relativeDue('2026-12-13', TODAY)!.text).toBe('In 2 months');
     expect(relativeDue('2027-11-01', TODAY)!.text).toBe('Mon 1 Nov 2027');
+  });
+
+  it('says when a repeating job comes round again, once ticked off, in the same words', () => {
+    expect(doneMessage(null, TODAY)).toBe('Marked as done');
+    expect(doneMessage('2026-10-14', TODAY)).toBe('Done. Next one tomorrow');
+    expect(doneMessage('2026-10-20', TODAY)).toBe('Done. Next one in 7 days');
+    expect(doneMessage('2026-12-08', TODAY)).toBe('Done. Next one in 8 weeks');
+    expect(doneMessage('2027-01-13', TODAY)).toBe('Done. Next one in 3 months');
+    expect(doneMessage('2027-10-13', TODAY)).toBe('Done. Next one on Wed 13 Oct 2027');
   });
 
   it('says when a To maintain item was last updated', () => {
@@ -146,6 +174,14 @@ describe('homeSummary', () => {
       rest: 'Next up: Water the plants, in 2 days.',
     });
     expect(summary([state('Firepit', 'green')])).toEqual({ lead: 'All clear.', rest: 'Nothing to do right now.' });
+  });
+
+  it('names the soonest thing next, even when Later lists a more urgent one first', () => {
+    // Both in Later, which sorts amber before green; the green one comes round first.
+    expect(summary([item('Paint the shed', 'amber', '2026-12-12'), item('Oil the hinges', 'green', '2026-10-22')])).toEqual({
+      lead: 'Nothing urgent today.',
+      rest: 'Next up: Oil the hinges, in 9 days.',
+    });
   });
 
   it('says whose items they are while the person filter narrows Home', () => {

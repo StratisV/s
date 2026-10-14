@@ -37,10 +37,10 @@ test.beforeEach(async ({ page }) => {
 test.describe('Dates and time zones', () => {
   test('an item due today is not late; after midnight it is', async ({ page }) => {
     await addItemDueToday(page, 'Put the recycling out');
-    await expect(meta(page, 'Put the recycling out')).toHaveText('Within the monthToday');
+    await expect(meta(page, 'Put the recycling out')).toHaveText('Within the month·Today');
 
     await jumpTo(page, '2026-10-09T00:01:00+01:00');
-    await expect(meta(page, 'Put the recycling out')).toHaveText('Within the month1 day late');
+    await expect(meta(page, 'Put the recycling out')).toHaveText('Within the month·1 day late');
     await expect(meta(page, 'Put the recycling out').getByText('1 day late')).toHaveCSS('color', 'rgb(215, 0, 21)');
     const sheet = await openItem(page, 'Put the recycling out');
     await expect(detailValue(sheet, 'Due')).toHaveText('Thu 8 Oct · 1 day late');
@@ -50,7 +50,7 @@ test.describe('Dates and time zones', () => {
     await addItemDueToday(page, 'Put the recycling out');
     // 23:30 in London is already 9 Oct in Auckland.
     await jumpTo(page, '2026-10-08T23:30:00+01:00');
-    await expect(meta(page, 'Put the recycling out')).toHaveText('Within the monthToday');
+    await expect(meta(page, 'Put the recycling out')).toHaveText('Within the month·Today');
 
     const dialog = await openProfile(page);
     await dialog.getByRole('button', { name: /^Household/ }).click();
@@ -58,7 +58,7 @@ test.describe('Dates and time zones', () => {
     await expect(dialog.getByText('Auckland', { exact: true })).toBeVisible();
     await dialog.getByRole('button', { name: 'Profile' }).click();
     await closeProfile(page);
-    await expect(meta(page, 'Put the recycling out')).toHaveText('Within the month1 day late');
+    await expect(meta(page, 'Put the recycling out')).toHaveText('Within the month·1 day late');
 
     // New items are due 7 days after today there.
     await expect(detailValue(await openNewItem(page), 'Due')).toHaveText('Fri 16 Oct');

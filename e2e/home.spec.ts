@@ -10,6 +10,7 @@ import {
   keepOnlyAreas,
   meta,
   mine,
+  NOW,
   openFresh,
   openItem,
   openNewItem,
@@ -43,6 +44,9 @@ function running(page: Page): Promise<number> {
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
 
+/** How long a ticked row takes to leave: its check (ItemRow's COMPLETE_FEEDBACK_MS), then its fold (LEAVE_MS). */
+const ROW_LEAVES_MS = 420 + 260;
+
 test.beforeEach(async ({ page }) => {
   await openSeeded(page);
 });
@@ -75,11 +79,11 @@ test.describe('Home', () => {
   });
 
   test('each row says its urgency in words, when it is due, and who it is for; late in red', async ({ page }) => {
-    // A quiet label (Not urgent) is text with a green dot; the others are pills.
+    // Quiet words (Within the month, Not urgent) with a dot after them; Urgent is a pill.
     await expect(meta(page, 'Kitchen paper')).toHaveText('Not urgent·In 4 weeks');
-    await expect(meta(page, 'Shower draining slowly')).toHaveText('Within the monthIn 6 days');
+    await expect(meta(page, 'Shower draining slowly')).toHaveText('Within the month·In 6 days');
     await expect(meta(page, 'Give away the old firepit')).toHaveText('Not urgent·In 7 days');
-    await expect(meta(page, 'Mirror lights not level')).toHaveText('Within the monthIn 12 days');
+    await expect(meta(page, 'Mirror lights not level')).toHaveText('Within the month·In 12 days');
     await expect(meta(page, 'Trim the hedges')).toHaveText('Not urgent·In 4 weeks');
     await expect(who(page, 'Kitchen paper')).toHaveText('🦔Stratis');
     await expect(who(page, 'Shower draining slowly')).toHaveText('🦆Shea');
@@ -99,10 +103,10 @@ test.describe('Home', () => {
     await expect(rowButton(page, 'Heaters not working')).toHaveAccessibleName(
       /^Heaters not working ?, Urgent, 2 days late, Shea, has a note\.$/,
     );
-    // The note is a small glyph after the title, not text on the row.
+    // A note is never on the row, not even as a glyph (VoiceOver hears "has a note"; it is in the sheet).
     await expect(row(page, 'Mirror lights not level')).not.toContainText('One is 3cm higher');
-    await expect(rowButton(page, 'Mirror lights not level').locator('svg')).toHaveCount(1);
-    // No note, no glyph (a repeat has its own, by the date).
+    await expect(rowButton(page, 'Mirror lights not level').locator('svg')).toHaveCount(0);
+    // A repeat has its glyph, by the date.
     await expect(rowButton(page, 'Change the filter').locator('svg')).toHaveCount(1);
     await expect(rowButton(page, 'Change the filter').locator('[data-meta] svg')).toHaveCount(1);
   });
@@ -112,12 +116,37 @@ test.describe('Home', () => {
       await expect(ring(page, title)).toHaveCSS('border-top-color', 'rgb(142, 142, 147)');
     }
     const label = (title: string) => meta(page, title).locator('[data-rag]');
+    // Three volumes: Urgent a filled red pill, Within the month amber words (a hue well apart
+    // from the red), Not urgent grey words.
     await expect(label('Heaters not working')).toHaveText('Urgent');
     await expect(label('Heaters not working')).toHaveCSS('color', 'rgb(215, 0, 21)');
+    await expect(label('Heaters not working')).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
     await expect(label('Mirror lights not level')).toHaveText('Within the month');
-    await expect(label('Mirror lights not level')).toHaveCSS('color', 'rgb(201, 52, 0)');
+    await expect(label('Mirror lights not level')).toHaveCSS('color', 'rgb(154, 91, 0)');
+    await expect(label('Mirror lights not level')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(label('Mirror lights not level')).toHaveCSS('font-weight', '500');
     await expect(label('Kitchen paper')).toHaveText('Not urgent');
     await expect(label('Kitchen paper')).toHaveCSS('color', 'rgb(110, 110, 115)');
+    await expect(label('Kitchen paper')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  });
+
+  test('the ring takes taps in a 44px circle', async ({ page }) => {
+    await ring(page, 'Heaters not working').scrollIntoViewIfNeeded();
+    const box = (await ring(page, 'Heaters not working').boundingBox())!;
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    // 21px from the centre (inside 22px) still lands on the ring; to the side, above and below.
+    const hits = await page.evaluate(
+      ([cx, cy]) =>
+        [
+          [cx - 21, cy],
+          [cx + 21, cy],
+          [cx, cy - 21],
+          [cx, cy + 21],
+        ].map(([x, y]) => document.elementFromPoint(x, y)?.closest('button')?.getAttribute('aria-label') ?? null),
+      [cx, cy],
+    );
+    expect(hits).toEqual(Array(4).fill('Mark Heaters not working as done'));
   });
 
   test('tapping a ring completes the item, with Undo', async ({ page }) => {
@@ -129,16 +158,22 @@ test.describe('Home', () => {
 
     await done.getByRole('button', { name: 'Undo' }).click();
     await expect(ring(page, 'Mirror lights not level')).toBeVisible();
-    await expect(meta(page, 'Mirror lights not level')).toHaveText('Within the monthIn 12 days');
+    await expect(meta(page, 'Mirror lights not level')).toHaveText('Within the month·In 12 days');
     await expect(area(page, 'Living Room').getByText('All clear')).toHaveCount(0);
     await expect(done).toHaveCount(0);
   });
 
   test('a ticked row is struck through for a moment, then folds away', async ({ page }) => {
     const item = row(page, 'Mirror lights not level');
+    const title = item.locator('[data-item-open] > span > span').first();
+    // The line is always there, in no colour: only its colour shows it.
+    await expect(title).toHaveCSS('text-decoration-color', 'rgba(0, 0, 0, 0)');
+    // Time stands still once tapped, so the moment lasts as long as the check needs.
+    await page.clock.pauseAt(new Date(NOW.getTime() + 60_000));
     await ring(page, 'Mirror lights not level').click();
     await expect(item).toHaveAttribute('data-completing');
-    await expect(item.locator('[data-item-open] > span > span').first()).toHaveCSS('text-decoration-line', 'line-through');
+    await expect(title).toHaveCSS('text-decoration-color', 'rgb(110, 110, 115)');
+    await page.clock.resume();
     await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
   });
 
@@ -168,6 +203,8 @@ test.describe('Home', () => {
   });
 
   test('two rings tapped 12ms apart both stay done', async ({ page }) => {
+    // Three rounds of four pairs, each waiting out the feedback and the fold: slow on a busy machine.
+    test.setTimeout(60_000);
     // One-off items, so a completed one leaves Home. A load that started before the
     // second tap must not put the second item back once it lands.
     const pairs = [
@@ -176,9 +213,14 @@ test.describe('Home', () => {
       ['Garden room wall panel', 'Give away the old firepit'],
       ['Water test strips running low', 'Heaters not working'],
     ];
+    const storedDone = () =>
+      page.evaluate(
+        (key) => JSON.parse(localStorage.getItem(key)!).items.filter((i: { status: string }) => i.status === 'done').length,
+        DEMO_STORAGE_KEY,
+      );
     for (let round = 0; round < 3; round++) {
       if (round > 0) await openSeeded(page);
-      for (const [a, b] of pairs) {
+      for (const [i, [a, b]] of pairs.entries()) {
         await page.evaluate(async ([a, b]) => {
           const ringFor = (title: string) =>
             document.querySelector<HTMLElement>(`[aria-label="Mark ${title} as done"]`);
@@ -186,16 +228,14 @@ test.describe('Home', () => {
           await new Promise((resolve) => setTimeout(resolve, 12));
           ringFor(b)!.click();
         }, [a, b]);
-        await page.waitForTimeout(1_200);
+        // Both saved (after the check and the fold), then time for any load already under way to land.
+        await expect.poll(storedDone, { timeout: 10_000 }).toBe((i + 1) * 2);
+        await page.waitForTimeout(ROW_LEAVES_MS);
         // Checked once, without waiting: a stale load would have put a row back by now.
         expect(await ring(page, a).count(), `round ${round}: ${a}`).toBe(0);
         expect(await ring(page, b).count(), `round ${round}: ${b}`).toBe(0);
       }
-      const stored = await page.evaluate(
-        (key) => JSON.parse(localStorage.getItem(key)!).items.filter((i: { status: string }) => i.status === 'done').length,
-        DEMO_STORAGE_KEY,
-      );
-      expect(stored).toBe(pairs.length * 2);
+      expect(await storedDone()).toBe(pairs.length * 2);
     }
   });
 
@@ -217,13 +257,13 @@ test.describe('Home', () => {
   test('a repeating item moves its date instead of disappearing', async ({ page }) => {
     // Monthly, due Thu 5 Nov.
     await ring(page, 'Kitchen paper').click();
-    await expect(toast(page, 'Done. Next due Sat 5 Dec')).toBeVisible();
+    await expect(toast(page, 'Done. Next one in 8 weeks')).toBeVisible();
     await expect(ring(page, 'Kitchen paper')).toBeVisible();
     await expect(meta(page, 'Kitchen paper')).toHaveText('Not urgent·In 8 weeks');
     // Re-sorted: Olive oil (12 Nov) is now first.
     expect(await titlesIn(page, 'Kitchen')).toEqual(['Olive oil', 'Kitchen paper']);
 
-    await toast(page, 'Done. Next due Sat 5 Dec').getByRole('button', { name: 'Undo' }).click();
+    await toast(page, 'Done. Next one in 8 weeks').getByRole('button', { name: 'Undo' }).click();
     await expect(meta(page, 'Kitchen paper')).toHaveText('Not urgent·In 4 weeks');
     expect(await titlesIn(page, 'Kitchen')).toEqual(['Kitchen paper', 'Olive oil']);
   });
@@ -236,7 +276,7 @@ test.describe('Home', () => {
     await expect(meta(page, 'Change the filter')).toHaveText('Not urgent·37 days late');
 
     await ring(page, 'Change the filter').click();
-    await expect(toast(page, 'Done. Next due Sun 8 Nov')).toBeVisible();
+    await expect(toast(page, 'Done. Next one in 4 weeks')).toBeVisible();
     await expect(meta(page, 'Change the filter')).toHaveText('Not urgent·In 4 weeks');
   });
 
@@ -248,7 +288,7 @@ test.describe('Home', () => {
     await expect(meta(page, 'Trim the hedges')).toHaveText('Not urgent');
     await ring(page, 'Trim the hedges').click();
     // Next year's dates carry the year.
-    await expect(toast(page, 'Done. Next due Fri 8 Jan 2027')).toBeVisible();
+    await expect(toast(page, 'Done. Next one in 3 months')).toBeVisible();
     await expect(meta(page, 'Trim the hedges')).toHaveText('Not urgent·In 3 months');
   });
 
@@ -334,6 +374,51 @@ test.describe('Up next', () => {
     await expect(homeScreen(page).locator('[data-who]')).toHaveCount(0);
     await mine(page).click();
     await expect(summary(page)).toHaveText('2 things need attention and 1 is due today. Everything else can wait.');
+  });
+
+  test('the view switch takes taps 44px tall, not just on its 28px pill', async ({ page }) => {
+    for (const name of ['Rooms', 'Calendar', 'Up next'] as const) {
+      const radio = views(page).getByRole('radio', { name, exact: true });
+      const box = (await radio.boundingBox())!;
+      // 3px above and below the pill still count.
+      for (const y of [box.y - 3, box.y + box.height + 3]) {
+        await page.mouse.click(box.x + box.width / 2, y);
+        await expect(radio).toHaveAttribute('aria-checked', 'true');
+      }
+    }
+  });
+
+  test('Looking after says how the things looked after are', async ({ page }) => {
+    await expect(group(page, 'looking').getByText('All in good shape.', { exact: true })).toBeVisible();
+  });
+});
+
+for (const width of [375, 402, 430]) {
+  test.describe(`Up next at ${width}px`, () => {
+    test.use({ viewport: { width, height: 874 } });
+
+    test('a room’s name is never cut short: it takes the next line whole when it does not fit', async ({ page }) => {
+      await showView(page, 'Up next');
+      await group(page, 'later').getByRole('button', { name: /^Show \d+ more$/ }).click();
+      const names = homeScreen(page).locator('[data-room] > span:last-child');
+      expect(await names.count()).toBeGreaterThan(15);
+      const cut = await names.evaluateAll((els) =>
+        els.filter((el) => el.scrollWidth > el.clientWidth + 0.5).map((el) => el.textContent),
+      );
+      expect(cut).toEqual([]);
+    });
+  });
+}
+
+test.describe('In dark mode', () => {
+  test.use({ colorScheme: 'dark' });
+
+  test('the Undo toast stands off the dark cards', async ({ page }) => {
+    await ring(page, 'Mirror lights not level').click();
+    const done = page.locator('[role="status"] > div').filter({ hasText: 'Marked as done' });
+    await expect(done).toBeVisible();
+    await expect(done).toHaveCSS('background-color', 'rgba(58, 58, 60, 0.96)');
+    await expect(area(page, 'Kitchen').locator('[data-room-card]')).toHaveCSS('background-color', 'rgb(28, 28, 30)');
   });
 });
 
@@ -481,7 +566,7 @@ test.describe('Hero', () => {
 });
 
 test.describe('Long text', () => {
-  test('a long title wraps to two lines at most; a long note is only a glyph on Home', async ({ page }) => {
+  test('a long title wraps to two lines at most; a long note never shows on Home', async ({ page }) => {
     const long = 'Olive oil, and the big tin of tomatoes, and the rice, and the lentils for the soup next week';
     const sheet = await openItem(page, 'Olive oil');
     await sheet.getByLabel('Title', { exact: true }).fill(long);

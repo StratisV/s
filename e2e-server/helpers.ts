@@ -285,11 +285,11 @@ export function who(scope: Locator, title: string): Locator {
 
 /**
  * A To do row's quiet line as Home shows it today: its urgency in words, then when it is due
- * ("Not urgent·In 6 days", "Urgent2 days late": a quiet word takes a dot after it, a coloured
- * one is a pill).
+ * ("Not urgent·In 6 days", "Within the month·In 4 days", "Urgent2 days late": quiet words take
+ * a dot after them, Urgent is a pill).
  */
 export function taskMeta(rag: Rag, due: string): string {
-  return `${ragWord('task', rag)}${rag === 'green' ? '·' : ''}${relativeDue(due, londonDate())!.text}`;
+  return `${ragWord('task', rag)}${rag === 'red' ? '' : '·'}${relativeDue(due, londonDate())!.text}`;
 }
 
 export function tabs(page: Page): Locator {

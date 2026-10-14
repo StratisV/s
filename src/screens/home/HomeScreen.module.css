@@ -93,17 +93,21 @@
   line-height: 18px;
   letter-spacing: -0.15px;
   font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   color: var(--label);
 }
 
-/* 44px tall tap target. */
+/* A 44px tall tap target (nothing on the button clips it: the label is cut short inside). */
 .viewOption::before {
   content: '';
   position: absolute;
   inset: -8px 0;
+}
+
+.viewLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .viewOption[aria-checked='true'] {
@@ -129,13 +133,9 @@
 }
 
 .groupTitle {
+  composes: sectionTitle from '../../ui/type.module.css';
   margin: 0;
   padding: 0 20px 10px;
-  font-size: 20px;
-  line-height: 25px;
-  font-weight: 700;
-  letter-spacing: -0.45px;
-  color: var(--label);
 }
 
 /* Focused (tabIndex -1) when the last row of a group is completed from the keyboard. */
@@ -152,6 +152,7 @@
   color: var(--label-secondary);
 }
 
+/* Every card on Home: a group's rows, a room, and the one-line messages ("All clear"). */
 .card {
   margin: 0 16px;
   background: var(--card);
@@ -178,7 +179,8 @@
   line-height: 20px;
   letter-spacing: -0.2px;
   font-weight: 500;
-  color: var(--tint);
+  /* 15px words: the darker tint keeps 4.5:1 on the card (the system blue is 4:1). */
+  color: var(--tint-text);
   text-align: left;
   -webkit-tap-highlight-color: transparent;
   scroll-margin: 8px 0 calc(104px + var(--bottom-inset));
@@ -274,30 +276,12 @@
   color: var(--label-secondary);
 }
 
+/* Who it is for (ItemRow's Who), given at most half the tile's width. */
 .tileWho {
   flex: 0 1 auto;
   min-width: 0;
   max-width: 50%;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 13px;
-  line-height: 18px;
-  font-weight: 500;
-  color: var(--label-secondary);
-}
-
-.tileWhoEmoji {
-  flex: none;
-  font-size: 15px;
-  line-height: 1;
-}
-
-.tileWhoName {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
 }
 
 .tileTitle {
@@ -324,13 +308,31 @@
   color: var(--label-secondary);
 }
 
-/* ── Nothing open ──────────────────────────────────────── */
+/* Okay, in the amber words the rows use for it. */
+.tileState[data-rag='amber'] {
+  color: var(--rag-amber-text);
+}
+
+/* Just saved (HomeScreen.tsx revealItem): a tint ring that fades, as a room from a shared link. */
+.tileCell[data-lit] .tile {
+  animation: tileLit 2.4s ease-out;
+}
+
+@keyframes tileLit {
+  0%,
+  45% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--tint) 50%, transparent);
+  }
+  100% {
+    box-shadow: var(--shadow-card);
+  }
+}
+
+/* ── Nothing open (each on a .card) ────────────────────── */
 
 .clear {
-  margin: 26px 16px 0;
+  margin-top: 26px;
   padding: 22px 20px;
-  border-radius: var(--r-card);
-  background: var(--card);
   display: flex;
   align-items: center;
   gap: 14px;
@@ -360,10 +362,8 @@
 
 /* The filter picked someone with nothing open (Rooms). */
 .nobody {
-  margin: 26px 16px 0;
+  margin-top: 26px;
   padding: 14px 18px;
-  border-radius: var(--r-card);
-  background: var(--card);
   font-size: 17px;
   line-height: 22px;
   letter-spacing: -0.4px;
@@ -376,16 +376,46 @@
   padding-top: 6px;
 }
 
+/*
+ * Collapse all / Expand all: a quiet text button on the right, where the other views have
+ * their first heading, so the first card starts at the same height in all three.
+ */
+.roomsBar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 48px;
+  margin-top: 8px;
+  padding: 0 20px;
+}
+
+.foldAll {
+  min-height: 44px;
+  padding: 0 4px;
+  margin: 0 -4px;
+  border-radius: 8px;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--tint-text);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.foldAll:active {
+  opacity: 0.5;
+}
+
+.foldAll:focus-visible {
+  outline-offset: -2px;
+}
+
 /* One card per room, 12px apart (Apple Home's rooms). */
 .section {
   padding-top: 12px;
 }
 
-.roomCard {
-  margin: 0 16px;
-  background: var(--card);
-  border-radius: var(--r-card);
-  overflow: hidden;
+.roomsBar + .section {
+  padding-top: 0;
 }
 
 /*
@@ -632,7 +662,7 @@ section[data-collapsed] .chevron {
  * Opened from a shared link: a tint ring that fades out, so it is clear which
  * area was meant. An outline inside the edge (the panel clips anything outside).
  */
-.section[data-linked] .roomCard {
+.section[data-linked] .card {
   outline: 3px solid transparent;
   outline-offset: -3px;
   border-radius: var(--r-card);
@@ -652,10 +682,7 @@ section[data-collapsed] .chevron {
 /* ── No areas left: one card with a way to add one ─────── */
 
 .noAreas {
-  margin: 24px 16px 0;
-  background: var(--card);
-  border-radius: var(--r-card);
-  overflow: hidden;
+  margin-top: 24px;
 }
 
 .noAreasText {
@@ -687,7 +714,8 @@ section[data-collapsed] .chevron {
   font-size: 17px;
   letter-spacing: -0.4px;
   text-align: left;
-  color: var(--tint);
+  /* The darker tint keeps 4.5:1 on the card (the system blue is 4:1). */
+  color: var(--tint-text);
   /* Keyboard focus scrolls it clear of the top fade and the floating tab bar. */
   scroll-margin: calc(var(--top-inset) + 16px) 0 112px;
 }
@@ -722,6 +750,21 @@ section[data-collapsed] .chevron {
     padding: 0 2px;
     font-size: 13px;
     letter-spacing: -0.08px;
+  }
+}
+
+/*
+ * The smallest phones: the view switch takes a line of its own (every word whole), Mine and
+ * the people menu the line under it. 12px apart, so their 44px targets never overlap.
+ */
+@media (max-width: 349px) {
+  .controls {
+    flex-wrap: wrap;
+    row-gap: 12px;
+  }
+
+  .views {
+    flex-basis: 100%;
   }
 }
 
@@ -772,8 +815,13 @@ section[data-collapsed] .chevron {
   }
 
   /* No fade: the ring is simply there for a moment. */
-  .section[data-linked] .roomCard {
+  .section[data-linked] .card {
     animation: none;
     outline-color: color-mix(in srgb, var(--tint) 50%, transparent);
+  }
+
+  .tileCell[data-lit] .tile {
+    animation: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--tint) 50%, transparent);
   }
 }

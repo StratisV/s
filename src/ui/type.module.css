@@ -1,0 +1,13 @@
+/* Type styles shared between screens, taken in with CSS Modules `composes`. */
+
+/*
+ * A section heading on a tab, a step under the hero's title: Home's "Needs attention",
+ * the calendar's "This week" and the chosen day's "Tuesday 13 October".
+ */
+.sectionTitle {
+  font-size: 20px;
+  line-height: 25px;
+  font-weight: 700;
+  letter-spacing: -0.45px;
+  color: var(--label);
+}

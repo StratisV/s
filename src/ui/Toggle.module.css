@@ -4,7 +4,7 @@
   width: 51px;
   height: 31px;
   border-radius: 31px;
-  background: rgba(120, 120, 128, 0.16);
+  background: var(--fill-secondary);
   transition: background 0.25s ease;
 }
 

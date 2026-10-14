@@ -72,13 +72,18 @@ test.describe('Home calendar', () => {
     await expect(calendar(page).getByText('5 to 11 October', { exact: true })).toBeVisible();
     await expect(control(page, 'Previous week')).toBeVisible();
     await expect(control(page, 'Next week')).toBeVisible();
-    await expect(day(page, 'Tuesday 6 October')).toHaveAccessibleName('Tuesday 6 October, 1 missed');
-    await expect(day(page, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today, 1 due, selected');
-    await expect(day(page, 'Saturday 10 October')).toHaveAccessibleName('Saturday 10 October, 1 due');
+    await expect(day(page, 'Tuesday 6 October')).toHaveAccessibleName('Tuesday 6 October, 1 missed (urgent)');
+    await expect(day(page, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today, 1 due (not urgent), selected');
+    await expect(day(page, 'Saturday 10 October')).toHaveAccessibleName('Saturday 10 October, 1 due (not urgent)');
     await expect(day(page, 'Friday 9 October')).toHaveAccessibleName('Friday 9 October');
     expect(await dots(day(page, 'Tuesday 6 October'))).toEqual(['red']);
     // Missed: the number in red.
     await expect(day(page, 'Tuesday 6 October')).toHaveCSS('color', 'rgb(215, 0, 21)');
+    // Under the strip too, what the dots mean in words (each day's name says it for VoiceOver).
+    const legend = calendar(page).locator('[data-legend]');
+    await expect(legend).toBeVisible();
+    await expect(legend).toHaveAttribute('aria-hidden', 'true');
+    await expect(legend).toContainText('UrgentWithin the monthNot urgent');
     // Today is chosen: filled with the tint, its cell selected.
     await expect(day(page, 'Thursday 8 October').locator('xpath=..')).toHaveAttribute('aria-selected', 'true');
 
@@ -100,7 +105,11 @@ test.describe('Home calendar', () => {
     await expect(calendar(page).getByText('12 to 18 October', { exact: true })).toBeVisible();
     await expect(heading(page)).toHaveText('Next week');
     await expect(grid(page).locator('[data-today]')).toHaveCount(0);
+    // Today's list would read as part of next week: one quiet line asks for a day instead.
+    await expect(panel(page)).toHaveCount(0);
+    await expect(calendar(page).locator('[data-calendar-pick]')).toHaveText('Pick a day to see what is due.');
     await day(page, 'Wednesday 14 October').click();
+    await expect(calendar(page).locator('[data-calendar-pick]')).toHaveCount(0);
     await expect(panel(page).getByRole('heading', { level: 3 })).toHaveText('Wednesday 14 October');
     await control(page, 'Previous week').click();
     await control(page, 'Previous week').click();
@@ -108,7 +117,7 @@ test.describe('Home calendar', () => {
     await expect(heading(page)).toHaveText('Last week');
     await control(page, 'Today').click();
     await expect(grid(page)).toHaveAccessibleName('Week of Monday 5 October');
-    await expect(day(page, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today, 1 due, selected');
+    await expect(day(page, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today, 1 due (not urgent), selected');
     await expect(panel(page).getByRole('heading', { level: 3 })).toHaveText('Thursday 8 October');
     await expect(heading(page)).toHaveText('This week');
     await expect(control(page, 'Today')).toHaveCount(0);
@@ -142,7 +151,7 @@ test.describe('Home calendar', () => {
 
     // Four due: three dots, red first, and "+1".
     const busy = day(page, 'Wednesday 14 October');
-    await expect(busy).toHaveAccessibleName('Wednesday 14 October, 4 due');
+    await expect(busy).toHaveAccessibleName('Wednesday 14 October, 4 due (1 urgent, 1 within the month, 2 not urgent)');
     expect(await dots(busy)).toEqual(['red', 'amber', 'green']);
     await expect(busy).toContainText('+1');
     // The bins come round every week after, clearly lighter.
@@ -151,8 +160,8 @@ test.describe('Home calendar', () => {
     expect(await dots(later)).toEqual(['green (repeat)']);
     // Lighter, but 3:1 against the card: a hollow ring in the darker green at 80%.
     await expect(later.locator('[data-repeat]')).toHaveCSS('opacity', '0.8');
-    await expect(later.locator('[data-repeat]')).toHaveCSS('box-shadow', 'rgb(36, 138, 61) 0px 0px 0px 1.5px inset');
-    await expect(day(page, 'Thursday 15 October')).toHaveAccessibleName('Thursday 15 October, 1 due, 1 repeat');
+    await expect(later.locator('[data-repeat]')).toHaveCSS('box-shadow', 'rgb(31, 122, 54) 0px 0px 0px 1.5px inset');
+    await expect(day(page, 'Thursday 15 October')).toHaveAccessibleName('Thursday 15 October, 1 due (not urgent), 1 repeat');
     // The housekeeper's visit: the dot in the circle Housekeeping's calendar uses.
     const visit = day(page, 'Thursday 1 October');
     await expect(visit).toHaveAccessibleName('Thursday 1 October, housekeeping visit');
@@ -160,9 +169,12 @@ test.describe('Home calendar', () => {
     // Today keeps its ring when another day is chosen.
     await busy.click();
     const today = day(page, 'Thursday 8 October');
-    await expect(today).toHaveAccessibleName('Thursday 8 October, today, 1 due');
+    await expect(today).toHaveAccessibleName('Thursday 8 October, today, 1 due (not urgent)');
     await expect(today.locator('span').first()).toHaveCSS('box-shadow', 'rgb(0, 122, 255) 0px 0px 0px 1.5px inset');
-    await expect(calendar(page).locator('[data-legend]')).toHaveText(/Due.*Missed.*Repeats.*Housekeeping/);
+    // What the marks mean, in words: the dots' colours, a repeat, the visit, a missed day.
+    await expect(calendar(page).locator('[data-legend]')).toHaveText(
+      'UrgentWithin the monthNot urgentRepeatHousekeepingRed date: missed',
+    );
 
     // Remembered after a reload; the week again, also remembered.
     await reopen(page);
@@ -177,10 +189,10 @@ test.describe('Home calendar', () => {
 
   test('the person filter: only their items mark the calendar, the visit stays', async ({ page }) => {
     await toggle(page, 'Show month').click();
-    await expect(day(page, 'Monday 12 October')).toHaveAccessibleName('Monday 12 October, 1 due');
+    await expect(day(page, 'Monday 12 October')).toHaveAccessibleName('Monday 12 October, 1 due (within the month)');
     await chooseWho(page, /^Shea,/);
     // Shea's two: the shower and the garden furniture.
-    await expect(day(page, 'Wednesday 14 October')).toHaveAccessibleName('Wednesday 14 October, 2 due');
+    await expect(day(page, 'Wednesday 14 October')).toHaveAccessibleName('Wednesday 14 October, 2 due (1 within the month, 1 not urgent)');
     expect(await dots(day(page, 'Wednesday 14 October'))).toEqual(['amber', 'green']);
     // The water test strips are unassigned, the plants Ela's.
     await expect(day(page, 'Monday 12 October')).toHaveAccessibleName('Monday 12 October');
@@ -198,12 +210,12 @@ test.describe('Home calendar', () => {
     await expect(panel(page).getByRole('heading', { level: 3 })).toHaveText('Wednesday 21 October');
     await expect(panel(page).getByRole('button', { name: /^Mark / })).toHaveCount(0);
     // Worded as a repeat of its due date, how often after it.
-    await expect(panel(page).locator('[data-meta]')).toHaveText('Repeat of Wed 14 Oct·Every week');
+    await expect(panel(page).locator('[data-meta]')).toHaveText('Not urgent·Repeat of Wed 14 Oct·Every week·Front garden');
     await expect(panel(page).locator('[data-who]')).toHaveText('🦔Stratis');
 
     await day(page, 'Wednesday 14 October').click();
-    await expect(said(page)).toHaveText('Wednesday 14 October: 4 due. Details below the calendar.');
-    await expect(day(page, 'Wednesday 14 October')).toHaveAccessibleName('Wednesday 14 October, 4 due, selected');
+    await expect(said(page)).toHaveText('Wednesday 14 October: 4 due (1 urgent, 1 within the month, 2 not urgent). Details below the calendar.');
+    await expect(day(page, 'Wednesday 14 October')).toHaveAccessibleName('Wednesday 14 October, 4 due (1 urgent, 1 within the month, 2 not urgent), selected');
     const rings = panel(page).getByRole('button', { name: /^Mark / });
     await expect(rings).toHaveCount(4);
     // In the order of its marks: the red one first, then amber, then green.
@@ -216,11 +228,11 @@ test.describe('Home calendar', () => {
     // A one-off: gone from the day (and from its room, below).
     await panel(page).getByRole('button', { name: 'Mark Cover the garden furniture as done' }).click();
     await expect(rings).toHaveCount(3);
-    await expect(day(page, 'Wednesday 14 October')).toHaveAccessibleName('Wednesday 14 October, 3 due, selected');
+    await expect(day(page, 'Wednesday 14 October')).toHaveAccessibleName('Wednesday 14 October, 3 due (1 urgent, 1 within the month, 1 not urgent), selected');
     // A weekly one moves on a week: due on the 21st, its repeat on the 28th.
     await panel(page).getByRole('button', { name: 'Mark Put the bins out as done' }).click();
     await expect(rings).toHaveCount(2);
-    await expect(day(page, 'Wednesday 21 October')).toHaveAccessibleName('Wednesday 21 October, 1 due');
+    await expect(day(page, 'Wednesday 21 October')).toHaveAccessibleName('Wednesday 21 October, 1 due (not urgent)');
     await expect(day(page, 'Wednesday 28 October')).toHaveAccessibleName('Wednesday 28 October, 1 repeat');
     // The row opens the Item sheet.
     await panel(page).getByRole('button', { name: /^Shower draining slowly/ }).click();
@@ -262,7 +274,7 @@ test.describe('Home calendar', () => {
     await page.keyboard.press('ArrowRight');
     await page.keyboard.press('Enter');
     await expect(day(page, 'Wednesday 14 October')).toBeFocused();
-    await expect(said(page)).toHaveText('Wednesday 14 October: 4 due. Details below the calendar.');
+    await expect(said(page)).toHaveText('Wednesday 14 October: 4 due (1 urgent, 1 within the month, 2 not urgent). Details below the calendar.');
     await expect(panel(page).getByRole('heading', { level: 3 })).toHaveText('Wednesday 14 October');
     // Only the chosen day is in the tab order.
     await expect(grid(page).locator('button[tabindex="0"]')).toHaveCount(1);
@@ -281,16 +293,23 @@ test.describe('Home calendar', () => {
     await expect(day(page, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today, selected');
   });
 
-  test('keyboard: completing the last row of a day that is off the grid puts focus on its heading', async ({ page }) => {
+  test('keyboard: moving into another week leaves the chosen day’s list out until Enter chooses a day', async ({ page }) => {
     await day(page, 'Tuesday 6 October').click();
     await page.keyboard.press('ArrowDown');
     await expect(grid(page)).toHaveAccessibleName('Week of Monday 12 October');
+    expect(await focusedName(page)).toMatch(/^Tuesday 13 October/);
+    await expect(panel(page)).toHaveCount(0);
+    await expect(calendar(page).locator('[data-calendar-pick]')).toHaveText('Pick a day to see what is due.');
+    await page.keyboard.press('Enter');
+    await expect(panel(page).getByRole('heading', { level: 3 })).toHaveText('Tuesday 13 October');
+    // Back to the day with its row, from the keyboard, and it completes from there.
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('Enter');
     await page.keyboard.press('Tab');
     await expect(panel(page).getByRole('button', { name: 'Mark Heaters not working as done' })).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(panel(page)).toContainText('Nothing due.');
-    await expect(panel(page).getByRole('heading', { level: 3, name: 'Tuesday 6 October' })).toBeFocused();
-    expect(await focusedName(page)).toBe('Tuesday 6 October');
+    await expect(day(page, 'Tuesday 6 October')).toBeFocused();
   });
 
   test('a new day after midnight: the strip shows the new week, even after a tap', async ({ page }) => {

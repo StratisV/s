@@ -147,7 +147,7 @@ test('items: create, edit, What good looks like, kind, done, undo and delete sho
   // Shea does a monthly one: Stratis sees its next date, and her count in Stats.
   await quiet(stratis);
   await ring(area(b, 'Jacuzzi'), 'Change the filter').click();
-  await expect(toast(b, /^Done\. Next due/)).toBeVisible();
+  await expect(toast(b, /^Done\. Next one/)).toBeVisible();
   // Monthly: next on Sat 21 Nov.
   await expect(meta(area(a, 'Jacuzzi'), 'Change the filter')).toHaveText(taskMeta('green', '2026-11-21'), {
     timeout: SYNC_MS,

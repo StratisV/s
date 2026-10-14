@@ -2,7 +2,8 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Item, Member } from '../../lib/types';
 import { ConfettiProvider } from '../../ui/Confetti';
-import { COMPLETE_FEEDBACK_MS, firstName, ItemRow, LEAVE_MS, splitLastWord } from './ItemRow';
+import { COMPLETE_FEEDBACK_MS, firstName, ItemRow, LEAVE_MS } from './ItemRow';
+import { RevealContext } from './reveal';
 
 const TODAY = '2026-10-08';
 
@@ -90,25 +91,36 @@ describe('ItemRow', () => {
 
   it('shows when it is due relative to today, a late date in red, and its room where the list mixes rooms', () => {
     const { meta } = setup({}, { room: 'Hallway' });
+    // After the Urgent pill the date follows straight on; a dot goes before the room.
     expect(meta.textContent).toBe('Urgent2 days late·Hallway');
     expect(screen.getByText('2 days late').hasAttribute('data-late')).toBe(true);
     cleanup();
+    // Quiet words (Within the month, Not urgent) are followed by a dot.
     const soon = setup({ rag: 'amber', due_date: '2026-10-12' });
-    expect(soon.meta.textContent).toBe('Within the monthIn 4 days');
+    expect(soon.meta.textContent).toBe('Within the month·In 4 days');
   });
 
-  it('puts the room after the words in a part of its own that can take the next line, its dot with it', () => {
+  it('puts the room after the words in a part of its own, its dot with it, so a short line moves it down whole', () => {
     const { meta } = setup({}, { room: 'Hallway' });
     const part = meta.querySelector('[data-room]')!.parentElement!;
-    // Its own flex item, after the urgency and when (so a short line moves it down whole)...
     expect(part.parentElement).toBe(meta);
     expect(part.firstElementChild!.textContent).toBe('·');
     expect(meta.firstElementChild!.textContent).toBe('Urgent2 days late');
     cleanup();
-    // ...but straight after a coloured label, with nothing said between, it stays beside it, without a dot.
+    // The same straight after a pill with nothing between.
     const state = setup({ kind: 'state', rag: 'red', due_date: null }, { room: 'Garden' });
-    expect(state.meta.textContent).toBe('Needs workGarden');
-    expect(state.meta.querySelector('[data-room]')!.parentElement).toBe(state.meta.firstElementChild);
+    expect(state.meta.textContent).toBe('Needs work·Garden');
+    expect(state.meta.querySelector('[data-room]')!.parentElement!.parentElement).toBe(state.meta);
+  });
+
+  it('gives a To do’s words a dot in its colour, and leaves it out for To maintain (its gauge shows the condition)', () => {
+    const amber = setup({ rag: 'amber' });
+    expect(amber.meta.querySelector('[data-rag="amber"]')!.children).toHaveLength(1);
+    cleanup();
+    const okay = setup({ kind: 'state', rag: 'amber', due_date: null });
+    const badge = okay.meta.querySelector<HTMLElement>('[data-rag]')!;
+    expect(badge.textContent).toBe('Okay');
+    expect(badge.children).toHaveLength(0);
   });
 
   it('leaves out the date where the list says it, but never a late one', () => {
@@ -143,15 +155,29 @@ describe('ItemRow', () => {
     expect(nobody.row.querySelector('[data-who]')).toBeNull();
   });
 
-  it('keeps the note glyph on the line of the title’s last word', () => {
+  it('says a note is there to assistive tech, with no glyph on the row (the note is in the sheet)', () => {
     const { row } = setup({ title: 'Heaters not working' });
-    const tail = row.querySelector('svg')!.parentElement!;
-    expect(tail.textContent).toBe('working');
-    expect(splitLastWord('Clear the gutters ')).toEqual(['Clear the ', 'gutters']);
-    expect(splitLastWord('Oven')).toEqual(['', 'Oven']);
-    // A last word too long to keep whole is left where it falls.
-    expect(splitLastWord('See https://example.com/a-long-link')).toEqual(['See https://example.com/a-long-link', '']);
+    expect(row.querySelector('svg')).toBeNull();
+    expect(row.querySelector('.visually-hidden')!.textContent).toMatch(/has a note\.$/);
     expect(firstName('  Shea Byrne ')).toBe('Shea');
+  });
+
+  it('carries its id, and lights up while it is the item just saved', () => {
+    const { view } = setup();
+    const li = view.container.querySelector('li')!;
+    expect(li.dataset.itemId).toBe('item-1');
+    expect(li.hasAttribute('data-lit')).toBe(false);
+    cleanup();
+    const lit = render(
+      <ConfettiProvider>
+        <RevealContext.Provider value="item-1">
+          <ul>
+            <ItemRow item={item} members={MEMBERS} today={TODAY} timeZone="Europe/London" onOpen={() => {}} onComplete={() => {}} />
+          </ul>
+        </RevealContext.Provider>
+      </ConfettiProvider>,
+    );
+    expect(lit.container.querySelector('li')!.hasAttribute('data-lit')).toBe(true);
   });
 
   it('opens the item when the row is tapped', () => {

@@ -210,7 +210,7 @@
 }
 
 .codeInput::placeholder {
-  color: rgba(60, 60, 67, 0.3);
+  color: var(--label-quaternary);
   opacity: 1;
   letter-spacing: 0.1em;
 }
@@ -355,7 +355,7 @@
 }
 
 .field::placeholder {
-  color: rgba(60, 60, 67, 0.3);
+  color: var(--label-quaternary);
   opacity: 1;
 }
 

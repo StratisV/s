@@ -27,28 +27,28 @@ interface ReadyProps {
   onRevealed(): void;
   onLinkedAreaShown(): void;
   onRoomContext(areaId: string | null): void;
-  expose(home: HomeContextValue, reveal: (areaId: string) => void, link: (areaId: string) => void): void;
+  expose(home: HomeContextValue, reveal: (itemId: string) => void, link: (areaId: string) => void): void;
 }
 
 /**
- * Home as App mounts it: `reveal` is what App does once an item is saved into an area,
- * `link` what it does for a shared `?area=` link.
+ * Home as App mounts it: `reveal` is what App does once an item is saved (new, or moved to
+ * another area), `link` what it does for a shared `?area=` link.
  */
 function Ready({ onOpenProfile, onAddItem, onRevealed, onLinkedAreaShown, onRoomContext, expose }: ReadyProps) {
   const home = useHome();
-  const [revealArea, setRevealArea] = useState<string | null>(null);
+  const [revealItem, setRevealItem] = useState<string | null>(null);
   const [linkedArea, setLinkedArea] = useState<string | null>(null);
-  expose(home, setRevealArea, setLinkedArea);
+  expose(home, setRevealItem, setLinkedArea);
   if (home.phase.kind !== 'ready' || !home.data) return null;
   return (
     <HomeScreen
       onOpenItem={() => {}}
       onOpenProfile={onOpenProfile}
       onAddItem={onAddItem}
-      revealArea={revealArea}
+      revealItem={revealItem}
       onRevealed={() => {
         onRevealed();
-        setRevealArea(null);
+        setRevealItem(null);
       }}
       linkedArea={linkedArea}
       onLinkedAreaShown={() => {
@@ -76,7 +76,7 @@ async function setup(storage?: StorageLike, view: HomeView = 'rooms') {
   const onLinkedAreaShown = vi.fn();
   const onRoomContext = vi.fn();
   let home!: HomeContextValue;
-  let revealArea!: (areaId: string) => void;
+  let revealItem!: (itemId: string) => void;
   let linkArea!: (areaId: string) => void;
   render(
     <HomeProvider backend={backend}>
@@ -89,7 +89,7 @@ async function setup(storage?: StorageLike, view: HomeView = 'rooms') {
           onRoomContext={onRoomContext}
           expose={(h, reveal, link) => {
             home = h;
-            revealArea = reveal;
+            revealItem = reveal;
             linkArea = link;
           }}
         />
@@ -103,7 +103,7 @@ async function setup(storage?: StorageLike, view: HomeView = 'rooms') {
     onRevealed,
     onLinkedAreaShown,
     onRoomContext,
-    revealArea: () => revealArea,
+    revealItem: () => revealItem,
     linkArea: () => linkArea,
     home: () => home,
     storage,
@@ -134,7 +134,7 @@ function emptyRoom(name: string) {
   return region;
 }
 
-/** Opens a room's "..." menu and chooses `item` ("Share Garden", "Add item to Garden", "Collapse All Rooms"). */
+/** Opens a room's "..." menu and chooses `item` ("Add item to Garden", "Share Room"). */
 function roomMenu(room: string, item: string | RegExp) {
   fireEvent.click(screen.getByRole('button', { name: `${room} options` }));
   fireEvent.click(within(screen.getByRole('menu', { name: room })).getByRole('menuitem', { name: item }));
@@ -322,30 +322,30 @@ describe('HomeScreen areas', () => {
     expect(kitchen.panel.hasAttribute('data-collapsed')).toBe(false);
   });
 
-  it('Collapse All Rooms and Expand All Rooms, from any room’s menu: one line per room, with how many are open', async () => {
+  it('Collapse all and Expand all, once at the top of Rooms: one line per room, with how many are open', async () => {
     const { home } = await setup();
     // The rooms with something open (an empty one has nothing to fold).
     const names = home()
       .data!.areas.filter((a) => home().data!.items.some((it) => it.area_id === a.id && it.status === 'open'))
       .map((a) => a.name);
     fireEvent.click(area('Garden').toggle);
+    // One button for the whole page, before the first room (never in a room's own menu).
+    const bar = document.querySelector<HTMLElement>('[data-view="rooms"] [data-fold-all]')!;
+    expect(bar.compareDocumentPosition(area('Kitchen').region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
-    roomMenu('Kitchen', 'Collapse All Rooms');
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse all' }));
     for (const name of names) expect(area(name).toggle.getAttribute('aria-expanded')).toBe('false');
     expect(within(area('Kitchen').region).getByText('2 open')).toBeTruthy();
     // Folded, a room's status is still part of what its name says (aria-describedby).
     const kitchen = area('Kitchen').toggle;
     expect(document.getElementById(kitchen.getAttribute('aria-describedby')!)!.textContent).toBe('2 open');
 
-    await act(async () => {});
-    roomMenu('Garden', 'Expand All Rooms');
+    fireEvent.click(screen.getByRole('button', { name: 'Expand all' }));
     for (const name of names) expect(area(name).toggle.getAttribute('aria-expanded')).toBe('true');
 
-    // Collapsing every room one by one also offers Expand All Rooms.
+    // Collapsing every room one by one also offers Expand all.
     for (const name of names) fireEvent.click(area(name).toggle);
-    await act(async () => {});
-    fireEvent.click(screen.getByRole('button', { name: 'Kitchen options' }));
-    expect(within(screen.getByRole('menu', { name: 'Kitchen' })).getByRole('menuitem', { name: 'Expand All Rooms' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Expand all' })).toBeTruthy();
   });
 
   it('shows three jobs in a busy room, then "Show 2 more"', async () => {
@@ -488,27 +488,119 @@ describe('HomeScreen areas', () => {
 });
 
 describe('HomeScreen after a save', () => {
-  it('expands the area an item was saved into, if it was collapsed', async () => {
-    const { home, revealArea: reveal, onRevealed } = await setup();
-    const revealArea = (id: string) => reveal()(id);
-    const kitchenId = home().data!.areas.find((a) => a.name === 'Kitchen')!.id;
-    const gardenId = home().data!.areas.find((a) => a.name === 'Garden')!.id;
+  const NEW_TASK = {
+    kind: 'task' as const,
+    note: '',
+    good: '',
+    rag: 'green' as const,
+    assignee_id: null,
+    repeat: 'none' as const,
+    notify: 'none' as const,
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  /** scrollIntoView, recorded: jsdom has none. */
+  function recordScrolls() {
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    return scrolled;
+  }
+
+  /** The row of an item, by its id. */
+  const rowOf = (id: string) => document.querySelector<HTMLElement>(`[data-item-id="${id}"]`);
+
+  it('opens the room it was saved into, and only that one, remembered as open', async () => {
+    const { home, revealItem, onRevealed } = await setup();
+    recordScrolls();
+    const data = home().data!;
+    const gardenId = data.areas.find((a) => a.name === 'Garden')!.id;
+    const paper = data.items.find((it) => it.title === 'Kitchen paper')!;
     fireEvent.click(area('Kitchen').toggle);
     fireEvent.click(area('Garden').toggle);
 
-    act(() => revealArea(kitchenId));
+    act(() => revealItem()(paper.id));
     expect(area('Kitchen').toggle.getAttribute('aria-expanded')).toBe('true');
     expect(area('Kitchen').panel.hasAttribute('data-collapsed')).toBe(false);
-    // Only that one; and it is remembered as open.
     expect(area('Garden').toggle.getAttribute('aria-expanded')).toBe('false');
     const hid = home().data!.household.id;
     expect(JSON.parse(localStorage.getItem(collapsedKey(hid))!)).toEqual([gardenId]);
     expect(onRevealed).toHaveBeenCalledTimes(1);
+    // Its row lights up for a moment.
+    expect(rowOf(paper.id)!.hasAttribute('data-lit')).toBe(true);
+  });
 
-    // An area that is already open stays open.
-    act(() => revealArea(kitchenId));
+  it('a new item behind "Show 2 more" in its room: the room shows it, scrolls to it and lights it up', async () => {
+    const { home, revealItem, onRevealed } = await setup();
+    const scrolled = recordScrolls();
+    const lounge = home().data!.areas.find((a) => a.name === 'Garden Lounge')!;
+    // A fifth job, not urgent and due in a week: the room folds after three, and it is fourth.
+    let created!: { id: string };
+    await act(async () => {
+      created = await home().createItem({ ...NEW_TASK, area_id: lounge.id, title: 'Oil the decking', due_date: '2026-10-21' });
+    });
+    vi.useFakeTimers();
+    act(() => revealItem()(created.id));
+    // Waits for it to load if need be; here it is in the list already.
+    await act(async () => {});
+    const { region } = area('Garden Lounge');
+    expect(within(region).getByRole('button', { name: 'Show fewer' }).getAttribute('aria-expanded')).toBe('true');
+    expect(rowOf(created.id)).toBeTruthy();
+    expect(rowOf(created.id)!.hasAttribute('data-lit')).toBe(true);
+    expect(onRevealed).toHaveBeenCalledTimes(1);
+    act(() => vi.advanceTimersByTime(100));
+    expect(scrolled).toEqual([rowOf(created.id)!.querySelector('[data-item-open]')]);
+    // The light fades; the room stays open until folded again.
+    act(() => vi.advanceTimersByTime(3000));
+    expect(rowOf(created.id)!.hasAttribute('data-lit')).toBe(false);
+    fireEvent.click(within(region).getByRole('button', { name: 'Show fewer' }));
+    expect(rowOf(created.id)).toBeNull();
+  });
+
+  it('Up next: a new item deep in Later opens it; one for someone the filter hides shows everyone’s again', async () => {
+    const { home, revealItem } = await setup(undefined, 'next');
+    recordScrolls();
+    const data = home().data!;
+    const kitchen = data.areas.find((a) => a.name === 'Kitchen')!;
+    const ela = data.members.find((m) => m.name === 'Ela')!;
+    fireEvent.click(screen.getByRole('button', { name: 'Mine' }));
+    expect(who()).not.toBe('Everyone');
+    let created!: { id: string };
+    await act(async () => {
+      created = await home().createItem({
+        ...NEW_TASK,
+        area_id: kitchen.id,
+        title: 'Service the boiler',
+        due_date: '2026-12-01',
+        assignee_id: ela.id,
+      });
+    });
+    act(() => revealItem()(created.id));
+    await act(async () => {});
+    expect(who()).toBe('Everyone');
+    const later = document.querySelector<HTMLElement>('section[data-group="later"]')!;
+    expect(within(later).getByRole('button', { name: 'Show fewer' })).toBeTruthy();
+    expect(later.contains(rowOf(created.id))).toBe(true);
+  });
+
+  it('an item moved to another room: shown in its new room', async () => {
+    const { home, revealItem } = await setup();
+    recordScrolls();
+    const data = home().data!;
+    const heaters = data.items.find((it) => it.title === 'Heaters not working')!;
+    const kitchen = data.areas.find((a) => a.name === 'Kitchen')!;
+    fireEvent.click(area('Kitchen').toggle);
+    await act(async () => {
+      await home().updateItem(heaters.id, { area_id: kitchen.id });
+    });
+    act(() => revealItem()(heaters.id));
     expect(area('Kitchen').toggle.getAttribute('aria-expanded')).toBe('true');
-    expect(onRevealed).toHaveBeenCalledTimes(2);
+    expect(area('Kitchen').region.contains(rowOf(heaters.id))).toBe(true);
   });
 });
 
@@ -531,17 +623,17 @@ describe('HomeScreen sharing an area', () => {
     return writeText;
   }
 
-  it('every room has one "..." menu: Add Item, Share Room, then Collapse All Rooms', async () => {
+  it('every room has one "..." menu, named after the room: Add Item and Share Room', async () => {
     const { home } = await setup();
     for (const a of home().data!.areas) {
       const button = screen.getByRole('button', { name: `${a.name} options` });
       expect(button.getAttribute('aria-haspopup'), a.name).toBe('menu');
       fireEvent.click(button);
       const menu = screen.getByRole('menu', { name: a.name });
+      // Each name holds the words on screen (Voice Control: "Tap Share Room").
       expect(within(menu).getAllByRole('menuitem').map((m) => m.getAttribute('aria-label') ?? m.textContent)).toEqual([
         `Add item to ${a.name}`,
-        `Share ${a.name}`,
-        'Collapse All Rooms',
+        'Share Room',
       ]);
       fireEvent.keyDown(menu, { key: 'Escape' });
       expect(document.activeElement).toBe(button);
@@ -555,7 +647,7 @@ describe('HomeScreen sharing an area', () => {
     const data = home().data!;
     const hallway = data.areas.find((a) => a.name === 'Hallway')!;
     const due = data.items.find((i) => i.title === 'Heaters not working')!.due_date!;
-    roomMenu('Hallway', 'Share Hallway');
+    roomMenu('Hallway', 'Share Room');
     expect(share).toHaveBeenCalledTimes(1);
     expect(share).toHaveBeenCalledWith({
       title: 'Hallway',
@@ -569,10 +661,10 @@ describe('HomeScreen sharing an area', () => {
     const { home } = await setup();
     const share = stubShare();
     fireEvent.click(area('Kitchen').toggle);
-    roomMenu('Kitchen', 'Share Kitchen');
+    roomMenu('Kitchen', 'Share Room');
     expect(share.mock.lastCall![0].text).toMatch(/^Kitchen \(2 items\)\n• Kitchen paper · Not urgent · Due .*\n• Olive oil · /);
     await act(async () => {});
-    roomMenu('Bedroom Small', 'Share Bedroom Small');
+    roomMenu('Bedroom Small', 'Share Room');
     const smallId = home().data!.areas.find((a) => a.name === 'Bedroom Small')!.id;
     expect(share.mock.lastCall![0].text).toBe(`Bedroom Small\nNothing to do\n\n${window.location.origin}/?area=${smallId}`);
   });
@@ -580,7 +672,7 @@ describe('HomeScreen sharing an area', () => {
   it('without a share sheet, copies the text and says so', async () => {
     const { home } = await setup();
     const writeText = stubClipboard();
-    roomMenu('Garden', 'Share Garden');
+    roomMenu('Garden', 'Share Room');
     await waitFor(() => expect(home().toast?.message).toBe(COPIED_TOAST));
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(writeText.mock.lastCall![0]).toMatch(/^Garden \(3 items\)\n/);
@@ -590,7 +682,7 @@ describe('HomeScreen sharing an area', () => {
     const { home } = await setup();
     const writeText = stubClipboard();
     const share = stubShare(() => Promise.reject(new DOMException('Share canceled', 'AbortError')));
-    roomMenu('Garden', 'Share Garden');
+    roomMenu('Garden', 'Share Room');
     await act(async () => {});
     expect(share).toHaveBeenCalledTimes(1);
     expect(writeText).not.toHaveBeenCalled();
@@ -601,7 +693,7 @@ describe('HomeScreen sharing an area', () => {
     const { home } = await setup();
     const writeText = stubClipboard();
     stubShare(() => Promise.reject(new DOMException('Not allowed', 'NotAllowedError')));
-    roomMenu('Garden', 'Share Garden');
+    roomMenu('Garden', 'Share Room');
     await waitFor(() => expect(home().toast?.message).toBe(COPIED_TOAST));
     expect(writeText).toHaveBeenCalledTimes(1);
   });
@@ -610,11 +702,11 @@ describe('HomeScreen sharing an area', () => {
     await setup();
     let finish!: () => void;
     const share = stubShare(() => new Promise<void>((resolve) => (finish = resolve)));
-    roomMenu('Garden', 'Share Garden');
-    roomMenu('Kitchen', 'Share Kitchen');
+    roomMenu('Garden', 'Share Room');
+    roomMenu('Kitchen', 'Share Room');
     expect(share).toHaveBeenCalledTimes(1);
     await act(async () => finish());
-    roomMenu('Kitchen', 'Share Kitchen');
+    roomMenu('Kitchen', 'Share Room');
     expect(share).toHaveBeenCalledTimes(2);
   });
 
@@ -623,11 +715,11 @@ describe('HomeScreen sharing an area', () => {
     const share = stubShare(() => new Promise<void>(() => {}));
     vi.useFakeTimers();
     try {
-      roomMenu('Garden', 'Share Garden');
-      roomMenu('Kitchen', 'Share Kitchen');
+      roomMenu('Garden', 'Share Room');
+      roomMenu('Kitchen', 'Share Room');
       expect(share).toHaveBeenCalledTimes(1);
       act(() => vi.advanceTimersByTime(1600));
-      roomMenu('Kitchen', 'Share Kitchen');
+      roomMenu('Kitchen', 'Share Room');
       expect(share).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
@@ -729,6 +821,26 @@ describe('HomeScreen from a shared area link', () => {
     expect(area('Garden').region.hasAttribute('data-linked')).toBe(true);
     fireEvent.click(within(views).getByRole('radio', { name: 'Up next' }));
     expect(onRoomContext).toHaveBeenLastCalledWith(null);
+  });
+
+  it('shows Rooms for the link only: the view this phone opens on stays the one the person picked', async () => {
+    const { home, linkArea, storage } = await setup(undefined, 'next');
+    Element.prototype.scrollIntoView = () => {};
+    const garden = home().data!.areas.find((a) => a.name === 'Garden')!;
+    act(() => linkArea()(garden.id));
+    await waitFor(() => expect(area('Garden').region.hasAttribute('data-linked')).toBe(true));
+    const radio = (name: string) => within(screen.getByRole('radiogroup', { name: 'View' })).getByRole('radio', { name });
+    expect(radio('Rooms').getAttribute('aria-checked')).toBe('true');
+    expect(localStorage.getItem(HOME_VIEW_KEY)).toBeNull();
+
+    // Opened again: Up next, as the person left it.
+    cleanup();
+    await setup(storage, 'next');
+    expect(radio('Up next').getAttribute('aria-checked')).toBe('true');
+
+    // A view picked on the switch is remembered, as ever.
+    fireEvent.click(radio('Rooms'));
+    expect(localStorage.getItem(HOME_VIEW_KEY)).toBe('rooms');
   });
 
   it('an open area scrolls straight away', async () => {

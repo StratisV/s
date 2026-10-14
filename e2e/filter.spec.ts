@@ -130,3 +130,36 @@ test.describe('Filter Home by person', () => {
     await expect(homeScreen(page).getByRole('status').filter({ hasText: 'Nothing for Ela' })).toHaveText('Nothing hereNothing for Ela right now.');
   });
 });
+
+for (const width of [320, 360]) {
+  test.describe(`Mine at ${width}px`, () => {
+    test.use({ viewport: { width, height: 700 } });
+
+    test('keeps its word, every view’s name stays whole, and each control takes taps 44px wide and tall', async ({ page }) => {
+      await openSeeded(page, 'Up next');
+      // "Mine" in words (the emoji alone looked like the profile button on the hero).
+      await expect(mine(page).getByText('Mine', { exact: true })).toBeVisible();
+      for (const name of ['Up next', 'Rooms', 'Calendar']) {
+        const label = homeScreen(page).getByRole('radio', { name, exact: true }).locator('span');
+        expect(await label.evaluate((el) => el.scrollWidth <= el.clientWidth + 0.5), name).toBe(true);
+      }
+      // 21px either side of each control's centre, and 21px above and below, is still that control.
+      for (const control of [mine(page), peopleButton(page)]) {
+        const box = (await control.boundingBox())!;
+        const name = await control.getAttribute('aria-label');
+        const hits = await page.evaluate(
+          ([cx, cy]) =>
+            [
+              [cx - 21, cy],
+              [cx + 21, cy],
+              [cx, cy - 21],
+              [cx, cy + 21],
+            ].map(([x, y]) => document.elementFromPoint(x, y)?.closest('button')?.getAttribute('aria-label') ?? null),
+          [box.x + box.width / 2, box.y + box.height / 2],
+        );
+        expect(hits, name!).toEqual(Array(4).fill(name));
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    });
+  });
+}

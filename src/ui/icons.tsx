@@ -154,15 +154,6 @@ export function ChevronDownIcon({ size = 12, strokeWidth = 2.4, ...p }: IconProp
   );
 }
 
-/** text.alignleft (an item has a note). */
-export function NoteIcon({ size = 14, ...p }: IconProps) {
-  return (
-    <svg {...base(size, p)}>
-      <path d="M5 7h14M5 12h14M5 17h9" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 /** arrow.triangle.2.circlepath (an item repeats). */
 export function RepeatIcon({ size = 14, ...p }: IconProps) {
   return (
@@ -191,21 +182,6 @@ export function PeopleIcon({ size = 20, ...p }: IconProps) {
       <circle cx="9" cy="8.5" r="3.3" stroke="currentColor" strokeWidth="2" />
       <path d="M3.2 19.2c.6-3.1 3-4.9 5.8-4.9s5.2 1.8 5.8 4.9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
       <path d="M15.4 5.6a3.1 3.1 0 0 1 0 6M17.6 14.6c1.7.6 2.9 2.2 3.2 4.6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-/** Collapse All (arrows meeting) or Expand All (`open`: arrows parting), in a room's menu. */
-export function FoldIcon({ size = 20, open = false, ...p }: IconProps & { open?: boolean }) {
-  return (
-    <svg {...base(size, p)}>
-      <path
-        d={open ? 'M7 9l5-5 5 5M7 15l5 5 5-5' : 'M7 4l5 5 5-5M7 20l5-5 5 5'}
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
     </svg>
   );
 }

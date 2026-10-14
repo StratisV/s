@@ -280,7 +280,7 @@ describe('areaShareMessage', () => {
   const bins = item({ id: 'bins', area_id: KITCHEN.id, title: 'Bins', rag: 'red', due_date: '2026-10-06' });
   const undated = item({ id: 'tap', area_id: KITCHEN.id, title: 'Dripping tap', due_date: null });
 
-  it('the area and how many open items, then one line each: To do by date, then To maintain', () => {
+  it('the area and how many open items, then one line each as its card on Home lists them: To do most urgent first, then To maintain', () => {
     const elsewhere = item({ id: 'heat', area_id: HALLWAY.id, title: 'Heaters' });
     const done = item({ id: 'done', area_id: KITCHEN.id, title: 'Descale kettle', status: 'done' });
     const message = areaShareMessage(KITCHEN, [fridge, oil, elsewhere, undated, paper, done, bins], CTX);
@@ -289,9 +289,9 @@ describe('areaShareMessage', () => {
       text: [
         'Kitchen (5 items)',
         '• Bins · Urgent · Missed · Tue 6 Oct',
+        '• Dripping tap · Within the month',
         '• Kitchen paper · Not urgent · Due Thu 5 Nov',
         '• Olive oil · Not urgent · Due Fri 13 Nov',
-        '• Dripping tap · Within the month',
         '• Fridge · Okay · Updated Tue 6 Oct',
         '',
         'https://home.example/?area=a-kitchen',

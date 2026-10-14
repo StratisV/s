@@ -1,7 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { useRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ISODate } from '../lib/types';
-import { DatePicker, mondayOf, useChosenDay, type ChosenDay } from './DatePicker';
+import { DatePicker, isDayShown, mondayOf, useCalendarView, useChosenDay, type ChosenDay } from './DatePicker';
 
 /** Thu 8 Oct 2026, the e2e clock's day. */
 const TODAY = '2026-10-08';
@@ -79,9 +80,10 @@ describe('DatePicker', () => {
     expect(document.activeElement).toBe(day(TODAY));
   });
 
-  it('Show month and Show week: kept on this device under its key; the summary and legend are the month’s', () => {
+  it('Show month and Show week: kept on this device under its key; the summary is the month’s, the legend under both', () => {
     render(<Harness memory={{ current: null }} />);
     expect(screen.queryByText('Totals for 2026-10')).toBeNull();
+    expect(screen.getByText('What the marks mean')).toBeTruthy();
     fireEvent.click(button('Show month'));
     expect(localStorage.getItem(VIEW_KEY)).toBe('month');
     expect(document.getElementById(grid().getAttribute('aria-labelledby')!)!.textContent).toBe('October 2026');
@@ -93,13 +95,48 @@ describe('DatePicker', () => {
     fireEvent.click(button('Show week'));
     expect(localStorage.getItem(VIEW_KEY)).toBeNull();
     expect(grid().getAttribute('aria-label')).toBe('Week of Monday 26 October');
-    expect(screen.queryByText('What the marks mean')).toBeNull();
+    expect(screen.getByText('What the marks mean')).toBeTruthy();
 
     // Kept: opened again in the month.
     fireEvent.click(button('Show month'));
     cleanup();
     render(<Harness memory={{ current: null }} />);
     expect(button('Show week')).toBeTruthy();
+  });
+
+  it('a screen can keep the view itself (useCalendarView), and tell which days are shown', () => {
+    function Kept() {
+      const memory = useRef<ChosenDay | null>(null);
+      const { chosen, update, reset } = useChosenDay(memory, 'h1', TODAY);
+      const [view, setView] = useCalendarView(VIEW_KEY);
+      return (
+        <>
+          <DatePicker
+            viewKey={VIEW_KEY}
+            view={view}
+            onViewChange={setView}
+            today={TODAY}
+            chosen={chosen}
+            onChange={update}
+            onReset={reset}
+            onSelect={(date) => update({ selected: date, week: mondayOf(date) })}
+            dayName={(date) => date}
+          />
+          <output data-shown="">{String(isDayShown(chosen.selected, view, chosen))}</output>
+        </>
+      );
+    }
+    render(<Kept />);
+    const shown = () => document.querySelector('[data-shown]')!.textContent;
+    expect(shown()).toBe('true');
+    fireEvent.click(button('Next week'));
+    expect(shown()).toBe('false');
+    fireEvent.click(button('Show month'));
+    expect(localStorage.getItem(VIEW_KEY)).toBe('month');
+    // The month of the week's Monday (12 October): today is in it.
+    expect(shown()).toBe('true');
+    fireEvent.click(button('Next month'));
+    expect(shown()).toBe('false');
   });
 
   it('lastDay: the days after it can’t be chosen, and Next stops at its week', () => {

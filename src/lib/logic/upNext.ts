@@ -75,6 +75,17 @@ export function compareByUrgency(today: ISODate) {
 }
 
 /**
+ * A room's open items as Rooms shows them (and Share Room lists them): its To dos most urgent
+ * first (compareByUrgency()), then the things it looks after, by name.
+ */
+export function roomOrder(items: Item[], today: ISODate): Item[] {
+  const open = items.filter((it) => it.status === 'open');
+  const tasks = open.filter((it) => !isState(it)).sort(compareByUrgency(today));
+  const states = open.filter(isState).sort((a, b) => a.title.localeCompare(b.title) || byAge(a, b));
+  return [...tasks, ...states];
+}
+
+/**
  * The earliest date first, then urgency, then the oldest: Today and Next 7 days, so the days
  * read in order ("In 2 days" never sits under "In 6 days") and, on one day, the most urgent
  * comes first.
@@ -147,6 +158,17 @@ export function relativeDue(due: ISODate | null, today: ISODate): { text: string
   return { text: formatDay(due, today), late: false };
 }
 
+/**
+ * The toast once a To do is ticked off: `'Marked as done'`; for a repeating one, when it comes
+ * round again, in the words its row will use: `'Done. Next one in 8 weeks'`, `'Done. Next one
+ * tomorrow'`, or a year or more away, `'Done. Next one on Fri 8 Oct 2027'`.
+ */
+export function doneMessage(next: ISODate | null, today: ISODate): string {
+  const when = relativeDue(next, today);
+  if (!next || !when) return 'Marked as done';
+  return `Done. Next one ${daysBetween(today, next) < 365 ? when.text.toLowerCase() : `on ${when.text}`}`;
+}
+
 /** "Updated today", "Updated yesterday", "Updated 3 days ago", then the date. */
 export function relativeUpdated(day: ISODate, today: ISODate): string {
   const days = daysBetween(day, today);
@@ -200,7 +222,11 @@ export function homeSummary(view: UpNext, today: ISODate, scope?: SummaryScope):
       rest: 'Nothing urgent or late.',
     };
   }
-  const next = view.groups.find((g) => g.id === 'week' || g.id === 'later')?.items[0];
+  // The soonest of what is left (Later lists urgency first, so its first row may be months away).
+  const next = view.groups
+    .filter((g) => g.id === 'week' || g.id === 'later')
+    .flatMap((g) => g.items)
+    .sort(compareByDate(today))[0];
   if (next) {
     const when = relativeDue(next.due_date, today);
     return {

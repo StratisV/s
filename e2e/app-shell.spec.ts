@@ -110,7 +110,7 @@ test.describe('App shell', () => {
   test('a finger tap on a ring completes the item', async ({ page }) => {
     await openSeeded(page);
     await ring(page, 'Olive oil').tap();
-    await expect(toast(page, 'Done. Next due Sat 12 Dec')).toBeVisible();
+    await expect(toast(page, 'Done. Next one in 2 months')).toBeVisible();
     await rowButton(page, 'Mirror lights not level').tap();
     await expect(itemSheet(page)).toBeVisible();
   });

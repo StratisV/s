@@ -5,7 +5,7 @@
 //
 // Each function's doc comment is its spec; the tests are in src/lib/logic/calendar.test.ts.
 
-import { RAG_ORDER } from '../constants';
+import { RAG_ORDER, URGENCY_LABEL } from '../constants';
 import type { HousekeepingVisit, ISODate, Item, Rag } from '../types';
 import { daysBetween, formatDay, parseISODate } from './dates';
 import { doneCount, formatPrice, isRecorded } from './housekeeping';
@@ -189,11 +189,25 @@ export function dayDots(day: CalendarDay, max = 3): { dots: DayDot[]; more: numb
   return { dots: all.slice(0, max), more: Math.max(0, all.length - max) };
 }
 
-/** What a day holds, read out: `['3 due', '1 missed', '2 repeats', 'housekeeping visit']`, without the empty parts. */
+/**
+ * How urgent some items are, in the words of their dots' colours: `'urgent'` when they all
+ * share one, else how many of each, most urgent first: `'1 urgent, 2 not urgent'`.
+ */
+function urgencyOf(items: Item[]): string {
+  const counts = RAG_ORDER.map((rag) => ({ rag, n: items.filter((it) => it.rag === rag).length })).filter((c) => c.n);
+  const word = (rag: Rag) => URGENCY_LABEL[rag].toLowerCase();
+  if (counts.length === 1) return word(counts[0].rag);
+  return counts.map((c) => `${c.n} ${word(c.rag)}`).join(', ');
+}
+
+/**
+ * What a day holds, read out, the colours of its dots in words: `['3 due (1 urgent, 2 not
+ * urgent)', '1 missed (urgent)', '2 repeats', 'housekeeping visit']`, without the empty parts.
+ */
 function dayParts(day: CalendarDay): string[] {
   const parts: string[] = [];
-  if (day.due.length) parts.push(`${day.due.length} due`);
-  if (day.missed.length) parts.push(`${day.missed.length} missed`);
+  if (day.due.length) parts.push(`${day.due.length} due (${urgencyOf(day.due)})`);
+  if (day.missed.length) parts.push(`${day.missed.length} missed (${urgencyOf(day.missed)})`);
   if (day.repeats.length) parts.push(`${day.repeats.length} ${day.repeats.length === 1 ? 'repeat' : 'repeats'}`);
   if (day.visit) parts.push('housekeeping visit');
   return parts;
@@ -201,11 +215,13 @@ function dayParts(day: CalendarDay): string[] {
 
 /**
  * The accessible name of a day's button on Home's calendar: fullDay() ("Friday 16 October",
- * with the year when it is not this year's), `', today'`, then what it holds (`', 3 due'`,
- * `', 1 missed'`, `', 2 repeats'`, `', housekeeping visit'`), then `', selected'` for the
- * day shown under the calendar. Examples: `'Friday 16 October, 3 due, housekeeping visit'`,
- * `'Tuesday 6 October, 1 missed'`, `'Thursday 8 October, today, selected'`,
- * `'Tuesday 20 October, 2 due, 1 repeat'`, `'Saturday 9 January 2027'`.
+ * with the year when it is not this year's), `', today'`, then what it holds, with how
+ * urgent in words for the coloured dots (`', 3 due (1 urgent, 2 not urgent)'`, `', 1 missed
+ * (urgent)'`, `', 2 repeats'`, `', housekeeping visit'`), then `', selected'` for the day
+ * shown under the calendar. Examples: `'Friday 16 October, 3 due (1 urgent, 2 not urgent),
+ * housekeeping visit'`, `'Tuesday 6 October, 1 missed (urgent)'`, `'Thursday 8 October,
+ * today, selected'`, `'Tuesday 20 October, 2 due (within the month), 1 repeat'`,
+ * `'Saturday 9 January 2027'`.
  * Tests: each example; singular and plural repeats.
  */
 export function calendarDayName(date: ISODate, today: ISODate, day: CalendarDay, selected = false): string {
@@ -218,9 +234,9 @@ export function calendarDayName(date: ISODate, today: ISODate, day: CalendarDay,
 
 /**
  * What the live region says when a day is chosen (its details show under the calendar):
- * `'Friday 16 October: 3 due, 1 repeat. Details below the calendar.'`,
+ * `'Friday 16 October: 3 due (not urgent), 1 repeat. Details below the calendar.'`,
  * `'Thursday 8 October, today: nothing due. Details below the calendar.'`,
- * `'Tuesday 6 October: 1 missed, housekeeping visit. Details below the calendar.'`.
+ * `'Tuesday 6 October: 1 missed (urgent), housekeeping visit. Details below the calendar.'`.
  * Tests: each example.
  */
 export function calendarDayAnnouncement(date: ISODate, today: ISODate, day: CalendarDay): string {
@@ -251,18 +267,6 @@ export function repeatMeta(item: Pick<Item, 'repeat' | 'due_date'>, today: ISODa
   if (!item.due_date) return { when: 'Repeat', every };
   const missed = item.due_date < today ? ', missed' : '';
   return { when: `Repeat of ${formatDay(item.due_date, today)}${missed}`, every };
-}
-
-/**
- * The line under the calendar while today is chosen and not yet opened (its rows are in the
- * areas below, so they aren't listed twice): `'1 due today'`, `'2 due today · housekeeping
- * visit'`, or `nothing` (`'Nothing due today'`, `'Nothing due for Shea today'`) with the visit
- * after it in the same way. Today never has missed items or repeats.
- * Tests: due; due and a visit; nothing; nothing and a visit.
- */
-export function todaySummary(day: CalendarDay, nothing: string): string {
-  const due = day.due.length ? `${day.due.length} due today` : nothing;
-  return day.visit ? `${due} · housekeeping visit` : due;
 }
 
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

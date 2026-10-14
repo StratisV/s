@@ -57,7 +57,7 @@ test.describe('Persistence', () => {
     await expect(meta(page, 'Olive oil')).toHaveText('Not urgent·In 2 months');
     await expect(who(page, 'Olive oil')).toHaveText('🌻Stratis');
     expect(await titlesIn(page, 'Hallway')).toEqual(['Heaters not working', 'Service the boiler']);
-    await expect(meta(page, 'Service the boiler')).toHaveText('Within the monthIn 7 days');
+    await expect(meta(page, 'Service the boiler')).toHaveText('Within the month·In 7 days');
     await expect(homeScreen(page).getByRole('button', { name: /^Service the boiler ?, .*, Unassigned, repeats yearly\.$/ })).toBeVisible();
     const shower = await openItem(page, 'Shower draining slowly');
     await expect(shower.getByLabel('Note', { exact: true })).toHaveValue('Plumber on Friday.');

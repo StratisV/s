@@ -1599,10 +1599,15 @@ colour only where it means something and always with a word, and few visible con
 - **The view switch and whose items**: one row under the sentence: a small segmented control
   (a radio group "View": **Up next**, **Rooms**, **Calendar**; 32px with 14px words, against
   the tab switch's 44px and 17px, so the two never read as one; each segment a 44px tall
-  target; arrow keys, Home and End move the choice), then **Mine** and the people menu (see
-  "Home: date and the person filter"). The view is kept on this device (`homeos.homeView` =
-  `rooms` or `calendar`, nothing for Up next; every read and write in try/catch). Below 390px
-  the segments' words drop to 13px; nothing scrolls sideways at 320px.
+  target, its label cut short inside it so nothing clips that target; arrow keys, Home and End
+  move the choice), then **Mine** and the people menu (see "Home: date and the person
+  filter"). The view the person picks on the switch is kept on this device (`homeos.homeView`
+  = `rooms` or `calendar`, nothing for Up next; every read and write in try/catch). A shared
+  room link shows Rooms for that visit only (`showForLink` in `useHomeView()`): it is not
+  stored, and gives way as soon as the person picks a view, leaves Home or reopens the app, so
+  a link from the chat never changes what Home opens on. Below 390px the segments' words drop
+  to 13px; below 350px the switch takes a line of its own (every word whole) and Mine and the
+  people menu the line under it; nothing scrolls sideways at 320px.
 - **Up next** (the default, `upNext()`): one list across every room, grouped by when:
   **Needs attention** (`needsAttention()`: a To do that is late or Urgent, whatever its date,
   and a To maintain item that Needs work), **Today**, **Next 7 days** (tomorrow to a week
@@ -1610,14 +1615,18 @@ colour only where it means something and always with a word, and few visible con
   Later are sorted by `compareByUrgency()` (late first, then Urgent, Within the month, Not
   urgent, then the earliest date, then the oldest); Today and Next 7 days by `compareByDate()`
   (the earliest date first, then urgency), so "In 2 days" never sits under "In 6 days". Later
-  shows three rows, then "Show 6 more" / "Show fewer" (a disclosure, `aria-expanded`). Things
-  looked after that are Good or Okay close the view under **Looking after** ("Nothing to do
-  right now."), Okay first: two columns of tiles (the room, who, the name, the gauge and the
-  word; a tile opens the item), or one row in a card when there is only one. Rows in the
+  shows three rows, then "Show 6 more" / "Show fewer" (a disclosure, `aria-expanded`;
+  `ShowMore.tsx`, as a room's). Things looked after that are Good or Okay close the view under
+  **Looking after** ("All in good shape.", or "Keep an eye on anything marked Okay." when one
+  is Okay), Okay first: two columns of tiles (the room, who, the name, the gauge and the word,
+  Okay in amber words; a tile opens the item), or one row in a card when there is only one. Rows in the
   groups show their room; a row in Today leaves its date out. Nothing open: one card, "All
   clear" (or "Nothing for Ela right now.").
-- **Rooms** (Apple Home's rooms): the rooms in the household's order, one card each, 12px
-  apart. The card's header (58px) is the room's drawing in a soft rounded square
+- **Rooms** (Apple Home's rooms): first, on the right where the other views have their first
+  heading, one quiet text button, **Collapse all** / **Expand all** (15px `--tint-text`, a 44px
+  target; rooms with nothing open don't count: they have nothing to fold), so the first card
+  starts at the same height in all three views. Then the rooms in the household's order, one
+  card each, 12px apart. The card's header (58px) is the room's drawing in a soft rounded square
   (`RoomIcon.tsx`: a pot, sofa, bath, bed, leaf, plant, hot tub, door, tulip and more, chosen
   from the name, a house when nothing matches; tinted red while something there is late,
   urgent or needs work), then its name (17/22/600) with a small chevron that stays on the line
@@ -1630,47 +1639,58 @@ colour only where it means something and always with a word, and few visible con
   it can. A tap on the word folds or opens the room too, as on the name
   (it is no button of its own: the name's button carries it for the keyboard and VoiceOver).
   Then a borderless "..." ("<area> options", 44px, lined up with
-  the rows' right edge) whose menu holds **Add Item** ("Add item to <area>": the new-item
-  sheet with that area chosen), **Share Room** ("Share <area>", see "Sharing") and **Collapse
-  All Rooms** / **Expand All Rooms** (rooms with nothing open don't count: they have nothing to
-  fold). Under the header (a hairline in between), the room's To dos, most urgent first,
-  three of them and "Show 2 more" / "Show fewer" when two or more are left (a room with four
-  shows all four), then, under a hairline and a small "Looking after" label, the things it
-  looks after. Folded, the rows slide shut (about 320ms, none with Reduce Motion) and are
-  inert and hidden, leaving one line per room: Collapse All Rooms gives an overview of the
+  the rows' right edge) whose menu, named after the room, holds **Add Item** ("Add item to
+  <area>": the new-item sheet with that area chosen) and **Share Room** (named by its words, as
+  seen and as Voice Control hears them; see "Sharing"). Under the header (a hairline in
+  between), the room's To dos, most urgent first (`roomOrder()`, the order Share Room lists
+  them in), three of them and "Show 2 more" / "Show fewer" when two or more are left (a room
+  with four shows all four), then, under a hairline and a small "Looking after" label, the
+  things it looks after. Folded, the rows slide shut (about 320ms, none with Reduce Motion)
+  and are inert and hidden, leaving one line per room: Collapse all gives an overview of the
   house, one line a room with how many are open. Folded rooms are kept in localStorage under
   `homeos.collapsed.<householdId>` (deleted areas are forgotten). A room with nothing open is
   one quiet line in its place in the order: its drawing and name in grey, "All clear" and its
   menu (its `h2` takes focus, `tabIndex={-1}`).
 - **Calendar**: see "Home: the calendar".
 - **Rows** (`ItemRow.tsx`): a neutral grey ring (24px, `--ring-idle`, 3:1 on the card; a 44px
-  target, "Mark <title> as done") for a To do, or a condition gauge for a To maintain item
+  tap circle, "Mark <title> as done") for a To do, or a condition gauge for a To maintain item
   (`ConditionGauge` in `StatusRing.tsx`: three rising bars, Good fills three, Okay two, Needs
   work one, in its colour; never a ring, as it is never done). Then the title (two lines at
-  most, with a small note glyph that stays on the line of its last word when it has a note)
-  and, at the end of its first line, who it is for: their emoji and first name (13px grey;
-  nothing when unassigned, and nothing while the person filter shows one person's items, as
-  they would all say the same). Under both, one 13px line: the label (`RagBadge`: a red pill
-  "Urgent", an amber pill "Within the month", or a green dot and grey "Not urgent"; for To
-  maintain, a red pill "Needs work", an amber pill "Okay" or grey "Good"), when it is due
-  (`relativeDue()`: "Today", "Tomorrow", "In 4 days", "In 3 weeks", "In 2 months", the date a
-  year or more away; "2 days late" in red, the only red date), a repeat glyph, "Updated 2 days
-  ago" for a To maintain item (`relativeUpdated()`, in the household's time zone) where the
-  room isn't shown, and the room with its drawing where the list mixes rooms (it gives way
-  first: while about a word of its name fits it stays on the line, shortened with an
-  ellipsis; else it takes the next line whole, its dot left behind, rather than shrinking to
-  a letter on a small phone). Assistive tech hears one sentence instead of the visible lines: "Heaters not
-  working, Urgent, 2 days late, Hallway, Shea, has a note." Completing: the ring fills with
-  the tint, the check springs in and the title is struck through (420ms), a row that leaves
-  its list folds away (260ms; none of the motion with Reduce Motion), then the item completes
-  with an Undo toast; a small burst of hedgehog and duck confetti (14) and a light haptic.
+  most; a note is never on the row, not even as a glyph: it is in the Item sheet, and
+  VoiceOver hears "has a note") and, at the end of its first line, who it is for (`Who`):
+  their emoji and first name (13px grey; nothing when unassigned, and nothing while the person
+  filter shows one person's items, as they would all say the same). Under both, one 13px line
+  (`RowMeta`): the label (`RagBadge`), at three volumes so red stands out: a red pill
+  "Urgent", a dot and amber words "Within the month" (500, `--rag-amber-text`: #9a5b00, 5.4:1
+  on the card and a hue well apart from the red; #ffb340 in dark), a dot and grey words "Not
+  urgent"; for To maintain the same without the dot (its gauge shows it): a red pill "Needs
+  work", amber "Okay", grey "Good". Then when it is due (`relativeDue()`: "Today", "Tomorrow",
+  "In 4 days", "In 3 weeks", "In 2 months", the date a year or more away; "2 days late" in
+  red, the only red date), a repeat glyph, "Updated 2 days ago" for a To maintain item
+  (`relativeUpdated()`, in the household's time zone) where the room isn't shown, and the room
+  with its drawing where the list mixes rooms. A dot follows quiet words and goes before the
+  room; after a pill the next words follow straight on. The room is always whole: on the line
+  while it fits, else at the start of the next ("Bathroom Small" and "Bathroom Large" never
+  both read "Bathroom ..."), cut short only when its name is wider than the whole line.
+  Assistive tech hears one sentence instead of the visible lines: "Heaters not working,
+  Urgent, 2 days late, Hallway, Shea, has a note." Completing: the ring fills with the tint,
+  the check springs in and the title is struck through (420ms), a row that leaves its list
+  folds away (260ms; none of the motion with Reduce Motion), then the item completes with an
+  Undo toast ("Marked as done", or for a repeating job when it comes round again, in the
+  words its row will use: "Done. Next one in 8 weeks", `doneMessage()`); a small burst of
+  hedgehog and duck confetti (14) and a light haptic.
 - **The round +** (`AddButton` in `TabBar.tsx`): adds an item. After a shared room link opened
   a room (`onRoomContext`), it widens to "+ Garden" and is named "New item in Garden", and the
   new-item sheet opens with that room chosen, until another view or tab is chosen.
-- **Saving into a collapsed area opens it**: when an item is created, or moved to another
-  area, the Item sheet reports the area (`onSaved`), App passes it to Home (`revealArea`)
-  and Home expands it, so the item can be seen in Rooms. If the person filter hides it, Home
-  shows everyone's again.
+- **What was saved can be seen**: when an item is created, or moved to another area, the Item
+  sheet reports it (`onSaved(itemId)`), and App passes it to Home (`revealItem`) while Home is
+  behind the sheet. Once it is in the list (a new item comes with the next load), Home shows
+  everyone's items if the person filter hides it, opens its room if folded, and holds it for
+  a moment in `RevealContext` (`screens/home/reveal.ts`): a "Show N more" over it opens
+  (`useFold()` in `ShowMore.tsx`: Up next's Later and a room's To dos; it can be folded again
+  straight away), the calendar goes to its day, and its row lights up (a tint wash that fades
+  over 2.4s, `data-lit`; a tile gets a ring) and is scrolled into view (`block: 'nearest'`,
+  clear of the docked tab switch and the +). Leaving Home drops a reveal not yet shown.
 - **Keyboard focus** never lands on a row in a collapsed area: after a completion
   (`ItemRow`) or when the Item sheet closes on a row that is gone (`App` `restoreFocus`),
   focus goes to the nearest row that can be seen (`inCollapsedArea()` in
@@ -1689,6 +1709,12 @@ colour only where it means something and always with a word, and few visible con
 - **Dark mode**: tokens in `styles/tokens.css` follow `prefers-color-scheme` (iOS dark system
   colours: black page, #1c1c1e cards, lighter status text tones that keep 4.5:1; the
   segmented controls' thumb is `#545458`, so it sits back as the white thumb does in light).
+  The toast is two steps lighter than a card there, with a hairline edge (`--toast-bg`,
+  `--toast-edge`, `--toast-shadow`), so it never sinks into the list; placeholders, disabled
+  buttons, the switches' off track and pressed rows use tokens too (`--placeholder`,
+  `--label-quaternary`, `--fill-secondary`, `--fill-tertiary`), on every tab. Small tint words
+  (Show 6 more, Today, Show month, Collapse all, Save) use `--tint-text`, 4.5:1 or better in
+  both appearances (the system blue is 4:1 on the card).
 
 ### Home: date and the person filter
 
@@ -1698,8 +1724,9 @@ colour only where it means something and always with a word, and few visible con
   switch's row, 32px tall (44px targets), grey until they narrow Home, then a tint wash (never
   a solid fill):
   - **Mine**: one tap. A toggle button (`aria-pressed`, named "Mine") with your emoji and the
-    word (just the emoji below 370px wide). On, Home shows only your items; tapped again,
-    everyone's.
+    word (the word only from 350 to 369px wide, where it shares its line with the view switch;
+    narrower, the controls take two lines and both show). On, Home shows only your items;
+    tapped again, everyone's.
   - **The people menu**: a small pill (a people glyph and a chevron, or the chosen person's
     emoji, or a dashed circle for Unassigned), named "Show tasks for: Everyone" (or "Shea",
     "Stratis (you)", "Unassigned"), washed in the tint while it narrows Home to someone other
@@ -1707,7 +1734,7 @@ colour only where it means something and always with a word, and few visible con
     Unassigned, each with how many are open ("5 open"; VoiceOver "5 items") and, under someone
     who has not joined yet, "Not joined yet"; the chosen one checked.
   Choosing a person shows only items assigned to them, in every view, and only the rooms where
-  they have some; Collapse All Rooms acts on what is shown. The choice is kept per household
+  they have some; Collapse all acts on what is shown. The choice is kept per household
   on this device (`homeos.who.<householdId>`); a member who left reads as Everyone. Saving an
   item into an area the filter hides switches back to Everyone, and so does a shared area link
   (see "Sharing").
@@ -1729,9 +1756,9 @@ Nothing new is stored on the server.
   names its section, always relative, so it says what the card's title doesn't: "This week",
   "Next week", "Last week", else "In 8 weeks" or "2 weeks ago" (`weekHeading()`); "This month",
   "Next month", "Last month", else "In 2 months" or "3 months ago" (`monthHeading()`). On the right **Today** (15px
-  tint, its own 44px target) whenever today isn't the chosen day or isn't shown, and **Show
-  month** / **Show week** (the same). The `line` the bar can show for today
-  (`todaySummary()`) is not used on Home, as today's list shows at once.
+  `--tint-text`, its own 44px target) whenever today isn't the chosen day or isn't shown, and **Show
+  month** / **Show week** (the same). The `line` the bar can show for today is Housekeeping's;
+  Home has none, as today's list shows at once.
 - **Week or month**: the week strip (one row of seven days, Monday first) is the default; Show
   month gives the month. Both are a card whose top row has Previous and Next (44px chevrons,
   "Previous week" / "Next week", or "Previous month" / "Next month", no limit either way) round
@@ -1741,8 +1768,10 @@ Nothing new is stored on the server.
   The arrows stay in the card's top row rather than either side of the days: there they would
   take the days under 44px wide at 375px. The grid of the week is named "Week of Monday 5
   October" (`weekName()`). The choice is kept on this device (`homeos.calendar` = `month`,
-  nothing for the week; every read and write in try/catch), as the brief asks, so the month can
-  be what Home opens on; it is the user's choice, and Show week is always at the top of it.
+  nothing for the week; every read and write in try/catch; `useCalendarView()`, which Home's
+  calendar keeps and hands to its `DatePicker` so it knows which days are shown), as the brief
+  asks, so the month can be what Home opens on; it is the user's choice, and Show week is
+  always at the top of it.
 - **The week and month shown** (`HomeCalendar` keeps them, MonthCalendar's `week` and
   `onWeek`): at first this week and this month. The keys move them too (past the edge of the
   strip goes on into the next week). Show month opens on the month of the chosen day if the
@@ -1754,11 +1783,16 @@ Nothing new is stored on the server.
   it back); a new day (midnight, or back from the background the next morning) starts on today
   in this week and month again, and MonthCalendar forgets the day the keys last moved to (the
   roving tab stop is today again).
-- **The chosen day**: today at first, opened: what is due today shows under the card at once.
-  Choosing another day shows its details there instead. Changing week or month keeps it (its details stay under the calendar). Choosing a day
+- **The chosen day**: today at first: what is due today shows under the card at once.
+  Choosing another day shows its details there instead. Changing week or month keeps it
+  chosen, but while it is not among the days shown (`isDayShown()`) one quiet line, "Pick a
+  day to see what is due.", takes the place of its details, so a list never reads as part of
+  a week it isn't in; choosing a day (or Today) brings a list back. An item just saved has
+  its day chosen and shown (`RevealContext`). Choosing a day
   says what it holds through a polite, visually hidden live region
-  (`calendarDayAnnouncement()`: "Wednesday 14 October: 4 due. Details below the calendar.",
-  "Thursday 8 October, today: nothing due. …") and, when its details are low on the screen,
+  (`calendarDayAnnouncement()`: "Wednesday 14 October: 4 due (1 urgent, 1 within the month, 2
+  not urgent). Details below the calendar.", "Thursday 8 October, today: nothing due. …")
+  and, when its details are low on the screen,
   scrolls them up (`revealDay()`: measured, as `scrollIntoView` with `block: 'nearest'` did not
   scroll at all in Chromium: as much of the day as fits above the floating +, which is the
   scroll area's bottom padding, without taking its heading up under the docked tab switch,
@@ -1767,14 +1801,16 @@ Nothing new is stored on the server.
 - **What marks a day** (`calendarDays()`, `calendarLookup()`, worked out a month at a time):
   - **To do items due** that day: open tasks with a due date (`isDated()`), the person
     filter applied (with Shea chosen, only Shea's). Under the day's circle, one 6px dot per
-    item in its RAG colour, red first, then amber, then green, at most three, then "+2"
-    (`dayDots()`). A day before today with something still open is **missed**: its number is
-    red (`--destructive`, 600) and its items count as missed.
+    item in its urgency's colour (set in CSS from its `data-rag`, so dark mode has its own),
+    red first, then amber, then green, at most three, then "+2" (`dayDots()`). A day before
+    today with something still open is **missed**: its number is red (`--destructive`, 600)
+    and its items count as missed.
   - **Repeats** (`repeatDates()`): a repeating item's next due date is its own mark; in the
     days shown (the month, or the week) its later rounds are faint hollow dots, after the
-    solid ones: a 1.5px ring in the darker status colour (`RAG_TEXT`) at 80%, which keeps 3:1
-    against the card (green 3.2:1, amber 3.9:1, red 4.5:1) while being clearly lighter than a
-    solid dot. They are where Mark as Done would move it, one completion after another:
+    solid ones: a 1.5px ring in the darker words colour of its urgency (`--rag-*-text`) at
+    80%, which keeps 3:1 against the card in both appearances (light: green 3.7:1, amber
+    3.7:1, red 4.5:1) while being clearly lighter than a solid dot. They are where Mark as
+    Done would move it, one completion after another:
     `nextDueDate()` from its due date (from today for a missed one, as `complete_item` does),
     then one interval at a time (weekly, monthly, quarterly, every 6 months, yearly; month
     ends clamp and carry on: 31 Jan, 28 Feb, 28 Mar). ISODate arithmetic only, so the clock
@@ -1785,9 +1821,11 @@ Nothing new is stored on the server.
     It sits inside the circle, the status dots under it, and it is tint blue, never a status
     colour.
   - To maintain items have no date and never mark it; nor do done items.
-  - The legend under the month (not the strip, and hidden from assistive tech, as each day's
-    name says it in words): three dots "Due", a red "6" "Missed", a hollow dot "Repeats", a
-    small circle with the tint dot "Housekeeping".
+  - The legend, under the days in the week strip and the month alike, says what every mark
+    means in words (hidden from assistive tech, as each day's name says it): on one line a red
+    dot "Urgent", an amber dot "Within the month" and a green dot "Not urgent"; on the next a
+    hollow dot "Repeat", a small circle with the tint dot "Housekeeping" and "Red date:
+    missed" (the words "Red date" in the missed red).
 - **Under the calendar** (the chosen day, once opened): an `h3` (17/22/600, `tabIndex={-1}`)
   with the day in full (`fullDay()`, with the year when it isn't this year's), then a card: its
   items as Home's own rows (`ItemRow`: the ring completes, the row opens the Item sheet) in the
@@ -1795,9 +1833,10 @@ Nothing new is stored on the server.
   ties), then its repeats in the same order. Each row shows its room; a row due that day
   leaves its date out (the heading says it); a missed one keeps "2 days late".
   Repeats (`RepeatRow`: a faint dashed grey ring that is not a button, the title in secondary
-  grey, "Repeat of Thu 8 Oct · Every week" (`repeatMeta()`; how often gives way first on a
-  narrow screen) and who it is for, as on Home's rows, read as "<title>, Within the month,
-  repeat, …"; the row opens the Item sheet). Nothing:
+  grey, then on the quiet line (`RowMeta`, as on every row) its urgency in words, "Repeat of
+  Thu 8 Oct · Every week" (`repeatMeta()`; how often gives way first on a narrow screen) and
+  its room, and who it is for, read as "<title>, Within the month, repeat, …"; the row opens
+  the Item sheet). Nothing:
   "Nothing due today." / "Nothing due." ("Nothing due for Shea." with Shea chosen, "Nothing
   unassigned due." for Unassigned). Then, for a day with a recorded visit, a card with one
   row: the broom, "Housekeeping visit" and "6 of 7 done · £60.00" (`visitSummary()`), named
@@ -1810,16 +1849,17 @@ Nothing new is stored on the server.
   Moving focus to a nearby row (after a completion in `ItemRow`, or when the Item sheet closes
   on a row that is gone in `App`) stays in the row's own list (`rowsBeside()` in
   `screens/home/areaPanel.ts`), and falls back to the area's name or, under the calendar, the
-  chosen day's button, or the day's heading when that day isn't on the grid (another week or
-  month is shown) (`rowFallback()`). Every row under the calendar leaves its list once
+  chosen day's button (else the day's heading) (`rowFallback()`). Every row under the calendar leaves its list once
   completed (`ItemRow` `leavesOnComplete`), a repeating one too, as it moves on to a later
   day; in the areas only a one-off leaves.
 - **Accessibility**: the grid is a `table` with `role="grid"`, labelled by the month title
   (`aria-live="polite"`) or the week's name (the week's title is a polite live region too);
   columns are `th scope="col"` with the full weekday as `abbr`; each day cell is
   `role="gridcell"` with `aria-selected`, holding the day's button, named by
-  `calendarDayName()` ("Friday 16 October, 3 due, 1 missed, 2 repeats, housekeeping visit";
-  ", today" after the date, ", selected" last); the marks are `aria-hidden`. One day button is
+  `calendarDayName()`, which says the dots' colours in words ("Friday 16 October, 3 due (1
+  urgent, 2 not urgent), 1 missed (urgent), 2 repeats, housekeeping visit"; one urgency
+  alone reads "1 due (within the month)"; ", today" after the date, ", selected" last); the
+  marks are `aria-hidden`. One day button is
   in the tab order (the one the keys moved to, else the chosen day, else today, else the first
   day shown); arrow keys move a day or a week, Home and End go to the start and end of the
   week, Page Up and Page Down change month, and moving past the edge goes on into the next
@@ -1911,8 +1951,8 @@ Any item or area can be shared, for example to WhatsApp, Messages or Mail.
 
 - **Where**: the Item sheet of a saved item has a round **Share item** button in its nav bar,
   left of Save (none while creating an item: there is nothing to link to yet). Each room's
-  "..." menu on Home has **Share Room** ("Share <area>", see "Home"). Both use `ShareIcon`
-  (square.and.arrow.up).
+  "..." menu on Home has **Share Room** (named by its words; the menu is named after the room,
+  see "Home"). Both use `ShareIcon` (square.and.arrow.up).
 - **What** (`lib/logic/share.ts`, pure and unit tested): plain text, then a blank line and a
   link back into the app. An item is shared as the sheet shows it, edits not yet saved
   included (as they would be saved; a blank title keeps the saved one). Sharing saves
@@ -1931,8 +1971,9 @@ Any item or area can be shared, for example to WhatsApp, Messages or Mail.
   a To maintain item reads `Updated <day>` (household time zone), `Looked after by <name>` and
   adds `What good looks like: …`. Names never carry the emoji; no assignee reads `Unassigned`.
   Notes are tidied (spaces squashed, blank lines dropped) and cut at a word with "…" past 280
-  characters (`SHARE_NOTE_MAX`). An area lists its open items in Home's order, one line each:
-  `Kitchen (2 items)`, `• Olive oil · Not urgent · Due Fri 13 Nov`, …; nothing open reads
+  characters (`SHARE_NOTE_MAX`). An area lists its open items in the order its card on Home
+  lists them (`roomOrder()`: To dos most urgent first, then the things it looks after, by
+  name), one line each: `Kitchen (2 items)`, `• Olive oil · Not urgent · Due Fri 13 Nov`, …; nothing open reads
   `Nothing to do`, and past 20 (`SHARE_AREA_MAX`) the rest are counted (`…and 4 more`).
 - **How** (`screens/share/useShare.ts`, `lib/shareSheet.ts`): `navigator.share({ title, text })`
   straight from the tap, with the link as the text's last line (so every app gets it, and the

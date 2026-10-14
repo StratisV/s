@@ -103,7 +103,7 @@ export async function openRoomMenu(page: Page, room: string): Promise<Locator> {
   return menu;
 }
 
-/** Chooses `item` in a room's "..." menu ("Add item to Garden", "Share Garden", "Collapse All Rooms"). */
+/** Chooses `item` in a room's "..." menu ("Add item to Garden", "Share Room"). */
 export async function roomMenu(page: Page, room: string, item: string): Promise<void> {
   const menu = await openRoomMenu(page, room);
   await menu.getByRole('menuitem', { name: item, exact: true }).click();
@@ -226,7 +226,7 @@ export async function titlesIn(page: Page, areaName: string): Promise<string[]> 
   return labels.map((l) => l.replace(/^Mark /, '').replace(/ as done$/, ''));
 }
 
-/** The quiet line under a row's title: `Within the month In 6 days`, its urgency in words and when. */
+/** The quiet line under a row's title: `Within the month·In 6 days`, its urgency in words and when. */
 export function meta(page: Page, title: string): Locator {
   return rowButton(page, title).locator('[data-meta]');
 }

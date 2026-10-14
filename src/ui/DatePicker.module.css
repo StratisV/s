@@ -24,7 +24,10 @@
   color: var(--label-secondary);
 }
 
-/* Today, and Show month / Show week: tint text, each its own 44px tap target. */
+/*
+ * Today, and Show month / Show week: tint text, each its own 44px tap target. 15px words: the
+ * darker tint keeps 4.5:1 on the page (the system blue is 3.6:1 there).
+ */
 .barAction {
   flex: none;
   min-height: 44px;
@@ -33,7 +36,7 @@
   font-size: 15px;
   line-height: 20px;
   letter-spacing: -0.2px;
-  color: var(--tint);
+  color: var(--tint-text);
   border-radius: 8px;
   -webkit-tap-highlight-color: transparent;
 }
@@ -57,14 +60,10 @@
 }
 
 .heading {
+  composes: sectionTitle from './type.module.css';
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
-  font-size: 20px;
-  line-height: 25px;
-  font-weight: 700;
-  letter-spacing: -0.45px;
-  color: var(--label);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

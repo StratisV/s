@@ -613,21 +613,23 @@ describe('ItemSheet: What good looks like', () => {
 });
 
 describe('ItemSheet: where it was saved', () => {
-  it('reports the area of a new item, and of an item moved to another area', async () => {
+  it('reports a new item, and an item moved to another area, by its id (Home shows where it went)', async () => {
     const created = await setup((home) => ({ kind: 'new', areaId: home.data!.areas.find((a) => a.name === 'Garden')!.id }));
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Fix the gate' } });
     fireEvent.click(save());
     await waitFor(() => expect(created.onClose).toHaveBeenCalledTimes(1));
-    const garden = created.home().data!.areas.find((a) => a.name === 'Garden')!.id;
-    expect(created.onSaved).toHaveBeenCalledWith(garden);
+    await waitFor(() => expect(created.home().data!.items.some((i) => i.title === 'Fix the gate')).toBe(true));
+    const gate = created.home().data!.items.find((i) => i.title === 'Fix the gate')!;
+    expect(created.onSaved).toHaveBeenCalledWith(gate.id);
     cleanup();
 
     const moved = await setup(editing('Heaters not working'));
+    const heaters = moved.home().data!.items.find((i) => i.title === 'Heaters not working')!;
     const kitchen = moved.home().data!.areas.find((a) => a.name === 'Kitchen')!.id;
     fireEvent.change(screen.getByLabelText('Area'), { target: { value: kitchen } });
     fireEvent.click(save());
     await waitFor(() => expect(moved.onClose).toHaveBeenCalledTimes(1));
-    expect(moved.onSaved).toHaveBeenCalledWith(kitchen);
+    expect(moved.onSaved).toHaveBeenCalledWith(heaters.id);
   });
 
   it('says nothing for an edit that stays in its area', async () => {
@@ -702,11 +704,13 @@ describe('ItemSheet: Share', () => {
 
   const shareButton = () => screen.getByRole('button', { name: 'Share item' });
 
-  it('sits in the nav bar, between the drag handle and Save', async () => {
+  it('sits in the nav bar, between the drag handle and Save (the word, never a check beside Mark as Done)', async () => {
     const { dialog } = await setup(editing('Heaters not working'));
     const nav = dialog.querySelector('[data-sheet-handle]')!;
-    const names = Array.from(nav.querySelectorAll('button'), (b) => b.getAttribute('aria-label'));
+    const names = Array.from(nav.querySelectorAll('button'), (b) => b.getAttribute('aria-label') ?? b.textContent);
     expect(names).toEqual(['Close', 'Share item', 'Save']);
+    expect(save().textContent).toBe('Save');
+    expect(save().querySelector('svg')).toBeNull();
   });
 
   it('shares a To do: what, where, status, when, who, the note and a link', async () => {

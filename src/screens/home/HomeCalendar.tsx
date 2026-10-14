@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { RAG_RING, RAG_TEXT, ragWord } from '../../lib/constants';
+import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { RAG_ORDER, URGENCY_LABEL } from '../../lib/constants';
 import {
   calendarDayAnnouncement,
   calendarDayName,
@@ -7,40 +7,33 @@ import {
   dayDots,
   dayRows,
   repeatMeta,
-  todaySummary,
   visitSummary,
   type CalendarDay,
 } from '../../lib/logic/calendar';
 import { doneCount, formatPrice } from '../../lib/logic/housekeeping';
-import { fullDay } from '../../lib/logic/months';
+import { fullDay, monthOf } from '../../lib/logic/months';
 import type { HousekeepingVisit, ISODate, Item, Member } from '../../lib/types';
-import { DatePicker, mondayOf, revealDay, useChosenDay, type ChosenDay } from '../../ui/DatePicker';
-import { EmojiText } from '../../ui/EmojiText';
+import {
+  DatePicker,
+  isDayShown,
+  mondayOf,
+  revealDay,
+  useCalendarView,
+  useChosenDay,
+  type ChosenDay,
+} from '../../ui/DatePicker';
 import { BroomIcon, ChevronRightIcon } from '../../ui/icons';
-import { firstName, ItemRow } from './ItemRow';
+import { ItemRow, RowMeta, Who } from './ItemRow';
 import type { PersonFilter } from './personFilter';
+import { RevealContext } from './reveal';
 import rowStyles from './ItemRow.module.css';
 import styles from './HomeCalendar.module.css';
 
 /** Where this device remembers the week strip or the month: 'month', or nothing for the week. */
 export const CALENDAR_VIEW_KEY = 'homeos.calendar';
 
-interface Chosen extends ChosenDay {
-  /**
-   * The chosen day's list shows under the calendar. False for today at first: a line says
-   * what is due (its rows are in the areas just below) until today is chosen.
-   */
-  opened: boolean;
-}
-
 /** The chosen day and the month and week shown, remembered while the app runs (Home comes and goes with its tab). */
-const remembered: { current: Chosen | null } = { current: null };
-
-/**
- * Today, at first, is opened: the calendar is a view of its own on Home (Up next, Rooms,
- * Calendar), so what is due today shows under it straight away.
- */
-const openedToday = (fresh: ChosenDay): Chosen => ({ ...fresh, opened: true });
+const remembered: { current: ChosenDay | null } = { current: null };
 
 interface HomeCalendarProps {
   householdId: string;
@@ -63,14 +56,16 @@ interface HomeCalendarProps {
 }
 
 /**
- * Home's calendar (docs/ARCHITECTURE.md "Home: the calendar"), under the person filter: the
- * week as a strip, or the whole month (Show month / Show week, remembered on this device),
- * with Previous and Next for the week or the month and Today to come back: the date picker
- * Housekeeping uses too (src/ui/DatePicker.tsx). Each day shows the To do items due (status
- * dots, up to three and "+2"; the number in red when something was missed), the later
- * repeats of repeating items (faint hollow dots) and the housekeeping visit (a dot in the
- * circle, as in Housekeeping). Today is chosen at first, with a line saying what is due; a
- * chosen day's items show under the calendar, as Home's rows.
+ * Home's calendar (docs/ARCHITECTURE.md "Home: the calendar"), Home's third view: the week
+ * as a strip, or the whole month (Show month / Show week, remembered on this device), with
+ * Previous and Next for the week or the month and Today to come back: the date picker
+ * Housekeeping uses too (src/ui/DatePicker.tsx). Each day shows the To do items due (dots in
+ * their urgency's colour, up to three and "+2"; the number in red when something was missed),
+ * the later repeats of repeating items (faint hollow dots) and the housekeeping visit (a dot
+ * in the circle, as in Housekeeping); a legend under the days says what each means in words.
+ * Today is chosen at first and its items show under the calendar, as Home's rows; another
+ * day shows when it is tapped. With the chosen day out of sight (another week or month), one
+ * quiet line asks for a day instead. An item just saved brings its day up (RevealContext).
  */
 export function HomeCalendar({
   householdId,
@@ -88,7 +83,8 @@ export function HomeCalendar({
   const headingId = useId();
   const sectionRef = useRef<HTMLElement>(null);
   // Another household, or a new day since: start on today, in this week and month.
-  const { chosen, update, reset } = useChosenDay(remembered, householdId, today, openedToday);
+  const { chosen, update, reset } = useChosenDay(remembered, householdId, today);
+  const [view, setView] = useCalendarView(CALENDAR_VIEW_KEY);
 
   const lookup = useMemo(() => calendarLookup(items, visits, today), [items, visits, today]);
 
@@ -107,25 +103,25 @@ export function HomeCalendar({
   }, [reveal]);
 
   const select = (date: ISODate) => {
-    update({ selected: date, opened: true, week: mondayOf(date) });
+    update({ selected: date, week: mondayOf(date) });
     announce(calendarDayAnnouncement(date, today, lookup(date)));
     setReveal((n) => n + 1);
   };
 
-  const opened = chosen.opened || chosen.selected !== today;
+  // An item just saved: its day is chosen and shown, so it can be seen in the list.
+  const lit = useContext(RevealContext);
+  const litDue = lit ? (items.find((it) => it.id === lit)?.due_date ?? null) : null;
+  useEffect(() => {
+    if (litDue) update({ selected: litDue, week: mondayOf(litDue), month: monthOf(litDue) });
+    // `update` is new on every render; only a new day matters.
+  }, [litDue]);
 
   const marks = (date: ISODate) => {
     const { dots, more } = dayDots(lookup(date));
     return (
       <>
         {dots.map((dot, i) => (
-          <span
-            key={i}
-            className={styles.dot}
-            data-rag={dot.rag}
-            data-repeat={dot.repeat || undefined}
-            style={{ '--dot': dot.repeat ? RAG_TEXT[dot.rag] : RAG_RING[dot.rag] } as CSSProperties}
-          />
+          <span key={i} className={styles.dot} data-rag={dot.rag} data-repeat={dot.repeat || undefined} />
         ))}
         {more ? <span className={styles.more}>+{more}</span> : null}
       </>
@@ -157,12 +153,13 @@ export function HomeCalendar({
       <DatePicker
         headingId={headingId}
         viewKey={CALENDAR_VIEW_KEY}
+        view={view}
+        onViewChange={setView}
         today={today}
         chosen={chosen}
         onChange={update}
         onReset={reset}
         onSelect={select}
-        line={opened ? null : todaySummary(lookup(today), nothingDue(true))}
         dayName={(date, isSelected) => calendarDayName(date, today, lookup(date), isSelected)}
         alert={(date) => lookup(date).missed.length > 0}
         dot={(date) => lookup(date).visit !== null}
@@ -170,7 +167,7 @@ export function HomeCalendar({
         dayData={dayData}
         legend={<Legend />}
       />
-      {opened ? (
+      {isDayShown(chosen.selected, view, chosen) ? (
         <DayPanel
           key={chosen.selected}
           date={chosen.selected}
@@ -185,7 +182,12 @@ export function HomeCalendar({
           onComplete={onComplete}
           onOpenHousekeeping={onOpenHousekeeping}
         />
-      ) : null}
+      ) : (
+        // Another week or month: the chosen day's list would read as part of it.
+        <p className={styles.pick} data-calendar-pick="">
+          Pick a day to see what is due.
+        </p>
+      )}
       <div className="visually-hidden" aria-live="polite" data-announcer="">
         <span key={said.key}>{said.text}</span>
       </div>
@@ -193,29 +195,37 @@ export function HomeCalendar({
   );
 }
 
-/** What the marks mean, under the month (not read out: each day's name says it in words). */
+/**
+ * What the marks mean, in words, under the days in the week strip and the month alike: the
+ * dots' colours (Urgent, Within the month, Not urgent), a faint hollow dot for a repeat, the
+ * housekeeping visit's dot, and a red date for a day with something missed. Not read out:
+ * each day's name says it in words.
+ */
 function Legend() {
   return (
     <div className={styles.legend} aria-hidden="true" data-legend="">
-      <span className={styles.legendItem}>
-        <span className={styles.legendDots}>
-          {(['red', 'amber', 'green'] as const).map((rag) => (
-            <span key={rag} className={styles.dot} style={{ '--dot': RAG_RING[rag] } as CSSProperties} />
-          ))}
+      <span className={styles.legendRow}>
+        {RAG_ORDER.map((rag) => (
+          <span key={rag} className={styles.legendItem}>
+            <span className={styles.dot} data-rag={rag} />
+            {URGENCY_LABEL[rag]}
+          </span>
+        ))}
+      </span>
+      <span className={styles.legendRow}>
+        <span className={styles.legendItem}>
+          <span className={styles.dot} data-rag="amber" data-repeat="" />
+          Repeat
         </span>
-        Due
-      </span>
-      <span className={styles.legendItem}>
-        <span className={styles.legendMissed}>6</span>
-        Missed
-      </span>
-      <span className={styles.legendItem}>
-        <span className={styles.dot} data-repeat="" style={{ '--dot': RAG_TEXT.amber } as CSSProperties} />
-        Repeats
-      </span>
-      <span className={styles.legendItem}>
-        <span className={styles.legendVisit} />
-        Housekeeping
+        <span className={styles.legendItem}>
+          <span className={styles.legendVisit} />
+          Housekeeping
+        </span>
+        <span className={styles.legendItem}>
+          <span>
+            <span className={styles.legendMissed}>Red date</span>: missed
+          </span>
+        </span>
       </span>
     </div>
   );
@@ -341,8 +351,9 @@ interface RepeatRowProps {
 
 /**
  * A repeat coming round on the chosen day: drawn like Home's row, with a faint dashed ring
- * that is not a button (it isn't due yet, so it can't be marked done), and "Repeat of Tue 13
- * Oct · Every week" (how often gives way first). The row opens the item.
+ * that is not a button (it isn't due yet, so it can't be marked done), and its urgency in
+ * words, then "Repeat of Tue 13 Oct · Every week" (how often gives way first) and its room.
+ * The row opens the item.
  */
 function RepeatRow({ item, members, today, room, showWho, onOpen }: RepeatRowProps) {
   const member = members.find((m) => m.id === item.assignee_id);
@@ -357,22 +368,23 @@ function RepeatRow({ item, members, today, room, showWho, onOpen }: RepeatRowPro
           <span className={rowStyles.text}>
             <span className={`${rowStyles.title} ${styles.repeatTitle}`}>
               {item.title}
-              <span className="visually-hidden">{`, ${ragWord(item.kind, item.rag)}, repeat, ${when}, ${every}, ${room}, ${member ? member.name : 'Unassigned'}.`}</span>
+              <span className="visually-hidden">{`, ${URGENCY_LABEL[item.rag]}, repeat, ${when}, ${every}, ${room}, ${member ? member.name : 'Unassigned'}.`}</span>
             </span>
-            <span className={rowStyles.meta} data-meta="" aria-hidden="true">
-              <span className={styles.repeatMeta}>{when}</span>
-              <span className={rowStyles.sep}>·</span>
-              <span className={rowStyles.part}>{every}</span>
-            </span>
+            <RowMeta
+              kind={item.kind}
+              rag={item.rag}
+              room={room}
+              parts={[
+                <span key="when" className={styles.repeatWhen}>
+                  {when}
+                </span>,
+                <span key="every" className={rowStyles.part}>
+                  {every}
+                </span>,
+              ]}
+            />
           </span>
-          {member && showWho ? (
-            <span className={rowStyles.who} aria-hidden="true" data-who="">
-              <span className={rowStyles.whoEmoji}>
-                <EmojiText text={member.emoji} />
-              </span>
-              <span className={rowStyles.whoName}>{firstName(member.name)}</span>
-            </span>
-          ) : null}
+          {member && showWho ? <Who member={member} /> : null}
         </button>
       </div>
     </li>

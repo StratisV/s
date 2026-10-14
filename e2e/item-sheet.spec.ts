@@ -103,7 +103,7 @@ test.describe('Item sheet: edit', () => {
     await expect(sheet).toHaveCount(0);
 
     const title = 'Level the mirror lights';
-    // Urgent, in red words, and when; who, at the end of the title; the note is a glyph.
+    // Urgent, in red words, and when; who, at the end of the title; the note is in the sheet.
     await expect(meta(page, title)).toHaveText('UrgentIn 2 weeks');
     await expect(meta(page, title).locator('[data-rag="red"]')).toHaveCSS('color', 'rgb(215, 0, 21)');
     await expect(who(page, title)).toHaveText('🦊Ela');
@@ -242,8 +242,8 @@ test.describe('Item sheet: new', () => {
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
 
-    await expect(meta(page, 'Fix the gate latch')).toHaveText('Within the monthIn 7 days');
-    await expect(meta(page, 'Fix the gate latch').locator('[data-rag="amber"]')).toHaveCSS('color', 'rgb(201, 52, 0)');
+    await expect(meta(page, 'Fix the gate latch')).toHaveText('Within the month·In 7 days');
+    await expect(meta(page, 'Fix the gate latch').locator('[data-rag="amber"]')).toHaveCSS('color', 'rgb(154, 91, 0)');
     // Nobody has it: the row leaves who out (VoiceOver hears "Unassigned").
     await expect(who(page, 'Fix the gate latch')).toHaveCount(0);
     await expect(rowButton(page, 'Fix the gate latch')).toHaveAccessibleName(
@@ -265,7 +265,7 @@ test.describe('Item sheet: new', () => {
     await sheet.getByLabel('Assigned to', { exact: true }).selectOption({ label: '🦆 Shea' });
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(area(page, 'Bedroom Small').getByText('All clear', { exact: true })).toHaveCount(0);
-    await expect(meta(page, 'Fit blackout blinds')).toHaveText('Within the monthIn 7 days');
+    await expect(meta(page, 'Fit blackout blinds')).toHaveText('Within the month·In 7 days');
     await expect(who(page, 'Fit blackout blinds')).toHaveText('🦆Shea');
   });
 

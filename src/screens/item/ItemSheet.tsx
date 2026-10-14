@@ -9,7 +9,7 @@ import { useHousehold } from '../../state/HomeProvider';
 import { ActionSheet } from '../../ui/ActionSheet';
 import { EmojiText } from '../../ui/EmojiText';
 import { useConfetti } from '../../ui/Confetti';
-import { CheckIcon, ShareIcon, XMarkIcon } from '../../ui/icons';
+import { ShareIcon, XMarkIcon } from '../../ui/icons';
 import { Sheet } from '../../ui/Sheet';
 import { SegmentedControl } from '../stats/SegmentedControl';
 import { useShare } from '../share/useShare';
@@ -25,8 +25,8 @@ interface ItemSheetProps {
   open: boolean;
   onClose(): void;
   onExited(): void;
-  /** Saved into this area: a new item, or one moved to another area (Home shows it there). */
-  onSaved?(areaId: string): void;
+  /** A new item was saved, or one moved to another area: its id, for Home to show where it went. */
+  onSaved?(itemId: string): void;
 }
 
 /** Mark as Done waits this long before closing so the confetti can be seen. */
@@ -147,9 +147,13 @@ export function ItemSheet({ target, open, onClose, onExited, onSaved }: ItemShee
     }
     setSaving(true);
     try {
-      if (isNew) await home.createItem(normalizeDraft(effective));
-      else await home.updateItem(itemId!, patch);
-      if (isNew || patch.area_id) onSaved?.(effective.area_id);
+      if (isNew) {
+        const created = await home.createItem(normalizeDraft(effective));
+        onSaved?.(created.id);
+      } else {
+        await home.updateItem(itemId!, patch);
+        if (patch.area_id) onSaved?.(itemId!);
+      }
       close();
     } catch {
       setSaving(false);
@@ -279,13 +283,12 @@ export function ItemSheet({ target, open, onClose, onExited, onSaved }: ItemShee
             <button
               type="button"
               className={styles.save}
-              aria-label="Save"
               onClick={() => void save()}
               disabled={!savable || saving}
               aria-busy={saving || undefined}
               aria-describedby={areas.length === 0 ? noAreaId : undefined}
             >
-              <CheckIcon size={24} strokeWidth={2.7} />
+              Save
             </button>
           </div>
         </div>
