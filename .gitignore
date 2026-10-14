@@ -16,3 +16,6 @@ supabase/.branches
 dist-server
 .vercel
 .homeos-local
+
+# Working copies for background helpers (git worktrees), never committed.
+.claude/worktrees/
