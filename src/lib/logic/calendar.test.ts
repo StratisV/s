@@ -11,10 +11,11 @@ import {
   EMPTY_DAY,
   isDated,
   isEmptyDay,
+  monthHeading,
   repeatDates,
   repeatMeta,
-  todaySummary,
   visitSummary,
+  weekHeading,
   weekName,
   weekTitle,
   type CalendarDay,
@@ -133,6 +134,27 @@ describe('weeks', () => {
     expect(weekTitle(weekOf('2026-12-30'), '2027-01-02')).toBe('28 Dec 2026 to 3 Jan');
     // The week the clocks go back in London: still Monday to Sunday.
     expect(weekTitle(weekOf('2026-10-25'), TODAY)).toBe('19 to 25 October');
+  });
+
+  it('weekHeading: this, next and last week in words, else how many weeks away', () => {
+    expect(weekHeading('2026-10-05', TODAY)).toBe('This week');
+    expect(weekHeading('2026-10-12', TODAY)).toBe('Next week');
+    expect(weekHeading('2026-09-28', TODAY)).toBe('Last week');
+    expect(weekHeading('2026-10-19', TODAY)).toBe('In 2 weeks');
+    expect(weekHeading('2026-11-30', TODAY)).toBe('In 8 weeks');
+    expect(weekHeading('2026-09-21', TODAY)).toBe('2 weeks ago');
+    // Across the clocks going back (25 Oct): still whole weeks.
+    expect(weekHeading('2026-11-02', TODAY)).toBe('In 4 weeks');
+  });
+
+  it('monthHeading: this, next and last month in words, else how many months away', () => {
+    expect(monthHeading('2026-10', TODAY)).toBe('This month');
+    expect(monthHeading('2026-11', TODAY)).toBe('Next month');
+    expect(monthHeading('2026-09', TODAY)).toBe('Last month');
+    expect(monthHeading('2026-12', TODAY)).toBe('In 2 months');
+    expect(monthHeading('2027-01', TODAY)).toBe('In 3 months');
+    expect(monthHeading('2026-07', TODAY)).toBe('3 months ago');
+    expect(monthHeading('2027-01', '2026-12-31')).toBe('Next month');
   });
 
   it('monthName: the month without its year', () => {
@@ -406,14 +428,21 @@ describe('dayRows', () => {
 describe('names and announcements', () => {
   const three = [item({ id: 'a' }), item({ id: 'b' }), item({ id: 'c' })];
 
-  it('names each day with what it holds', () => {
+  const urgent = item({ id: 'u', rag: 'red' });
+  const green = (id: string) => item({ id, rag: 'green' });
+
+  it('names each day with what it holds, the colours of its dots in words', () => {
     expect(calendarDayName('2026-10-16', TODAY, day({ due: three, visit: visit('2026-10-16') }))).toBe(
-      'Friday 16 October, 3 due, housekeeping visit',
+      'Friday 16 October, 3 due (within the month), housekeeping visit',
     );
-    expect(calendarDayName('2026-10-06', TODAY, day({ missed: [three[0]] }))).toBe('Tuesday 6 October, 1 missed');
+    // Mixed: how many of each, most urgent first.
+    expect(calendarDayName('2026-10-16', TODAY, day({ due: [green('g1'), three[0], green('g2'), urgent] }))).toBe(
+      'Friday 16 October, 4 due (1 urgent, 1 within the month, 2 not urgent)',
+    );
+    expect(calendarDayName('2026-10-06', TODAY, day({ missed: [urgent] }))).toBe('Tuesday 6 October, 1 missed (urgent)');
     expect(calendarDayName(TODAY, TODAY, EMPTY_DAY, true)).toBe('Thursday 8 October, today, selected');
-    expect(calendarDayName('2026-10-20', TODAY, day({ due: three.slice(0, 2), repeats: [three[2]] }))).toBe(
-      'Tuesday 20 October, 2 due, 1 repeat',
+    expect(calendarDayName('2026-10-20', TODAY, day({ due: [green('g1'), green('g2')], repeats: [three[2]] }))).toBe(
+      'Tuesday 20 October, 2 due (not urgent), 1 repeat',
     );
     expect(calendarDayName('2026-10-27', TODAY, day({ repeats: three.slice(0, 2) }), true)).toBe(
       'Tuesday 27 October, 2 repeats, selected',
@@ -423,13 +452,13 @@ describe('names and announcements', () => {
 
   it('announces a chosen day', () => {
     expect(calendarDayAnnouncement('2026-10-16', TODAY, day({ due: three, repeats: [three[0]] }))).toBe(
-      'Friday 16 October: 3 due, 1 repeat. Details below the calendar.',
+      'Friday 16 October: 3 due (within the month), 1 repeat. Details below the calendar.',
     );
     expect(calendarDayAnnouncement(TODAY, TODAY, EMPTY_DAY)).toBe(
       'Thursday 8 October, today: nothing due. Details below the calendar.',
     );
-    expect(calendarDayAnnouncement('2026-10-06', TODAY, day({ missed: [three[0]], visit: visit('2026-10-06') }))).toBe(
-      'Tuesday 6 October: 1 missed, housekeeping visit. Details below the calendar.',
+    expect(calendarDayAnnouncement('2026-10-06', TODAY, day({ missed: [urgent], visit: visit('2026-10-06') }))).toBe(
+      'Tuesday 6 October: 1 missed (urgent), housekeeping visit. Details below the calendar.',
     );
   });
 
@@ -448,14 +477,6 @@ describe('names and announcements', () => {
     });
     expect(repeatMeta({ repeat: 'yearly', due_date: null }, TODAY)).toEqual({ when: 'Repeat', every: 'Every year' });
     expect(repeatMeta({ repeat: 'none', due_date: '2026-10-06' }, TODAY)).toEqual({ when: '', every: '' });
-  });
-
-  it('sums up today while it is chosen and not opened', () => {
-    const two = [item({ id: 'a' }), item({ id: 'b' })];
-    expect(todaySummary(day({ due: [two[0]] }), 'Nothing due today')).toBe('1 due today');
-    expect(todaySummary(day({ due: two, visit: visit(TODAY) }), 'Nothing due today')).toBe('2 due today · housekeeping visit');
-    expect(todaySummary(EMPTY_DAY, 'Nothing due for Shea today')).toBe('Nothing due for Shea today');
-    expect(todaySummary(day({ visit: visit(TODAY) }), 'Nothing due today')).toBe('Nothing due today · housekeeping visit');
   });
 
   it('sums up a visit', () => {

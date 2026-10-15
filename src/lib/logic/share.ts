@@ -1,9 +1,10 @@
 // What "Share" sends: a short plain-text summary of an item or an area, readable in
 // WhatsApp, Messages or Mail, ending with a link back into the app.
-import { RAG_LABEL } from '../constants';
+import { ragWord } from '../constants';
 import type { Area, ISODate, Item, Member, Repeat } from '../types';
 import { formatDay } from './dates';
-import { isMissed, isState, sortItems, updatedLabel } from './items';
+import { isMissed, isState, updatedLabel } from './items';
+import { roomOrder } from './upNext';
 
 /** A link into the app: `?item=<id>` opens that item, `?area=<id>` shows that area on Home. */
 export type SharedLink = { kind: 'item' | 'area'; id: string };
@@ -115,7 +116,7 @@ function whenOf(item: Item, today: ISODate, timeZone: string): string | null {
  * An item, for example:
  *
  *     Heaters not working
- *     Hallway · Red · Missed · Tue 6 Oct
+ *     Hallway · Urgent · Missed · Tue 6 Oct
  *     Assigned to Shea
  *     No heat since the weekend. Engineer needs booking.
  *
@@ -129,7 +130,7 @@ export function itemShareMessage(item: Item, areas: Area[], ctx: ShareContext): 
   const title = item.title.trim();
   const area = areas.find((a) => a.id === item.area_id)?.name.trim();
   const repeat = !state && item.repeat !== 'none' ? SHARE_REPEAT[item.repeat] : null;
-  const facts = [area, RAG_LABEL[item.rag], whenOf(item, ctx.today, ctx.timeZone), repeat].filter(Boolean);
+  const facts = [area, ragWord(item.kind, item.rag), whenOf(item, ctx.today, ctx.timeZone), repeat].filter(Boolean);
   const name = nameOf(ctx.members, item.assignee_id);
   const who = name ? `${state ? 'Looked after by' : 'Assigned to'} ${name}` : 'Unassigned';
   const note = clipText(item.note);
@@ -138,17 +139,18 @@ export function itemShareMessage(item: Item, areas: Area[], ctx: ShareContext): 
   return { title, text: `${lines.join('\n')}\n\n${linkUrl(ctx.baseUrl, { kind: 'item', id: item.id })}` };
 }
 
-/** One line of an area share: `• Olive oil · Green · Due Fri 13 Nov`. */
+/** One line of an area share: `• Olive oil · Not urgent · Due Fri 13 Nov`. */
 function itemLine(item: Item, ctx: ShareContext): string {
-  return `• ${[item.title.trim(), RAG_LABEL[item.rag], whenOf(item, ctx.today, ctx.timeZone)].filter(Boolean).join(SEP)}`;
+  return `• ${[item.title.trim(), ragWord(item.kind, item.rag), whenOf(item, ctx.today, ctx.timeZone)].filter(Boolean).join(SEP)}`;
 }
 
 /**
- * An area and its open items, To do first by date, then To maintain (Home's order):
+ * An area and its open items in the order its card on Home lists them (roomOrder(): To dos
+ * most urgent first, then the things it looks after):
  *
  *     Kitchen (2 items)
- *     • Kitchen paper · Green · Due Thu 5 Nov
- *     • Olive oil · Green · Due Thu 12 Nov
+ *     • Kitchen paper · Not urgent · Due Thu 5 Nov
+ *     • Olive oil · Not urgent · Due Thu 12 Nov
  *
  *     https://home.example/?area=…
  *
@@ -156,7 +158,10 @@ function itemLine(item: Item, ctx: ShareContext): string {
  */
 export function areaShareMessage(area: Area, items: Item[], ctx: ShareContext): ShareMessage {
   const title = area.name.trim();
-  const open = sortItems(items.filter((it) => it.area_id === area.id && it.status === 'open'));
+  const open = roomOrder(
+    items.filter((it) => it.area_id === area.id),
+    ctx.today,
+  );
   const count = open.length;
   const heading = count ? `${title} (${count} ${count === 1 ? 'item' : 'items'})` : title;
   const shown = open.length > SHARE_AREA_MAX ? open.slice(0, SHARE_AREA_MAX - 1) : open;

@@ -21,6 +21,7 @@ import {
   toast,
   type Locator,
   type Page,
+  who,
 } from './fixtures';
 
 test.use({
@@ -63,7 +64,7 @@ test.describe('Profile', () => {
     await closeProfile(page);
   });
 
-  test('a new emoji shows on the Home avatar, the meta lines and in Stats', async ({ page }) => {
+  test('a new emoji shows on the Home avatar, on the rows and in Stats', async ({ page }) => {
     const dialog = await openProfile(page);
     const grid = dialog.getByRole('radiogroup', { name: 'Your emoji' });
     await grid.getByRole('radio', { name: '🐙' }).click();
@@ -72,10 +73,10 @@ test.describe('Profile', () => {
     await closeProfile(page);
 
     await expect(page.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🐙');
-    await expect(meta(page, 'Kitchen paper')).toHaveText('🐙 Stratis · Thu 5 Nov');
-    await expect(meta(page, 'Garden room wall panel')).toHaveText('🐙 Stratis · Fri 30 Oct');
+    await expect(who(page, 'Kitchen paper')).toHaveText('🐙Stratis');
+    await expect(who(page, 'Garden room wall panel')).toHaveText('🐙Stratis');
     // Other people keep theirs.
-    await expect(meta(page, 'Heaters not working')).toHaveText('🦆 Shea · Missed · Tue 6 Oct');
+    await expect(who(page, 'Heaters not working')).toHaveText('🦆Shea');
 
     await goToTab(page, 'Stats');
     await expect(statsScreen(page).getByRole('list', { name: 'Done per person' }).getByRole('listitem').first()).toHaveText(
@@ -90,7 +91,7 @@ test.describe('Profile', () => {
     await name.press('Enter');
     await expect(name).not.toBeFocused();
     await closeProfile(page);
-    await expect(meta(page, 'Kitchen paper')).toHaveText('🦔 Stratos · Thu 5 Nov');
+    await expect(who(page, 'Kitchen paper')).toHaveText('🦔Stratos');
 
     // A blank name is not saved.
     const again = await openProfile(page);
@@ -99,7 +100,7 @@ test.describe('Profile', () => {
     await field.press('Enter');
     await expect(field).toHaveValue('Stratos');
     await closeProfile(page);
-    await expect(meta(page, 'Kitchen paper')).toHaveText('🦔 Stratos · Thu 5 Nov');
+    await expect(who(page, 'Kitchen paper')).toHaveText('🦔Stratos');
 
     // The item sheet's assignee list follows too.
     const sheet = await openItem(page, 'Kitchen paper');
@@ -266,7 +267,7 @@ test.describe('Household editor', () => {
       .map((n) => (n === 'Front garden' ? 'Front yard' : n))
       .concat('Garage');
     await expect(areaHeadings(page)).toHaveText(expected);
-    await expect(area(page, 'Garage').getByText('Nothing to do')).toBeVisible();
+    await expect(area(page, 'Garage').getByText('All clear', { exact: true })).toBeVisible();
     await expect(ring(page, 'Trim the hedges')).toBeVisible(); // kept its items through the rename
     await expect(ring(page, 'Heaters not working')).toHaveCount(0);
 
@@ -392,8 +393,9 @@ test.describe('People', () => {
     await closeProfile(page);
 
     // Home: Shea's items show the new name and emoji; your own avatar is unchanged.
-    await expect(meta(page, 'Heaters not working')).toHaveText('🐧 Shay · Missed · Tue 6 Oct');
-    await expect(meta(page, 'Shower draining slowly')).toHaveText('🐧 Shay · Wed 14 Oct');
+    await expect(who(page, 'Heaters not working')).toHaveText('🐧Shay');
+    await expect(who(page, 'Shower draining slowly')).toHaveText('🐧Shay');
+    await expect(meta(page, 'Heaters not working')).toHaveText('Urgent2 days late');
     await expect(page.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🦔');
 
     await goToTab(page, 'Stats');
@@ -404,7 +406,7 @@ test.describe('People', () => {
     // Stored, not just on screen (the app reopens on Stats, the tab last open).
     await reopen(page);
     await goToTab(page, 'Home');
-    await expect(meta(page, 'Heaters not working')).toHaveText('🐧 Shay · Missed · Tue 6 Oct');
+    await expect(who(page, 'Heaters not working')).toHaveText('🐧Shay');
   });
 });
 

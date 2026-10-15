@@ -1,79 +1,115 @@
-/* One line of pills under the tab switch, scrolling sideways (edge to edge) when it is long. */
-.row {
-  display: flex;
-  gap: 8px;
-  padding: 4px 16px 2px;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
-}
-
-.row::-webkit-scrollbar {
-  display: none;
-}
-
-.chip {
+/*
+ * Whose tasks Home shows (PersonFilter.tsx): Mine, a one-tap toggle, and a small pill that
+ * opens the people menu. Both 32px tall (44px to a finger), quiet grey until they narrow the
+ * list, then a tint wash (never a solid fill).
+ */
+.mine,
+.button {
+  position: relative;
   flex: none;
-  height: 36px;
-  padding: 0 12px;
-  border-radius: 18px;
+  height: 32px;
+  border-radius: 16px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  background: var(--card);
+  background: var(--fill-tertiary);
   color: var(--label);
-  font-size: 15px;
-  line-height: 20px;
-  letter-spacing: -0.2px;
-  font-weight: 500;
-  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  font-size: 14px;
+  line-height: 18px;
+  letter-spacing: -0.15px;
+  font-weight: 600;
+  -webkit-tap-highlight-color: transparent;
   transition:
     background-color 0.2s ease,
-    color 0.2s ease;
+    color 0.2s ease,
+    transform 0.12s ease;
 }
 
-.chip[aria-checked='true'] {
-  background: var(--tint);
-  color: #fff;
-  font-weight: 600;
-  box-shadow: none;
+/* 44px tall tap targets. */
+.mine::before,
+.button::before {
+  content: '';
+  position: absolute;
+  inset: -6px -3px;
 }
 
-.chip:not([aria-checked='true']):active {
-  background: #e5e5ea;
+.mine:active,
+.button:active {
+  transform: scale(0.95);
 }
 
-.chip:focus-visible {
+.mine:focus-visible,
+.button:focus-visible {
   outline-offset: 2px;
 }
 
-.emoji {
+/* On: Home shows only your items. */
+.mine[aria-pressed='true'],
+.button[data-filtered] {
+  background: var(--tint-wash);
+  color: var(--tint-text);
+}
+
+.mine {
+  gap: 5px;
+  padding: 0 12px 0 7px;
+}
+
+.mineEmoji {
+  flex: none;
+  width: 22px;
+  display: grid;
+  place-items: center;
   font-size: 18px;
   line-height: 1;
 }
 
-.count {
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 10px;
-  display: inline-grid;
-  place-items: center;
-  font-size: 13px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  background: var(--fill-tertiary);
-  color: var(--label-secondary);
+.button {
+  gap: 3px;
+  padding: 0 10px 0 8px;
 }
 
-.chip[aria-checked='true'] .count {
-  background: rgba(255, 255, 255, 0.24);
-  color: #fff;
+.lead {
+  flex: none;
+  width: 22px;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.chevron {
+  flex: none;
+  opacity: 0.6;
+}
+
+/* Unassigned: an empty dashed circle, nobody in it. */
+.nobody {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px dashed currentColor;
+  opacity: 0.7;
+}
+
+/*
+ * Narrow phones, where Mine shares its line with the view switch: it keeps its word and gives
+ * up your emoji (the emoji alone looked just like the profile button on the hero, and said
+ * nothing about whose tasks). Narrower still, Mine has a line of its own and both come back.
+ */
+@media (min-width: 350px) and (max-width: 369px) {
+  .mine {
+    padding: 0 12px;
+  }
+
+  .mineEmoji {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chip {
+  .mine,
+  .button {
     transition: none;
   }
 }

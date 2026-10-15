@@ -36,13 +36,14 @@ function showItem(home: HomeContextValue) {
 afterEach(() => cleanup());
 
 describe('Home in server mode', () => {
-  it('says saving is paused, under the person filter, while the month’s storage is used up', () => {
+  it('says saving is paused, under the summary sentence, while the month’s storage is used up', () => {
     showHome(makeHome({ backend: server(), readOnly: true }));
     const line = screen.getByText(READ_ONLY_LINE);
     expect(line.textContent).toBe('Saving is paused until next month: the free storage limit is used up.');
-    // Right under the filter (the radio group of people).
-    const filter = screen.getByRole('radiogroup');
-    expect(filter.nextElementSibling).toBe(line);
+    expect(line.getAttribute('role')).toBe('status');
+    // Right under the sentence on what needs doing, above the view switch and whose items.
+    expect(line.previousElementSibling).toBe(document.querySelector('[data-home-summary]'));
+    expect(line.nextElementSibling!.contains(screen.getByRole('radiogroup', { name: 'View' }))).toBe(true);
   });
 
   it('says it with no areas too, and not at all while saving works', () => {

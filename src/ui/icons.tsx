@@ -133,3 +133,68 @@ export function BroomIcon({ size = 16, ...p }: IconProps) {
     </svg>
   );
 }
+
+/** ellipsis (a room's menu on Home). */
+export function EllipsisIcon({ size = 20, ...p }: IconProps) {
+  return (
+    <svg {...base(size, p)}>
+      <circle cx="5.5" cy="12" r="1.9" fill="currentColor" />
+      <circle cx="12" cy="12" r="1.9" fill="currentColor" />
+      <circle cx="18.5" cy="12" r="1.9" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** chevron.down (a menu button, Show more). */
+export function ChevronDownIcon({ size = 12, strokeWidth = 2.4, ...p }: IconProps) {
+  return (
+    <svg {...base(size, p)} viewBox="0 0 14 8">
+      <path d="M1.5 1.5L7 6.5l5.5-5" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** arrow.triangle.2.circlepath (an item repeats). */
+export function RepeatIcon({ size = 14, ...p }: IconProps) {
+  return (
+    <svg {...base(size, p)}>
+      <path
+        d="M4.5 11a7.5 7.5 0 0 1 13.2-4.6M19.5 13a7.5 7.5 0 0 1-13.2 4.6"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M18.6 3.2v3.9h-3.9M5.4 20.8v-3.9h3.9"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** person.2 (Everyone, in Home's person menu). */
+export function PeopleIcon({ size = 20, ...p }: IconProps) {
+  return (
+    <svg {...base(size, p)}>
+      <circle cx="9" cy="8.5" r="3.3" stroke="currentColor" strokeWidth="2" />
+      <path d="M3.2 19.2c.6-3.1 3-4.9 5.8-4.9s5.2 1.8 5.8 4.9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M15.4 5.6a3.1 3.1 0 0 1 0 6M17.6 14.6c1.7.6 2.9 2.2 3.2 4.6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** checkmark.seal.fill (all clear). The check is cut out in the card colour. */
+export function SealCheckIcon({ size = 22, ...p }: IconProps) {
+  return (
+    <svg {...base(size, p)}>
+      <path
+        d="M12 2.8l2.3 1.7 2.9-.1.9 2.7 2.3 1.8-.9 2.7.9 2.7-2.3 1.8-.9 2.7-2.9-.1L12 21.2l-2.3-1.7-2.9.1-.9-2.7-2.3-1.8.9-2.7-.9-2.7 2.3-1.8.9-2.7 2.9.1z"
+        fill="currentColor"
+      />
+      <path d="M8.4 12.2l2.4 2.4 4.8-4.9" stroke="var(--card)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}

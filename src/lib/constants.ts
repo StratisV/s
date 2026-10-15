@@ -15,24 +15,28 @@ export const MEMBER_COLORS = ['#007AFF', '#AF52DE', '#30B0C7', '#FF9500', '#34C7
 
 export const RAG_ORDER: Rag[] = ['red', 'amber', 'green'];
 
-export const RAG_LABEL: Record<Rag, string> = { red: 'Red', amber: 'Amber', green: 'Green' };
+/**
+ * What a To do item's colour means, in words (the household's own rule): red is urgent,
+ * amber is to be done within the month, green is not urgent. Shown wherever the colour is.
+ */
+export const URGENCY_LABEL: Record<Rag, string> = { red: 'Urgent', amber: 'Within the month', green: 'Not urgent' };
 
-/** Ring/dot colour. */
-export const RAG_RING: Record<Rag, string> = { red: '#FF3B30', amber: '#FF9500', green: '#34C759' };
-/** Ring fill on Home. */
-export const RAG_TINT: Record<Rag, string> = {
-  red: 'rgba(255,59,48,0.12)',
-  amber: 'rgba(255,149,0,0.14)',
-  green: 'rgba(52,199,89,0.14)',
+/** What a To maintain item's colour means, in words: the condition it is in. */
+export const CONDITION_LABEL: Record<Rag, string> = { red: 'Needs work', amber: 'Okay', green: 'Good' };
+
+/**
+ * What each word means, under it in the Item sheet's picker: how soon (To do) or what shape
+ * it is in (To maintain).
+ */
+export const RAG_HINT: Record<ItemKind, Record<Rag, string>> = {
+  task: { red: 'Needs doing now', amber: 'Some time in the next few weeks', green: 'Whenever there is time' },
+  state: { red: 'Not as it should be', amber: 'Fine for now, keep an eye on it', green: 'Just as it should be' },
 };
-/** Selected background in the RAG picker. */
-export const RAG_PICK_BG: Record<Rag, string> = {
-  red: 'rgba(255,59,48,0.10)',
-  amber: 'rgba(255,149,0,0.12)',
-  green: 'rgba(52,199,89,0.12)',
-};
-/** Accessible text tone. */
-export const RAG_TEXT: Record<Rag, string> = { red: '#D70015', amber: '#C93400', green: '#248A3D' };
+
+/** The word for an item's colour: its urgency (To do) or its condition (To maintain). */
+export function ragWord(kind: ItemKind | undefined, rag: Rag): string {
+  return kind === 'state' ? CONDITION_LABEL[rag] : URGENCY_LABEL[rag];
+}
 
 /** The two kinds of item, as the Item sheet offers them ("To do" is the default). */
 export const KIND_OPTIONS: { value: ItemKind; label: string }[] = [

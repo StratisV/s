@@ -100,7 +100,7 @@ describe('ItemSheet (edit)', () => {
     expect((screen.getByLabelText('Note') as HTMLTextAreaElement).value).toBe(
       'No heat since the weekend. Engineer needs booking.',
     );
-    expect((screen.getByRole('radio', { name: 'Red' }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole('radio', { name: 'Urgent' }) as HTMLInputElement).checked).toBe(true);
     expect(value('Area')).toBe('Hallway');
     expect(value('Due')).toMatch(/ · 2 days late$/);
     expect(value('Assigned to')).toBe('🦆 Shea');
@@ -113,7 +113,7 @@ describe('ItemSheet (edit)', () => {
   it('saves only the changed fields', async () => {
     const { backend, onClose } = await setup(editing('Heaters not working'));
     const update = vi.spyOn(backend, 'updateItem');
-    fireEvent.click(screen.getByRole('radio', { name: 'Green' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Not urgent' }));
     fireEvent.change(screen.getByLabelText('Repeat'), { target: { value: 'monthly' } });
     fireEvent.change(screen.getByLabelText('Due'), { target: { value: '' } });
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: '  Heaters fixed  ' } });
@@ -134,14 +134,14 @@ describe('ItemSheet (edit)', () => {
     const { backend, onClose, home } = await setup(editing('Heaters not working'));
     const update = vi.spyOn(backend, 'updateItem').mockRejectedValue(new BackendError('network'));
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Heaters fixed' } });
-    fireEvent.click(screen.getByRole('radio', { name: 'Green' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Not urgent' }));
     fireEvent.click(save());
     expect(save().getAttribute('aria-busy')).toBe('true');
     await waitFor(() => expect(save().getAttribute('aria-busy')).toBeNull());
     expect(update).toHaveBeenCalledTimes(1);
     expect(onClose).not.toHaveBeenCalled();
     expect((screen.getByLabelText('Title') as HTMLTextAreaElement).value).toBe('Heaters fixed');
-    expect((screen.getByRole('radio', { name: 'Green' }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole('radio', { name: 'Not urgent' }) as HTMLInputElement).checked).toBe(true);
     expect((save() as HTMLButtonElement).disabled).toBe(false);
     // Home shows the item as it was, and a toast says why.
     expect(home().data!.items.find((i) => i.id === update.mock.calls[0][0])).toMatchObject({
@@ -179,12 +179,12 @@ describe('ItemSheet (edit)', () => {
   it('asks before discarding changes', async () => {
     const { onClose, backend } = await setup(editing('Olive oil'));
     const update = vi.spyOn(backend, 'updateItem');
-    fireEvent.click(screen.getByRole('radio', { name: 'Red' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Urgent' }));
     fireEvent.keyDown(window, { key: 'Escape' });
     const confirm = await screen.findByRole('alertdialog', { name: 'Discard your changes?' });
     fireEvent.click(within(confirm).getByRole('button', { name: 'Keep Editing' }));
     expect(onClose).not.toHaveBeenCalled();
-    expect((screen.getByRole('radio', { name: 'Red' }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole('radio', { name: 'Urgent' }) as HTMLInputElement).checked).toBe(true);
 
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Discard Changes' }));
@@ -209,7 +209,7 @@ describe('ItemSheet (edit)', () => {
     const { backend, onClose } = await setup(editing('Kitchen paper'));
     const update = vi.spyOn(backend, 'updateItem');
     const complete = vi.spyOn(backend, 'completeItem');
-    fireEvent.click(screen.getByRole('radio', { name: 'Amber' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Within the month' }));
     const done = screen.getByRole('button', { name: 'Mark as Done' });
     fireEvent.click(done);
     fireEvent.click(done);
@@ -251,7 +251,7 @@ describe('ItemSheet (edit)', () => {
     const { backend, onClose } = await setup(editing('Olive oil'));
     vi.spyOn(backend, 'completeItem').mockRejectedValue(new BackendError('network'));
     const update = vi.spyOn(backend, 'updateItem');
-    fireEvent.click(screen.getByRole('radio', { name: 'Red' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Urgent' }));
     const done = screen.getByRole('button', { name: 'Mark as Done' });
     fireEvent.click(done);
     await waitFor(() => expect(done.getAttribute('aria-disabled')).toBeNull());
@@ -275,7 +275,7 @@ describe('ItemSheet (new)', () => {
     const { dialog, home } = await setup(() => ({ kind: 'new' }));
     expect(dialog.getAttribute('aria-label')).toBe('New item');
     expect((save() as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole('radio', { name: 'Amber' }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole('radio', { name: 'Within the month' }) as HTMLInputElement).checked).toBe(true);
     expect(value('Area')).toBe('Kitchen');
     expect((screen.getByLabelText('Due') as HTMLInputElement).value).toBe(addDays(home().today, 7));
     expect(value('Assigned to')).toBe('Unassigned');
@@ -371,7 +371,7 @@ describe('ItemSheet: To do and To maintain', () => {
     expect(kind('To do').getAttribute('aria-checked')).toBe('true');
     expect(kind('To maintain').getAttribute('aria-checked')).toBe('false');
     // Order in the sheet: note, kind, RAG picker, details.
-    const order = [screen.getByLabelText('Note'), group, screen.getByRole('radiogroup', { name: 'Status' }), screen.getByLabelText('Area')];
+    const order = [screen.getByLabelText('Note'), group, screen.getByRole('radiogroup', { name: 'How urgent?' }), screen.getByLabelText('Area')];
     for (let i = 1; i < order.length; i++) {
       expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
@@ -381,12 +381,15 @@ describe('ItemSheet: To do and To maintain', () => {
   it('edits a state: no Due, Repeat, Notify or Mark as Done, and "Looked after by"', async () => {
     await setup(editing('Firepit'));
     expect(kind('To maintain').getAttribute('aria-checked')).toBe('true');
-    expect((screen.getByRole('radio', { name: 'Green' }) as HTMLInputElement).checked).toBe(true);
-    expect(screen.getAllByRole('radio', { name: /^(Red|Amber|Green)$/ }).map((r) => (r as HTMLInputElement).value)).toEqual([
-      'red',
-      'amber',
-      'green',
-    ]);
+    expect((screen.getByRole('radio', { name: 'Good' }) as HTMLInputElement).checked).toBe(true);
+    // Needs work, Okay, Good: red first, as the urgency list runs.
+    expect(
+      screen.getAllByRole('radio', { name: /^(Needs work|Okay|Good)$/ }).map((r) => (r as HTMLInputElement).value),
+    ).toEqual(['red', 'amber', 'green']);
+    expect(screen.getByRole('radio', { name: 'Okay' }).getAttribute('aria-describedby')).toBeTruthy();
+    expect(document.getElementById(screen.getByRole('radio', { name: 'Okay' }).getAttribute('aria-describedby')!)!.textContent).toBe(
+      'Fine for now, keep an eye on it',
+    );
     expect(value('Area')).toBe('Garden');
     expect(value('Looked after by')).toBe('🦊 Ela');
     for (const gone of ['Due', 'Assigned to', 'Repeat', 'Notify']) expect(label(gone), gone).toBeNull();
@@ -397,7 +400,7 @@ describe('ItemSheet: To do and To maintain', () => {
   it('saves edits to a state without any due date, repeat or reminder', async () => {
     const { backend, onClose } = await setup(editing('Firepit'));
     const update = vi.spyOn(backend, 'updateItem');
-    fireEvent.click(screen.getByRole('radio', { name: 'Amber' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Okay' }));
     fireEvent.change(screen.getByLabelText('Looked after by'), { target: { value: '' } });
     fireEvent.click(save());
     expect(update).toHaveBeenCalledWith(expect.any(String), { rag: 'amber', assignee_id: null });
@@ -513,7 +516,7 @@ describe('ItemSheet: What good looks like', () => {
       screen.getByRole('radiogroup', { name: 'Type' }),
       header,
       field,
-      screen.getByRole('radiogroup', { name: 'Status' }),
+      screen.getByRole('radiogroup', { name: 'Condition' }),
       screen.getByLabelText('Area'),
     ];
     for (let i = 1; i < order.length; i++) {
@@ -610,26 +613,28 @@ describe('ItemSheet: What good looks like', () => {
 });
 
 describe('ItemSheet: where it was saved', () => {
-  it('reports the area of a new item, and of an item moved to another area', async () => {
+  it('reports a new item, and an item moved to another area, by its id (Home shows where it went)', async () => {
     const created = await setup((home) => ({ kind: 'new', areaId: home.data!.areas.find((a) => a.name === 'Garden')!.id }));
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Fix the gate' } });
     fireEvent.click(save());
     await waitFor(() => expect(created.onClose).toHaveBeenCalledTimes(1));
-    const garden = created.home().data!.areas.find((a) => a.name === 'Garden')!.id;
-    expect(created.onSaved).toHaveBeenCalledWith(garden);
+    await waitFor(() => expect(created.home().data!.items.some((i) => i.title === 'Fix the gate')).toBe(true));
+    const gate = created.home().data!.items.find((i) => i.title === 'Fix the gate')!;
+    expect(created.onSaved).toHaveBeenCalledWith(gate.id);
     cleanup();
 
     const moved = await setup(editing('Heaters not working'));
+    const heaters = moved.home().data!.items.find((i) => i.title === 'Heaters not working')!;
     const kitchen = moved.home().data!.areas.find((a) => a.name === 'Kitchen')!.id;
     fireEvent.change(screen.getByLabelText('Area'), { target: { value: kitchen } });
     fireEvent.click(save());
     await waitFor(() => expect(moved.onClose).toHaveBeenCalledTimes(1));
-    expect(moved.onSaved).toHaveBeenCalledWith(kitchen);
+    expect(moved.onSaved).toHaveBeenCalledWith(heaters.id);
   });
 
   it('says nothing for an edit that stays in its area', async () => {
     const { onClose, onSaved } = await setup(editing('Heaters not working'));
-    fireEvent.click(screen.getByRole('radio', { name: 'Green' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Not urgent' }));
     fireEvent.click(save());
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(onSaved).not.toHaveBeenCalled();
@@ -699,11 +704,13 @@ describe('ItemSheet: Share', () => {
 
   const shareButton = () => screen.getByRole('button', { name: 'Share item' });
 
-  it('sits in the nav bar, between the drag handle and Save', async () => {
+  it('sits in the nav bar, between the drag handle and Save (the word, never a check beside Mark as Done)', async () => {
     const { dialog } = await setup(editing('Heaters not working'));
     const nav = dialog.querySelector('[data-sheet-handle]')!;
-    const names = Array.from(nav.querySelectorAll('button'), (b) => b.getAttribute('aria-label'));
+    const names = Array.from(nav.querySelectorAll('button'), (b) => b.getAttribute('aria-label') ?? b.textContent);
     expect(names).toEqual(['Close', 'Share item', 'Save']);
+    expect(save().textContent).toBe('Save');
+    expect(save().querySelector('svg')).toBeNull();
   });
 
   it('shares a To do: what, where, status, when, who, the note and a link', async () => {
@@ -715,7 +722,7 @@ describe('ItemSheet: Share', () => {
       title: 'Heaters not working',
       text: [
         'Heaters not working',
-        `Hallway · Red · Missed · ${formatDay(heaters.due_date!, home().today)}`,
+        `Hallway · Urgent · Missed · ${formatDay(heaters.due_date!, home().today)}`,
         'Assigned to Shea',
         'No heat since the weekend. Engineer needs booking.',
         '',
@@ -733,7 +740,7 @@ describe('ItemSheet: Share', () => {
     const share = stubShare();
     fireEvent.click(shareButton());
     const text = share.mock.lastCall![0].text!;
-    expect(text).toMatch(/^Firepit\nGarden · Green · Updated \w{3} \d{1,2} \w{3}\nLooked after by Ela\n/);
+    expect(text).toMatch(/^Firepit\nGarden · Good · Updated \w{3} \d{1,2} \w{3}\nLooked after by Ela\n/);
     expect(text).toContain('\nWhat good looks like: Cover on when not in use, ash cleared out, logs dry and stacked under the bench.\n\n');
   });
 
@@ -744,7 +751,7 @@ describe('ItemSheet: Share', () => {
     const nextWeek = addDays(home().today, 7);
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: '  Heaters: engineer booked  ' } });
     fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'Coming next week.' } });
-    fireEvent.click(screen.getByRole('radio', { name: 'Green' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Not urgent' }));
     fireEvent.change(screen.getByLabelText('Assigned to'), { target: { value: '' } });
     fireEvent.change(screen.getByLabelText('Repeat'), { target: { value: 'yearly' } });
     fireEvent.change(screen.getByLabelText('Due'), { target: { value: nextWeek } });
@@ -753,7 +760,7 @@ describe('ItemSheet: Share', () => {
       title: 'Heaters: engineer booked',
       text: [
         'Heaters: engineer booked',
-        `Hallway · Green · Due ${formatDay(nextWeek, home().today)} · Every year`,
+        `Hallway · Not urgent · Due ${formatDay(nextWeek, home().today)} · Every year`,
         'Unassigned',
         'Coming next week.',
         '',
@@ -770,7 +777,7 @@ describe('ItemSheet: Share', () => {
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: '   ' } });
     fireEvent.click(shareButton());
     expect(share.mock.lastCall![0].title).toBe('Heaters not working');
-    expect(share.mock.lastCall![0].text).toMatch(/^Heaters not working\nHallway · Red · Missed · /);
+    expect(share.mock.lastCall![0].text).toMatch(/^Heaters not working\nHallway · Urgent · Missed · /);
   });
 
   it('a To do made To maintain in the sheet shares as one', async () => {
@@ -780,7 +787,7 @@ describe('ItemSheet: Share', () => {
     fireEvent.change(screen.getByLabelText('What good looks like'), { target: { value: 'Always a full tin.' } });
     fireEvent.click(shareButton());
     const text = share.mock.lastCall![0].text!;
-    expect(text).toMatch(/^Olive oil\nKitchen · Green · Updated \w{3} \d{1,2} \w{3}\nLooked after by Stratis\n/);
+    expect(text).toMatch(/^Olive oil\nKitchen · Good · Updated \w{3} \d{1,2} \w{3}\nLooked after by Stratis\n/);
     expect(text).not.toContain('Every month');
     expect(text).toContain('\nWhat good looks like: Always a full tin.\n\n');
   });
@@ -791,7 +798,7 @@ describe('ItemSheet: Share', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     fireEvent.click(shareButton());
     await waitFor(() => expect(home().toast?.message).toBe(COPIED_TOAST));
-    expect(writeText.mock.lastCall![0]).toMatch(/^Olive oil\nKitchen · Green · Due .* · Every month\nAssigned to Stratis\n/);
+    expect(writeText.mock.lastCall![0]).toMatch(/^Olive oil\nKitchen · Not urgent · Due .* · Every month\nAssigned to Stratis\n/);
   });
 
   it('does nothing when the share sheet is closed without sharing', async () => {

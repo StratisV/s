@@ -1,34 +1,80 @@
+/* The item's urgency (To do) or condition (To maintain), in words (RagPicker.tsx). */
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* As the sheet's other section header ("What good looks like"). */
+.heading {
+  padding: 0 4px;
+  font-size: 20px;
+  line-height: 25px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  color: var(--label);
+}
+
 .card {
   background: var(--card);
   border-radius: var(--r-sheet-card);
-  padding: 7px;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .option {
+  --on: var(--rag-green);
+  --wash: var(--rag-green-tint);
+  --ink: var(--rag-green-text);
   position: relative;
-  height: 52px;
-  border-radius: var(--r-rag);
+  min-height: 58px;
+  padding: 8px 14px 8px 14px;
+  border-radius: 20px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  font-size: 17px;
-  line-height: 22px;
-  letter-spacing: normal;
-  color: var(--label-tertiary);
+  gap: 14px;
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
-  transition:
-    background-color 0.2s ease,
-    color 0.2s ease;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.2s ease;
+}
+
+.option[data-rag='red'] {
+  --on: var(--rag-red);
+  --wash: var(--rag-red-tint);
+  --ink: var(--rag-red-text);
+}
+
+.option[data-rag='amber'] {
+  --on: var(--rag-amber);
+  --wash: var(--rag-amber-tint);
+  --ink: var(--rag-amber-text);
+}
+
+/* Between two options that aren't chosen: a hairline under the words. */
+.option + .option::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 42px;
+  right: 14px;
+  border-top: 0.5px solid var(--separator);
+}
+
+.option[data-selected]::before,
+.option[data-selected] + .option::before {
+  display: none;
+}
+
+.option:active:not([data-selected]) {
+  background: var(--fill-tertiary);
 }
 
 .option[data-selected] {
-  font-weight: 600;
+  background: var(--wash);
 }
 
 .option:has(.input:focus-visible) {
@@ -47,13 +93,57 @@
 
 .dot {
   flex: none;
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
+  background: var(--on);
+}
+
+.words {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.word {
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label);
+}
+
+.option[data-selected] .word {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.hint {
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.05px;
+  color: var(--label-secondary);
+}
+
+.check {
+  flex: none;
+  color: var(--ink);
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 0.15s ease,
+    transform 0.25s var(--spring);
+}
+
+.option[data-selected] .check {
+  opacity: 1;
+  transform: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .option {
+  .option,
+  .check {
     transition: none;
   }
 }

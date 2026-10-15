@@ -7,7 +7,7 @@ import {
   area,
   areaHeadings,
   areas,
-  chips,
+  chooseWho,
   codeField,
   codeFor,
   codeSheet,
@@ -19,22 +19,28 @@ import {
   homeScreen,
   loadHome,
   meta,
+  mine,
   openCodes,
   openDevice,
   openHousehold,
+  openItem,
   people,
   personRow,
+  peopleInMenu,
+  expectPerson,
   PHONE_DOC,
   resetServer,
   ring,
   rowFor,
   SETUP_CODE,
+  showAllRows,
   shownCode,
   statsScreen,
   SYNC_MS,
   version,
   welcome,
-  dayLabel,
+  taskMeta,
+  who as whoOn,
 } from './helpers';
 
 // Bringing the home online and signing in with codes (docs/ARCHITECTURE.md "Server mode (no
@@ -46,13 +52,8 @@ test.beforeEach(async ({ request }) => {
 
 const doc = PHONE_DOC;
 const areaName = (id: string) => doc.areas.find((a) => a.id === id)!.name;
-const who = (id: string | null) => {
-  const m = id ? doc.members.find((p) => p.id === id) : null;
-  return m ? `${m.emoji} ${m.name}` : 'Unassigned';
-};
-/** The London day of a stored time, as YYYY-MM-DD. */
-const londonDay = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
-const RAG = { red: 'Red', amber: 'Amber', green: 'Green' } as const;
+const person = (id: string | null) => (id ? doc.members.find((p) => p.id === id)! : null);
+const CONDITION = { red: 'Needs work', amber: 'Okay', green: 'Good' } as const;
 
 /** The phone's open items, as Home shows them. */
 const OPEN_ITEMS = doc.items
@@ -61,25 +62,33 @@ const OPEN_ITEMS = doc.items
     area: areaName(i.area_id),
     title: i.title,
     state: i.kind === 'state',
-    rag: RAG[i.rag],
-    who: who(i.assignee_id),
-    date: i.kind === 'state' ? `Updated ${dayLabel(londonDay(i.updated_at))}` : dayLabel(i.due_date!),
+    rag: i.rag,
+    /** Who, as VoiceOver hears it, and as the row shows it ("🦔Shea"; nothing for nobody). */
+    who: person(i.assignee_id)?.name ?? 'Unassigned',
+    chip: person(i.assignee_id) ? `${person(i.assignee_id)!.emoji}${person(i.assignee_id)!.name}` : null,
+    due: i.due_date,
     note: i.note,
   }));
-const SHEAS = OPEN_ITEMS.filter((it) => it.who === '🦔 Shea');
+const SHEAS = OPEN_ITEMS.filter((it) => it.who === 'Shea');
 
-/** Every area in order, every open item with its kind, status, person, date and note. */
+/** Every area in order, every open item with its kind, urgency or condition, person, date and note. */
 async function expectPhoneHome(page: Page): Promise<void> {
   await expect(areaHeadings(page)).toHaveText(doc.areas.map((a) => a.name));
+  await showAllRows(page);
   for (const it of OPEN_ITEMS) {
     const row = rowFor(page, it.title, it.area);
-    await expect(row, `${it.area}: ${it.title}`).toHaveAccessibleName(
-      new RegExp(`^${escapeRe(it.title)} ?, ${it.rag}${it.state ? ', to maintain' : ''}\\.`),
+    const label = `${it.area}: ${it.title}`;
+    const word = it.state ? `to maintain, ${CONDITION[it.rag]}` : null;
+    await expect(row, label).toHaveAccessibleName(
+      new RegExp(`^${escapeRe(it.title)} ?, ${word ?? '(Urgent|Within the month|Not urgent)'}, (.*, )?${it.who}(, .*)?\\.$`),
     );
-    await expect(meta(area(page, it.area), it.title), `${it.area}: ${it.title}`).toHaveText(
-      new RegExp(`^${escapeRe(it.who)} · ${it.state ? '' : '(Missed · )?'}${escapeRe(it.date)}$`),
+    if (it.note) await expect(row, label).toHaveAccessibleName(/, has a note\.$/);
+    else await expect(row, label).not.toHaveAccessibleName(/has a note/);
+    if (it.chip) await expect(whoOn(area(page, it.area), it.title), label).toHaveText(it.chip);
+    else await expect(whoOn(area(page, it.area), it.title), label).toHaveCount(0);
+    await expect(meta(area(page, it.area), it.title), label).toHaveText(
+      it.state ? new RegExp(`^${CONDITION[it.rag]}·?Updated `) : taskMeta(it.rag, it.due!),
     );
-    if (it.note) await expect(row).toContainText(it.note);
     await expect(ring(area(page, it.area), it.title)).toHaveCount(it.state ? 0 : 1);
   }
   await expect(areas(page).locator('[data-item-open]')).toHaveCount(OPEN_ITEMS.length);
@@ -136,7 +145,7 @@ test('Stratis brings the home on his phone online with the setup link, invites S
   // No notifications step in server mode: straight to Home, with everything from the phone.
   await expect(homeHeading(a)).toBeVisible();
   await expectPhoneHome(a);
-  expect(await chips(a).getByRole('radio').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')))).toEqual([
+  expect(await peopleInMenu(a)).toEqual([
     'Everyone, 19 items',
     'Stratis (you), 11 items',
     `Shea, ${SHEAS.length} items, not joined yet`,
@@ -172,15 +181,17 @@ test('Stratis brings the home on his phone online with the setup link, invites S
   await expect(hello.getByRole('heading', { name: 'Welcome home, Shea', level: 1 })).toBeVisible();
   await expect(hello.getByRole('radiogroup', { name: 'Your emoji' }).getByRole('radio', { name: '🦔' })).toBeChecked();
   // Stratis's phone hears that she joined, without a reload.
-  await expect(chips(a).getByRole('radio', { name: `Shea, ${SHEAS.length} items`, exact: true })).toBeVisible({ timeout: SYNC_MS });
+  await expectPerson(a, `Shea, ${SHEAS.length} items`, SYNC_MS);
   await hello.getByRole('button', { name: 'Continue' }).click();
   await expect(homeHeading(b)).toBeVisible();
   await expect(b.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🦔');
-  const mine = chips(b).getByRole('radio', { name: `Shea (you), ${SHEAS.length} items`, exact: true });
-  await mine.click();
+  await expectPerson(b, `Shea (you), ${SHEAS.length} items`);
+  await mine(b).click();
+  await expect(mine(b)).toHaveAttribute('aria-pressed', 'true');
+  await showAllRows(b);
   await expect(areas(b).locator('[data-item-open]')).toHaveCount(SHEAS.length);
   for (const it of SHEAS) await expect(rowFor(b, it.title, it.area)).toBeVisible();
-  await chips(b).getByRole('radio', { name: /^Everyone,/ }).click();
+  await chooseWho(b, /^Everyone,/);
   await expectPhoneHome(b);
 
   // The code is used up: on a third phone it does not work.
@@ -296,10 +307,8 @@ test('a code also works as a link, and a link whose code does not work says so',
   await expect(hello.getByRole('heading', { name: 'Welcome home, Shea', level: 1 })).toBeVisible();
   expect(new URL(shea.page.url()).search).toBe('');
   await hello.getByRole('button', { name: 'Continue' }).click();
-  await expect(chips(shea.page).getByRole('radio', { name: `Shea (you), ${SHEAS.length} items`, exact: true })).toBeVisible();
-  await expect(chips(stratis.page).getByRole('radio', { name: `Shea, ${SHEAS.length} items`, exact: true })).toBeVisible({
-    timeout: SYNC_MS,
-  });
+  await expectPerson(shea.page, `Shea (you), ${SHEAS.length} items`);
+  await expectPerson(stratis.page, `Shea, ${SHEAS.length} items`, SYNC_MS);
   await expectNoReload(stratis);
   await expectNoReload(shea);
   await stratis.context.close();
@@ -520,7 +529,11 @@ test('a setup link opened on a phone without the home can bring the saved copy o
   ]);
   await expect(areas(a).locator('[data-item-open]')).toHaveCount(21);
   await expect(rowFor(a, 'Rubbish fill level', 'Kitchen')).toBeVisible();
-  await expect(rowFor(a, 'Check Chemicals', 'Jacuzzi')).toContainText('Order a new pack.');
+  await expect(rowFor(a, 'Check Chemicals', 'Jacuzzi')).toHaveAccessibleName(/, has a note\.$/);
+  const sheet = await openItem(a, area(a, 'Jacuzzi'), 'Check Chemicals');
+  await expect(sheet.getByLabel('Note', { exact: true })).toHaveValue('Order a new pack.');
+  await sheet.getByRole('button', { name: 'Close' }).click();
+  await expect(sheet).toHaveCount(0);
   // Nothing was kept in Safari: the home lives on the server.
   expect(await a.evaluate((key) => localStorage.getItem(key), DEMO_DOC_KEY)).toBeNull();
   await expectNoReload(safari);

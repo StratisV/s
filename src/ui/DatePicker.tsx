@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { weekName, weekTitle, type CalendarView } from '../lib/logic/calendar';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { monthHeading, weekHeading, weekName, weekTitle, type CalendarView } from '../lib/logic/calendar';
 import { monthOf, weekOf, type YearMonth } from '../lib/logic/months';
 import type { ISODate } from '../lib/types';
 import { MonthCalendar, type DayData } from './MonthCalendar';
@@ -20,6 +20,28 @@ function writeView(key: string, view: CalendarView): void {
   } catch {
     /* private mode or storage full: it just isn't remembered */
   }
+}
+
+/**
+ * The week strip or the whole month, remembered on this device under `key` ('month', or
+ * nothing for the week). A screen that needs to know which is shown keeps it with this and
+ * hands it to its DatePicker (`view`, `onViewChange`).
+ */
+export function useCalendarView(key: string): [CalendarView, (view: CalendarView) => void] {
+  const [view, setView] = useState<CalendarView>(() => readView(key));
+  const change = useCallback(
+    (next: CalendarView) => {
+      writeView(key, next);
+      setView(next);
+    },
+    [key],
+  );
+  return [view, change];
+}
+
+/** Whether `date` is among the days a date picker shows: in the week strip's week, or in the month. */
+export function isDayShown(date: ISODate, view: CalendarView, chosen: Pick<ChosenDay, 'week' | 'month'>): boolean {
+  return view === 'week' ? weekOf(chosen.week).includes(date) : monthOf(date) === chosen.month;
 }
 
 /** The Monday of the week a day is in. */
@@ -83,23 +105,18 @@ export type ChosenPatch<C extends ChosenDay> = Partial<Omit<C, 'householdId' | '
  * The chosen day and the week and month shown, kept in `memory` as well, so a screen that
  * comes and goes with its tab finds them as it left them while the app runs. Another
  * household, or a new day since (midnight, or back from the background the next morning),
- * starts on today again, in this week and month. `start` adds a screen's own fields to that
- * fresh start (Home: today not opened yet).
+ * starts on today again, in this week and month.
  */
-export function useChosenDay<C extends ChosenDay = ChosenDay>(
-  memory: { current: C | null },
+export function useChosenDay(
+  memory: { current: ChosenDay | null },
   householdId: string,
   today: ISODate,
-  start?: (fresh: ChosenDay) => C,
-): { chosen: C; update(patch: ChosenPatch<C>): void; reset(): void } {
-  const fresh = (): C => {
-    const day: ChosenDay = { householdId, today, selected: today, month: monthOf(today), week: mondayOf(today) };
-    return start ? start(day) : (day as C);
-  };
-  const valid = (c: C | null): c is C => !!c && c.householdId === householdId && c.today === today;
-  const [state, setState] = useState<C>(() => (valid(memory.current) ? memory.current : fresh()));
+): { chosen: ChosenDay; update(patch: ChosenPatch<ChosenDay>): void; reset(): void } {
+  const fresh = (): ChosenDay => ({ householdId, today, selected: today, month: monthOf(today), week: mondayOf(today) });
+  const valid = (c: ChosenDay | null): c is ChosenDay => !!c && c.householdId === householdId && c.today === today;
+  const [state, setState] = useState<ChosenDay>(() => (valid(memory.current) ? memory.current : fresh()));
   const chosen = valid(state) ? state : fresh();
-  const save = (next: C) => {
+  const save = (next: ChosenDay) => {
     memory.current = next;
     setState(next);
   };
@@ -113,6 +130,12 @@ export function useChosenDay<C extends ChosenDay = ChosenDay>(
 interface DatePickerProps {
   /** Where this device remembers the week strip or the month: 'month', or nothing for the week. */
   viewKey: string;
+  /**
+   * The week strip or the month, when the screen keeps it (useCalendarView() with the same
+   * `viewKey`, so the screen knows which days are shown); else the picker keeps it.
+   */
+  view?: CalendarView;
+  onViewChange?(view: CalendarView): void;
   /** Today in the household's time zone. */
   today: ISODate;
   /** The chosen day and the week and month shown (useChosenDay()). */
@@ -123,7 +146,7 @@ interface DatePickerProps {
   onReset(): void;
   /** A day was chosen (tapped, or Enter or Space on it). */
   onSelect(date: ISODate): void;
-  /** On the left of the bar while today is chosen and shown (Home: what is due today). */
+  /** On the left of the bar while today is chosen and shown (Housekeeping: how today's visit is going). */
   line?: ReactNode;
   /** The last day that can be chosen (Housekeeping: today, as visits can't be ahead). */
   lastDay?: ISODate;
@@ -139,8 +162,14 @@ interface DatePickerProps {
   marks?(date: ISODate): ReactNode;
   /** More data attributes on a day's button. */
   dayData?(date: ISODate): DayData;
-  /** Under the month's grid, in the month (Home: what the marks mean). */
+  /** Under the grid, in the week strip and the month alike (Home: what the marks mean, in words). */
   legend?: ReactNode;
+  /**
+   * Home's calendar: a visible heading on the bar, relative ("This week", "In 8 weeks",
+   * "Next month"), with Today and Show month beside it on the right. The heading is an h2
+   * with this id, which names the calendar's section.
+   */
+  headingId?: string;
 }
 
 /**
@@ -155,6 +184,8 @@ interface DatePickerProps {
  */
 export function DatePicker({
   viewKey,
+  view: viewProp,
+  onViewChange,
   today,
   chosen,
   onChange,
@@ -169,10 +200,13 @@ export function DatePicker({
   marks,
   dayData,
   legend,
+  headingId,
 }: DatePickerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const todayRef = useRef<HTMLButtonElement>(null);
-  const [view, setView] = useState<CalendarView>(() => readView(viewKey));
+  const [ownView, setOwnView] = useCalendarView(viewKey);
+  const view = viewProp ?? ownView;
+  const setView = onViewChange ?? setOwnView;
 
   // Today was pressed from the keyboard (or by VoiceOver): the button goes, so focus goes to today.
   const focusToday = useRef(false);
@@ -202,20 +236,23 @@ export function DatePicker({
       onReset();
     }
     setView(next);
-    writeView(viewKey, next);
   };
 
-  const shownDays = view === 'week' ? weekOf(chosen.week) : null;
-  const todayShown = shownDays ? shownDays.includes(today) : monthOf(today) === chosen.month;
+  const todayShown = isDayShown(today, view, chosen);
 
   return (
     <div ref={rootRef}>
-      <div className={styles.bar} data-calendar-bar="">
+      <div className={styles.bar} data-calendar-bar="" data-headed={headingId ? '' : undefined}>
+        {headingId ? (
+          <h2 id={headingId} className={styles.heading} data-calendar-heading="">
+            {view === 'week' ? weekHeading(chosen.week, today) : monthHeading(chosen.month, today)}
+          </h2>
+        ) : null}
         {!todayShown || chosen.selected !== today ? (
           <button ref={todayRef} type="button" className={styles.barAction} onClick={goToday}>
             Today
           </button>
-        ) : line ? (
+        ) : line && !headingId ? (
           <p className={styles.line} data-today-summary="">
             {line}
           </p>
@@ -249,7 +286,7 @@ export function DatePicker({
         dot={dot}
         marks={marks}
         dayData={dayData}
-        legend={view === 'month' ? legend : undefined}
+        legend={legend}
       />
     </div>
   );

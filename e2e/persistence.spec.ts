@@ -19,6 +19,7 @@ import {
   tabButton,
   test,
   titlesIn,
+  who,
 } from './fixtures';
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
@@ -31,7 +32,8 @@ test.describe('Persistence', () => {
     await ring(page, 'Mirror lights not level').click();
     await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
     await ring(page, 'Olive oil').click();
-    await expect(meta(page, 'Olive oil')).toHaveText('🦔 Stratis · Sat 12 Dec');
+    // Monthly: next on Sat 12 Dec.
+    await expect(meta(page, 'Olive oil')).toHaveText('Not urgent·In 2 months');
 
     const sheet = await openNewItem(page);
     await sheet.getByLabel('Title', { exact: true }).fill('Service the boiler');
@@ -52,12 +54,15 @@ test.describe('Persistence', () => {
     await reopen(page);
     await expect(areaHeadings(page)).toHaveText(DEFAULT_AREAS);
     await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
-    await expect(meta(page, 'Olive oil')).toHaveText('🌻 Stratis · Sat 12 Dec');
+    await expect(meta(page, 'Olive oil')).toHaveText('Not urgent·In 2 months');
+    await expect(who(page, 'Olive oil')).toHaveText('🌻Stratis');
     expect(await titlesIn(page, 'Hallway')).toEqual(['Heaters not working', 'Service the boiler']);
-    await expect(meta(page, 'Service the boiler')).toHaveText('Unassigned · Thu 15 Oct');
-    await expect(homeScreen(page).getByRole('button', { name: /^Shower draining slowly/ })).toContainText(
-      'Plumber on Friday.',
-    );
+    await expect(meta(page, 'Service the boiler')).toHaveText('Within the month·In 7 days');
+    await expect(homeScreen(page).getByRole('button', { name: /^Service the boiler ?, .*, Unassigned, repeats yearly\.$/ })).toBeVisible();
+    const shower = await openItem(page, 'Shower draining slowly');
+    await expect(shower.getByLabel('Note', { exact: true })).toHaveValue('Plumber on Friday.');
+    await shower.getByRole('button', { name: 'Close' }).click();
+    await expect(shower).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🌻');
     await goToTab(page, 'Stats');
     await expect(statsScreen(page).getByRole('img', { name: /^9 tasks done this month/ })).toBeVisible();

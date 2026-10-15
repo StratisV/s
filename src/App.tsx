@@ -115,7 +115,7 @@ function restoreFocus({ target, nearby, section }: FocusReturn, stage: HTMLEleme
   const next =
     [target, ...nearby].find(reachable) ??
     [rowFallback(section)].find(reachable) ??
-    stage.querySelector<HTMLElement>('button[aria-label="New item"]');
+    stage.querySelector<HTMLElement>('button[data-add-button]');
   next?.focus({ preventScroll: true });
 }
 
@@ -131,6 +131,7 @@ function MainApp() {
 
 function MainShell() {
   const { unread } = useChat();
+  const { data } = useHousehold();
   // The tab last open on this device (the housekeeper reopens on Housekeeping).
   const [tab, setTab] = useState<Tab>(loadTab);
   useEffect(() => storeTab(tab), [tab]);
@@ -155,12 +156,15 @@ function MainShell() {
     setDoneOpen(true);
   }, []);
   const pushed = sheetOpen || taskListOpen || doneOpen;
-  // The area an item was just saved into, for Home to expand if it is collapsed.
-  const [revealArea, setRevealArea] = useState<string | null>(null);
-  const clearReveal = useCallback(() => setRevealArea(null), []);
+  // The item just saved (new, or moved to another area), for Home to bring into view.
+  const [revealItem, setRevealItem] = useState<string | null>(null);
+  const clearReveal = useCallback(() => setRevealItem(null), []);
   // The area a shared link (?area=) points at, for Home to open and scroll to.
   const [linkedArea, setLinkedArea] = useState<string | null>(null);
   const clearLinkedArea = useCallback(() => setLinkedArea(null), []);
+  // The room the round + adds to (the one a shared link opened on Home), if any.
+  const [addRoom, setAddRoom] = useState<string | null>(null);
+  const addRoomName = addRoom ? (data.areas.find((a) => a.id === addRoom)?.name ?? null) : null;
   // A day Home's calendar sends to Housekeeping (its visit), for Housekeeping to show.
   const [housekeepingDay, setHousekeepingDay] = useState<ISODate | null>(null);
   const clearHousekeepingDay = useCallback(() => setHousekeepingDay(null), []);
@@ -232,10 +236,14 @@ function MainShell() {
     },
   });
 
-  // Leaving Home drops an area link it hasn't shown yet, so it can't scroll Home on a later return.
+  // Leaving Home drops an area link or a saved item it hasn't shown yet, so neither can scroll
+  // Home on a later return.
   const switchTab = useCallback((next: Tab) => {
     setTab(next);
-    if (next !== 'home') setLinkedArea(null);
+    if (next !== 'home') {
+      setLinkedArea(null);
+      setRevealItem(null);
+    }
     if (next !== 'housekeeping') setHousekeepingDay(null);
   }, []);
   const openHousekeepingDay = useCallback(
@@ -258,10 +266,11 @@ function MainShell() {
             onOpenItem={(itemId) => openSheet({ kind: 'edit', itemId })}
             onOpenProfile={() => setProfileOpen(true)}
             onAddItem={(areaId) => openSheet({ kind: 'new', areaId })}
-            revealArea={revealArea}
+            revealItem={revealItem}
             onRevealed={clearReveal}
             linkedArea={linkedArea}
             onLinkedAreaShown={clearLinkedArea}
+            onRoomContext={setAddRoom}
             onOpenHousekeeping={openHousekeepingDay}
           />
         ) : tab === 'chat' ? (
@@ -277,7 +286,11 @@ function MainShell() {
         ) : (
           <StatsScreen tabs={tabs} onOpenProfile={() => setProfileOpen(true)} onOpenDone={openDone} />
         )}
-        <AddButton tab={tab} onAdd={() => openSheet({ kind: 'new' })} />
+        <AddButton
+          tab={tab}
+          room={tab === 'home' && addRoom && addRoomName ? addRoomName : null}
+          onAdd={() => openSheet(tab === 'home' && addRoom && addRoomName ? { kind: 'new', areaId: addRoom } : { kind: 'new' })}
+        />
         <div className={styles.dim} aria-hidden="true" />
       </div>
       {sheetTarget ? (
@@ -287,7 +300,8 @@ function MainShell() {
           open={sheetOpen}
           onClose={() => setSheetOpen(false)}
           onExited={() => setSheetTarget(null)}
-          onSaved={setRevealArea}
+          // Shown where it went when Home is behind the sheet (not later, from another tab).
+          onSaved={tab === 'home' ? setRevealItem : undefined}
         />
       ) : null}
       <TaskListSheet open={taskListOpen} onClose={() => setTaskListOpen(false)} />

@@ -1,20 +1,50 @@
-/* Its own stacking context so the row's tap layer sits under the text but above the card. */
+/*
+ * A Home row (ItemRow.tsx). The li folds away when the item leaves its list: its grid row
+ * goes from 1fr to 0fr while it fades.
+ */
 .row {
-  position: relative;
-  z-index: 0;
-  display: flex;
-  gap: 14px;
-  padding: 0 18px 0 16px;
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows 0.26s var(--sheet-ease),
+    opacity 0.2s ease;
 }
 
+.row[data-leaving] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+/* Its own stacking context so the row's tap layer sits under the text but above the card. */
+.inner {
+  position: relative;
+  z-index: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  gap: 14px;
+  padding: 0 16px 0 16px;
+}
+
+/*
+ * The title (two lines at most) with who it is for at the end of its first line, then the
+ * quiet line under both, so the words on it get the full width.
+ */
 .open {
   flex: 1;
   min-width: 0;
-  padding: 8px 0 9px;
+  min-height: 64px;
+  padding: 11px 0 11px;
   border-top: 0.5px solid var(--separator);
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'title who'
+    'meta meta';
+  align-items: start;
+  align-content: center;
+  column-gap: 10px;
+  row-gap: 3px;
   text-align: left;
   user-select: none;
   -webkit-user-select: none;
@@ -51,68 +81,261 @@
   box-shadow: inset 0 0 0 2px var(--tint);
 }
 
+.text {
+  display: contents;
+}
+
+/* The title, two lines at most (the full title and the note are in the Item sheet). */
 .title {
-  display: block;
-  /* One line: the full title is in the Item sheet. */
-  white-space: nowrap;
+  grid-area: title;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
   font-size: 17px;
   line-height: 22px;
   letter-spacing: -0.4px;
   color: var(--label);
+  text-decoration-line: line-through;
+  text-decoration-color: transparent;
+  text-decoration-thickness: 1.5px;
+  transition:
+    color 0.2s ease,
+    text-decoration-color 0.2s ease;
 }
 
-/*
- * One line: who and when, then the note. A long name gives way first (cut short),
- * the date always shows in full, and the note takes whatever room is left.
- */
+/* Just ticked off: struck through for a moment, so it is clear which one it was. */
+.row[data-completing] .title {
+  color: var(--label-secondary);
+  text-decoration-color: currentColor;
+}
+
+/* One quiet line: the urgency in words, when, where. The room moves to the next line whole rather than shrinking. */
 .meta {
+  grid-area: meta;
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   min-width: 0;
-  white-space: pre;
+  /* The room's dot sits in this gap; on a line of its own the room starts flush, its dot clipped. */
+  column-gap: 16px;
+  row-gap: 2px;
+  overflow: hidden;
+  white-space: nowrap;
   font-size: 13px;
   line-height: 18px;
-  letter-spacing: 0;
+  letter-spacing: -0.05px;
   color: var(--label-secondary);
 }
 
-.lead {
+/* How urgent (or its condition), then when it is due or was updated. */
+.metaLead {
+  flex: 0 1 auto;
+  min-width: 0;
   display: flex;
-  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+/*
+ * The room after the words: whole, on this line while it fits, else at the start of the next
+ * ("Bathroom Small" and "Bathroom Large" must never both read "Bathroom ..."). Cut short only
+ * when its name is wider than the whole line.
+ */
+.roomPart {
+  position: relative;
+  flex: 0 0 auto;
+  max-width: 100%;
   min-width: 0;
+  display: flex;
 }
 
-.who {
-  flex: 0 1 auto;
-  min-width: 2.5em;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.roomSep {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -10px;
+  display: flex;
+  align-items: center;
+  color: var(--label-secondary);
+  opacity: 0.6;
 }
 
-.note {
-  flex: 1 1 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.date {
+.when {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
-.date[data-updated] {
-  font-weight: 400;
-}
-
-.date[data-missed] {
+/* Late: the only red date on the page. */
+.when[data-late] {
   color: var(--destructive);
-  font-weight: 700;
+  font-weight: 600;
+}
+
+.part {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The room, with its drawing, where the list mixes rooms. */
+.room {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.roomIcon {
+  flex: none;
+  opacity: 0.85;
+}
+
+.roomName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sep {
+  flex: none;
+  color: var(--label-secondary);
+  opacity: 0.6;
+  margin: 0 -1px;
+}
+
+.glyph {
+  flex: none;
+  color: var(--label-secondary);
+  opacity: 0.6;
+}
+
+/* Who it is for: their emoji and first name, at the end of the title's first line. */
+.who {
+  grid-area: who;
+  max-width: 108px;
+  min-width: 0;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.05px;
+  font-weight: 500;
+  color: var(--label-secondary);
+}
+
+.whoEmoji {
+  flex: none;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.whoName {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* ── The urgency (or condition) label ──────────────────── */
+
+/*
+ * Three volumes, so red stands out: Urgent is a red pill, Within the month a dot and amber
+ * words, Not urgent a dot and grey words. The same for To maintain: Needs work, Okay, Good.
+ */
+.badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.badgeDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.badge[data-rag='red'] {
+  height: 20px;
+  padding: 0 8px 0 7px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0;
+  background: var(--rag-red-tint);
+  color: var(--rag-red-text);
+}
+
+.badge[data-rag='red'] .badgeDot {
+  background: var(--rag-red);
+}
+
+/* Amber words, 5.4:1 on the card (9:1 in dark); a hue well apart from the red. */
+.badge[data-rag='amber'] {
+  color: var(--rag-amber-text);
+}
+
+.badge[data-rag='amber'] .badgeDot {
+  background: var(--rag-amber);
+}
+
+.badge[data-rag='green'] {
+  color: var(--label-secondary);
+}
+
+.badge[data-rag='green'] .badgeDot {
+  background: var(--rag-green);
+}
+
+/* ── Just saved: lit up for a moment ─────────────────────── */
+
+/* The row of an item just saved (HomeScreen.tsx revealItem): a tint wash that fades. */
+.row[data-lit] .open::after {
+  animation: lit 2.4s ease-out;
+}
+
+@keyframes lit {
+  0%,
+  45% {
+    background-color: var(--tint-wash);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+/* Narrow phones: the first name gives way sooner, so the title keeps its room. */
+@media (max-width: 359px) {
+  .who {
+    max-width: 72px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .open::after {
+  .row,
+  .open::after,
+  .title {
     transition: none;
+  }
+
+  /* No fade: the wash is simply there for a moment. */
+  .row[data-lit] .open::after {
+    animation: none;
+    background-color: var(--tint-wash);
   }
 }

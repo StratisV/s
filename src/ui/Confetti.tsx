@@ -5,7 +5,7 @@ type Fire = (origin: Element | { x: number; y: number }) => void;
 
 const ConfettiContext = createContext<Fire>(() => {});
 
-const PARTICLES = 36;
+const PARTICLES = 14;
 const REDUCED_PARTICLES = 6;
 const GRAVITY = 1500; // px/s²
 const LIFETIME_MS = 3000;
@@ -17,8 +17,8 @@ function prefersReducedMotion(): boolean {
 
 /**
  * Hedgehog and duck confetti (README "Confetti"), drawn with the scene's
- * green duck and brown hedgehog (src/ui/animals.ts): 36 particles from the
- * centre of the tapped control, ±280 px/s horizontal, −(700–1200) px/s
+ * green duck and brown hedgehog (src/ui/animals.ts): 14 particles from the
+ * centre of the tapped control, ±200 px/s horizontal, −(560–860) px/s
  * vertical, 1500 px/s² gravity, ±420° spin, 1.7–2.6 s, 0–160 ms delay,
  * scale 0.2→1 in the first frame, fade after 75%. Full-screen overlay
  * that never takes taps; removed after ~3 s. With Reduce Motion: a small,
@@ -69,9 +69,9 @@ export function ConfettiProvider({ children }: { children: ReactNode }) {
     const count = reduced ? REDUCED_PARTICLES : PARTICLES;
     const burst = document.createElement('div');
     for (let i = 0; i < count; i++) {
-      const vx = (Math.random() * 2 - 1) * (reduced ? 90 : 280);
-      const vy = -(reduced ? 300 + Math.random() * 150 : 700 + Math.random() * 500);
-      const size = 24 + Math.random() * 20;
+      const vx = (Math.random() * 2 - 1) * (reduced ? 90 : 200);
+      const vy = -(reduced ? 300 + Math.random() * 150 : 560 + Math.random() * 300);
+      const size = 20 + Math.random() * 14;
       const spin = reduced ? 0 : (Math.random() * 2 - 1) * 420;
       const dur = 1700 + Math.random() * 900;
       const delay = Math.random() * 160;

@@ -86,26 +86,6 @@ export function updatedLabel(updatedAt: string, today: ISODate, timeZone: string
   return `Updated ${formatDay(todayIn(timeZone, at), today)}`;
 }
 
-/**
- * Pieces of the Home row meta line `🦆 Shea · Tue 20 Oct`.
- * `date` is null without a due date; when missed it reads `Missed · Tue 6 Oct`.
- * A state (To maintain) reads `🦊 Ela · Updated Tue 6 Oct`, from updated_at in `timeZone`
- * (the household's; pass data.household.timezone).
- */
-export function itemMeta(
-  item: Item,
-  members: Member[],
-  today: ISODate,
-  timeZone: string = FALLBACK_TIME_ZONE,
-): { who: string; date: string | null; missed: boolean } {
-  const who = memberLabel(members.find((m) => m.id === item.assignee_id));
-  if (isState(item)) return { who, date: updatedLabel(item.updated_at, today, timeZone), missed: false };
-  if (!item.due_date) return { who, date: null, missed: false };
-  const missed = isMissed(item, today);
-  const day = formatDay(item.due_date, today);
-  return { who, date: missed ? `Missed · ${day}` : day, missed };
-}
-
 /** Due row value in the Item sheet: `Tue 6 Oct · 2 days late`, `Tue 20 Oct` or `None`. */
 export function dueDetail(due: ISODate | null, today: ISODate): { text: string; missed: boolean } {
   if (!due) return { text: 'None', missed: false };

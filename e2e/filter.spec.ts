@@ -1,58 +1,115 @@
-import { area, areaHeadings, DEMO_STORAGE_KEY, expect, homeScreen, openSeeded, reopen, rowButton, test } from './fixtures';
+import {
+  area,
+  areaHeadings,
+  chooseWho,
+  DEMO_STORAGE_KEY,
+  expect,
+  homeScreen,
+  mine,
+  openSeeded,
+  peopleButton,
+  reopen,
+  rowButton,
+  showView,
+  summary,
+  test,
+  type Page,
+} from './fixtures';
 
 test.use({ timezoneId: 'Europe/London' });
 
-function chips(page: import('@playwright/test').Page) {
-  return homeScreen(page).getByRole('radiogroup', { name: 'Show tasks for' });
+/** The people menu, opened. */
+async function peopleMenu(page: Page) {
+  await peopleButton(page).click();
+  const menu = page.getByRole('menu', { name: 'Show tasks for' });
+  await expect(menu).toBeVisible();
+  return menu;
 }
 
 test.describe('Filter Home by person', () => {
-  test('Everyone first, then you, the others and Unassigned, each with a count', async ({ page }) => {
+  test('the people menu: Everyone, you, the others and Unassigned, each with how many are open', async ({ page }) => {
     await openSeeded(page);
-    const radios = chips(page).getByRole('radio');
+    await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Everyone');
+    const menu = await peopleMenu(page);
+    const radios = menu.getByRole('menuitemradio');
     await expect(radios.first()).toHaveAccessibleName(/^Everyone, \d+ items$/);
     await expect(radios.first()).toHaveAttribute('aria-checked', 'true');
+    await expect(radios.first()).toBeFocused();
     await expect(radios.nth(1)).toHaveAccessibleName(/^Stratis \(you\), \d+ items?$/);
     await expect(radios.last()).toHaveAccessibleName(/^Unassigned, \d+ items?$/);
+    // On screen: "5 open".
+    await expect(radios.first()).toContainText(/\d+ open$/);
     // The counts add up.
     const names = await radios.evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')!));
     const n = (s: string) => Number(/, (\d+) items?$/.exec(s)![1]);
     expect(names.slice(1).reduce((sum, s) => sum + n(s), 0)).toBe(n(names[0]));
+    // The arrow keys move, Escape closes it and focus goes back to the button.
+    await page.keyboard.press('ArrowDown');
+    await expect(radios.nth(1)).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    await expect(peopleButton(page)).toBeFocused();
   });
 
-  test("one person's items only, in the areas where they have some; remembered after a reload", async ({ page }) => {
+  test("one person's items only, in the rooms where they have some; remembered after a reload", async ({ page }) => {
     await openSeeded(page);
     const all = await areaHeadings(page).count();
-    await chips(page).getByRole('radio', { name: /^Shea,/ }).click();
-    await expect(chips(page).getByRole('radio', { name: /^Shea,/ })).toHaveAttribute('aria-checked', 'true');
+    await chooseWho(page, /^Shea,/);
+    await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Shea');
+    // The pill shows who, on a tint wash.
+    await expect(peopleButton(page)).toHaveAttribute('data-filtered', 'true');
     await expect(rowButton(page, 'Change the filter')).toBeVisible();
     await expect(rowButton(page, 'Olive oil')).toHaveCount(0);
     expect(await areaHeadings(page).count()).toBeLessThan(all);
-    // Every row shown is Shea's.
-    const metas = await homeScreen(page).locator('[data-meta]').allTextContents();
-    expect(metas.length).toBeGreaterThan(0);
-    for (const m of metas) expect(m).toMatch(/^🦆 Shea/);
+    // Every row shown is Shea's (VoiceOver hears whose; the rows don't need to say it).
+    const names = await homeScreen(page)
+      .locator('[data-item-open]')
+      .evaluateAll((els) => els.map((el) => el.textContent ?? ''));
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) expect(name).toContain(', Shea');
+    await expect(homeScreen(page).locator('[data-who]')).toHaveCount(0);
+    await expect(summary(page)).toHaveText(/^For Shea, /);
 
     await reopen(page);
-    await expect(chips(page).getByRole('radio', { name: /^Shea,/ })).toHaveAttribute('aria-checked', 'true');
+    await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Shea');
     await expect(rowButton(page, 'Olive oil')).toHaveCount(0);
 
-    await chips(page).getByRole('radio', { name: /^Everyone,/ }).click();
+    await chooseWho(page, /^Everyone,/);
     await expect(rowButton(page, 'Olive oil')).toBeVisible();
     expect(await areaHeadings(page).count()).toBe(all);
   });
 
-  test('Unassigned, and arrow keys move the choice', async ({ page }) => {
+  test('Mine is one tap, and a second tap shows everyone’s again', async ({ page }) => {
+    await openSeeded(page, 'Up next');
+    await expect(mine(page)).toHaveAttribute('aria-pressed', 'false');
+    await mine(page).click();
+    await expect(mine(page)).toHaveAttribute('aria-pressed', 'true');
+    await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Stratis (you)');
+    // Mine shows it: the pill stays quiet.
+    await expect(peopleButton(page)).not.toHaveAttribute('data-filtered');
+    await expect(summary(page)).toHaveText(/^For you, /);
+    const names = await homeScreen(page)
+      .locator('[data-item-open]')
+      .evaluateAll((els) => els.map((el) => el.textContent ?? ''));
+    for (const name of names) expect(name).toContain(', Stratis');
+    // Remembered, like any choice.
+    await reopen(page);
+    await expect(mine(page)).toHaveAttribute('aria-pressed', 'true');
+    await mine(page).click();
+    await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Everyone');
+    await expect(summary(page)).toHaveText(/^2 things need attention/);
+  });
+
+  test('Unassigned: only the items nobody has', async ({ page }) => {
     await openSeeded(page);
-    await chips(page).getByRole('radio', { name: /^Unassigned,/ }).click();
-    const metas = await homeScreen(page).locator('[data-meta]').allTextContents();
-    for (const m of metas) expect(m).toMatch(/^Unassigned/);
-    await chips(page).getByRole('radio', { name: /^Unassigned,/ }).focus();
-    await page.keyboard.press('Home');
-    await expect(chips(page).getByRole('radio', { name: /^Everyone,/ })).toBeFocused();
-    await expect(chips(page).getByRole('radio', { name: /^Everyone,/ })).toHaveAttribute('aria-checked', 'true');
-    await page.keyboard.press('ArrowRight');
-    await expect(chips(page).getByRole('radio', { name: /^Stratis \(you\),/ })).toHaveAttribute('aria-checked', 'true');
+    await chooseWho(page, /^Unassigned,/);
+    await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Unassigned');
+    const names = await homeScreen(page)
+      .locator('[data-item-open]')
+      .evaluateAll((els) => els.map((el) => el.textContent ?? ''));
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) expect(name).toContain(', Unassigned');
+    await expect(summary(page)).toHaveText(/^Unassigned: /);
   });
 
   test('someone with nothing open sees that said plainly', async ({ page }) => {
@@ -65,9 +122,44 @@ test.describe('Filter Home by person', () => {
       localStorage.setItem(key, JSON.stringify(doc));
     }, DEMO_STORAGE_KEY);
     await reopen(page);
-    await chips(page).getByRole('radio', { name: 'Ela, 0 items' }).click();
+    await chooseWho(page, /^Ela, 0 items/);
     await expect(homeScreen(page).getByText('Nothing for Ela right now.', { exact: true })).toBeVisible();
     await expect(area(page, 'Kitchen')).toHaveCount(0);
-    await expect(homeScreen(page).getByRole('button', { name: /^(Collapse|Expand) All$/ })).toHaveCount(0);
+    await expect(summary(page)).toHaveText('All clear for Ela. Nothing to do right now.');
+    await showView(page, 'Up next');
+    await expect(homeScreen(page).getByRole('status').filter({ hasText: 'Nothing for Ela' })).toHaveText('Nothing hereNothing for Ela right now.');
   });
 });
+
+for (const width of [320, 360]) {
+  test.describe(`Mine at ${width}px`, () => {
+    test.use({ viewport: { width, height: 700 } });
+
+    test('keeps its word, every view’s name stays whole, and each control takes taps 44px wide and tall', async ({ page }) => {
+      await openSeeded(page, 'Up next');
+      // "Mine" in words (the emoji alone looked like the profile button on the hero).
+      await expect(mine(page).getByText('Mine', { exact: true })).toBeVisible();
+      for (const name of ['Up next', 'Rooms', 'Calendar']) {
+        const label = homeScreen(page).getByRole('radio', { name, exact: true }).locator('span');
+        expect(await label.evaluate((el) => el.scrollWidth <= el.clientWidth + 0.5), name).toBe(true);
+      }
+      // 21px either side of each control's centre, and 21px above and below, is still that control.
+      for (const control of [mine(page), peopleButton(page)]) {
+        const box = (await control.boundingBox())!;
+        const name = await control.getAttribute('aria-label');
+        const hits = await page.evaluate(
+          ([cx, cy]) =>
+            [
+              [cx - 21, cy],
+              [cx + 21, cy],
+              [cx, cy - 21],
+              [cx, cy + 21],
+            ].map(([x, y]) => document.elementFromPoint(x, y)?.closest('button')?.getAttribute('aria-label') ?? null),
+          [box.x + box.width / 2, box.y + box.height / 2],
+        );
+        expect(hits, name!).toEqual(Array(4).fill(name));
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    });
+  });
+}

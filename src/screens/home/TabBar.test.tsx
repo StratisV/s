@@ -65,4 +65,16 @@ describe('AddButton', () => {
     rerender(show('stats'));
     expect(add()?.hasAttribute('data-enter')).toBe(true);
   });
+
+  it('says which room it adds to, when Home gives it one', () => {
+    const onAdd = vi.fn();
+    const { rerender } = render(<AddButton tab="home" room="Garden" onAdd={onAdd} />);
+    const add = screen.getByRole('button', { name: 'New item in Garden' });
+    expect(add.textContent).toBe('Garden');
+    expect(add.hasAttribute('data-room')).toBe(true);
+    fireEvent.click(add);
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    rerender(<AddButton tab="home" room={null} onAdd={onAdd} />);
+    expect(screen.getByRole('button', { name: 'New item' }).textContent).toBe('');
+  });
 });

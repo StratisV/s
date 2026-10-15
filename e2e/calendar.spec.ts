@@ -1,15 +1,19 @@
 import {
   areas,
   calendar,
+  chooseWho,
   expect,
   goToTab,
   housekeepingScreen,
   homeScreen,
+  meta,
   openSeeded,
   reopen,
   ring,
+  showView,
   tabButton,
   test,
+  views,
   type Locator,
   type Page,
 } from './fixtures';
@@ -32,8 +36,10 @@ const said = (page: Page) => calendar(page).locator('[data-announcer]');
 const toggle = (page: Page, name: 'Show month' | 'Show week') => calendar(page).getByRole('button', { name, exact: true });
 const control = (page: Page, name: 'Today' | 'Previous week' | 'Next week' | 'Previous month' | 'Next month') =>
   calendar(page).getByRole('button', { name, exact: true });
-/** The line for today while it is chosen and not opened. */
+/** The line Housekeeping's bar shows for today; Home never shows it (today's list is open at once). */
 const summary = (page: Page) => calendar(page).locator('[data-today-summary]');
+/** The calendar's heading over the card: "This week", "Next week", "This month"... */
+const heading = (page: Page) => calendar(page).getByRole('heading', { level: 2 });
 /** The accessible name of the focused element. */
 const focusedName = (page: Page) =>
   page.evaluate(() => {
@@ -49,58 +55,71 @@ function dots(button: Locator): Promise<string[]> {
 }
 
 test.beforeEach(async ({ page }) => {
-  await openSeeded(page);
+  await openSeeded(page, 'Calendar');
 });
 
 test.describe('Home calendar', () => {
   test('the week strip: this week, today chosen and ringed, each day marked', async ({ page }) => {
-    // Under the person filter, above the areas.
-    const order = await homeScreen(page)
-      .locator('[role="radiogroup"], section[data-calendar], section[data-area-id]')
-      .evaluateAll((els) => els.slice(0, 3).map((el) => el.getAttribute('aria-label') ?? (el.hasAttribute('data-calendar') ? 'calendar' : 'area')));
-    expect(order).toEqual(['Show tasks for', 'calendar', 'area']);
+    // Home's third view, under the view switch, on its own: no rooms with it.
+    await expect(views(page).getByRole('radio', { name: 'Calendar' })).toHaveAttribute('aria-checked', 'true');
+    await expect(areas(page)).toHaveCount(0);
+    // A section named by its heading, which says which week it is.
+    await expect(heading(page)).toHaveText('This week');
+    await expect(homeScreen(page).getByRole('region', { name: 'This week' })).toBeVisible();
 
     await expect(grid(page)).toHaveAccessibleName('Week of Monday 5 October');
     await expect(grid(page).getByRole('button')).toHaveCount(7);
     await expect(calendar(page).getByText('5 to 11 October', { exact: true })).toBeVisible();
     await expect(control(page, 'Previous week')).toBeVisible();
     await expect(control(page, 'Next week')).toBeVisible();
-    await expect(day(page, 'Tuesday 6 October')).toHaveAccessibleName('Tuesday 6 October, 1 missed');
-    await expect(day(page, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today, 1 due, selected');
-    await expect(day(page, 'Saturday 10 October')).toHaveAccessibleName('Saturday 10 October, 1 due');
+    await expect(day(page, 'Tuesday 6 October')).toHaveAccessibleName('Tuesday 6 October, 1 missed (urgent)');
+    await expect(day(page, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today, 1 due (not urgent), selected');
+    await expect(day(page, 'Saturday 10 October')).toHaveAccessibleName('Saturday 10 October, 1 due (not urgent)');
     await expect(day(page, 'Friday 9 October')).toHaveAccessibleName('Friday 9 October');
     expect(await dots(day(page, 'Tuesday 6 October'))).toEqual(['red']);
     // Missed: the number in red.
     await expect(day(page, 'Tuesday 6 October')).toHaveCSS('color', 'rgb(215, 0, 21)');
+    // Under the strip too, what the dots mean in words (each day's name says it for VoiceOver).
+    const legend = calendar(page).locator('[data-legend]');
+    await expect(legend).toBeVisible();
+    await expect(legend).toHaveAttribute('aria-hidden', 'true');
+    await expect(legend).toContainText('UrgentWithin the monthNot urgent');
     // Today is chosen: filled with the tint, its cell selected.
     await expect(day(page, 'Thursday 8 October').locator('xpath=..')).toHaveAttribute('aria-selected', 'true');
 
-    // Today's rows are in the areas just below: one line here until today is chosen.
-    await expect(summary(page)).toHaveText('1 due today');
-    await expect(panel(page)).toHaveCount(0);
-    await expect(control(page, 'Today')).toHaveCount(0);
-    await day(page, 'Thursday 8 October').click();
+    // Today's list is open at once, with no line in its place.
     await expect(summary(page)).toHaveCount(0);
+    await expect(control(page, 'Today')).toHaveCount(0);
     await expect(panel(page).getByRole('heading', { level: 3 })).toHaveText('Thursday 8 October');
     await expect(panel(page).getByRole('button', { name: 'Mark Empty the dehumidifier as done' })).toBeVisible();
-    // A row due that day leaves its date out; the note gets the room.
-    await expect(panel(page).locator('[data-meta]')).toHaveText('🦆 Shea');
+    // A row due that day leaves its date out; it says its urgency, its room and who it is for.
+    await expect(panel(page).locator('[data-meta]')).toHaveText('Not urgent·Garden Lounge');
+    await expect(panel(page).locator('[data-who]')).toHaveText('🦆Shea');
+    await day(page, 'Thursday 8 October').click();
+    await expect(panel(page).getByRole('heading', { level: 3 })).toHaveText('Thursday 8 October');
   });
 
   test('the strip moves a week at a time by taps, and Today comes back, also on a Sunday', async ({ page }) => {
     await control(page, 'Next week').click();
     await expect(grid(page)).toHaveAccessibleName('Week of Monday 12 October');
     await expect(calendar(page).getByText('12 to 18 October', { exact: true })).toBeVisible();
+    await expect(heading(page)).toHaveText('Next week');
     await expect(grid(page).locator('[data-today]')).toHaveCount(0);
+    // Today's list would read as part of next week: one quiet line asks for a day instead.
+    await expect(panel(page)).toHaveCount(0);
+    await expect(calendar(page).locator('[data-calendar-pick]')).toHaveText('Pick a day to see what is due.');
     await day(page, 'Wednesday 14 October').click();
+    await expect(calendar(page).locator('[data-calendar-pick]')).toHaveCount(0);
     await expect(panel(page).getByRole('heading', { level: 3 })).toHaveText('Wednesday 14 October');
     await control(page, 'Previous week').click();
     await control(page, 'Previous week').click();
     await expect(calendar(page).getByText('28 Sep to 4 Oct', { exact: true })).toBeVisible();
+    await expect(heading(page)).toHaveText('Last week');
     await control(page, 'Today').click();
     await expect(grid(page)).toHaveAccessibleName('Week of Monday 5 October');
-    await expect(day(page, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today, 1 due, selected');
-    await expect(summary(page)).toHaveText('1 due today');
+    await expect(day(page, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today, 1 due (not urgent), selected');
+    await expect(panel(page).getByRole('heading', { level: 3 })).toHaveText('Thursday 8 October');
+    await expect(heading(page)).toHaveText('This week');
     await expect(control(page, 'Today')).toHaveCount(0);
   });
 
@@ -109,11 +128,13 @@ test.describe('Home calendar', () => {
     await control(page, 'Next month').click();
     await control(page, 'Next month').click();
     await expect(grid(page)).toHaveAccessibleName('December 2026');
+    await expect(heading(page)).toHaveText('In 2 months');
     await day(page, 'Thursday 3 December').click();
     await toggle(page, 'Show week').click();
     // The chosen day's week, named, with its title.
     await expect(grid(page)).toHaveAccessibleName('Week of Monday 30 November');
-    await expect(calendar(page).getByText('30 Nov to 6 Dec', { exact: true })).toBeVisible();
+    await expect(heading(page)).toHaveText('In 8 weeks');
+    await expect(calendar(page).locator('[aria-live]').filter({ hasText: /^30 Nov to 6 Dec$/ })).toBeVisible();
     await expect(panel(page).getByRole('heading', { level: 3 })).toHaveText('Thursday 3 December');
     await control(page, 'Today').click();
     await expect(grid(page)).toHaveAccessibleName('Week of Monday 5 October');
@@ -123,13 +144,14 @@ test.describe('Home calendar', () => {
   test('Show month: the busy day, faint repeats, the visit and the legend; remembered on this device', async ({ page }) => {
     await toggle(page, 'Show month').click();
     await expect(grid(page)).toHaveAccessibleName('October 2026');
+    await expect(heading(page)).toHaveText('This month');
     await expect(toggle(page, 'Show week')).toBeVisible();
     await expect(calendar(page).getByRole('button', { name: 'Previous month' })).toBeVisible();
     await expect(calendar(page).getByRole('button', { name: 'Next month' })).toBeEnabled();
 
     // Four due: three dots, red first, and "+1".
     const busy = day(page, 'Wednesday 14 October');
-    await expect(busy).toHaveAccessibleName('Wednesday 14 October, 4 due');
+    await expect(busy).toHaveAccessibleName('Wednesday 14 October, 4 due (1 urgent, 1 within the month, 2 not urgent)');
     expect(await dots(busy)).toEqual(['red', 'amber', 'green']);
     await expect(busy).toContainText('+1');
     // The bins come round every week after, clearly lighter.
@@ -138,8 +160,8 @@ test.describe('Home calendar', () => {
     expect(await dots(later)).toEqual(['green (repeat)']);
     // Lighter, but 3:1 against the card: a hollow ring in the darker green at 80%.
     await expect(later.locator('[data-repeat]')).toHaveCSS('opacity', '0.8');
-    await expect(later.locator('[data-repeat]')).toHaveCSS('box-shadow', 'rgb(36, 138, 61) 0px 0px 0px 1.5px inset');
-    await expect(day(page, 'Thursday 15 October')).toHaveAccessibleName('Thursday 15 October, 1 due, 1 repeat');
+    await expect(later.locator('[data-repeat]')).toHaveCSS('box-shadow', 'rgb(31, 122, 54) 0px 0px 0px 1.5px inset');
+    await expect(day(page, 'Thursday 15 October')).toHaveAccessibleName('Thursday 15 October, 1 due (not urgent), 1 repeat');
     // The housekeeper's visit: the dot in the circle Housekeeping's calendar uses.
     const visit = day(page, 'Thursday 1 October');
     await expect(visit).toHaveAccessibleName('Thursday 1 October, housekeeping visit');
@@ -147,9 +169,12 @@ test.describe('Home calendar', () => {
     // Today keeps its ring when another day is chosen.
     await busy.click();
     const today = day(page, 'Thursday 8 October');
-    await expect(today).toHaveAccessibleName('Thursday 8 October, today, 1 due');
+    await expect(today).toHaveAccessibleName('Thursday 8 October, today, 1 due (not urgent)');
     await expect(today.locator('span').first()).toHaveCSS('box-shadow', 'rgb(0, 122, 255) 0px 0px 0px 1.5px inset');
-    await expect(calendar(page).locator('[data-legend]')).toHaveText(/Due.*Missed.*Repeats.*Housekeeping/);
+    // What the marks mean, in words: the dots' colours, a repeat, the visit, a missed day.
+    await expect(calendar(page).locator('[data-legend]')).toHaveText(
+      'UrgentWithin the monthNot urgentRepeatHousekeepingRed date: missed',
+    );
 
     // Remembered after a reload; the week again, also remembered.
     await reopen(page);
@@ -164,10 +189,10 @@ test.describe('Home calendar', () => {
 
   test('the person filter: only their items mark the calendar, the visit stays', async ({ page }) => {
     await toggle(page, 'Show month').click();
-    await expect(day(page, 'Monday 12 October')).toHaveAccessibleName('Monday 12 October, 1 due');
-    await homeScreen(page).getByRole('radiogroup', { name: 'Show tasks for' }).getByRole('radio', { name: /^Shea,/ }).click();
+    await expect(day(page, 'Monday 12 October')).toHaveAccessibleName('Monday 12 October, 1 due (within the month)');
+    await chooseWho(page, /^Shea,/);
     // Shea's two: the shower and the garden furniture.
-    await expect(day(page, 'Wednesday 14 October')).toHaveAccessibleName('Wednesday 14 October, 2 due');
+    await expect(day(page, 'Wednesday 14 October')).toHaveAccessibleName('Wednesday 14 October, 2 due (1 within the month, 1 not urgent)');
     expect(await dots(day(page, 'Wednesday 14 October'))).toEqual(['amber', 'green']);
     // The water test strips are unassigned, the plants Ela's.
     await expect(day(page, 'Monday 12 October')).toHaveAccessibleName('Monday 12 October');
@@ -185,12 +210,12 @@ test.describe('Home calendar', () => {
     await expect(panel(page).getByRole('heading', { level: 3 })).toHaveText('Wednesday 21 October');
     await expect(panel(page).getByRole('button', { name: /^Mark / })).toHaveCount(0);
     // Worded as a repeat of its due date, how often after it.
-    await expect(panel(page).locator('[data-meta]')).toHaveText('🦔 Stratis · Repeat of Wed 14 Oct');
-    await expect(panel(page).getByRole('listitem')).toContainText('Every week');
+    await expect(panel(page).locator('[data-meta]')).toHaveText('Not urgent·Repeat of Wed 14 Oct·Every week·Front garden');
+    await expect(panel(page).locator('[data-who]')).toHaveText('🦔Stratis');
 
     await day(page, 'Wednesday 14 October').click();
-    await expect(said(page)).toHaveText('Wednesday 14 October: 4 due. Details below the calendar.');
-    await expect(day(page, 'Wednesday 14 October')).toHaveAccessibleName('Wednesday 14 October, 4 due, selected');
+    await expect(said(page)).toHaveText('Wednesday 14 October: 4 due (1 urgent, 1 within the month, 2 not urgent). Details below the calendar.');
+    await expect(day(page, 'Wednesday 14 October')).toHaveAccessibleName('Wednesday 14 October, 4 due (1 urgent, 1 within the month, 2 not urgent), selected');
     const rings = panel(page).getByRole('button', { name: /^Mark / });
     await expect(rings).toHaveCount(4);
     // In the order of its marks: the red one first, then amber, then green.
@@ -200,22 +225,24 @@ test.describe('Home calendar', () => {
       'Mark Cover the garden furniture as done',
       'Mark Put the bins out as done',
     ]);
-    // A one-off: gone from the day and from its area.
+    // A one-off: gone from the day (and from its room, below).
     await panel(page).getByRole('button', { name: 'Mark Cover the garden furniture as done' }).click();
     await expect(rings).toHaveCount(3);
-    await expect(ring(page, 'Cover the garden furniture')).toHaveCount(0);
-    await expect(day(page, 'Wednesday 14 October')).toHaveAccessibleName('Wednesday 14 October, 3 due, selected');
+    await expect(day(page, 'Wednesday 14 October')).toHaveAccessibleName('Wednesday 14 October, 3 due (1 urgent, 1 within the month, 1 not urgent), selected');
     // A weekly one moves on a week: due on the 21st, its repeat on the 28th.
     await panel(page).getByRole('button', { name: 'Mark Put the bins out as done' }).click();
     await expect(rings).toHaveCount(2);
-    await expect(day(page, 'Wednesday 21 October')).toHaveAccessibleName('Wednesday 21 October, 1 due');
+    await expect(day(page, 'Wednesday 21 October')).toHaveAccessibleName('Wednesday 21 October, 1 due (not urgent)');
     await expect(day(page, 'Wednesday 28 October')).toHaveAccessibleName('Wednesday 28 October, 1 repeat');
-    await expect(areas(page).getByRole('listitem').filter({ hasText: 'Put the bins out' }).locator('[data-meta]')).toHaveText(
-      '🦔 Stratis · Wed 21 Oct',
-    );
     // The row opens the Item sheet.
     await panel(page).getByRole('button', { name: /^Shower draining slowly/ }).click();
     await expect(page.getByRole('dialog', { name: 'Edit item' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: 'Edit item' })).toHaveCount(0);
+    // Everywhere: the rooms say the same.
+    await showView(page, 'Rooms');
+    await expect(ring(page, 'Cover the garden furniture')).toHaveCount(0);
+    await expect(meta(page, 'Put the bins out')).toHaveText('Not urgent·In 13 days');
   });
 
   test('the visit opens that day in Housekeeping', async ({ page }) => {
@@ -247,7 +274,7 @@ test.describe('Home calendar', () => {
     await page.keyboard.press('ArrowRight');
     await page.keyboard.press('Enter');
     await expect(day(page, 'Wednesday 14 October')).toBeFocused();
-    await expect(said(page)).toHaveText('Wednesday 14 October: 4 due. Details below the calendar.');
+    await expect(said(page)).toHaveText('Wednesday 14 October: 4 due (1 urgent, 1 within the month, 2 not urgent). Details below the calendar.');
     await expect(panel(page).getByRole('heading', { level: 3 })).toHaveText('Wednesday 14 October');
     // Only the chosen day is in the tab order.
     await expect(grid(page).locator('button[tabindex="0"]')).toHaveCount(1);
@@ -266,16 +293,23 @@ test.describe('Home calendar', () => {
     await expect(day(page, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today, selected');
   });
 
-  test('keyboard: completing the last row of a day that is off the grid puts focus on its heading', async ({ page }) => {
+  test('keyboard: moving into another week leaves the chosen day’s list out until Enter chooses a day', async ({ page }) => {
     await day(page, 'Tuesday 6 October').click();
     await page.keyboard.press('ArrowDown');
     await expect(grid(page)).toHaveAccessibleName('Week of Monday 12 October');
+    expect(await focusedName(page)).toMatch(/^Tuesday 13 October/);
+    await expect(panel(page)).toHaveCount(0);
+    await expect(calendar(page).locator('[data-calendar-pick]')).toHaveText('Pick a day to see what is due.');
+    await page.keyboard.press('Enter');
+    await expect(panel(page).getByRole('heading', { level: 3 })).toHaveText('Tuesday 13 October');
+    // Back to the day with its row, from the keyboard, and it completes from there.
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('Enter');
     await page.keyboard.press('Tab');
     await expect(panel(page).getByRole('button', { name: 'Mark Heaters not working as done' })).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(panel(page)).toContainText('Nothing due.');
-    await expect(panel(page).getByRole('heading', { level: 3, name: 'Tuesday 6 October' })).toBeFocused();
-    expect(await focusedName(page)).toBe('Tuesday 6 October');
+    await expect(day(page, 'Tuesday 6 October')).toBeFocused();
   });
 
   test('a new day after midnight: the strip shows the new week, even after a tap', async ({ page }) => {
@@ -286,7 +320,7 @@ test.describe('Home calendar', () => {
     await expect(grid(page)).toHaveAccessibleName('Week of Monday 12 October');
     await expect(grid(page).locator('[data-today][data-selected]')).toHaveAccessibleName(/^Monday 12 October, today/);
     await expect(grid(page).locator('button[tabindex="0"]')).toHaveAccessibleName(/^Monday 12 October, today/);
-    await expect(summary(page)).toBeVisible();
+    await expect(panel(page).getByRole('heading', { level: 3 })).toHaveText('Monday 12 October');
   });
 
   test('Reduce Motion: no transitions', async ({ page }) => {
@@ -300,7 +334,7 @@ test.describe('Home calendar fits', () => {
   for (const width of [320, 375, 402]) {
     test(`at ${width}px: no sideways scroll, days at least 40 by 44, the rest 44px targets`, async ({ page }) => {
       await page.setViewportSize({ width, height: 800 });
-      await openSeeded(page);
+      await openSeeded(page, 'Calendar');
       await toggle(page, 'Show month').click();
       await day(page, 'Thursday 1 October').click();
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
@@ -345,27 +379,29 @@ test.describe('Home calendar fits', () => {
     });
   }
 
-  test('the week strip keeps the areas up: at 402 by 874 the first area and its first row on the first screen', async ({ page }) => {
+  test('a view of its own: at 402 by 874 its heading, the strip and today’s first row on the first screen', async ({ page }) => {
+    await expect(heading(page)).toBeInViewport({ ratio: 1 });
+    await expect(grid(page)).toBeInViewport({ ratio: 1 });
+    await expect(panel(page).getByRole('listitem').first()).toBeInViewport({ ratio: 1 });
+    // Rooms has no calendar above it: the first room and its first row on the first screen.
+    await showView(page, 'Rooms');
     const first = areas(page).first();
     await expect(first.getByRole('heading', { level: 2 })).toBeInViewport({ ratio: 1 });
     await expect(first.getByRole('listitem').first()).toBeInViewport({ ratio: 1 });
   });
 
-  test('at 320 by 700 the first area’s name still shows on the first screen', async ({ page }) => {
+  test('at 320 by 700 the first room’s name shows on the first screen in Rooms', async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 700 });
-    await openSeeded(page);
+    await openSeeded(page, 'Rooms');
     const name = areas(page).first().getByRole('heading', { level: 2 });
-    await expect(name).toBeInViewport();
-    const box = (await name.boundingBox())!;
-    // Its text (20px on a 25px line) is above the fold.
-    expect(box.y + 22).toBeLessThanOrEqual(700);
+    await expect(name).toBeInViewport({ ratio: 1 });
   });
 
   for (const reducedMotion of ['no-preference', 'reduce'] as const) {
     test(`at 320 by 700, a day low in the month comes up above the + (${reducedMotion})`, async ({ page }) => {
       await page.emulateMedia({ reducedMotion });
       await page.setViewportSize({ width: 320, height: 700 });
-      await openSeeded(page);
+      await openSeeded(page, 'Calendar');
       await toggle(page, 'Show month').click();
       // The month's top just under the docked tab switch, its last row low on the screen.
       await calendar(page).evaluate((el) => {
@@ -402,9 +438,11 @@ test.describe('the Housekeeping calendar: the same date picker', () => {
     await expect(hkCalendar.getByText('5 to 11 October', { exact: true })).toBeVisible();
     await expect(hkCalendar.getByRole('button', { name: 'Show month', exact: true })).toBeVisible();
     await expect(hkCalendar.getByRole('button', { name: 'Next week' })).toBeDisabled();
-    // The bar is Home's; the card is as wide, a little taller without marks under the days.
+    // The bar is Home's (Home's is 48px tall, for its heading); the card is as wide, a little
+    // taller without marks under the days.
     const bar = (await hkCalendar.locator('[data-calendar-bar]').boundingBox())!;
-    expect([bar.x, bar.width, bar.height]).toEqual([homeBar.x, homeBar.width, homeBar.height]);
+    expect([bar.x, bar.width]).toEqual([homeBar.x, homeBar.width]);
+    expect([bar.height, homeBar.height]).toEqual([44, 48]);
     const card = hkGrid.locator('xpath=..');
     const box = (await card.boundingBox())!;
     expect([box.x, box.width]).toEqual([homeCard.x, homeCard.width]);

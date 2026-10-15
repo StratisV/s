@@ -10,6 +10,7 @@ import {
   openItem,
   openProfile,
   openSeeded,
+  peopleButton,
   reopen,
   ring,
   rowButton,
@@ -18,6 +19,7 @@ import {
   test,
   type Locator,
   type Page,
+  who,
 } from './fixtures';
 
 // People before they join (docs/ARCHITECTURE.md "People before they join"), in demo mode:
@@ -88,8 +90,12 @@ async function assign(page: Page, title: string, option: string): Promise<void> 
   await expect(sheet).toHaveCount(0);
 }
 
-function chips(page: Page): Locator {
-  return homeScreen(page).getByRole('radiogroup', { name: 'Show tasks for' });
+/** Opens Home's people menu ("Show tasks for"); resolves to the menu. */
+async function peopleMenu(page: Page): Promise<Locator> {
+  await peopleButton(page).click();
+  const menu = page.getByRole('menu', { name: 'Show tasks for' });
+  await expect(menu).toBeVisible();
+  return menu;
 }
 
 test.describe('People before they join', () => {
@@ -178,19 +184,23 @@ test.describe('People before they join', () => {
     await sheet.getByRole('button', { name: 'Close' }).click();
     await expect(sheet).toHaveCount(0);
     await assign(page, 'Kitchen paper', '🐳 Robin · Not joined yet');
-    await expect(meta(page, 'Kitchen paper')).toHaveText('🐳 Robin · Thu 5 Nov');
+    await expect(who(page, 'Kitchen paper')).toHaveText('🐳Robin');
+    await expect(meta(page, 'Kitchen paper')).toHaveText('Not urgent·In 4 weeks');
 
-    // In the person filter like anyone else (VoiceOver hears "not joined yet").
-    const chip = chips(page).getByRole('radio', { name: 'Robin, 1 item, not joined yet' });
-    await expect(chip).toHaveText('🐳Robin1');
-    await chip.click();
-    await expect(chip).toHaveAttribute('aria-checked', 'true');
+    // In the people menu like anyone else, saying so (VoiceOver hears "not joined yet").
+    const menu = await peopleMenu(page);
+    const robin = menu.getByRole('menuitemradio', { name: 'Robin, 1 item, not joined yet' });
+    await expect(robin).toHaveText(/Robin.*Not joined yet.*1 open$/);
+    await robin.click();
+    await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Robin');
     await expect(rowButton(page, 'Kitchen paper')).toBeVisible();
-    await expect(homeScreen(page).locator('[data-meta]')).toHaveText(['🐳 Robin · Thu 5 Nov']);
+    await expect(homeScreen(page).locator('[data-item-open]')).toHaveCount(1);
+    // One person's items: the rows leave who out.
+    await expect(homeScreen(page).locator('[data-who]')).toHaveCount(0);
 
-    // Done for Robin: credited to Robin.
+    // Done for Robin: credited to Robin. Monthly, so next on Sat 5 Dec.
     await ring(page, 'Kitchen paper').click();
-    await expect(meta(page, 'Kitchen paper')).toHaveText('🐳 Robin · Sat 5 Dec');
+    await expect(meta(page, 'Kitchen paper')).toHaveText('Not urgent·In 8 weeks');
     await goToTab(page, 'Stats');
     await expect(
       statsScreen(page).getByRole('list', { name: 'Done per person' }).getByRole('listitem').last(),
@@ -198,6 +208,8 @@ test.describe('People before they join', () => {
   });
 
   test('set their email later, then remove them: their items become unassigned', async ({ page }) => {
+    // Four trips through Profile and People, each sliding in and out: about 20s alone.
+    test.setTimeout(60_000);
     let dialog = await openPeople(page);
     await addPerson(dialog, { name: 'Robin', emoji: '🐳' });
     await expect(personRow(dialog, 'Robin')).toHaveText('🐳Robin, Not joined yet · , No email yet');
@@ -231,8 +243,11 @@ test.describe('People before they join', () => {
     await expect(people(dialog).getByRole('button', { name: 'Add Person' })).toBeFocused();
     await closePeople(page, dialog);
 
-    await expect(meta(page, 'Kitchen paper')).toHaveText('Unassigned · Thu 5 Nov');
-    await expect(chips(page).getByRole('radio', { name: /^Robin/ })).toHaveCount(0);
+    await expect(who(page, 'Kitchen paper')).toHaveCount(0);
+    await expect(rowButton(page, 'Kitchen paper')).toHaveAccessibleName(/, Unassigned, /);
+    const menu = await peopleMenu(page);
+    await expect(menu.getByRole('menuitemradio', { name: /^Robin/ })).toHaveCount(0);
+    await page.keyboard.press('Escape');
   });
 });
 
@@ -263,7 +278,7 @@ test.describe('Joining as someone who was added', () => {
     // In the home as Stratis, with his items and the new emoji.
     await expect(homeScreen(page).getByRole('heading', { name: 'Home', level: 1 })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🐳');
-    await expect(meta(page, 'Kitchen paper')).toHaveText('🐳 Stratis · Thu 5 Nov');
+    await expect(who(page, 'Kitchen paper')).toHaveText('🐳Stratis');
   });
 });
 
@@ -280,8 +295,16 @@ test.describe('People on two phones', () => {
 
     const dialog = await openPeople(page);
     await addPerson(dialog, { name: 'Robin', emoji: '🐳' });
-    const chip = chips(other).getByRole('radio', { name: /^Robin, 0 items, not joined yet$/ });
-    await expect(chip).toBeVisible();
+    // In the other phone's people menu, without a reload.
+    await expect(async () => {
+      const menu = await peopleMenu(other);
+      try {
+        await expect(menu.getByRole('menuitemradio', { name: /^Robin, 0 items, not joined yet$/ })).toBeVisible({ timeout: 1_000 });
+      } finally {
+        await other.keyboard.press('Escape');
+        await expect(menu).toHaveCount(0);
+      }
+    }).toPass();
 
     const otherPeople = await openPeople(other);
     await expect(personRow(otherPeople, 'Robin')).toHaveText('🐳Robin, Not joined yet · , No email yet');

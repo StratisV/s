@@ -1,5 +1,7 @@
-/* home.os design tokens (design/README.md "Design tokens"). */
+/* home.os design tokens (design/README.md "Design tokens"). Dark values follow at the end. */
 :root {
+  color-scheme: light dark;
+
   /* Colours */
   --bg: #f2f2f7;
   --card: #ffffff;
@@ -7,14 +9,42 @@
   --label: #000000;
   --label-secondary: #6e6e73;
   --label-tertiary: #3c3c43;
+  /* Placeholders, idle chevrons and disabled glyphs (iOS quaternary label). */
+  --label-quaternary: rgba(60, 60, 67, 0.3);
   --label-strong: #1c1c1e;
   --separator: rgba(60, 60, 67, 0.16);
   --tint: #007aff;
   /* Tint for small text on light tinted fills and glass (5.2:1 or better; #007aff is 3 to 4:1 there). */
   --tint-text: #0058b9;
+  /* A soft tint wash: a selected or lit-up control. */
+  --tint-wash: rgba(0, 122, 255, 0.1);
   --destructive: #d70015;
   --fill-tertiary: rgba(118, 118, 128, 0.12);
+  --fill-secondary: rgba(118, 118, 128, 0.16);
   --toggle-on: #34c759;
+
+  /* A To do's ring before it is done: neutral grey, 3:1 against the card (WCAG 1.4.11). */
+  --ring-idle: #8e8e93;
+  /* The sliding thumb of a segmented control. */
+  --thumb: #ffffff;
+  /* Bars that float over the page (the docked tab switch). */
+  --bar-glass: rgba(242, 242, 247, 0.92);
+  /* Menus and action sheets: frosted glass over the page. */
+  --menu-glass: rgba(250, 250, 252, 0.98);
+  /* The same, solid, where there is no glass (Reduce Transparency, or no backdrop-filter). */
+  --menu-solid: #fafafc;
+  --menu-separator: rgba(60, 60, 67, 0.14);
+  --sheet-glass: rgba(255, 255, 255, 0.92);
+  /* Liquid glass controls over content (Chat's composer, its reaction bar and pills). */
+  --glass-fill: rgba(255, 255, 255, 0.72);
+  --glass-strong: rgba(255, 255, 255, 0.92);
+  --glass-highlight: rgba(255, 255, 255, 0.75);
+  /* The toast (Undo, errors): dark in both appearances; in dark mode lifted off the dark cards. */
+  --toast-bg: rgba(28, 28, 30, 0.92);
+  --toast-edge: transparent;
+  --toast-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  /* The words in a field before anything is typed (Chat's "Message"). */
+  --placeholder: rgba(60, 60, 67, 0.6);
 
   --rag-red: #ff3b30;
   --rag-amber: #ff9500;
@@ -23,8 +53,10 @@
   --rag-amber-tint: rgba(255, 149, 0, 0.14);
   --rag-green-tint: rgba(52, 199, 89, 0.14);
   --rag-red-text: #d70015;
-  --rag-amber-text: #c93400;
-  --rag-green-text: #248a3d;
+  /* Amber words ("Within the month", "Okay"): 5.4:1 on the card, and a hue well apart from the red. */
+  --rag-amber-text: #9a5b00;
+  /* 4.8:1 on the green wash (the picker's chosen "Not urgent" or "Good"); #248a3d was 3.9:1 there. */
+  --rag-green-text: #1f7a36;
 
   /* Type */
   --font-text: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', 'Figtree Variable', system-ui,
@@ -44,6 +76,9 @@
   --shadow-glass: 0 1px 3px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.08);
   --shadow-add: 0 6px 18px rgba(0, 122, 255, 0.35);
   --shadow-segment: 0 3px 8px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+  --shadow-menu: 0 12px 40px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.06), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  /* A raised card on the page (Home's Looking after tiles). */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
 
   /* Layout. The OS draws the status bar; we only respect the safe areas. */
   --top-inset: env(safe-area-inset-top, 0px);
@@ -57,4 +92,63 @@
   /* Motion (iOS sheet curve) */
   --sheet-duration: 480ms;
   --sheet-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  /* A small spring, for a check popping in. */
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/*
+ * Dark appearance (iOS system colours, dark): black page, #1c1c1e cards, white labels.
+ * Status text tones are lighter so small words keep 4.5:1 on the dark cards.
+ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --card: #1c1c1e;
+    --avatar-bg: #2c2c2e;
+    --label: #ffffff;
+    --label-secondary: rgba(235, 235, 245, 0.62);
+    --label-tertiary: #d1d1d6;
+    --label-quaternary: rgba(235, 235, 245, 0.3);
+    --label-strong: #f2f2f7;
+    --separator: rgba(84, 84, 88, 0.62);
+    --tint: #0a84ff;
+    --tint-text: #5aa9ff;
+    --tint-wash: rgba(10, 132, 255, 0.2);
+    --destructive: #ff453a;
+    --fill-tertiary: rgba(118, 118, 128, 0.24);
+    --fill-secondary: rgba(118, 118, 128, 0.32);
+    --toggle-on: #30d158;
+
+    --ring-idle: #7c7c80;
+    --thumb: #545458;
+    --bar-glass: rgba(10, 10, 12, 0.86);
+    --menu-glass: rgba(44, 44, 46, 0.98);
+    --menu-solid: #2c2c2e;
+    --menu-separator: rgba(84, 84, 88, 0.6);
+    --sheet-glass: rgba(44, 44, 46, 0.94);
+    --glass-fill: rgba(44, 44, 46, 0.72);
+    --glass-strong: rgba(44, 44, 46, 0.92);
+    --glass-highlight: rgba(255, 255, 255, 0.1);
+    /* Two steps lighter than a card (#1c1c1e), with an edge, so it never sinks into one. */
+    --toast-bg: rgba(58, 58, 60, 0.96);
+    --toast-edge: rgba(255, 255, 255, 0.14);
+    --toast-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+    --placeholder: rgba(235, 235, 245, 0.6);
+
+    --rag-red: #ff453a;
+    --rag-amber: #ff9f0a;
+    --rag-green: #30d158;
+    --rag-red-tint: rgba(255, 69, 58, 0.2);
+    --rag-amber-tint: rgba(255, 159, 10, 0.18);
+    --rag-green-tint: rgba(48, 209, 88, 0.18);
+    --rag-red-text: #ff6961;
+    --rag-amber-text: #ffb340;
+    --rag-green-text: #4ade80;
+
+    --shadow-glass: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.4);
+    --shadow-add: 0 6px 18px rgba(10, 132, 255, 0.35);
+    --shadow-segment: 0 3px 8px rgba(0, 0, 0, 0.3);
+    --shadow-menu: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+    --shadow-card: none;
+  }
 }

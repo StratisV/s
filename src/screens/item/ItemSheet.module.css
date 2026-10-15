@@ -26,11 +26,11 @@
 .close,
 .share,
 .save {
-  width: 44px;
   height: 44px;
-  border-radius: 50%;
   display: grid;
   place-items: center;
+  background: var(--card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   transition:
     transform 0.12s ease,
     background-color 0.2s ease,
@@ -40,8 +40,8 @@
 
 .close,
 .share {
-  background: var(--card);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  width: 44px;
+  border-radius: 50%;
   color: var(--label-strong);
 }
 
@@ -50,16 +50,24 @@
   margin-top: -2px;
 }
 
+/*
+ * Save says so in a word, in a glass capsule like its neighbours: a check here read as "done"
+ * beside Mark as Done. The darker tint keeps 4.5:1 on the capsule.
+ */
 .save {
-  background: var(--tint);
-  color: #fff;
+  min-width: 72px;
+  padding: 0 18px;
+  border-radius: 22px;
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  color: var(--tint-text);
 }
 
-/* Disabled (no title yet): a plain glass button with a faded check. */
+/* Disabled (no title yet): the word faded. */
 .save:disabled {
-  background: var(--card);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  color: rgba(60, 60, 67, 0.3);
+  color: var(--label-quaternary);
   cursor: default;
 }
 
@@ -126,7 +134,7 @@
 
 .title::placeholder,
 .note::placeholder {
-  color: rgba(60, 60, 67, 0.3);
+  color: var(--label-quaternary);
   opacity: 1;
 }
 
@@ -172,7 +180,7 @@
 }
 
 .goodText::placeholder {
-  color: rgba(60, 60, 67, 0.3);
+  color: var(--label-quaternary);
   opacity: 1;
 }
 

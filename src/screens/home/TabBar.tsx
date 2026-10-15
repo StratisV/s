@@ -127,8 +127,12 @@ export function TabBar({ tab, onTab, unread = false, newNote = false }: TabBarPr
   );
 }
 
-/** The round add button, floating at the bottom right on Home and Stats. */
-export function AddButton({ tab, onAdd }: { tab: Tab; onAdd(): void }) {
+/**
+ * The round add button, floating at the bottom right on Home and Stats. Given a `room` (Home,
+ * after a shared link opened that room), it widens to say where the item goes ("+ Garden")
+ * and VoiceOver hears "New item in Garden".
+ */
+export function AddButton({ tab, room = null, onAdd }: { tab: Tab; room?: string | null; onAdd(): void }) {
   // It pops in when it comes back from a tab without it, not when the app opens.
   const [wasAway, setWasAway] = useState(false);
   const away = WITHOUT_ADD.includes(tab);
@@ -138,12 +142,19 @@ export function AddButton({ tab, onAdd }: { tab: Tab; onAdd(): void }) {
     <button
       type="button"
       className={styles.add}
-      aria-label="New item"
+      aria-label={room ? `New item in ${room}` : 'New item'}
       onClick={onAdd}
+      data-add-button=""
+      data-room={room ? '' : undefined}
       data-enter={wasAway || undefined}
     >
       {/* Same visible size as the 32px "add" glyph in the design: 18px across, 3px stroke. */}
       <PlusIcon size={25} strokeWidth={2.9} />
+      {room ? (
+        <span className={styles.addRoom} aria-hidden="true">
+          {room}
+        </span>
+      ) : null}
     </button>
   );
 }

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { DemoBackend, type StorageLike } from './lib/backend/demo';
 import { todayIn } from './lib/logic/dates';
-import { collapsedKey } from './screens/home/HomeScreen';
+import { collapsedKey, HOME_VIEW_KEY } from './screens/home/HomeScreen';
 import { HomeProvider } from './state/HomeProvider';
 import { ConfettiProvider } from './ui/Confetti';
 
@@ -34,9 +34,16 @@ async function setup(prepare?: (backend: DemoBackend) => Promise<void>) {
   return backend;
 }
 
-/** The part of a Home row that opens the Item sheet. */
-const rowButton = (title: string) => screen.getByText(title, { selector: '[data-item-open] *' }).closest('button')!;
 const rows = () => Array.from(document.querySelectorAll<HTMLElement>('[data-item-open]'));
+/** The part of a Home row that opens the Item sheet (its name starts with the title). */
+function rowButton(title: string) {
+  const row = rows().find((b) => (b.textContent ?? '').startsWith(`${title},`));
+  if (!row) throw new Error(`No row ${title}`);
+  return row;
+}
+
+/** Home opens on its Rooms view (or Calendar) on this device, rather than Up next. */
+const openHomeOn = (view: 'rooms' | 'calendar') => localStorage.setItem(HOME_VIEW_KEY, view);
 
 /** Focus `el` from the keyboard and activate it. */
 async function openWith(el: HTMLElement, kind: 'Edit item' | 'New item' = 'Edit item') {
@@ -50,12 +57,14 @@ async function openWith(el: HTMLElement, kind: 'Edit item' | 'New item' = 'Edit 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
-  // The tab last open is kept per device: each test starts on Home.
+  // The tab last open is kept per device: each test starts on Home, on Up next.
   localStorage.removeItem('homeos.tab');
+  localStorage.removeItem(HOME_VIEW_KEY);
 });
 
 describe('focus after the Item sheet closes', () => {
   it('goes back to the row it was opened from', async () => {
+    openHomeOn('rooms');
     await setup();
     const row = rowButton('Olive oil');
     const sheet = await openWith(row);
@@ -77,8 +86,10 @@ describe('focus after the Item sheet closes', () => {
 
   it('moves to the next row when the item was completed from the sheet', async () => {
     await setup();
+    // Up next: the heaters are the first row, the gutters the next.
     const row = rowButton('Heaters not working');
     const next = rows()[rows().indexOf(row) + 1];
+    expect(next).toBe(rowButton('Clear the gutters'));
     const sheet = await openWith(row);
     fireEvent.click(within(sheet).getByRole('button', { name: 'Mark as Done' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit item' })).toBeNull(), { timeout: 2000 });
@@ -87,6 +98,7 @@ describe('focus after the Item sheet closes', () => {
   });
 
   it('falls back to the area’s name when no rows are left', async () => {
+    openHomeOn('rooms');
     await setup(async (backend) => {
       const data = await backend.load((await backend.getMyHouseholdId())!);
       for (const item of data.items.filter((i) => i.title !== 'Olive oil')) await backend.deleteItem(item.id);
@@ -94,10 +106,12 @@ describe('focus after the Item sheet closes', () => {
     const sheet = await openWith(rowButton('Olive oil'));
     fireEvent.click(within(sheet).getByRole('button', { name: 'Delete' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Delete Item' }));
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Kitchen', expanded: true })));
+    // The room has nothing open now: its name is a heading that takes focus.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Kitchen', level: 2 })));
   });
 
   it('skips rows in collapsed areas', async () => {
+    openHomeOn('rooms');
     await setup(async (backend) => {
       const data = await backend.load((await backend.getMyHouseholdId())!);
       const kitchen = data.areas.find((a) => a.name === 'Kitchen')!.id;
@@ -113,6 +127,7 @@ describe('focus after the Item sheet closes', () => {
   });
 
   it('is left alone after a tap (no focus ring or scroll on touch)', async () => {
+    openHomeOn('rooms');
     await setup();
     const matches = Element.prototype.matches;
     vi.spyOn(Element.prototype, 'matches').mockImplementation(function (this: Element, selector: string) {
@@ -126,20 +141,51 @@ describe('focus after the Item sheet closes', () => {
   });
 });
 
-describe('adding an item from an area header', () => {
-  it('opens the new-item sheet with that area chosen, and the item lands there', async () => {
+describe('adding an item from a room’s menu', () => {
+  it('opens the new-item sheet with that room chosen, and the item lands there', async () => {
+    openHomeOn('rooms');
     await setup();
-    // The area's disclosure button is labelled with its name.
+    // The room's disclosure button is labelled with its name.
     const garden = screen.getByRole('button', { name: 'Garden' }).closest('section') as HTMLElement;
-    const add = within(garden).getByRole('button', { name: 'Add item to Garden' });
-    const sheet = await openWith(add, 'New item');
+    const options = within(garden).getByRole('button', { name: 'Garden options' });
+    act(() => options.focus());
+    fireEvent.click(options);
+    const add = within(screen.getByRole('menu', { name: 'Garden' })).getByRole('menuitem', { name: 'Add item to Garden' });
+    fireEvent.click(add);
+    const sheet = await screen.findByRole('dialog', { name: 'New item' });
+    await waitFor(() => expect(sheet.hasAttribute('data-shown')).toBe(true));
     const area = within(sheet).getByLabelText('Area') as HTMLSelectElement;
     expect(area.selectedOptions[0].textContent).toBe('Garden');
     fireEvent.change(within(sheet).getByLabelText('Title'), { target: { value: 'Rake the leaves' } });
     fireEvent.click(within(sheet).getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(within(garden).getByText('Rake the leaves')).toBeTruthy());
-    // Keyboard focus goes back to the + it came from.
-    await waitFor(() => expect(document.activeElement).toBe(add));
+    await waitFor(() => expect(within(garden).getByRole('button', { name: /^Rake the leaves ?,/ })).toBeTruthy());
+    // Keyboard focus goes back to the menu's button it came from.
+    await waitFor(() => expect(document.activeElement).toBe(options));
+  });
+});
+
+describe('the round + after a shared room link', () => {
+  afterEach(() => {
+    localStorage.clear();
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  it('says it adds to that room, and does, until another view is chosen', async () => {
+    Element.prototype.scrollIntoView = () => {};
+    let gardenId = '';
+    await setup(async (backend) => {
+      const householdId = (await backend.getMyHouseholdId())!;
+      gardenId = (await backend.load(householdId)).areas.find((a) => a.name === 'Garden')!.id;
+      localStorage.setItem('homeos.link', JSON.stringify({ kind: 'area', id: gardenId, at: Date.now() }));
+    });
+    const add = await screen.findByRole('button', { name: 'New item in Garden' });
+    expect(add.textContent).toBe('Garden');
+    const sheet = await openWith(add, 'New item');
+    expect((within(sheet).getByLabelText('Area') as HTMLSelectElement).selectedOptions[0].textContent).toBe('Garden');
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New item' })).toBeNull(), { timeout: 2000 });
+    fireEvent.click(within(screen.getByRole('radiogroup', { name: 'View' })).getByRole('radio', { name: 'Up next' }));
+    expect(screen.getByRole('button', { name: 'New item' })).toBe(add);
   });
 });
 
@@ -261,8 +307,9 @@ describe('tab bar', () => {
 
 describe('a housekeeping visit on Home’s calendar', () => {
   it('opens that day in Housekeeping, chosen, with focus on its heading', async () => {
+    openHomeOn('calendar');
     await setup();
-    const calendar = screen.getByRole('region', { name: 'Calendar' });
+    const calendar = document.querySelector<HTMLElement>('[data-calendar]')!;
     fireEvent.click(within(calendar).getByRole('button', { name: 'Show month' }));
     // The latest visit: this month, or the one before early in a month.
     const visits = () => Array.from(calendar.querySelectorAll<HTMLButtonElement>('[role="grid"] [data-visit]'));
@@ -292,16 +339,16 @@ describe('today’s housekeeping visit on Home’s calendar', () => {
     const scrollIntoView = vi.fn();
     Object.defineProperty(Element.prototype, 'scrollIntoView', { value: scrollIntoView, configurable: true, writable: true });
     try {
+      openHomeOn('calendar');
       await setup(async (backend) => {
         const hid = (await backend.getMyHouseholdId())!;
         const data = await backend.load(hid);
         const today = todayIn(data.household.timezone);
         await backend.setHousekeepingTaskDone(hid, today, { taskId: data.housekeeping.tasks[0].id }, true);
       });
-      const calendar = screen.getByRole('region', { name: 'Calendar' });
-      // Today is chosen at first, with a line that mentions the visit; choosing it shows the visit.
-      expect(within(calendar).getByText(/housekeeping visit$/)).toBeTruthy();
-      fireEvent.click(within(calendar).getByRole('button', { name: /, today, .*selected$/ }));
+      const calendar = document.querySelector<HTMLElement>('[data-calendar]')!;
+      // Today is chosen at first and its list is open: the visit is in it.
+      expect(within(calendar).getByRole('button', { name: /, today, .*selected$/ })).toBeTruthy();
       fireEvent.click(within(calendar).getByRole('button', { name: 'Housekeeping visit, 1 of 7 done. Show in Housekeeping' }));
       await screen.findByRole('heading', { name: 'Housekeeping', level: 1 });
       const heading = screen.getByRole('heading', { level: 2, name: 'Today' });
@@ -327,6 +374,8 @@ describe('a shared area link', () => {
   });
 
   it('is dropped when Home is left before it was shown, so it can’t scroll Home later', async () => {
+    // On Rooms already, a collapsed room takes its slide to open before Home scrolls to it.
+    openHomeOn('rooms');
     const scrolled: Element[] = [];
     Element.prototype.scrollIntoView = function (this: Element) {
       scrolled.push(this);

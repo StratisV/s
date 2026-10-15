@@ -95,7 +95,7 @@ The household wants push on iPhone without needing the App Store. Two good route
 - **Presentation**: an iOS page sheet. Top edge at 62px, top corner radius 38, background `#F2F2F7`. The screen behind is black with a peek card: `#BDBDC2`, 50px from the top, inset 18px left and right, 40px tall, top radius 14. Natively, use `.sheet` with the large detent.
 - **Nav** (padding 14 16 6), using a 44 / 1fr / 44 grid:
   - Left: close button. A 44px white circle with shadow `0 1px 3px rgba(0,0,0,.08)` and an xmark at 22px in `#1C1C1E`. Closes without saving.
-  - Right: save button. A 44px circle in `#007AFF` with a white checkmark at 24px. Saves and closes.
+  - Right: save button. The word **Save** (17px semibold, `--tint-text`) in a 44px white capsule with the close button's shadow; faded until there is a title. Saves and closes. (It was a blue circle with a white checkmark, which read as "done" beside Mark as Done.)
 - **Body** (padding 14 16 40, scrollable, 20px gap between blocks):
   1. **Title and note**, with no card, padding 0 4.
      - Title: 28/34, weight 700, −0.02em, editable.

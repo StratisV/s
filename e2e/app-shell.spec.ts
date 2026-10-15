@@ -93,7 +93,7 @@ test.describe('App shell', () => {
   test('swiping the sheet down with a finger dismisses it', async ({ page, context }) => {
     await openSeeded(page);
     const sheet = await openItem(page, 'Olive oil');
-    const status = sheet.getByRole('radiogroup', { name: 'Status' });
+    const status = sheet.getByRole('radiogroup', { name: 'How urgent?' });
     await status.hover(); // waits for the sheet to finish sliding up
     const box = (await status.boundingBox())!;
     const cdp = await context.newCDPSession(page);
@@ -110,7 +110,7 @@ test.describe('App shell', () => {
   test('a finger tap on a ring completes the item', async ({ page }) => {
     await openSeeded(page);
     await ring(page, 'Olive oil').tap();
-    await expect(toast(page, 'Done. Next due Sat 12 Dec')).toBeVisible();
+    await expect(toast(page, 'Done. Next one in 2 months')).toBeVisible();
     await rowButton(page, 'Mirror lights not level').tap();
     await expect(itemSheet(page)).toBeVisible();
   });
