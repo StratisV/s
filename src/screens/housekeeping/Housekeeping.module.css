@@ -43,7 +43,7 @@
   font-size: 15px;
   line-height: 20px;
   letter-spacing: -0.2px;
-  color: var(--tint);
+  color: var(--tint-text);
   border-radius: 6px;
 }
 
@@ -236,7 +236,7 @@
   line-height: 22px;
   letter-spacing: -0.4px;
   text-align: left;
-  color: var(--tint);
+  color: var(--tint-text);
 }
 
 .cardButton::before {
@@ -318,7 +318,7 @@
   line-height: 18px;
   letter-spacing: -0.1px;
   font-weight: 600;
-  color: var(--tint);
+  color: var(--tint-text);
   white-space: nowrap;
   animation: savedIn 0.2s ease-out;
 }
@@ -355,7 +355,7 @@
   line-height: 18px;
   letter-spacing: -0.1px;
   font-weight: 600;
-  color: var(--tint);
+  color: var(--tint-text);
   border-radius: 4px;
 }
 

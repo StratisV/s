@@ -190,20 +190,19 @@ describe('itemsByArea', () => {
 });
 
 describe('newItemDraft', () => {
-  it('uses the README defaults', () => {
-    expect(newItemDraft('a1', TODAY)).toEqual({
+  it('uses the README defaults: no due date until someone gives it one', () => {
+    expect(newItemDraft('a1')).toEqual({
       area_id: 'a1',
       kind: 'task',
       title: '',
       note: '',
       good: '',
       rag: 'amber',
-      due_date: '2026-10-15',
+      due_date: null,
       assignee_id: null,
       repeat: 'none',
       notify: 'day_before',
     });
-    expect(newItemDraft('a1', '2026-12-28').due_date).toBe('2027-01-04');
   });
 });
 
@@ -337,33 +336,33 @@ describe('kinds: To do (task) and To maintain (state)', () => {
 
   it('withKind keeps "What good looks like" both ways, and applyKindRules leaves it alone', () => {
     const saved = draftOf(state({ good: 'Cover on, logs dry.' }));
-    const task = withKind(saved, 'task', TODAY, 'state');
+    const task = withKind(saved, 'task', 'state');
     expect(task.good).toBe('Cover on, logs dry.');
-    expect(withKind(task, 'state', TODAY, 'state').good).toBe('Cover on, logs dry.');
+    expect(withKind(task, 'state', 'state').good).toBe('Cover on, logs dry.');
     expect(applyKindRules(saved).good).toBe('Cover on, logs dry.');
     expect(applyKindRules({ ...saved, kind: 'task' as const }).good).toBe('Cover on, logs dry.');
   });
 
   it('withKind: a To do becoming To maintain keeps its hidden task fields, so switching back restores them', () => {
-    const task = newItemDraft('a1', TODAY);
-    const maintained = withKind(task, 'state', TODAY);
+    const task = newItemDraft('a1');
+    const maintained = withKind(task, 'state');
     expect(maintained).toEqual({ ...task, kind: 'state' });
-    expect(withKind(maintained, 'task', TODAY, 'task')).toEqual(task);
-    expect(withKind(task, 'task', TODAY)).toBe(task);
+    expect(withKind(maintained, 'task', 'task')).toEqual(task);
+    expect(withKind(task, 'task')).toBe(task);
   });
 
-  it('withKind: a saved state becoming To do gets the new-item due date, repeat and notify', () => {
+  it('withKind: a saved state becoming To do gets the new-item due date (none), repeat and notify', () => {
     const saved = draftOf(state({ title: 'Firepit', rag: 'green', assignee_id: 'm-ela', note: 'Cover on.' }));
-    expect(withKind(saved, 'task', TODAY, 'state')).toEqual({
+    expect(withKind(saved, 'task', 'state')).toEqual({
       ...saved,
       kind: 'task',
-      due_date: '2026-10-15',
+      due_date: null,
       repeat: 'none',
       notify: 'day_before',
     });
     // A saved task without a date or reminder keeps them when switched back and forth.
     const bare = draftOf(item({ due_date: null, notify: 'none' }));
-    expect(withKind(withKind(bare, 'state', TODAY, 'task'), 'task', TODAY, 'task')).toEqual(bare);
+    expect(withKind(withKind(bare, 'state', 'task'), 'task', 'task')).toEqual(bare);
   });
 
   it('seeds the Firepit as a green state in the Garden, looked after by Ela', () => {

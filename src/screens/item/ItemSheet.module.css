@@ -87,6 +87,8 @@
   -webkit-overflow-scrolling: touch;
   padding: 14px 16px calc(40px + var(--bottom-inset));
   display: grid;
+  /* One column as wide as the sheet: a long name or area is cut short in its row, never wider. */
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   grid-auto-rows: max-content;
   gap: 20px;
@@ -129,12 +131,16 @@
   font-size: 17px;
   line-height: 23px;
   letter-spacing: -0.3px;
-  color: var(--label-secondary);
+  color: var(--label-tertiary);
 }
 
+/*
+ * The only words on an empty sheet, so readable: 4.5:1 on the sheet (the iOS placeholder grey
+ * was 1.7:1). A note typed in is a step darker, so the two never look alike.
+ */
 .title::placeholder,
 .note::placeholder {
-  color: var(--label-quaternary);
+  color: var(--label-secondary);
   opacity: 1;
 }
 
@@ -180,7 +186,7 @@
 }
 
 .goodText::placeholder {
-  color: var(--label-quaternary);
+  color: var(--label-secondary);
   opacity: 1;
 }
 
@@ -199,7 +205,7 @@
 .done {
   height: 54px;
   border-radius: var(--r-button);
-  background: var(--tint);
+  background: var(--tint-fill);
   color: #fff;
   display: flex;
   align-items: center;

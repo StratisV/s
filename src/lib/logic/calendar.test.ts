@@ -11,6 +11,7 @@ import {
   EMPTY_DAY,
   isDated,
   isEmptyDay,
+  lateItems,
   monthHeading,
   repeatDates,
   repeatMeta,
@@ -425,6 +426,23 @@ describe('dayRows', () => {
   });
 });
 
+describe('lateItems', () => {
+  it('lists the open To dos due before today, most urgent first, then the longest late', () => {
+    const heaters = item({ id: 'heaters', rag: 'red', due_date: '2026-10-06' });
+    const older = item({ id: 'older', rag: 'green', due_date: '2026-09-30' });
+    const amber = item({ id: 'amber', rag: 'amber', due_date: '2026-10-07' });
+    const amberOlder = item({ id: 'amberOlder', rag: 'amber', due_date: '2026-10-01' });
+    const today = item({ id: 'today', rag: 'red', due_date: TODAY });
+    const future = item({ id: 'future', due_date: '2026-10-20' });
+    const undated = item({ id: 'undated', rag: 'red', due_date: null });
+    const done = item({ id: 'done', due_date: '2026-10-01', status: 'done' });
+    const state = item({ id: 'state', kind: 'state', rag: 'red', due_date: null });
+    const all = [older, amber, today, heaters, future, undated, done, state, amberOlder];
+    expect(lateItems(all, TODAY).map((i) => i.id)).toEqual(['heaters', 'amberOlder', 'amber', 'older']);
+    expect(lateItems([today, future, undated], TODAY)).toEqual([]);
+  });
+});
+
 describe('names and announcements', () => {
   const three = [item({ id: 'a' }), item({ id: 'b' }), item({ id: 'c' })];
 
@@ -459,6 +477,13 @@ describe('names and announcements', () => {
     );
     expect(calendarDayAnnouncement('2026-10-06', TODAY, day({ missed: [urgent], visit: visit('2026-10-06') }))).toBe(
       'Tuesday 6 October: 1 missed (urgent), housekeeping visit. Details below the calendar.',
+    );
+    // Today lists what is late first, so it says that first.
+    expect(calendarDayAnnouncement(TODAY, TODAY, day({ due: [green('g1')] }), [urgent])).toBe(
+      'Thursday 8 October, today: 1 late (urgent), 1 due (not urgent). Details below the calendar.',
+    );
+    expect(calendarDayAnnouncement(TODAY, TODAY, EMPTY_DAY, [urgent, three[0]])).toBe(
+      'Thursday 8 October, today: 2 late (1 urgent, 1 within the month). Details below the calendar.',
     );
   });
 

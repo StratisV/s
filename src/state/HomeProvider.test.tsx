@@ -197,6 +197,52 @@ describe('failed writes', () => {
     expect(notSavedMessage(new Error('boom'), 'undo')).toBe('Couldn’t undo. Try again.');
   });
 
+  it('Undo shows as the row goes, before the save returns, and waits for it to take it back', async () => {
+    const { backend, home } = await seeded();
+    const item = itemNamed(home, 'Heaters not working')!;
+    const save = deferred<string>();
+    vi.spyOn(backend, 'completeItem').mockImplementation(() => save.promise);
+    const undo = vi.spyOn(backend, 'undoCompletion').mockResolvedValue();
+    let done: Promise<void> | undefined;
+    act(() => {
+      done = home().completeItem(item.id);
+    });
+    // A slow connection: the row has gone and Undo is there to tap at once.
+    expect(itemNamed(home, 'Heaters not working')).toBeUndefined();
+    expect(home().toast?.message).toBe('Marked as done');
+    act(() => home().toast!.action!.run());
+    expect(itemNamed(home, 'Heaters not working')).toEqual(item);
+    expect(undo).not.toHaveBeenCalled();
+    await act(async () => {
+      save.resolve('completion-1');
+      await done;
+    });
+    await flush();
+    expect(undo).toHaveBeenCalledWith('completion-1');
+  });
+
+  it('Undo on a completion that never saved has nothing to take back', async () => {
+    const { backend, home } = await seeded();
+    vi.spyOn(backend, 'load').mockRejectedValue(offline());
+    const item = itemNamed(home, 'Heaters not working')!;
+    const save = deferred<string>();
+    vi.spyOn(backend, 'completeItem').mockImplementation(() => save.promise);
+    const undo = vi.spyOn(backend, 'undoCompletion');
+    let done: Promise<void> | undefined;
+    act(() => {
+      done = home().completeItem(item.id);
+    });
+    act(() => home().toast!.action!.run());
+    await act(async () => {
+      save.reject(offline());
+      await done!.catch(() => {});
+    });
+    await flush();
+    expect(undo).not.toHaveBeenCalled();
+    expect(home().data!.items.filter((i) => i.id === item.id)).toEqual([item]);
+    expect(home().toast?.message).toBe('Couldn’t save. No connection.');
+  });
+
   it('undo is shown at once and taken back if it fails', async () => {
     const { backend, home } = await seeded();
     const item = itemNamed(home, 'Heaters not working')!;

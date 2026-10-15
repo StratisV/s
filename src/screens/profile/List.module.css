@@ -81,7 +81,7 @@ button.row:focus-visible {
 }
 
 .action {
-  color: var(--tint);
+  color: var(--tint-text);
 }
 
 .destructive {

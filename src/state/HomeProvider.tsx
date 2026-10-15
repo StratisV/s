@@ -435,14 +435,20 @@ export interface HomeContextValue {
   toast: ToastState | null;
   showToast(message: string, action?: ToastState['action']): void;
   dismissToast(): void;
-  /** While held (focus or a pointer on the toast) the toast does not hide; it gets a fresh ~4s after. */
+  /** While held (focus or a pointer on the toast) the toast does not hide; it gets a fresh 4s (8s with Undo) after. */
   holdToast(held: boolean): void;
 }
 
 const HomeContext = createContext<HomeContextValue | null>(null);
 
 const INVITE_KEY = 'homeos.invite';
+/** How long a toast with only words stays. */
 export const TOAST_MS = 4000;
+/**
+ * How long a toast with a button (Undo) stays: twice as long, as a finger can't hold it (only
+ * a hovering mouse or keyboard focus can) and it is the only way back.
+ */
+export const ACTION_TOAST_MS = 8000;
 
 // Sync guarantees (docs/ARCHITECTURE.md): how a failed background reload is retried, when coming
 // back counts as a resume, and the safety net for a channel that silently stopped delivering.
@@ -945,11 +951,14 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
     clearTimeout(toastTimer.current);
     const current = toastRef.current;
     if (!current || toastHeld.current) return;
-    toastTimer.current = setTimeout(() => {
-      if (toastRef.current?.id !== current.id) return;
-      toastRef.current = null;
-      setToast(null);
-    }, TOAST_MS);
+    toastTimer.current = setTimeout(
+      () => {
+        if (toastRef.current?.id !== current.id) return;
+        toastRef.current = null;
+        setToast(null);
+      },
+      current.action ? ACTION_TOAST_MS : TOAST_MS,
+    );
   }, []);
 
   const dismissToast = useCallback(() => {
@@ -1574,21 +1583,28 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         next
           ? { ...cur, items: patchRow(cur.items, id, { due_date: item.due_date }) }
           : { ...cur, items: restoreRows(cur.items, [item]) };
-      const completionId = await mutate(
+      const saved = mutate(
         (cur) => ({ next: done(cur), revert: undone }),
         () => backend.completeItem(id),
       );
+      // Undo shows as the row goes, not once the server has answered (a slow connection left a
+      // second with nothing to tap). Undo waits for that answer before taking it back; if the
+      // completion was never saved there is nothing to take back (its own toast says so).
       showToast(doneMessage(next, today), {
         label: 'Undo',
         run: () => {
           dismissToast();
           void mutate(
             (cur) => ({ next: undone(cur), revert: done }),
-            () => backend.undoCompletion(completionId),
+            async () => {
+              const completionId = await saved.catch(() => null);
+              if (completionId !== null) await backend.undoCompletion(completionId);
+            },
             'undo',
           ).catch(() => {});
         },
       });
+      await saved;
     };
 
     /**

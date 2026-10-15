@@ -13,9 +13,26 @@ import {
   showView,
   test,
   titlesIn,
+  toast,
+  type Locator,
+  type Page,
 } from './fixtures';
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
+
+/**
+ * A row just saved comes up whole, clear of the round + floating over the bottom of the screen
+ * (it used to stop flush with the bottom edge, under the +).
+ */
+async function clearOfAdd(page: Page, row: Locator) {
+  await expect
+    .poll(async () => {
+      const box = await row.boundingBox();
+      const add = await addButton(page).boundingBox();
+      return !!box && !!add && box.y >= 0 && box.y + box.height <= add.y;
+    })
+    .toBe(true);
+}
 
 test.beforeEach(async ({ page }) => {
   await openSeeded(page);
@@ -75,7 +92,7 @@ test.describe('Adding an item from a room', () => {
 
 test.describe('After saving, the item can be seen where it went', () => {
   test('a fifth job in a room that shows three: its room shows it, scrolled to and lit up', async ({ page }) => {
-    // Garden Lounge has four To dos, all not urgent: a fifth due in a week sorts fourth, behind "Show 2 more".
+    // Garden Lounge has four To dos, all not urgent: a fifth with no date sorts last, behind "Show 2 more".
     await roomMenu(page, 'Garden Lounge', 'Add item to Garden Lounge');
     const sheet = itemSheet(page, 'New item');
     await settled(sheet.getByRole('button', { name: 'Close' }));
@@ -86,7 +103,7 @@ test.describe('After saving, the item can be seen where it went', () => {
     const row = area(page, 'Garden Lounge').getByRole('listitem').filter({ hasText: 'Oil the decking' });
     await expect(row).toBeVisible();
     await expect(row).toHaveAttribute('data-lit');
-    await expect(row).toBeInViewport();
+    await clearOfAdd(page, row);
     await expect(area(page, 'Garden Lounge').getByRole('button', { name: 'Show fewer' })).toHaveAttribute('aria-expanded', 'true');
     // The light fades after a moment.
     await expect(row).not.toHaveAttribute('data-lit', { timeout: 5_000 });
@@ -105,8 +122,30 @@ test.describe('After saving, the item can be seen where it went', () => {
     const later = homeScreen(page).locator('section[data-group="later"]');
     const row = later.getByRole('listitem').filter({ hasText: 'Service the boiler' });
     await expect(row).toBeVisible();
-    await expect(row).toBeInViewport();
+    await clearOfAdd(page, row);
     await expect(later.getByRole('button', { name: 'Show fewer' })).toBeVisible();
+  });
+
+  test('Calendar: one it can’t show (no date, or looked after) says where it went', async ({ page }) => {
+    await showView(page, 'Calendar');
+    await addButton(page).click();
+    const sheet = itemSheet(page, 'New item');
+    await settled(sheet.getByRole('button', { name: 'Close' }));
+    await sheet.getByLabel('Title', { exact: true }).fill('Find a plumber');
+    await sheet.getByRole('radiogroup', { name: 'How urgent?' }).getByText('Urgent', { exact: true }).click();
+    await sheet.getByLabel('Area', { exact: true }).selectOption({ label: 'Kitchen' });
+    await sheet.getByRole('button', { name: 'Save' }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(toast(page, 'Saved in Kitchen. It has no date, so it isn’t on the calendar.')).toBeVisible();
+
+    await addButton(page).click();
+    await settled(sheet.getByRole('button', { name: 'Close' }));
+    await sheet.getByLabel('Title', { exact: true }).fill('Grout');
+    await sheet.getByRole('radio', { name: 'To maintain' }).click();
+    await sheet.getByLabel('Area', { exact: true }).selectOption({ label: 'Bathroom Large' });
+    await sheet.getByRole('button', { name: 'Save' }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(toast(page, 'Saved in Bathroom Large. Things looked after aren’t on the calendar.')).toBeVisible();
   });
 });
 

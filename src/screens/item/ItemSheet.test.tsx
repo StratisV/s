@@ -271,13 +271,15 @@ describe('ItemSheet (edit)', () => {
 });
 
 describe('ItemSheet (new)', () => {
-  it('starts from the defaults with Save disabled and no done/delete', async () => {
-    const { dialog, home } = await setup(() => ({ kind: 'new' }));
+  it('starts from the defaults (no due date) with Save disabled and no done/delete', async () => {
+    const { dialog } = await setup(() => ({ kind: 'new' }));
     expect(dialog.getAttribute('aria-label')).toBe('New item');
     expect((save() as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('radio', { name: 'Within the month' }) as HTMLInputElement).checked).toBe(true);
     expect(value('Area')).toBe('Kitchen');
-    expect((screen.getByLabelText('Due') as HTMLInputElement).value).toBe(addDays(home().today, 7));
+    // Due only once someone says when: a date a week on turned a job nobody dated into "late".
+    expect((screen.getByLabelText('Due') as HTMLInputElement).value).toBe('');
+    expect(value('Due')).toBe('None');
     expect(value('Assigned to')).toBe('Unassigned');
     expect(value('Repeat')).toBe('Never');
     expect(value('Notify')).toBe('1 day before');
@@ -337,7 +339,7 @@ describe('ItemSheet (new)', () => {
       note: 'Latch is loose.',
       good: '',
       rag: 'amber',
-      due_date: addDays(home().today, 7),
+      due_date: null,
       assignee_id: null,
       repeat: 'none',
       notify: 'day_before',
@@ -470,12 +472,12 @@ describe('ItemSheet: To do and To maintain', () => {
     });
   });
 
-  it('turns a state into a To do with the new-item due date and reminder, and can then mark it done', async () => {
+  it('turns a state into a To do with the new-item defaults (no due date, a reminder), and can then mark it done', async () => {
     const { backend, home } = await setup(editing('Firepit'));
     const update = vi.spyOn(backend, 'updateItem');
     const complete = vi.spyOn(backend, 'completeItem');
     fireEvent.click(kind('To do'));
-    expect((screen.getByLabelText('Due') as HTMLInputElement).value).toBe(addDays(home().today, 7));
+    expect((screen.getByLabelText('Due') as HTMLInputElement).value).toBe('');
     expect(value('Assigned to')).toBe('🦊 Ela');
     expect(value('Repeat')).toBe('Never');
     expect(value('Notify')).toBe('1 day before');
@@ -483,7 +485,6 @@ describe('ItemSheet: To do and To maintain', () => {
     await waitFor(() => expect(complete).toHaveBeenCalledTimes(1));
     expect(update).toHaveBeenCalledWith(expect.any(String), {
       kind: 'task',
-      due_date: addDays(home().today, 7),
       notify: 'day_before',
     });
     expect(update.mock.invocationCallOrder[0]).toBeLessThan(complete.mock.invocationCallOrder[0]);

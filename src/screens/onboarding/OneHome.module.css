@@ -139,7 +139,7 @@
   padding: 0 4px 0 8px;
   font-size: 17px;
   letter-spacing: -0.4px;
-  color: var(--tint);
+  color: var(--tint-text);
   transition: opacity 0.15s ease;
 }
 

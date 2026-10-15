@@ -56,7 +56,7 @@ const reducedMotion = () => {
 };
 
 /** The nearest ancestor that scrolls (the tab's scroll area). */
-function scrollParent(el: HTMLElement): HTMLElement | null {
+export function scrollParent(el: HTMLElement): HTMLElement | null {
   for (let p = el.parentElement; p; p = p.parentElement) {
     const { overflowY } = getComputedStyle(p);
     if (overflowY === 'auto' || overflowY === 'scroll') return p;

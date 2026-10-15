@@ -126,6 +126,11 @@
   color: var(--label-secondary);
 }
 
+/* On the chosen option's wash the grey goes a step darker (the red wash took it to 4.3:1). */
+.option[data-selected] .hint {
+  color: var(--label-tertiary);
+}
+
 .check {
   flex: none;
   color: var(--ink);

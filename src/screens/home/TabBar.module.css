@@ -124,7 +124,7 @@
   width: 62px;
   height: 62px;
   border-radius: 50%;
-  background: var(--tint);
+  background: var(--tint-fill);
   color: #fff;
   box-shadow: var(--shadow-add);
   display: grid;

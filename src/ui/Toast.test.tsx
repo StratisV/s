@@ -1,7 +1,7 @@
 import { act, cleanup, createEvent, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Backend } from '../lib/backend/types';
-import { HomeProvider, TOAST_MS, useHome, type HomeContextValue } from '../state/HomeProvider';
+import { ACTION_TOAST_MS, HomeProvider, TOAST_MS, useHome, type HomeContextValue } from '../state/HomeProvider';
 import { Toast } from './Toast';
 
 // The toast only needs the provider; stay on the splash (auth never answers).
@@ -53,29 +53,36 @@ describe('Toast', () => {
     showUndo(home);
     expect(screen.getByRole('status')).toBe(region);
     expect(region.textContent).toBe('Marked as doneUndo');
-    advance(TOAST_MS);
+    advance(ACTION_TOAST_MS);
     expect(screen.getByRole('status')).toBe(region);
     expect(region.textContent).toBe('');
   });
 
-  it('hides after about 4 seconds', () => {
+  it('hides words alone after 4 seconds, and Undo after 8 (a finger can’t hold it)', () => {
     const { home, region } = setup();
-    showUndo(home);
+    act(() => home().showToast('Invite link copied'));
     advance(TOAST_MS - 1);
+    expect(region.textContent).toBe('Invite link copied');
+    advance(1);
+    expect(region.textContent).toBe('');
+
+    showUndo(home);
+    expect(ACTION_TOAST_MS).toBe(8000);
+    advance(ACTION_TOAST_MS - 1);
     expect(region.textContent).toContain('Marked as done');
     advance(1);
     expect(region.textContent).toBe('');
   });
 
-  it('stays while Undo has focus, then gets a fresh 4 seconds', () => {
+  it('stays while Undo has focus, then gets a fresh 8 seconds', () => {
     const { home, region } = setup();
     showUndo(home);
     const undo = within(region).getByRole('button', { name: 'Undo' });
     act(() => undo.focus());
-    advance(TOAST_MS * 3);
+    advance(ACTION_TOAST_MS * 3);
     expect(region.textContent).toContain('Marked as done');
     act(() => undo.blur());
-    advance(TOAST_MS - 1);
+    advance(ACTION_TOAST_MS - 1);
     expect(region.textContent).toContain('Marked as done');
     advance(1);
     expect(region.textContent).toBe('');
@@ -86,15 +93,15 @@ describe('Toast', () => {
     showUndo(home);
     const toast = region.firstElementChild!;
     pointer('pointerMove', toast, 'mouse');
-    advance(TOAST_MS * 2);
+    advance(ACTION_TOAST_MS * 2);
     expect(region.textContent).toContain('Marked as done');
     pointer('pointerLeave', toast, 'mouse');
-    advance(TOAST_MS);
+    advance(ACTION_TOAST_MS);
     expect(region.textContent).toBe('');
 
     showUndo(home);
     pointer('pointerMove', region.firstElementChild!, 'touch');
-    advance(TOAST_MS);
+    advance(ACTION_TOAST_MS);
     expect(region.textContent).toBe('');
   });
 
@@ -131,10 +138,10 @@ describe('Toast', () => {
     act(() => home().showToast('Invite link ready', { label: 'Share', run: share }));
     fireEvent.keyDown(document.body, { key: 'z', metaKey: true });
     expect(share).not.toHaveBeenCalled();
-    advance(TOAST_MS);
+    advance(ACTION_TOAST_MS);
     const run = vi.fn();
     act(() => home().showToast('Marked as done', { label: 'Undo', run }));
-    advance(TOAST_MS);
+    advance(ACTION_TOAST_MS);
     fireEvent.keyDown(document.body, { key: 'z', metaKey: true });
     expect(run).not.toHaveBeenCalled();
   });

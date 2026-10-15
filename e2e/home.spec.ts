@@ -195,7 +195,7 @@ test.describe('Home', () => {
     const done = toast(page, 'Marked as done');
     const undo = done.getByRole('button', { name: 'Undo' });
     await undo.focus();
-    await page.clock.runFor(6_000);
+    await page.clock.runFor(10_000);
     await expect(done).toBeVisible();
     await page.keyboard.press('Enter');
     await expect(ring(page, 'Shower draining slowly')).toBeVisible();
@@ -239,11 +239,15 @@ test.describe('Home', () => {
     }
   });
 
-  test('the toast goes away by itself after about 4 seconds', async ({ page }) => {
+  test('Undo stays 8 seconds (a finger can’t hold it), then goes by itself', async ({ page }) => {
     await ring(page, 'Water test strips running low').click();
     const done = toast(page, 'Marked as done');
     await expect(done).toBeVisible();
-    await expect(done).toHaveCount(0, { timeout: 6_000 });
+    // A finger resting on it: still there well past the 4 seconds words alone get.
+    await done.getByText('Marked as done').tap();
+    await page.clock.runFor(6_500);
+    await expect(done).toBeVisible();
+    await expect(done).toHaveCount(0, { timeout: 5_000 });
     await expect(ring(page, 'Water test strips running low')).toHaveCount(0);
   });
 

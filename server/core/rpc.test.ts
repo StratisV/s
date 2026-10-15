@@ -6,7 +6,7 @@ import { ID_MAX, RPC_ARGS, TEXT_CAP, isRpcMethod, validateArgs } from './rpc';
 
 const H = '6f1c6b1e-6a47-4b7a-9d3c-7b0f6a1f2a10';
 const ID = '0b9e6f5a-1c2d-4e3f-8a9b-0c1d2e3f4a5b';
-const DRAFT = { ...newItemDraft(ID, '2026-10-09'), title: 'Bleed the radiators' };
+const DRAFT = { ...newItemDraft(ID), title: 'Bleed the radiators' };
 
 /** What the app really sends for each method (HomeProvider, ChatProvider, the screens). */
 const REAL: { [M in RpcMethod]: unknown[][] } = {

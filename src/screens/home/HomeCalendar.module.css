@@ -176,6 +176,53 @@
   color: var(--label-secondary);
 }
 
+/* The day's heading, and for today with late jobs, how many beside it ("1 late"), as a room's word. */
+.dayHeadRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.dayHeadRow .dayHeader {
+  flex: 1;
+  min-width: 0;
+}
+
+.lateWord {
+  flex: none;
+  padding-right: 20px;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  color: var(--rag-red-text);
+}
+
+/* Today's own rows after its late jobs: a small label, as a room's "Looking after". */
+.listLabel {
+  margin: 0;
+  padding: 12px 16px 0 54px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  letter-spacing: -0.05px;
+  color: var(--label-secondary);
+}
+
+/* Today's own part, after the late jobs: under a hairline inset like the rows'. */
+.afterLate {
+  position: relative;
+}
+
+.afterLate::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  border-top: 0.5px solid var(--separator);
+}
+
 /* A repeat's ring: dashed and faint, in the ring's place; not a button. */
 .repeatSlot {
   pointer-events: none;

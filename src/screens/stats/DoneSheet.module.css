@@ -39,7 +39,7 @@
   line-height: 22px;
   font-weight: 600;
   letter-spacing: -0.4px;
-  color: var(--tint);
+  color: var(--tint-text);
   border-radius: 12px;
 }
 
@@ -73,7 +73,9 @@
   display: none;
 }
 
+/* 36px pills, 44px to a finger (the row's padding leaves room above and below). */
 .chip {
+  position: relative;
   flex: none;
   min-height: 36px;
   padding: 0 14px;
@@ -90,14 +92,25 @@
   box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.06);
 }
 
+.chip::before {
+  content: '';
+  position: absolute;
+  inset: -4px 0;
+}
+
 .chip[aria-checked='true'] {
-  background: var(--tint);
+  background: var(--tint-fill);
   color: #fff;
 }
 
 .chipCount {
   font-variant-numeric: tabular-nums;
   opacity: 0.6;
+}
+
+/* On the chosen chip the count stays white: faded, it fell to 2.6:1 on the tint. */
+.chip[aria-checked='true'] .chipCount {
+  opacity: 1;
 }
 
 .list {

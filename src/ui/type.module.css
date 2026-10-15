@@ -2,12 +2,14 @@
 
 /*
  * A section heading on a tab, a step under the hero's title: Home's "Needs attention",
- * the calendar's "This week" and the chosen day's "Tuesday 13 October".
+ * the calendar's "This week" and the chosen day's "Tuesday 13 October". The same 20/25/600
+ * as every other tab's headings (Housekeeping's "Today", Profile's "Notifications", the
+ * Item sheet's "How urgent?").
  */
 .sectionTitle {
   font-size: 20px;
   line-height: 25px;
-  font-weight: 700;
-  letter-spacing: -0.45px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
   color: var(--label);
 }

@@ -176,6 +176,18 @@ export function dayRows(day: CalendarDay): { rows: Item[]; repeats: Item[] } {
 }
 
 /**
+ * The To dos still open from days before today, for today's list under the calendar: marked
+ * only on their own day, they left today reading "Nothing due" while something urgent was
+ * days late (Reminders and Todoist put them at the top of Today too). Most urgent first (red,
+ * amber, green), then the longest late; ties keep the order given (Home's).
+ * Tests: only open To dos with a date before today; the order; none.
+ */
+export function lateItems(items: Item[], today: ISODate): Item[] {
+  const byDue = (a: Item, b: Item) => (a.due_date! < b.due_date! ? -1 : a.due_date! > b.due_date! ? 1 : 0);
+  return items.filter((it) => isDated(it) && it.due_date! < today).sort((a, b) => byRag(a, b) || byDue(a, b));
+}
+
+/**
  * The marks under a day's number: a dot per item due or missed, red first, then amber,
  * then green; then a faint one per repeat in the same order; at most `max` (3), and how
  * many more there are (shown as "+2").
@@ -237,10 +249,13 @@ export function calendarDayName(date: ISODate, today: ISODate, day: CalendarDay,
  * `'Friday 16 October: 3 due (not urgent), 1 repeat. Details below the calendar.'`,
  * `'Thursday 8 October, today: nothing due. Details below the calendar.'`,
  * `'Tuesday 6 October: 1 missed (urgent), housekeeping visit. Details below the calendar.'`.
+ * For today, what is late (lateItems(), listed first under it) comes first: `'Thursday 8
+ * October, today: 1 late (urgent), 1 due (not urgent). Details below the calendar.'`.
  * Tests: each example.
  */
-export function calendarDayAnnouncement(date: ISODate, today: ISODate, day: CalendarDay): string {
+export function calendarDayAnnouncement(date: ISODate, today: ISODate, day: CalendarDay, late: Item[] = []): string {
   const parts = dayParts(day);
+  if (late.length) parts.unshift(`${late.length} late (${urgencyOf(late)})`);
   const name = `${fullDay(date, today)}${date === today ? ', today' : ''}`;
   return `${name}: ${parts.length ? parts.join(', ') : 'nothing due'}. Details below the calendar.`;
 }

@@ -72,6 +72,20 @@ test('choices and reminders are kept for the person on every device, and only th
   await expect(dialog.getByRole('textbox', { name: 'Remind me to' })).toHaveValue('Take the bins out');
   const days = dialog.getByRole('group', { name: 'Days' });
   await expect(days.getByRole('button', { name: 'Sunday' })).toHaveAttribute('aria-pressed', 'true');
+  // Seven 40px circles, each a 44px target to a finger that reaches no neighbour's (once the
+  // page has slid in).
+  await settled(days.getByRole('button', { name: 'Sunday' }));
+  const reach = await days.getByRole('button').evaluateAll((els) =>
+    els.map((el) => {
+      const r = el.getBoundingClientRect();
+      const [x, y] = [r.left + r.width / 2, r.top + r.height / 2];
+      const hit = (dx: number, dy: number) => document.elementFromPoint(x + dx, y + dy) === el;
+      return { drawn: Math.round(r.width), reach: hit(0, -21.5) && hit(0, 21.5) && hit(-21.5, 0) && hit(21.5, 0) };
+    }),
+  );
+  expect(reach).toEqual(Array.from({ length: 7 }, () => ({ drawn: 40, reach: true })));
+  // A chosen day: white on the deeper tint fill, 4.7:1.
+  await expect(days.getByRole('button', { name: 'Sunday' })).toHaveCSS('background-color', 'rgb(0, 113, 227)');
   await days.getByRole('button', { name: 'Wednesday' }).click();
   await dialog.getByRole('button', { name: 'Save' }).click();
   await expect(dialog.getByRole('button', { name: /^Take the bins out/ })).toHaveText(/Wed, Sun · Morning/);

@@ -1,6 +1,7 @@
 import {
   area,
   confirmation,
+  DEMO_STORAGE_KEY,
   detailValue,
   expect,
   homeScreen,
@@ -9,6 +10,7 @@ import {
   openItem,
   openNewItem,
   openSeeded,
+  reopen,
   ring,
   rowButton,
   test,
@@ -216,10 +218,16 @@ test.describe('Item sheet: new', () => {
     await expect(title).toBeFocused();
     await expect(title).toHaveAttribute('placeholder', 'Title');
     await expect(sheet.getByLabel('Note', { exact: true })).toHaveAttribute('placeholder', 'Add a note');
+    // The only words on the empty sheet, so readable: the secondary grey, 4.5:1 (iOS's own was 1.7:1).
+    const placeholder = (label: string) =>
+      sheet.getByLabel(label, { exact: true }).evaluate((el) => getComputedStyle(el, '::placeholder').color);
+    expect(await placeholder('Title')).toBe('rgb(110, 110, 115)');
+    expect(await placeholder('Note')).toBe('rgb(110, 110, 115)');
     await expect(sheet.getByRole('radio', { name: 'Within the month' })).toBeChecked();
     await expect(detailValue(sheet, 'Area')).toHaveText('Kitchen');
-    await expect(sheet.getByLabel('Due', { exact: true })).toHaveValue('2026-10-15');
-    await expect(detailValue(sheet, 'Due')).toHaveText('Thu 15 Oct');
+    // Due only once someone says when: a date a week on made a job nobody dated "late".
+    await expect(sheet.getByLabel('Due', { exact: true })).toHaveValue('');
+    await expect(detailValue(sheet, 'Due')).toHaveText('None');
     await expect(detailValue(sheet, 'Assigned to')).toHaveText('Unassigned');
     await expect(detailValue(sheet, 'Repeat')).toHaveText('Never');
     await expect(detailValue(sheet, 'Notify')).toHaveText('1 day before');
@@ -239,6 +247,7 @@ test.describe('Item sheet: new', () => {
     await sheet.getByLabel('Title', { exact: true }).fill('Fix the gate latch');
     await sheet.getByLabel('Note', { exact: true }).fill('It sticks when wet.');
     await sheet.getByLabel('Area', { exact: true }).selectOption({ label: 'Garden' });
+    await sheet.getByLabel('Due', { exact: true }).fill('2026-10-15');
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
 
@@ -265,7 +274,8 @@ test.describe('Item sheet: new', () => {
     await sheet.getByLabel('Assigned to', { exact: true }).selectOption({ label: '🦆 Shea' });
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(area(page, 'Bedroom Small').getByText('All clear', { exact: true })).toHaveCount(0);
-    await expect(meta(page, 'Fit blackout blinds')).toHaveText('Within the month·In 7 days');
+    // No date until someone gives it one: its urgency alone, never "late".
+    await expect(meta(page, 'Fit blackout blinds')).toHaveText('Within the month');
     await expect(who(page, 'Fit blackout blinds')).toHaveText('🦆Shea');
   });
 
@@ -392,6 +402,51 @@ test.describe('Item sheet: keyboard', () => {
     const title = (await openNewItem(page)).getByLabel('Title', { exact: true });
     await title.fill('Fix the\nback door');
     await expect(title).toHaveValue('Fix the back door');
+  });
+});
+
+test.describe('Item sheet: easy to read, and as wide as the phone', () => {
+  test('the chosen urgency’s hint, Mark as Done and the confirmation keep their words readable, light and dark', async ({ page }) => {
+    const sheet = await openItem(page, 'Heaters not working');
+    // Under the chosen option the grey hint goes a step darker on its wash (the red wash took
+    // it to 4.3:1); the others keep the usual grey.
+    await expect(sheet.getByText('Needs doing now', { exact: true })).toHaveCSS('color', 'rgb(60, 60, 67)');
+    await expect(sheet.getByText('Whenever there is time', { exact: true })).toHaveCSS('color', 'rgb(110, 110, 115)');
+    // Mark as Done: white on the deeper tint fill, 4.7:1 in both appearances (the system blue was 4:1).
+    const markDone = sheet.getByRole('button', { name: 'Mark as Done' });
+    await expect(markDone).toHaveCSS('background-color', 'rgb(0, 113, 227)');
+    await sheet.getByRole('button', { name: 'Delete' }).click();
+    const ask = await confirmation(page, 'Delete this item?');
+    // Cancel in the darker tint words use, even with the blue button showing through the glass.
+    await expect(ask.getByRole('button', { name: 'Cancel' })).toHaveCSS('color', 'rgb(0, 88, 185)');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(ask.getByRole('button', { name: 'Cancel' })).toHaveCSS('color', 'rgb(90, 169, 255)');
+    // iOS's accessible red in dark mode: 4.8:1 on the glass (#ff453a was 4.2:1).
+    await expect(ask.getByRole('button', { name: 'Delete Item' })).toHaveCSS('color', 'rgb(255, 105, 97)');
+    await expect(markDone).toHaveCSS('background-color', 'rgb(0, 113, 227)');
+  });
+
+  test('a long name or room is cut short in its row: the sheet never gets wider than the phone', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    // Someone who signed up with their full name, and a room with a long one.
+    await page.evaluate((key) => {
+      const doc = JSON.parse(localStorage.getItem(key)!);
+      doc.members.find((m: { name: string }) => m.name === 'Shea').name = 'Christopher Montgomery-Wells';
+      doc.areas.find((a: { name: string }) => a.name === 'Bathroom Large').name = 'The big bathroom at the top of the stairs';
+      localStorage.setItem(key, JSON.stringify(doc));
+    }, DEMO_STORAGE_KEY);
+    await reopen(page);
+    const sheet = await openItem(page, 'Shower draining slowly');
+    const body = sheet.locator('[data-sheet-scroll]');
+    expect(await body.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    for (const label of ['Area', 'Due', 'Assigned to', 'Repeat', 'Notify']) {
+      const box = (await detailValue(sheet, label).boundingBox())!;
+      expect(box.x + box.width, label).toBeLessThanOrEqual(375 - 16);
+    }
+    // Cut short with an ellipsis (the select itself names the whole value).
+    await expect(detailValue(sheet, 'Assigned to')).toHaveCSS('text-overflow', 'ellipsis');
+    const done = (await sheet.getByRole('button', { name: 'Mark as Done' }).boundingBox())!;
+    expect(done.width).toBeCloseTo(375 - 32, 0);
   });
 });
 

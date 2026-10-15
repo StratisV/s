@@ -47,7 +47,7 @@
 }
 
 .selectRow:focus-within .selectValue {
-  color: var(--tint);
+  color: var(--tint-text);
 }
 
 .select {

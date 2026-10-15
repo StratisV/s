@@ -11,6 +11,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
+import { isDated } from '../../lib/logic/calendar';
 import { longDay } from '../../lib/logic/dates';
 import { isState, itemsByArea } from '../../lib/logic/items';
 import { areaShareMessage } from '../../lib/logic/share';
@@ -25,7 +26,7 @@ import { useShare } from '../share/useShare';
 import { HomeCalendar } from './HomeCalendar';
 import { ItemRow } from './ItemRow';
 import { PersonFilter } from './PersonFilter';
-import { RevealContext } from './reveal';
+import { RevealContext, revealRow } from './reveal';
 import { RoomIcon } from './RoomIcon';
 import { ShowMore, useFold } from './ShowMore';
 import { countsFor, isFor, personFilterKey, validFilter, type PersonFilter as Who } from './personFilter';
@@ -151,7 +152,13 @@ function useCollapsedAreas(householdId: string, areaIds: string[]) {
   return [ids, update] as const;
 }
 
-/** Whose items Home shows, remembered per household on this device. */
+/**
+ * Whose items Home shows. `setWho`, the person's choice (Mine, the people menu), is remembered
+ * per household on this device. Everyone's items can also show for this visit only
+ * (`showAllForNow`: an item just saved for someone else, a shared room): that is not
+ * remembered, and gives way as soon as the person picks, leaves Home or reopens the app, so
+ * Mine stays their own choice.
+ */
 function usePersonFilter(householdId: string, members: Member[]) {
   const key = personFilterKey(householdId);
   const read = () => {
@@ -162,9 +169,10 @@ function usePersonFilter(householdId: string, members: Member[]) {
     }
   };
   const [state, setState] = useState(() => ({ key, who: read() }));
+  const [allFor, setAllFor] = useState<string | null>(null);
   // Another household on this device: its own choice.
   const stored = state.key === key ? state.who : read();
-  const who = validFilter(stored, members);
+  const who = allFor === key ? 'all' : validFilter(stored, members);
   const setWho = useCallback(
     (next: Who) => {
       try {
@@ -173,11 +181,13 @@ function usePersonFilter(householdId: string, members: Member[]) {
       } catch {
         /* private mode or storage full: it just isn't remembered */
       }
+      setAllFor(null);
       setState({ key, who: next });
     },
     [key],
   );
-  return [who, setWho] as const;
+  const showAllForNow = useCallback(() => setAllFor(key), [key]);
+  return [who, setWho, showAllForNow] as const;
 }
 
 /**
@@ -199,13 +209,13 @@ export function HomeScreen({
   onRoomContext,
   onOpenHousekeeping,
 }: HomeScreenProps) {
-  const { data, me, today, completeItem, readOnly } = useHousehold();
+  const { data, me, today, completeItem, readOnly, showToast } = useHousehold();
   const share = useShare();
   const timeZone = data.household.timezone;
   const sections = useMemo(() => itemsByArea(data.areas, data.items), [data.areas, data.items]);
   const areaIds = useMemo(() => sections.map((s) => s.area.id), [sections]);
   const [collapsed, setCollapsed] = useCollapsedAreas(data.household.id, areaIds);
-  const [who, setWho] = usePersonFilter(data.household.id, data.members);
+  const [who, setWho, showAllForNow] = usePersonFilter(data.household.id, data.members);
   const { view, pick: pickView, showForLink } = useHomeView();
   const counts = useMemo(
     () => countsFor(sections.flatMap((s) => s.items), data.members),
@@ -249,23 +259,25 @@ export function HomeScreen({
           : `Nothing for ${whoName} right now.`;
 
   // An item was just saved (the sheet is closing over Home). A new one is in the list after the
-  // next load, so this waits for it. Everyone's items if the filter hides it, its room opened
-  // if folded; then `lit` holds it for a moment: a "Show N more" over it opens (ShowMore.tsx),
-  // the calendar goes to its day, and its row lights up and comes into view.
+  // next load, so this waits for it. Everyone's items for now if the filter hides it, its room
+  // opened if folded; then `lit` holds it for a moment: a "Show N more" over it opens
+  // (ShowMore.tsx), the calendar goes to its day, and its row lights up and comes into view.
+  // The calendar shows only To dos with a date: for anything else a toast says where it went.
   const [lit, setLit] = useState<{ id: string; delay: number } | null>(null);
   const saved = revealItem ? (data.items.find((it) => it.id === revealItem && it.status === 'open') ?? null) : null;
-  const revealRef = useRef({ who, setWho, collapsed, setCollapsed, onRevealed });
-  revealRef.current = { who, setWho, collapsed, setCollapsed, onRevealed };
+  const revealRef = useRef({ who, showAllForNow, collapsed, setCollapsed, onRevealed, view, roomOf, showToast });
+  revealRef.current = { who, showAllForNow, collapsed, setCollapsed, onRevealed, view, roomOf, showToast };
   useEffect(() => {
     if (!saved) return;
     const now = revealRef.current;
-    if (now.who !== 'all' && !isFor(saved, now.who)) now.setWho('all');
+    if (now.who !== 'all' && !isFor(saved, now.who)) now.showAllForNow();
     const folded = now.collapsed.has(saved.area_id);
     if (folded) {
       const nextIds = new Set(now.collapsed);
       nextIds.delete(saved.area_id);
       now.setCollapsed(nextIds);
     }
+    if (now.view === 'calendar' && !isDated(saved)) now.showToast(notOnCalendar(saved, now.roomOf(saved.area_id)));
     const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     setLit({ id: saved.id, delay: folded && !still ? AREA_SLIDE_MS : AREA_REDRAW_MS });
     now.onRevealed?.();
@@ -274,12 +286,12 @@ export function HomeScreen({
     if (!lit) return;
     const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     // Once its room has opened and the rows behind a fold are drawn: into view, clear of the
-    // docked tab switch and the round + (the rows' scroll margins).
+    // docked tab switch and the round + (revealRow(), measured).
     const show = setTimeout(() => {
       const row = Array.from(document.querySelectorAll<HTMLElement>('[data-view] [data-item-id]')).find(
         (el) => el.dataset.itemId === lit.id,
       );
-      row?.querySelector<HTMLElement>('[data-item-open]')?.scrollIntoView({ block: 'nearest', behavior: still ? 'auto' : 'smooth' });
+      if (row) revealRow(row, !still);
     }, lit.delay);
     const done = setTimeout(() => setLit(null), lit.delay + ITEM_FLASH_MS);
     return () => {
@@ -298,24 +310,25 @@ export function HomeScreen({
     onLinkedAreaShown,
     onRoomContext,
     who,
-    setWho,
+    showAllForNow,
     sections,
     shown,
     view,
     showForLink,
   });
-  linkedRef.current = { collapsed, setCollapsed, onLinkedAreaShown, onRoomContext, who, setWho, sections, shown, view, showForLink };
+  linkedRef.current = { collapsed, setCollapsed, onLinkedAreaShown, onRoomContext, who, showAllForNow, sections, shown, view, showForLink };
   useEffect(() => {
     if (!linkedArea) return;
     const now = linkedRef.current;
     const switching = now.view !== 'rooms';
     // Rooms for this visit; what Home opens on next time stays the person's own choice.
     if (switching) now.showForLink('rooms');
-    // The person filter hides the area, or some of its items: show everyone's, as shared.
+    // The person filter hides the area, or some of its items: show everyone's for this visit, as
+    // shared (Mine or the person picked stays the choice Home opens on).
     const all = now.sections.find((s) => s.area.id === linkedArea)?.items.length ?? 0;
     const visible = now.shown.find((s) => s.area.id === linkedArea)?.items.length;
     const unfiltered = now.who !== 'all' && (visible === undefined || visible < all);
-    if (unfiltered) now.setWho('all');
+    if (unfiltered) now.showAllForNow();
     const wasCollapsed = now.collapsed.has(linkedArea);
     if (wasCollapsed) {
       const nextIds = new Set(now.collapsed);
@@ -574,6 +587,19 @@ export function splitLast(name: string): [string, string] {
   const parts = graphemes ? Array.from(graphemes.segment(name), (s) => s.segment) : Array.from(name);
   const tail = parts.pop() ?? '';
   return [parts.join(''), tail];
+}
+
+/**
+ * The toast when an item is saved from the Calendar view but the calendar can't show it (it
+ * shows only To dos with a date), so the person knows it was saved, and where:
+ * "Saved in Kitchen. It has no date, so it isn’t on the calendar." For a thing looked after:
+ * "Saved in Garden. Things looked after aren’t on the calendar."
+ */
+export function notOnCalendar(item: Item, room: string): string {
+  const where = room ? `Saved in ${room}.` : 'Saved.';
+  return isState(item)
+    ? `${where} Things looked after aren’t on the calendar.`
+    : `${where} It has no date, so it isn’t on the calendar.`;
 }
 
 /**

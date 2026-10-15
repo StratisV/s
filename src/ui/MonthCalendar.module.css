@@ -129,12 +129,12 @@
 
 /* Today: a tint number in a tint ring. */
 .day[data-today] {
-  color: var(--tint);
+  color: var(--tint-text);
   font-weight: 600;
 }
 
 .day[data-today] .circle {
-  box-shadow: inset 0 0 0 1.5px var(--tint);
+  box-shadow: inset 0 0 0 1.5px var(--tint-text);
 }
 
 /* The day shown below the calendar: filled. */
@@ -144,7 +144,7 @@
 }
 
 .day[data-selected] .circle {
-  background: var(--tint);
+  background: var(--tint-fill);
   box-shadow: none;
 }
 

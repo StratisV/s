@@ -55,7 +55,7 @@ export function ItemSheet({ target, open, onClose, onExited, onSaved }: ItemShee
     // The area it was added from, otherwise the first area.
     const wanted = target.kind === 'new' ? target.areaId : undefined;
     const areaId = wanted && areas.some((a) => a.id === wanted) ? wanted : (areas[0]?.id ?? '');
-    return newItemDraft(areaId, today);
+    return newItemDraft(areaId);
   });
   const [draft, setDraft] = useState<ItemDraft>(base);
   const [confirm, setConfirm] = useState<Confirm>(null);
@@ -81,7 +81,7 @@ export function ItemSheet({ target, open, onClose, onExited, onSaved }: ItemShee
 
   const update = (patch: Partial<ItemDraft>) => setDraft((d) => ({ ...d, ...patch }));
   /** To do or To maintain. A state keeps the hidden task fields until it is saved. */
-  const setKind = (kind: ItemKind) => setDraft((d) => withKind(d, kind, today, base.kind));
+  const setKind = (kind: ItemKind) => setDraft((d) => withKind(d, kind, base.kind));
   const maintained = draft.kind === 'state';
 
   const close = () => {

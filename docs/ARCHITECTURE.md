@@ -116,8 +116,18 @@ scripts/                   migrate, build-server (Build Output for Vercel, local
 ## Styling conventions
 
 - CSS Modules (`X.module.css`) next to each component; tokens in `src/styles/tokens.css`.
-  `--tint-text` (#0058b9) is the tint for small text on tinted fills or glass, where `--tint`
-  falls below 4.5:1 (selected reaction chips, the chat's "New messages" pill).
+  The tint has three tokens, so words keep 4.5:1: `--tint` (#007aff, dark #0a84ff) is for
+  shapes only (rings, dots, icons, focus rings); `--tint-text` (#0058b9, dark #5aa9ff) is every
+  word in the tint (text buttons and links, Done, Cancel, Today, Clear, Edit, today's date on
+  a calendar), 6:1 or better on the page where the system blue is 3.6:1; `--tint-fill`
+  (#0071e3 in both appearances, #0040dd with Increase Contrast) is a solid fill under white
+  words or glyphs (filled buttons, Mark as Done, the chosen day or chip, your chat bubbles,
+  the round +), 4.7:1 with white where the system blue is 4:1 (3.7:1 in dark). In dark mode
+  `--destructive` is iOS's accessible red #ff6961 (4.8:1 on the action sheets' glass). A
+  bottom sheet over the page (the code sheet) takes `--sheet-bg`, `--sheet-card`,
+  `--sheet-edge` and `--sheet-dim`: the page's colours in light; in dark mode lifted a step
+  (#1c1c1e, its cards #2c2c2e, a faint top edge, the page dimmed more), so it never sinks
+  into the black page.
 - Sizes from the README are CSS px at the 402×874 reference. The OS draws the status bar:
   layouts use `var(--top-inset)` (= `env(safe-area-inset-top)`) instead of a fixed 54px.
 - The app draws under the status bar (`apple-mobile-web-app-status-bar-style` is
@@ -1212,7 +1222,9 @@ claim). New in `HomeContextValue`:
   helper, text "Join our home on home.os. Type this code in home.os: {code}\nOr open {link}": the
   code first, since a link opens in Safari or the messaging app's browser); **Done**. A code that
   could not be made because the person signed in meanwhile says "{name} signed in meanwhile, so
-  only they can add a device now." in a toast.
+  only they can add a device now." in a toast. The sheet has its own surface (`--sheet-*`): in
+  dark mode #1c1c1e with a faint top edge, its code card #2c2c2e, over the page dimmed by half,
+  so it reads as a step of its own rather than the next part of Profile.
 - **Profile**: the account line reads "This device · {label}" instead of "Signed in with
   Google"; **Notifications** (see "Notifications" below); **Add another device** (a code for
   me); **Sign Out** as now. The weekly email and "Invite someone" are hidden.
@@ -1313,8 +1325,9 @@ hand beyond the four settings (see "Deploying").
   morning, between 7 and 9." (at 20: "You have 20 reminders, the most there can be."). A
   reminder's page is pushed from Profile like Household: "New Reminder" or "Edit Reminder",
   **Save** in the bar (off until there is a title and a day), **Remind me to** (placeholder
-  "Take the bins out"), **Days** (seven round buttons, Monday first, "Pick the days it should
-  come on." while none is chosen), **Time** "Morning" with the same caption, and **Delete
+  "Take the bins out"), **Days** (seven round buttons, Monday first, 40px circles that take a
+  finger 44px across without reaching a neighbour, 44px tall below 360px wide; "Pick the days
+  it should come on." while none is chosen), **Time** "Morning" with the same caption, and **Delete
   Reminder** for one that exists. Saving or deleting closes it (focus back on its row, or Add
   Reminder); a failure keeps it, with a toast. Loading failed: "Couldn't load your
   notifications." with **Try Again**. Settings load when Profile opens and when the app comes
@@ -1619,7 +1632,9 @@ colour only where it means something and always with a word, and few visible con
   shows three rows, then "Show 6 more" / "Show fewer" (a disclosure, `aria-expanded`;
   `ShowMore.tsx`, as a room's). Things looked after that are Good or Okay close the view under
   **Looking after** ("All in good shape.", or "Keep an eye on anything marked Okay." when one
-  is Okay), Okay first: two columns of tiles (the room, who, the name, the gauge and the word,
+  is Okay; while something looked after needs work, and so is under Needs attention, never
+  "all in good shape": "1 needs work, under Needs attention.", `lookingAfterNote()`), Okay
+  first: two columns of tiles (the room, who, the name, the gauge and the word,
   Okay in amber words; a tile opens the item), or one row in a card when there is only one. Rows in the
   groups show their room; a row in Today leaves its date out. Nothing open: one card, "All
   clear" (or "Nothing for Ela right now.").
@@ -1679,19 +1694,31 @@ colour only where it means something and always with a word, and few visible con
   folds away (260ms; none of the motion with Reduce Motion), then the item completes with an
   Undo toast ("Marked as done", or for a repeating job when it comes round again, in the
   words its row will use: "Done. Next one in 8 weeks", `doneMessage()`); a small burst of
-  hedgehog and duck confetti (14) and a light haptic.
+  hedgehog and duck confetti (14) and a light haptic. The toast shows as the row goes, not
+  once the server answers (a slow connection left a second with nothing to tap); Undo waits
+  for that answer before taking the completion back, and a completion that never saved has
+  nothing to take back (its own toast says so). A toast with a button stays 8 seconds
+  (`ACTION_TOAST_MS`; a finger can't hold it, only a hovering mouse or keyboard focus can),
+  one with words alone 4 (`TOAST_MS`).
 - **The round +** (`AddButton` in `TabBar.tsx`): adds an item. After a shared room link opened
   a room (`onRoomContext`), it widens to "+ Garden" and is named "New item in Garden", and the
   new-item sheet opens with that room chosen, until another view or tab is chosen.
 - **What was saved can be seen**: when an item is created, or moved to another area, the Item
   sheet reports it (`onSaved(itemId)`), and App passes it to Home (`revealItem`) while Home is
   behind the sheet. Once it is in the list (a new item comes with the next load), Home shows
-  everyone's items if the person filter hides it, opens its room if folded, and holds it for
-  a moment in `RevealContext` (`screens/home/reveal.ts`): a "Show N more" over it opens
+  everyone's items for that visit if the person filter hides it (`showAllForNow`: not
+  remembered, so Mine stays the choice Home opens on), opens its room if folded, and holds it
+  for a moment in `RevealContext` (`screens/home/reveal.ts`): a "Show N more" over it opens
   (`useFold()` in `ShowMore.tsx`: Up next's Later and a room's To dos; it can be folded again
   straight away), the calendar goes to its day, and its row lights up (a tint wash that fades
-  over 2.4s, `data-lit`; a tile gets a ring) and is scrolled into view (`block: 'nearest'`,
-  clear of the docked tab switch and the +). Leaving Home drops a reveal not yet shown.
+  over 2.4s, `data-lit`; a tile gets a ring) and comes into view whole, clear of the docked
+  tab switch and the + (`revealRow()`: measured, as `scrollIntoView` with the rows' scroll
+  margins stopped short in Chromium, which cut them at the cards' clipped edges, and at the
+  scale of the page still pushed back behind the closing sheet). The calendar shows only To
+  dos with a date: one saved from it without a date, or a thing looked after, gets a toast
+  saying where it went (`notOnCalendar()`: "Saved in Kitchen. It has no date, so it isn’t on
+  the calendar.", "Saved in Garden. Things looked after aren’t on the calendar."). Leaving
+  Home drops a reveal not yet shown.
 - **Keyboard focus** never lands on a row in a collapsed area: after a completion
   (`ItemRow`) or when the Item sheet closes on a row that is gone (`App` `restoreFocus`),
   focus goes to the nearest row that can be seen (`inCollapsedArea()` in
@@ -1713,9 +1740,10 @@ colour only where it means something and always with a word, and few visible con
   The toast is two steps lighter than a card there, with a hairline edge (`--toast-bg`,
   `--toast-edge`, `--toast-shadow`), so it never sinks into the list; placeholders, disabled
   buttons, the switches' off track and pressed rows use tokens too (`--placeholder`,
-  `--label-quaternary`, `--fill-secondary`, `--fill-tertiary`), on every tab. Small tint words
-  (Show 6 more, Today, Show month, Collapse all, Save) use `--tint-text`, 4.5:1 or better in
-  both appearances (the system blue is 4:1 on the card).
+  `--label-quaternary`, `--fill-secondary`, `--fill-tertiary`), on every tab. Every word in
+  the tint (Show 6 more, Today, Show month, Collapse all, Save, Done, Cancel, Clear, Edit) uses
+  `--tint-text`, and white words sit on `--tint-fill`, 4.5:1 or better in both appearances
+  (see "Styling conventions").
 
 ### Home: date and the person filter
 
@@ -1737,8 +1765,9 @@ colour only where it means something and always with a word, and few visible con
   Choosing a person shows only items assigned to them, in every view, and only the rooms where
   they have some; Collapse all acts on what is shown. The choice is kept per household
   on this device (`homeos.who.<householdId>`); a member who left reads as Everyone. Saving an
-  item into an area the filter hides switches back to Everyone, and so does a shared area link
-  (see "Sharing").
+  item the filter hides shows everyone's for that visit, and so does a shared area link (see
+  "Sharing"): not remembered, and gone once the person picks, leaves Home or reopens the app,
+  so Mine stays their own choice.
 - People's 🦆 and 🦔 are drawn (`ui/EmojiText.tsx`: the green duck and brown hedgehog of
   `ui/animals.ts`) wherever a member's emoji shows, with the character kept in the text for
   copying and screen readers.
@@ -1753,7 +1782,8 @@ card `ui/MonthCalendar.tsx`, both of which Housekeeping uses too (see "Housekeep
 Nothing new is stored on the server.
 
 - **Where**: Home's third view (**Calendar** in the view switch). First a 48px bar
-  (`DatePicker`'s `headingId`): on the left the calendar's heading, an `h2` (20/25/700) that
+  (`DatePicker`'s `headingId`): on the left the calendar's heading, an `h2` (20/25/600, the
+  section title every tab's headings share, `ui/type.module.css`) that
   names its section, always relative, so it says what the card's title doesn't: "This week",
   "Next week", "Last week", else "In 8 weeks" or "2 weeks ago" (`weekHeading()`); "This month",
   "Next month", "Last month", else "In 2 months" or "3 months ago" (`monthHeading()`). On the right **Today** (15px
@@ -1827,12 +1857,20 @@ Nothing new is stored on the server.
     dot "Urgent", an amber dot "Within the month" and a green dot "Not urgent"; on the next a
     hollow dot "Repeat", a small circle with the tint dot "Housekeeping" and "Red date:
     missed" (the words "Red date" in the missed red).
-- **Under the calendar** (the chosen day, once opened): an `h3` (17/22/600, `tabIndex={-1}`)
-  with the day in full (`fullDay()`, with the year when it isn't this year's), then a card: its
-  items as Home's own rows (`ItemRow`: the ring completes, the row opens the Item sheet) in the
-  order of its marks (`dayRows()`: missed first, then red, amber, green; Home's order breaks
-  ties), then its repeats in the same order. Each row shows its room; a row due that day
-  leaves its date out (the heading says it); a missed one keeps "2 days late".
+- **Under the calendar** (the chosen day, once opened): an `h3` (the section title,
+  `tabIndex={-1}`) with the day in full (`fullDay()`, with the year when it isn't this year's),
+  then a card: its items as Home's own rows (`ItemRow`: the ring completes, the row opens the
+  Item sheet) in the order of its marks (`dayRows()`: missed first, then red, amber, green;
+  Home's order breaks ties), then its repeats in the same order. Each row shows its room; a
+  row due that day leaves its date out (the heading says it); a missed one keeps "2 days
+  late". Today first lists what is still open from before it (`lateItems()`: most urgent
+  first, then the longest late), with "1 late" beside its heading in the missed red (as a room
+  says it beside its name; it takes no room of its own, so today's first row stays on the
+  first screen), then its own rows under a small "Due today" label (or the line saying there
+  are none): marked only on their own day, a late job left today reading "Nothing due for
+  Shea today." while it was two days late. Choosing today says
+  them first too ("Thursday 8 October, today: 1 late (urgent), 1 due (not urgent). Details
+  below the calendar.").
   Repeats (`RepeatRow`: a faint dashed grey ring that is not a button, the title in secondary
   grey, then on the quiet line (`RowMeta`, as on every row) its urgency in words, "Repeat of
   Thu 8 Oct · Every week" (`repeatMeta()`; how often gives way first on a narrow screen) and
@@ -2014,7 +2052,7 @@ Migrations `supabase/migrations/20261010000200_item_kind.sql` and
   database trigger, `applyKindRules()` in `src/lib/logic/items.ts`, the demo backend and the
   Item sheet all agree). Its RAG status, note, area and who looks after it are edited as usual.
 - Changing kind is allowed both ways. A state that becomes a task gets the new-item defaults
-  (due in 7 days, Never, 1 day before) from the Item sheet (`withKind()`); a task that becomes
+  (no due date, Never, 1 day before) from the Item sheet (`withKind()`); a task that becomes
   a state keeps its task fields in the sheet's draft until it is saved, so switching back
   before saving restores them.
 - **Item sheet**: a two-option segmented control (**To do**, **To maintain**; the Stats control

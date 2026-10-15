@@ -26,9 +26,11 @@
   opacity: 1;
 }
 
+/* The total over the ring: taps go through it, to a slice or the circle's button. */
 .center {
   position: absolute;
   inset: 0;
+  pointer-events: none;
   display: flex;
   flex-direction: column;
   align-items: center;

@@ -1,15 +1,18 @@
 import {
+  addButton,
   area,
   areaHeadings,
   chooseWho,
   DEMO_STORAGE_KEY,
   expect,
   homeScreen,
+  itemSheet,
   mine,
   openSeeded,
   peopleButton,
   reopen,
   rowButton,
+  settled,
   showView,
   summary,
   test,
@@ -77,6 +80,26 @@ test.describe('Filter Home by person', () => {
     await chooseWho(page, /^Everyone,/);
     await expect(rowButton(page, 'Olive oil')).toBeVisible();
     expect(await areaHeadings(page).count()).toBe(all);
+  });
+
+  test('a job added for someone else shows everyone’s for now, and Mine stays the choice Home opens on', async ({ page }) => {
+    await openSeeded(page, 'Up next');
+    await mine(page).click();
+    await expect(summary(page)).toHaveText(/^For you, /);
+    await addButton(page).click();
+    const sheet = itemSheet(page, 'New item');
+    await settled(sheet.getByRole('button', { name: 'Close' }));
+    await sheet.getByLabel('Title', { exact: true }).fill('Return the ladder');
+    await sheet.getByLabel('Assigned to', { exact: true }).selectOption({ label: '🦊 Ela' });
+    await sheet.getByRole('button', { name: 'Save' }).click();
+    await expect(sheet).toHaveCount(0);
+    // Everyone's for this visit, so the new job can be seen where it went.
+    await expect(mine(page)).toHaveAttribute('aria-pressed', 'false');
+    await expect(homeScreen(page).getByRole('button', { name: /^Return the ladder ?, / })).toBeVisible();
+    // Opened again, Home is as the person left it: Mine.
+    await reopen(page);
+    await expect(mine(page)).toHaveAttribute('aria-pressed', 'true');
+    await expect(summary(page)).toHaveText(/^For you, /);
   });
 
   test('Mine is one tap, and a second tap shows everyone’s again', async ({ page }) => {

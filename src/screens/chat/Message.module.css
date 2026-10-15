@@ -68,7 +68,7 @@
 }
 
 .bubble[data-mine] {
-  background: var(--tint);
+  background: var(--tint-fill);
   color: #fff;
 }
 
@@ -107,7 +107,7 @@
 .bubble[data-tail][data-mine]::before {
   right: -7px;
   width: 20px;
-  background: var(--tint);
+  background: var(--tint-fill);
   border-bottom-left-radius: 16px 14px;
 }
 
@@ -241,14 +241,6 @@
 .chipEmoji {
   font-size: 15px;
   line-height: 1;
-}
-
-/* Increase Contrast: your bubbles in a deeper blue (white on it is 6.8:1, on #007aff 4:1). */
-@media (prefers-contrast: more) {
-  .bubble[data-mine]:not([data-jumbo]),
-  .bubble[data-tail][data-mine]::before {
-    background: var(--tint-text);
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

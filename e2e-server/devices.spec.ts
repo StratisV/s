@@ -50,6 +50,17 @@ test('Add another device signs a second phone in as Stratis; removing it from th
   await dialog.getByRole('button', { name: 'Add another device' }).click();
   const sheet = codeSheet(a, 'Code for another device');
   await expect(sheet).toContainText('On your other phone or tablet, open home.os and enter it, or open the link.');
+  // Its own surface over the page: the page's colours in light; in dark mode a step lighter
+  // than the black page, its code card lighter again, with a faint top edge.
+  await expect(sheet).toHaveCSS('background-color', 'rgb(242, 242, 247)');
+  await a.emulateMedia({ colorScheme: 'dark' });
+  await expect(sheet).toHaveCSS('background-color', 'rgb(28, 28, 30)');
+  await expect(sheet).toHaveCSS('box-shadow', 'rgba(255, 255, 255, 0.14) 0px 0.5px 0px 0px inset');
+  await expect(sheet.locator('p').first()).toHaveCSS('background-color', 'rgb(44, 44, 46)');
+  // Share is white on the deeper tint fill (4.7:1), Done in the lighter tint words use.
+  await expect(sheet.getByRole('button', { name: 'Share' })).toHaveCSS('background-color', 'rgb(0, 113, 227)');
+  await expect(sheet.getByRole('button', { name: 'Done' })).toHaveCSS('color', 'rgb(90, 169, 255)');
+  await a.emulateMedia({ colorScheme: 'light' });
   const code = await shownCode(sheet);
   await sheet.getByRole('button', { name: 'Done' }).click();
   await expect(sheet).toHaveCount(0);

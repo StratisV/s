@@ -3,10 +3,12 @@ import {
   confirmation,
   expect,
   goToTab,
+  homeScreen,
   housekeepingScreen,
   openSeeded,
   reopen,
   settled,
+  showView,
   tabButton,
   tabs,
   test,
@@ -255,6 +257,25 @@ test.describe('Housekeeping tab', () => {
     );
     // The month is remembered on this device.
     await expect(calendar(screen).getByText('2 visits · £105.50', { exact: true })).toBeVisible();
+  });
+
+  test('its text buttons are one blue, readable on the page: Show month, Clear and Edit', async ({ page }) => {
+    const screen = await openHousekeeping(page);
+    const buttons = [
+      control(screen, 'Show month'),
+      screen.getByRole('button', { name: 'Clear message' }),
+      today(screen).getByRole('button', { name: 'Edit task list' }),
+    ];
+    // The darker tint words use: 6:1 on the page (the system blue was 3.6:1), and in dark mode
+    // its lighter twin, so the three always match.
+    for (const button of buttons) await expect(button).toHaveCSS('color', 'rgb(0, 88, 185)');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    for (const button of buttons) await expect(button).toHaveCSS('color', 'rgb(90, 169, 255)');
+    // Section headings weigh the same as Home's.
+    await expect(screen.getByRole('heading', { name: 'Today', level: 2 })).toHaveCSS('font-weight', '600');
+    await goToTab(page, 'Home');
+    await showView(page, 'Up next');
+    await expect(homeScreen(page).getByRole('heading', { name: 'Needs attention', level: 2 })).toHaveCSS('font-weight', '600');
   });
 
   test('the message saves itself, and Clear can be undone', async ({ page }) => {

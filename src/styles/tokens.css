@@ -13,9 +13,18 @@
   --label-quaternary: rgba(60, 60, 67, 0.3);
   --label-strong: #1c1c1e;
   --separator: rgba(60, 60, 67, 0.16);
+  /* The tint, for shapes: rings, dots, icons, focus rings and outlines (3:1 or better). */
   --tint: #007aff;
-  /* Tint for small text on light tinted fills and glass (5.2:1 or better; #007aff is 3 to 4:1 there). */
+  /*
+   * Words in the tint (text buttons, links, Done, Cancel), on the page, cards, glass or tinted
+   * fills: 6:1 or better on the page (#007aff is 3.6:1 there, 4:1 on a card).
+   */
   --tint-text: #0058b9;
+  /*
+   * A solid tint fill under white words (filled buttons, the chosen day or chip, your chat
+   * bubbles, the round +): 4.7:1 with white, in both appearances (#007aff is 4:1, #0a84ff 3.7:1).
+   */
+  --tint-fill: #0071e3;
   /* A soft tint wash: a selected or lit-up control. */
   --tint-wash: rgba(0, 122, 255, 0.1);
   --destructive: #d70015;
@@ -35,6 +44,15 @@
   --menu-solid: #fafafc;
   --menu-separator: rgba(60, 60, 67, 0.14);
   --sheet-glass: rgba(255, 255, 255, 0.92);
+  /*
+   * A bottom sheet over the page (the code sheet): the page's own colours in light, over a
+   * dimmed page. In dark mode it is lifted a step (iOS's elevated colours), its cards a step
+   * lighter again, with a faint top edge, so it never sinks into the black page.
+   */
+  --sheet-bg: #f2f2f7;
+  --sheet-card: #ffffff;
+  --sheet-edge: transparent;
+  --sheet-dim: rgba(0, 0, 0, 0.3);
   /* Liquid glass controls over content (Chat's composer, its reaction bar and pills). */
   --glass-fill: rgba(255, 255, 255, 0.72);
   --glass-strong: rgba(255, 255, 255, 0.92);
@@ -114,7 +132,8 @@
     --tint: #0a84ff;
     --tint-text: #5aa9ff;
     --tint-wash: rgba(10, 132, 255, 0.2);
-    --destructive: #ff453a;
+    /* iOS's accessible red: 4.8:1 on the action sheets' glass and menus (#ff453a was 4.2:1). */
+    --destructive: #ff6961;
     --fill-tertiary: rgba(118, 118, 128, 0.24);
     --fill-secondary: rgba(118, 118, 128, 0.32);
     --toggle-on: #30d158;
@@ -126,6 +145,10 @@
     --menu-solid: #2c2c2e;
     --menu-separator: rgba(84, 84, 88, 0.6);
     --sheet-glass: rgba(44, 44, 46, 0.94);
+    --sheet-bg: #1c1c1e;
+    --sheet-card: #2c2c2e;
+    --sheet-edge: rgba(255, 255, 255, 0.14);
+    --sheet-dim: rgba(0, 0, 0, 0.5);
     --glass-fill: rgba(44, 44, 46, 0.72);
     --glass-strong: rgba(44, 44, 46, 0.92);
     --glass-highlight: rgba(255, 255, 255, 0.1);
@@ -150,5 +173,12 @@
     --shadow-segment: 0 3px 8px rgba(0, 0, 0, 0.3);
     --shadow-menu: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
     --shadow-card: none;
+  }
+}
+
+/* Increase Contrast: solid tint fills go deeper (iOS's accessible blue), 7.6:1 with white in both appearances. */
+@media (prefers-contrast: more) {
+  :root {
+    --tint-fill: #0040dd;
   }
 }

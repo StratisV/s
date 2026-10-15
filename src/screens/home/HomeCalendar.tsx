@@ -6,6 +6,7 @@ import {
   calendarLookup,
   dayDots,
   dayRows,
+  lateItems,
   repeatMeta,
   visitSummary,
   type CalendarDay,
@@ -87,6 +88,8 @@ export function HomeCalendar({
   const [view, setView] = useCalendarView(CALENDAR_VIEW_KEY);
 
   const lookup = useMemo(() => calendarLookup(items, visits, today), [items, visits, today]);
+  // What is still open from before today: listed first under today, which it is now up to.
+  const late = useMemo(() => lateItems(items, today), [items, today]);
 
   // What a chosen day holds, read out politely. A new key re-announces the same words.
   const [said, setSaid] = useState({ text: '', key: 0 });
@@ -104,7 +107,7 @@ export function HomeCalendar({
 
   const select = (date: ISODate) => {
     update({ selected: date, week: mondayOf(date) });
-    announce(calendarDayAnnouncement(date, today, lookup(date)));
+    announce(calendarDayAnnouncement(date, today, lookup(date), date === today ? late : []));
     setReveal((n) => n + 1);
   };
 
@@ -172,6 +175,7 @@ export function HomeCalendar({
           key={chosen.selected}
           date={chosen.selected}
           day={lookup(chosen.selected)}
+          late={chosen.selected === today ? late : []}
           today={today}
           timeZone={timeZone}
           members={members}
@@ -234,6 +238,8 @@ function Legend() {
 interface DayPanelProps {
   date: ISODate;
   day: CalendarDay;
+  /** For today: what is still open from before it (lateItems()), listed first ("1 late" beside the heading). */
+  late: Item[];
   today: ISODate;
   timeZone: string;
   members: Member[];
@@ -253,11 +259,14 @@ interface DayPanelProps {
  * green), then the repeats coming round that day (opened, not completed), then its
  * housekeeping visit, which opens that day in Housekeeping. A row due that day leaves its
  * date out (the heading says it); a late one keeps "2 days late". Every row leaves the list
- * once completed, a repeating one too (it moves on to a later day).
+ * once completed, a repeating one too (it moves on to a later day). Today lists what is late
+ * first ("1 late" beside its heading), then its own rows under "Due today" (or the line
+ * saying there are none).
  */
 function DayPanel({
   date,
   day,
+  late,
   today,
   timeZone,
   members,
@@ -276,29 +285,35 @@ function DayPanel({
     const price = visit.price_pence === null ? '' : `, ${formatPrice(visit.price_pence)}`;
     visitName = `Housekeeping visit, ${done} of ${total} done${price}. Show in Housekeeping`;
   }
+  const rowProps = { members, today, timeZone, showWho, leavesOnComplete: true, onOpen: onOpenItem, onComplete };
+  const own = rows.length > 0 || repeats.length > 0;
   return (
     <div className={styles.day} data-calendar-day={date}>
-      {/* Focus comes here when the last row is completed and the day isn't on the grid. */}
-      <h3 className={styles.dayHeader} tabIndex={-1}>
-        {fullDay(date, today)}
-      </h3>
+      <div className={styles.dayHeadRow}>
+        {/* Focus comes here when the last row is completed and the day isn't on the grid. */}
+        <h3 className={styles.dayHeader} tabIndex={-1}>
+          {fullDay(date, today)}
+        </h3>
+        {/* As a room says it beside its name: the late jobs at the top of the list below. */}
+        {late.length ? (
+          <span className={styles.lateWord} data-late-count="">
+            {late.length} late
+          </span>
+        ) : null}
+      </div>
       <div className={styles.card}>
-        {rows.length || repeats.length ? (
+        {late.length ? (
+          <ul className={styles.list} role="list" data-late="">
+            {late.map((item) => (
+              <ItemRow key={item.id} item={item} room={roomOf(item.area_id)} {...rowProps} />
+            ))}
+          </ul>
+        ) : null}
+        {late.length && own ? <p className={`${styles.listLabel} ${styles.afterLate}`}>Due today</p> : null}
+        {own ? (
           <ul className={styles.list} role="list">
             {rows.map((item) => (
-              <ItemRow
-                key={item.id}
-                item={item}
-                members={members}
-                today={today}
-                timeZone={timeZone}
-                room={roomOf(item.area_id)}
-                hideWhen
-                showWho={showWho}
-                leavesOnComplete
-                onOpen={onOpenItem}
-                onComplete={onComplete}
-              />
+              <ItemRow key={item.id} item={item} room={roomOf(item.area_id)} hideWhen {...rowProps} />
             ))}
             {repeats.map((item) => (
               <RepeatRow
@@ -313,7 +328,7 @@ function DayPanel({
             ))}
           </ul>
         ) : (
-          <p className={styles.empty}>{empty}</p>
+          <p className={late.length ? `${styles.empty} ${styles.afterLate}` : styles.empty}>{empty}</p>
         )}
       </div>
       {visit ? (

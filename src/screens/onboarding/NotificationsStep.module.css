@@ -21,7 +21,7 @@
   height: 26px;
   border-radius: 50%;
   background: rgba(0, 122, 255, 0.1);
-  color: var(--tint);
+  color: var(--tint-text);
   display: grid;
   place-items: center;
   font-size: 15px;

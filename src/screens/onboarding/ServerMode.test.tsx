@@ -358,16 +358,30 @@ describe('Welcome in server mode', () => {
       throw new BackendError('invalid_code');
     });
     const home = show(signedOut(privateHome(), { createAccount, signInWithPassword }));
+    /** The fields the error marks (red, and described by it), by label. */
+    const marked = () =>
+      ['Your name', 'Email', 'Password'].filter((label) => {
+        const field = screen.queryByLabelText(label);
+        if (field?.getAttribute('aria-invalid') !== 'true') return false;
+        expect(field.getAttribute('aria-describedby')).toBe(screen.getByRole('alert').id);
+        return true;
+      });
     fireEvent.click(screen.getByRole('button', { name: 'Create Account' }));
     expect(screen.getByRole('alert').textContent).toBe('Add your name, your email, and a password of 6 or more characters.');
+    expect(marked()).toEqual(['Your name', 'Email', 'Password']);
     expect(createAccount).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText('Your name'), { target: { value: ' Shea ' } });
+    expect(marked()).toEqual([]);
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: ' shea@example.com ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create Account' }));
+    // Only what is still missing is marked.
+    expect(marked()).toEqual(['Password']);
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'hedgehog1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create Account' }));
     expect(home.createAccount).toHaveBeenCalledWith('Shea', 'shea@example.com', 'hedgehog1');
-    // Taken: on to Sign In, the email kept.
+    // Taken: on to Sign In, the email kept; nothing to fix, so no field is marked.
     expect((await screen.findByRole('alert')).textContent).toBe('That email already has an account. Sign in instead.');
+    expect(marked()).toEqual([]);
     expect(screen.getByText('Welcome back')).toBeTruthy();
     expect((screen.getByLabelText('Email') as HTMLInputElement).value).toBe('shea@example.com');
     expect((screen.getByLabelText('Password') as HTMLInputElement).autocomplete).toBe('current-password');
@@ -375,6 +389,7 @@ describe('Welcome in server mode', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
     expect(signInWithPassword).toHaveBeenCalledWith('shea@example.com', 'hedgehog1');
     expect((await screen.findByRole('alert')).textContent).toBe('Wrong password. Check it and try again.');
+    expect(marked()).toEqual(['Password']);
   });
 
   it('sends Sign In with an email that has no account on to Create Account, keeping what was typed', async () => {
@@ -387,6 +402,9 @@ describe('Welcome in server mode', () => {
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'duckduck' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
     expect((await screen.findByRole('alert')).textContent).toBe('There’s no account for this email yet. Add your name to create it.');
+    // The name is what to add: that field is marked, not the password they typed.
+    expect(screen.getByLabelText('Your name').getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByLabelText('Password').hasAttribute('aria-invalid')).toBe(false);
     expect(screen.getByText('Join your home')).toBeTruthy();
     expect((screen.getByLabelText('Email') as HTMLInputElement).value).toBe('stratis@example.com');
     expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('duckduck');

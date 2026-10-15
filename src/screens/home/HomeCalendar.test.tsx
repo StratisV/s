@@ -202,12 +202,38 @@ describe('Home calendar: the week', () => {
     // The calendar is a view of its own: today's list is open at once, with no line in its place.
     expect(summary()).toBeNull();
     expect(within(panel()!).getByRole('heading', { level: 3, name: 'Thursday 8 October' })).toBeTruthy();
-    expect(within(panel()!).getByRole('button', { name: 'Mark Empty the dehumidifier as done' })).toBeTruthy();
+    // What is late comes first, saying how late, with "1 late" beside the heading (only on its
+    // own day, it left today reading "Nothing due"); then today's own rows, under "Due today".
+    expect(panel()!.querySelector('[data-late-count]')!.textContent).toBe('1 late');
+    expect(Array.from(panel()!.querySelectorAll('p'), (p) => p.textContent)).toEqual(['Due today']);
+    expect(within(panel()!).getAllByRole('button', { name: /^Mark .* as done$/ }).map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Mark Heaters not working as done',
+      'Mark Empty the dehumidifier as done',
+    ]);
     // A row due that day leaves its date out (the heading says it), and says its urgency and room.
-    expect(panel()!.querySelector('[data-meta]')!.textContent).toBe('Within the month·Kitchen');
+    expect(Array.from(panel()!.querySelectorAll('[data-meta]'), (m) => m.textContent)).toEqual([
+      'Urgent2 days late·Kitchen',
+      'Within the month·Kitchen',
+    ]);
     expect(panel()!.querySelector('[data-who]')!.textContent).toBe('🦆Shea');
     fireEvent.click(today);
     expect(within(panel()!).getByRole('heading', { level: 3, name: 'Thursday 8 October' })).toBeTruthy();
+    expect(said()).toBe('Thursday 8 October, today: 1 late (urgent), 1 due (within the month). Details below the calendar.');
+  });
+
+  it('today lists what is late even with nothing of its own, and no other day does', () => {
+    setup({ items: [HEATERS, PLANTS], who: 'm-shea' });
+    expect(within(panel()!).getByRole('button', { name: 'Mark Heaters not working as done' })).toBeTruthy();
+    // Nothing due today, said under the late job rather than in place of it.
+    expect(panel()!.querySelector('[data-late-count]')!.textContent).toBe('1 late');
+    expect(Array.from(panel()!.querySelectorAll('p'), (p) => p.textContent)).toEqual(['Nothing due for Shea today.']);
+    // Another day lists only its own: the late job is on its own day there.
+    fireEvent.click(day(/^Friday 9 October/));
+    expect(within(panel()!).queryByRole('button', { name: 'Mark Heaters not working as done' })).toBeNull();
+    expect(panel()!.querySelector('[data-late-count]')).toBeNull();
+    fireEvent.click(day(/^Tuesday 6 October/));
+    expect(within(panel()!).getByRole('button', { name: 'Mark Heaters not working as done' })).toBeTruthy();
+    expect(panel()!.querySelector('[data-late-count]')).toBeNull();
   });
 
   it('marks each day: status dots, missed in red, repeats faint, the visit with the dot Housekeeping uses', () => {
@@ -442,7 +468,8 @@ describe('Home calendar: choosing a day', () => {
   it('completing a weekly item from the keyboard keeps focus in the calendar, as it leaves the day', () => {
     vi.useFakeTimers();
     keyboardFocus();
-    const { onComplete } = setup();
+    // Nothing late, so today's own row is its only one.
+    const { onComplete } = setup({ items: ITEMS.filter((it) => it !== HEATERS) });
     fireEvent.click(day(/^Thursday 8 October/));
     const ring = within(panel()!).getByRole('button', { name: 'Mark Empty the dehumidifier as done' });
     act(() => ring.focus());

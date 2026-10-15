@@ -202,18 +202,18 @@ test.describe('To maintain', () => {
     const sheet = await openState(page, 'Firepit');
     await sheet.getByRole('radio', { name: 'To do' }).click();
     await expectTaskRows(sheet, true);
-    await expect(sheet.getByLabel('Due', { exact: true })).toHaveValue('2026-10-15');
-    await expect(detailValue(sheet, 'Due')).toHaveText('Thu 15 Oct');
+    await expect(sheet.getByLabel('Due', { exact: true })).toHaveValue('');
+    await expect(detailValue(sheet, 'Due')).toHaveText('None');
     await expect(detailValue(sheet, 'Assigned to')).toHaveText('🦊 Ela');
     await expect(detailValue(sheet, 'Repeat')).toHaveText('Never');
     await expect(detailValue(sheet, 'Notify')).toHaveText('1 day before');
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
 
-    // Now a to-do: the ring is back, with a due date, sorted with the other to-dos.
+    // Now a to-do: the ring is back, with no date yet, after the dated to-dos as urgent as it.
     await expect(stateRow(page, 'Firepit')).toHaveCount(0);
     await expect(ring(page, 'Firepit')).toBeVisible();
-    await expect(meta(page, 'Firepit')).toHaveText('Not urgent·In 7 days');
+    await expect(meta(page, 'Firepit')).toHaveText('Not urgent');
     expect(await titlesIn(page, 'Garden')).toEqual(['Garden room wall panel', 'Give away the old firepit', 'Firepit']);
 
     // And it can be completed like any to-do.

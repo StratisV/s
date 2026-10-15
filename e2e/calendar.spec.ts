@@ -91,10 +91,20 @@ test.describe('Home calendar', () => {
     await expect(summary(page)).toHaveCount(0);
     await expect(control(page, 'Today')).toHaveCount(0);
     await expect(panel(page).getByRole('heading', { level: 3 })).toHaveText('Thursday 8 October');
-    await expect(panel(page).getByRole('button', { name: 'Mark Empty the dehumidifier as done' })).toBeVisible();
-    // A row due that day leaves its date out; it says its urgency, its room and who it is for.
-    await expect(panel(page).locator('[data-meta]')).toHaveText('Not urgent·Garden Lounge');
-    await expect(panel(page).locator('[data-who]')).toHaveText('🦆Shea');
+    // What is late comes first, "1 late" beside the heading (marked only on its own day, it left
+    // today reading "Nothing due"), then today's own, under "Due today".
+    await expect(panel(page).locator('[data-late-count]')).toHaveText('1 late');
+    await expect(panel(page).locator('[data-late-count]')).toHaveCSS('color', 'rgb(215, 0, 21)');
+    await expect(panel(page).locator('p')).toHaveText(['Due today']);
+    expect(
+      await panel(page)
+        .getByRole('button', { name: /^Mark .* as done$/ })
+        .evaluateAll((els) => els.map((el) => el.getAttribute('aria-label'))),
+    ).toEqual(['Mark Heaters not working as done', 'Mark Empty the dehumidifier as done']);
+    // A row due that day leaves its date out, a late one says how late; each its urgency, its
+    // room and who it is for.
+    await expect(panel(page).locator('[data-meta]')).toHaveText(['Urgent2 days late·Hallway', 'Not urgent·Garden Lounge']);
+    await expect(panel(page).locator('[data-who]')).toHaveText(['🦆Shea', '🦆Shea']);
     await day(page, 'Thursday 8 October').click();
     await expect(panel(page).getByRole('heading', { level: 3 })).toHaveText('Thursday 8 October');
   });
@@ -170,7 +180,9 @@ test.describe('Home calendar', () => {
     await busy.click();
     const today = day(page, 'Thursday 8 October');
     await expect(today).toHaveAccessibleName('Thursday 8 October, today, 1 due (not urgent)');
-    await expect(today.locator('span').first()).toHaveCSS('box-shadow', 'rgb(0, 122, 255) 0px 0px 0px 1.5px inset');
+    // In the darker tint words use: 7:1 on the card (the system blue was 4:1).
+    await expect(today).toHaveCSS('color', 'rgb(0, 88, 185)');
+    await expect(today.locator('span').first()).toHaveCSS('box-shadow', 'rgb(0, 88, 185) 0px 0px 0px 1.5px inset');
     // What the marks mean, in words: the dots' colours, a repeat, the visit, a missed day.
     await expect(calendar(page).locator('[data-legend]')).toHaveText(
       'UrgentWithin the monthNot urgentRepeatHousekeepingRed date: missed',
@@ -280,17 +292,40 @@ test.describe('Home calendar', () => {
     await expect(grid(page).locator('button[tabindex="0"]')).toHaveCount(1);
   });
 
-  test('keyboard: completing a weekly item from the chosen day keeps focus on the day', async ({ page }) => {
+  test('keyboard: completing from today’s list keeps focus in it, then on the day', async ({ page }) => {
     await day(page, 'Thursday 8 October').click();
-    // From the day, Tab goes to the row's ring.
+    // From the day, Tab goes to the first row's ring: the late job, listed first.
     await page.keyboard.press('Tab');
+    const late = panel(page).getByRole('button', { name: 'Mark Heaters not working as done' });
+    await expect(late).toBeFocused();
     const ringButton = panel(page).getByRole('button', { name: 'Mark Empty the dehumidifier as done' });
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Tab');
     await expect(ringButton).toBeFocused();
     await page.keyboard.press('Enter');
+    // The weekly job moved on a week, out of today's list: focus goes to the row left, not lost.
+    await expect(ringButton).toHaveCount(0);
     await expect(panel(page)).toContainText('Nothing due today.');
-    // The weekly job moved on a week, out of today's list: focus is on today, not lost.
+    await expect(panel(page).getByRole('button', { name: /^Heaters not working/ })).toBeFocused();
+    // The late one done too: nothing left, so focus is on today.
+    await page.keyboard.press('Shift+Tab');
+    await expect(late).toBeFocused();
+    await page.keyboard.press('Enter');
     await expect(day(page, 'Thursday 8 October')).toBeFocused();
     await expect(day(page, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today, selected');
+    await expect(panel(page)).toContainText('Nothing due today.');
+    await expect(panel(page).locator('p')).toHaveText(['Nothing due today.']);
+    await expect(panel(page).locator('[data-late-count]')).toHaveCount(0);
+  });
+
+  test('Shea’s late job is on her today, not only on the day it was due', async ({ page }) => {
+    await chooseWho(page, /^Shea,/);
+    // Her only job due today, done: what is left today is the late one.
+    await panel(page).getByRole('button', { name: 'Mark Empty the dehumidifier as done' }).click();
+    await expect(panel(page).getByRole('button', { name: 'Mark Empty the dehumidifier as done' })).toHaveCount(0);
+    await expect(panel(page).locator('[data-late-count]')).toHaveText('1 late');
+    await expect(panel(page).locator('p')).toHaveText(['Nothing due for Shea today.']);
+    await expect(panel(page).getByRole('button', { name: /^Heaters not working ?, Urgent, 2 days late, Hallway/ })).toBeVisible();
   });
 
   test('keyboard: moving into another week leaves the chosen day’s list out until Enter chooses a day', async ({ page }) => {
@@ -451,7 +486,8 @@ test.describe('the Housekeeping calendar: the same date picker', () => {
     const oct8 = hkGrid.getByRole('button', { name: /^Thursday 8 October/ });
     expect((await oct8.boundingBox())!.height).toBe(46);
     expect((await oct8.locator('span').first().boundingBox())!.width).toBe(40);
-    await expect(oct8.locator('span').first()).toHaveCSS('background-color', 'rgb(0, 122, 255)');
+    // The chosen day: white on the deeper tint fill, 4.7:1 (the system blue was 4:1).
+    await expect(oct8.locator('span').first()).toHaveCSS('background-color', 'rgb(0, 113, 227)');
     await expect(card.locator('[data-legend], [data-rag]')).toHaveCount(0);
     await expect(hkGrid.getByRole('button', { name: /^Friday 9 October/ })).toBeDisabled();
 

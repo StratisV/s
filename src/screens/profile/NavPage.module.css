@@ -63,7 +63,7 @@
   font-size: 17px;
   line-height: 22px;
   letter-spacing: -0.4px;
-  color: var(--tint);
+  color: var(--tint-text);
   border-radius: 12px;
 }
 

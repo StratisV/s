@@ -111,7 +111,7 @@ The household wants push on iPhone without needing the App Store. Two good route
      - **Notify**: None, On the day, 1 day before (default), 1 week before. This is a push reminder.
   4. **Mark as Done**: 54px tall, radius 27, `#007AFF`, white 17/600 text. On press it scales to 0.96 over 120ms. Then it fires the confetti, completes the item, and dismisses the sheet after about 600ms so the burst can be seen.
   5. **Delete**: centred 17px `#D70015` text button. Ask for confirmation in an action sheet.
-- **New item**: open the same sheet with the area preselected (the area you added from, otherwise the first area), status Amber, due in 7 days, Unassigned, Repeat Never, Notify 1 day before. Hide Mark as Done and Delete. Save is disabled until the title is filled in.
+- **New item**: open the same sheet with the area preselected (the area you added from, otherwise the first area), status Amber, no due date (a job is due only once someone says when; a date a week on turned jobs nobody had dated into red "late" ones), Unassigned, Repeat Never, Notify 1 day before (once it has a date). Hide Mark as Done and Delete. Save is disabled until the title is filled in.
 
 ### 3. Stats
 - Nav row with the avatar, then the title "Stats" (34/41/700).
@@ -150,7 +150,7 @@ The household wants push on iPhone without needing the App Store. Two good route
 - **Done**:
   1. Log a completion `{item_id, credited_to, completed_by, completed_at}`.
   2. If the item repeats, keep it open and move the due date forward by one interval from the old due date. If that date is still in the past, step forward from today instead. Otherwise mark the item done, which hides it from Home.
-  3. Show an undo toast for about 4s.
+  3. Show an undo toast as the row goes, for about 8s (a finger can't hold it; words alone stay about 4s).
 - **Confetti: hedgehogs and ducks**. It fires on Mark as Done and on tapping a status ring.
   - 36 particles, each one randomly 🦔 or 🦆, sized 24–44px.
   - Origin: the centre of the control that was tapped.

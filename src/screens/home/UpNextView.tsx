@@ -1,5 +1,6 @@
 import { useContext, useId } from 'react';
 import { ragWord } from '../../lib/constants';
+import { isState } from '../../lib/logic/items';
 import type { UpNext, UpNextGroup } from '../../lib/logic/upNext';
 import type { ISODate, Item, Member } from '../../lib/types';
 import { SealCheckIcon } from '../../ui/icons';
@@ -75,6 +76,7 @@ export function UpNextView({
       {view.looking.length ? (
         <LookingAfter
           items={view.looking}
+          needsWork={view.groups.find((g) => g.id === 'attention')?.items.filter(isState).length ?? 0}
           roomOf={roomOf}
           members={members}
           today={today}
@@ -133,8 +135,22 @@ function Group({ group, roomOf, members, today, timeZone, showWho, onOpenItem, o
   );
 }
 
+/**
+ * The line under Looking after, which never says all is well while something looked after
+ * needs work (that one is listed under Needs attention): "All in good shape.", "Keep an eye
+ * on anything marked Okay.", "1 needs work, under Needs attention." (and the Okay line after it).
+ */
+export function lookingAfterNote(needsWork: number, okay: boolean): string {
+  const keepAnEye = 'Keep an eye on anything marked Okay.';
+  if (!needsWork) return okay ? keepAnEye : 'All in good shape.';
+  const work = `${needsWork} ${needsWork === 1 ? 'needs' : 'need'} work, under Needs attention.`;
+  return okay ? `${work} ${keepAnEye}` : work;
+}
+
 interface LookingAfterProps {
   items: Item[];
+  /** How many things looked after need work (listed under Needs attention, not here). */
+  needsWork: number;
   roomOf(areaId: string): string;
   members: Member[];
   today: ISODate;
@@ -150,9 +166,9 @@ interface LookingAfterProps {
  * tiles, each with its room, its name and its condition as a gauge and a word (Apple Home's
  * accessory tiles, Tody's condition bars). They open the item. A lone one is a row in a card,
  * as the groups above draw theirs, rather than half a row of tiles. One line under the
- * heading says how they are: all in good shape, or which to keep an eye on.
+ * heading says how they are (lookingAfterNote()).
  */
-function LookingAfter({ items, roomOf, members, today, timeZone, showWho, onOpenItem, onComplete }: LookingAfterProps) {
+function LookingAfter({ items, needsWork, roomOf, members, today, timeZone, showWho, onOpenItem, onComplete }: LookingAfterProps) {
   const headingId = useId();
   const lit = useContext(RevealContext);
   const okay = items.some((it) => it.rag === 'amber');
@@ -161,7 +177,7 @@ function LookingAfter({ items, roomOf, members, today, timeZone, showWho, onOpen
       <h2 id={headingId} className={styles.groupTitle} tabIndex={-1}>
         Looking after
       </h2>
-      <p className={styles.groupNote}>{okay ? 'Keep an eye on anything marked Okay.' : 'All in good shape.'}</p>
+      <p className={styles.groupNote}>{lookingAfterNote(needsWork, okay)}</p>
       {items.length === 1 ? (
         <div className={styles.card}>
           <ul className={styles.list} role="list">

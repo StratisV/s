@@ -95,8 +95,8 @@ export function dueDetail(due: ISODate | null, today: ISODate): { text: string; 
   return { text: `${day} · ${late} ${late === 1 ? 'day' : 'days'} late`, missed: true };
 }
 
-/** README "New item" defaults (a To do). */
-export function newItemDraft(areaId: string, today: ISODate): ItemDraft {
+/** README "New item" defaults (a To do, with no due date until someone gives it one). */
+export function newItemDraft(areaId: string): ItemDraft {
   return {
     area_id: areaId,
     kind: NEW_ITEM_DEFAULTS.kind,
@@ -104,7 +104,7 @@ export function newItemDraft(areaId: string, today: ISODate): ItemDraft {
     note: '',
     good: '',
     rag: NEW_ITEM_DEFAULTS.rag,
-    due_date: addDays(today, NEW_ITEM_DEFAULTS.due_in_days),
+    due_date: NEW_ITEM_DEFAULTS.due_date,
     assignee_id: null,
     repeat: NEW_ITEM_DEFAULTS.repeat,
     notify: NEW_ITEM_DEFAULTS.notify,
@@ -133,9 +133,9 @@ export function draftOf(item: Item): ItemDraft {
  * in the draft (they are hidden, and dropped when saved), so switching back restores them.
  * "What good looks like" stays whatever the kind (a task just doesn't show it).
  * An item saved as a state (`savedKind`) that becomes a task gets the new-item defaults for
- * due date, repeat and notify.
+ * due date (none), repeat and notify.
  */
-export function withKind(draft: ItemDraft, kind: ItemKind, today: ISODate, savedKind: ItemKind = draft.kind): ItemDraft {
+export function withKind(draft: ItemDraft, kind: ItemKind, savedKind: ItemKind = draft.kind): ItemDraft {
   if (draft.kind === kind) return draft;
   if (kind === 'state') return { ...draft, kind };
   const bare =
@@ -143,7 +143,7 @@ export function withKind(draft: ItemDraft, kind: ItemKind, today: ISODate, saved
     draft.repeat === STATE_FIELDS.repeat &&
     draft.notify === STATE_FIELDS.notify;
   if (savedKind !== 'state' || !bare) return { ...draft, kind };
-  const fresh = newItemDraft(draft.area_id, today);
+  const fresh = newItemDraft(draft.area_id);
   return { ...draft, kind, due_date: fresh.due_date, repeat: fresh.repeat, notify: fresh.notify };
 }
 

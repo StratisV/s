@@ -6,7 +6,14 @@ import { formatDay } from '../../lib/logic/dates';
 import { HomeProvider, useHome, type HomeContextValue } from '../../state/HomeProvider';
 import { ConfettiProvider } from '../../ui/Confetti';
 import { COPIED_TOAST } from '../share/useShare';
-import { collapsedKey, HOME_VIEW_KEY, HomeScreen, ROOM_PREVIEW, roomStatus, splitLast, type HomeView } from './HomeScreen';
+import { collapsedKey, HOME_VIEW_KEY, HomeScreen, notOnCalendar, ROOM_PREVIEW, roomStatus, splitLast, type HomeView } from './HomeScreen';
+import { personFilterKey } from './personFilter';
+import { revealRow } from './reveal';
+import { lookingAfterNote } from './UpNextView';
+
+// jsdom lays nothing out: record where Home scrolls a row just saved to instead (reveal.test.tsx
+// measures it).
+vi.mock('./reveal', async (importOriginal) => ({ ...(await importOriginal<typeof import('./reveal')>()), revealRow: vi.fn() }));
 
 class MemoryStorage implements StorageLike {
   private map = new Map<string, string>();
@@ -247,6 +254,40 @@ describe('HomeScreen views', () => {
     expect(within(groups[3]).getByRole('button', { name: 'Show fewer' }).getAttribute('aria-expanded')).toBe('true');
     // The firepit is looked after and in good shape: a row of its own at the foot.
     expect(within(groups[4]).getByRole('button', { name: /^Firepit ?, to maintain, Good, Garden, Ela/ })).toBeTruthy();
+    expect(groups[4].querySelector('p')!.textContent).toBe('All in good shape.');
+  });
+
+  it('Looking after never says all is well while something looked after needs work', async () => {
+    const { home } = await setup(undefined, 'next');
+    const bathroom = home().data!.areas.find((a) => a.name === 'Bathroom Large')!;
+    await act(async () => {
+      await home().createItem({
+        area_id: bathroom.id,
+        kind: 'state',
+        title: 'Grout',
+        note: '',
+        good: '',
+        rag: 'red',
+        due_date: null,
+        assignee_id: null,
+        repeat: 'none',
+        notify: 'none',
+      });
+    });
+    const group = (id: string) => document.querySelector<HTMLElement>(`section[data-group="${id}"]`)!;
+    // It comes with the next load.
+    await waitFor(() => expect(within(group('attention')).getByRole('button', { name: /^Grout ?, to maintain, Needs work/ })).toBeTruthy());
+    expect(group('looking').querySelector('p')!.textContent).toBe('1 needs work, under Needs attention.');
+    expect(lookingAfterNote(0, false)).toBe('All in good shape.');
+    expect(lookingAfterNote(0, true)).toBe('Keep an eye on anything marked Okay.');
+    expect(lookingAfterNote(2, true)).toBe('2 need work, under Needs attention. Keep an eye on anything marked Okay.');
+  });
+
+  it('says where an item saved from the Calendar view went when the calendar can’t show it', () => {
+    const task = { kind: 'task', due_date: null } as Parameters<typeof notOnCalendar>[0];
+    expect(notOnCalendar(task, 'Hallway')).toBe('Saved in Hallway. It has no date, so it isn’t on the calendar.');
+    expect(notOnCalendar({ ...task, kind: 'state' }, 'Garden')).toBe('Saved in Garden. Things looked after aren’t on the calendar.');
+    expect(notOnCalendar(task, '')).toBe('Saved. It has no date, so it isn’t on the calendar.');
   });
 
   it('remembers the view on this device, and moves between views with the arrow keys', async () => {
@@ -500,16 +541,13 @@ describe('HomeScreen after a save', () => {
 
   afterEach(() => {
     vi.useRealTimers();
-    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    vi.mocked(revealRow).mockClear();
   });
 
-  /** scrollIntoView, recorded: jsdom has none. */
+  /** The rows Home brought into view (revealRow(), measured in reveal.test.tsx). */
   function recordScrolls() {
-    const scrolled: Element[] = [];
-    Element.prototype.scrollIntoView = function (this: Element) {
-      scrolled.push(this);
-    };
-    return scrolled;
+    vi.mocked(revealRow).mockClear();
+    return vi.mocked(revealRow).mock.calls;
   }
 
   /** The row of an item, by its id. */
@@ -554,7 +592,8 @@ describe('HomeScreen after a save', () => {
     expect(rowOf(created.id)!.hasAttribute('data-lit')).toBe(true);
     expect(onRevealed).toHaveBeenCalledTimes(1);
     act(() => vi.advanceTimersByTime(100));
-    expect(scrolled).toEqual([rowOf(created.id)!.querySelector('[data-item-open]')]);
+    // The whole row, clear of the docked tab switch and the round +, smoothly.
+    expect(scrolled).toEqual([[rowOf(created.id)!, true]]);
     // The light fades; the room stays open until folded again.
     act(() => vi.advanceTimersByTime(3000));
     expect(rowOf(created.id)!.hasAttribute('data-lit')).toBe(false);
@@ -563,7 +602,7 @@ describe('HomeScreen after a save', () => {
   });
 
   it('Up next: a new item deep in Later opens it; one for someone the filter hides shows everyone’s again', async () => {
-    const { home, revealItem } = await setup(undefined, 'next');
+    const { home, revealItem, storage } = await setup(undefined, 'next');
     recordScrolls();
     const data = home().data!;
     const kitchen = data.areas.find((a) => a.name === 'Kitchen')!;
@@ -586,6 +625,33 @@ describe('HomeScreen after a save', () => {
     const later = document.querySelector<HTMLElement>('section[data-group="later"]')!;
     expect(within(later).getByRole('button', { name: 'Show fewer' })).toBeTruthy();
     expect(later.contains(rowOf(created.id))).toBe(true);
+    // Everyone's for this visit only: Mine stays the choice this phone opens on.
+    const me = home().me!.id;
+    expect(localStorage.getItem(personFilterKey(home().data!.household.id))).toBe(me);
+    expect(screen.getByRole('button', { name: 'Mine' }).getAttribute('aria-pressed')).toBe('false');
+    cleanup();
+    await setup(storage, 'next');
+    expect(screen.getByRole('button', { name: 'Mine' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('Calendar: a saved item the calendar can’t show (no date, or looked after) says where it went', async () => {
+    const { home, revealItem } = await setup(undefined, 'calendar');
+    recordScrolls();
+    const kitchen = home().data!.areas.find((a) => a.name === 'Kitchen')!;
+    const save = async (over: Record<string, unknown>) => {
+      let created!: { id: string };
+      await act(async () => {
+        created = await home().createItem({ ...NEW_TASK, area_id: kitchen.id, title: 'Find a plumber', due_date: null, ...over });
+      });
+      act(() => home().dismissToast());
+      act(() => revealItem()(created.id));
+      await act(async () => {});
+      return home().toast?.message ?? null;
+    };
+    expect(await save({ rag: 'red' })).toBe('Saved in Kitchen. It has no date, so it isn’t on the calendar.');
+    expect(await save({ kind: 'state', title: 'Grout', notify: 'none' })).toBe('Saved in Kitchen. Things looked after aren’t on the calendar.');
+    // One with a date: the calendar goes to its day instead, and nothing needs saying.
+    expect(await save({ due_date: '2026-10-20' })).toBeNull();
   });
 
   it('an item moved to another room: shown in its new room', async () => {
@@ -780,6 +846,8 @@ describe('HomeScreen from a shared area link', () => {
     vi.useFakeTimers();
     act(() => linkArea()(hallway.id));
     expect(who()).toBe('Everyone');
+    // For this visit: the choice this phone opens on stays Unassigned.
+    expect(localStorage.getItem(personFilterKey(home().data!.household.id))).toBe('none');
     act(() => vi.advanceTimersByTime(100));
     expect(scrolled).toEqual([area('Hallway').region]);
     expect(document.activeElement).toBe(area('Hallway').toggle);

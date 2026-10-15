@@ -244,10 +244,15 @@ export const ACCOUNT = {
   tooMany: 'Too many tries. Wait 15 minutes, then try again.',
 };
 
+/** A field of Create Account or Sign In that an error can be about. */
+type AccountField = 'name' | 'email' | 'password';
+
 /**
  * Create Account and Sign In (server mode, a home online): name, email and password once,
  * then email and password on any other phone. The browser stays signed in. "Have a code?"
- * is still there for a code someone sent.
+ * is still there for a code someone sent. An error marks the fields it is about (red, and
+ * described by it): the ones still to fill in, the password when it is wrong, the name when
+ * an email has no account yet; none when it is about no field (too many tries, no connection).
  */
 function Account({ google, notice, onCode }: { google: boolean; notice: ServerWelcomeNotice | null; onCode(): void }) {
   const { createAccount, signInWithPassword, continueWithGoogle } = useHome();
@@ -256,7 +261,7 @@ function Account({ google, notice, onCode }: { google: boolean; notice: ServerWe
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ text: string; fields: AccountField[] } | null>(null);
   const errorId = useId();
   const alive = useRef(true);
   useEffect(() => {
@@ -266,13 +271,21 @@ function Account({ google, notice, onCode }: { google: boolean; notice: ServerWe
     };
   }, []);
   const creating = mode === 'create';
-  const ready = (!creating || name.trim() !== '') && /\S+@\S+\.\S+/.test(email.trim()) && password.length >= 6;
+  /** What is still to fill in, or isn't right yet, before the form can go. */
+  const missing: AccountField[] = [];
+  if (creating && name.trim() === '') missing.push('name');
+  if (!/\S+@\S+\.\S+/.test(email.trim())) missing.push('email');
+  if (password.length < 6) missing.push('password');
+  const say = (text: string, fields: AccountField[] = []) => setError({ text, fields });
+  /** The attributes that mark a field the error is about. */
+  const marked = (field: AccountField) =>
+    error?.fields.includes(field) ? { 'aria-invalid': true, 'aria-describedby': errorId } : {};
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (busy) return;
-    if (!ready) {
-      setError(creating ? ACCOUNT.missingCreate : ACCOUNT.missingSignIn);
+    if (missing.length) {
+      say(creating ? ACCOUNT.missingCreate : ACCOUNT.missingSignIn, missing);
       return;
     }
     setBusy(true);
@@ -285,25 +298,19 @@ function Account({ google, notice, onCode }: { google: boolean; notice: ServerWe
       if (!alive.current) return;
       const code = err instanceof BackendError ? err.code : null;
       if (!creating && code === 'not_found') {
-        // No account yet: on to Create Account, with what they typed kept.
+        // No account yet: on to Create Account, with what they typed kept, and their name to add.
         setMode('create');
-        setError(ACCOUNT.noAccount);
+        say(ACCOUNT.noAccount, ['name']);
         return;
       }
-      setError(
-        code === 'email_taken'
-          ? ACCOUNT.emailTaken
-          : code === 'invalid_code'
-            ? ACCOUNT.wrong
-            : err instanceof BackendError && err.message.startsWith('invalid_input')
-              ? creating
-                ? ACCOUNT.missingCreate
-                : ACCOUNT.missingSignIn
-              : code === 'too_many_attempts'
-                ? ACCOUNT.tooMany
-                : errorMessage(err),
-      );
-      if (code === 'email_taken') setMode('signIn');
+      if (code === 'email_taken') {
+        // Nothing to fix: on to Sign In, the email kept.
+        setMode('signIn');
+        say(ACCOUNT.emailTaken);
+      } else if (code === 'invalid_code') say(ACCOUNT.wrong, ['password']);
+      else if (err instanceof BackendError && err.message.startsWith('invalid_input')) {
+        say(creating ? ACCOUNT.missingCreate : ACCOUNT.missingSignIn, missing);
+      } else say(code === 'too_many_attempts' ? ACCOUNT.tooMany : errorMessage(err));
     } finally {
       if (alive.current) setBusy(false);
     }
@@ -344,6 +351,7 @@ function Account({ google, notice, onCode }: { google: boolean; notice: ServerWe
                 value={name}
                 maxLength={60}
                 disabled={busy}
+                {...marked('name')}
                 onChange={(e) => {
                   setName(e.target.value);
                   setError(null);
@@ -367,6 +375,7 @@ function Account({ google, notice, onCode }: { google: boolean; notice: ServerWe
             value={email}
             maxLength={254}
             disabled={busy}
+            {...marked('email')}
             onChange={(e) => {
               setEmail(e.target.value);
               setError(null);
@@ -385,8 +394,7 @@ function Account({ google, notice, onCode }: { google: boolean; notice: ServerWe
             value={password}
             maxLength={200}
             disabled={busy}
-            aria-invalid={error ? true : undefined}
-            aria-describedby={error ? errorId : undefined}
+            {...marked('password')}
             onChange={(e) => {
               setPassword(e.target.value);
               setError(null);
@@ -396,7 +404,7 @@ function Account({ google, notice, onCode }: { google: boolean; notice: ServerWe
         )}
         {error ? (
           <p id={errorId} className={styles.codeError} role="alert">
-            {error}
+            {error.text}
           </p>
         ) : null}
         <div className={styles.join}>

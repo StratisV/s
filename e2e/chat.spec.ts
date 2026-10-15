@@ -97,10 +97,17 @@ test.describe('Chat', () => {
     expect(composerBox.y + composerBox.height).toBeGreaterThan(874 - 24);
     expect((await tabs(page).boundingBox())!.y).toBeLessThan(composerBox.y);
 
-    // Others on the left in white, yours on the right in the tint.
+    // Others on the left in white, yours on the right in the tint: white on the deeper tint
+    // fill, 4.7:1 in both appearances (the system blue was 4:1, 3.7:1 in dark).
     await expect(bubble(page, 'The heating engineer')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-    await expect(bubble(page, 'Restocked the olive oil')).toHaveCSS('background-color', 'rgb(0, 122, 255)');
+    await expect(bubble(page, 'Restocked the olive oil')).toHaveCSS('background-color', 'rgb(0, 113, 227)');
     await expect(bubble(page, 'Restocked the olive oil')).toHaveCSS('color', 'rgb(255, 255, 255)');
+    // Increase Contrast: deeper still, 7.6:1, in dark mode too (it was lighter there, 2.5:1).
+    await page.emulateMedia({ contrast: 'more' });
+    await expect(bubble(page, 'Restocked the olive oil')).toHaveCSS('background-color', 'rgb(0, 64, 221)');
+    await page.emulateMedia({ contrast: 'more', colorScheme: 'dark' });
+    await expect(bubble(page, 'Restocked the olive oil')).toHaveCSS('background-color', 'rgb(0, 64, 221)');
+    await page.emulateMedia({ contrast: 'no-preference', colorScheme: 'light' });
     const mine = (await bubble(page, 'Restocked the olive oil').boundingBox())!;
     const theirs = (await bubble(page, 'Legend.').boundingBox())!;
     expect(mine.x + mine.width).toBeGreaterThan(theirs.x + theirs.width);

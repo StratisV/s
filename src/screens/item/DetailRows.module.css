@@ -40,7 +40,7 @@
 
 /* The open picker's value takes the tint, as in iOS Settings. */
 .row:focus-within .value {
-  color: var(--tint);
+  color: var(--tint-text);
 }
 
 /* Native select / date input covering the whole row. 16px+ so iOS doesn't zoom. */

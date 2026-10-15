@@ -60,8 +60,8 @@ test.describe('Dates and time zones', () => {
     await closeProfile(page);
     await expect(meta(page, 'Put the recycling out')).toHaveText('Within the month·1 day late');
 
-    // New items are due 7 days after today there.
-    await expect(detailValue(await openNewItem(page), 'Due')).toHaveText('Fri 16 Oct');
+    // New items have no date until someone gives it one, wherever the home is.
+    await expect(detailValue(await openNewItem(page), 'Due')).toHaveText('None');
   });
 
   test('This Month starts again on the 1st', async ({ page }) => {

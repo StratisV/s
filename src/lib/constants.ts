@@ -80,11 +80,16 @@ export const REPEAT_MONTHS: Record<Exclude<Repeat, 'none' | 'weekly'>, number> =
   yearly: 12,
 };
 
-/** New item defaults (README: To do, Amber, due in 7 days, Unassigned, Never, 1 day before). */
+/**
+ * New item defaults (design/README.md "New item"): To do, Within the month, no due date,
+ * Unassigned, Never, 1 day before (once it has a date). A job is due only when someone says
+ * when, as in Reminders, Things and Todoist: a date a week on turned a "Not urgent" job nobody
+ * had dated into a red "1 day late".
+ */
 export const NEW_ITEM_DEFAULTS = {
   kind: 'task' as ItemKind,
   rag: 'amber' as Rag,
-  due_in_days: 7,
+  due_date: null,
   repeat: 'none' as Repeat,
   notify: 'day_before' as Notify,
 };
