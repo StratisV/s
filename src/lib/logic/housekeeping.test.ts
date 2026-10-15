@@ -1,18 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { HOUSEKEEPING_PRICE_MAX_PENCE } from '../constants';
-import type {
-  HousekeepingData,
-  HousekeepingSection,
-  HousekeepingTask,
-  HousekeepingTaskGroup,
-  HousekeepingVisit,
-  HousekeepingVisitTask,
-  Member,
-} from '../types';
+import type { HousekeepingData, HousekeepingSection, HousekeepingTask, HousekeepingVisit, HousekeepingVisitTask, Member } from '../types';
 import {
   applyTick,
   applyVisitPatch,
-  arrangementOf,
   calendarDayLabel,
   canHaveVisit,
   checklistFor,
@@ -51,13 +42,13 @@ import {
   WEEKDAYS,
   withSectionAdded,
   withSectionDeleted,
+  withSectionMoved,
   withSectionRenamed,
-  withSectionsReordered,
   withTaskAdded,
   withTaskDeleted,
+  withTaskMoved,
   withTaskRenamed,
   withListSettled,
-  withTasksArranged,
 } from './housekeeping';
 
 const TZ = 'Europe/London';
@@ -160,9 +151,6 @@ const section = (id: string, title: string, position: number): HousekeepingSecti
 const KITCHEN = section('s-kitchen', 'Kitchen', 0);
 const BATH = section('s-bath', 'Bathrooms', 1);
 const GARDEN = section('s-garden', 'Garden', 2);
-
-/** One group of an arrangement (arrangeHousekeepingTasks). */
-const group = (sectionId: string | null, ...taskIds: string[]): HousekeepingTaskGroup => ({ sectionId, taskIds });
 
 /** The same items in another order (the backends' order is not what decides). */
 const shuffle = <T>(items: T[]): T[] => [...items.slice(3), ...items.slice(0, 3).reverse()];
@@ -922,32 +910,53 @@ describe('optimistic edits', () => {
       expect(visitOn(next.visits, lastWeek)!.tasks.find((r) => r.title === 'Clean the kitchen')).toEqual({ ...before, task_id: null });
     });
 
-    it('withTasksArranged: within a section, across sections, out to the top and into an empty section', () => {
+    /** Each task's section (by name) and place, in the list's order. */
+    const placesOf = (hk: HousekeepingData) =>
+      hk.tasks.map((t) => `${t.id} ${hk.sections.find((s) => s.id === t.section_id)?.title ?? '-'} ${t.position}`);
+
+    it('withTaskMoved: within a section, down and up; the places run 0…n-1', () => {
       const base = sectioned({ sections: [KITCHEN, BATH, GARDEN] });
       const before = clone(base);
-
-      const within = withTasksArranged(base, [group(null, 't0', 't1', 't4', 't6'), group(KITCHEN.id, 't5', 't3'), group(BATH.id, 't2')], TODAY);
-      expect(within.tasks.map((t) => t.id)).toEqual(['t0', 't1', 't4', 't6', 't5', 't3', 't2']);
-      expect(within.tasks.find((t) => t.id === 't5')).toMatchObject({ section_id: KITCHEN.id, position: 0 });
-
-      const across = withTasksArranged(base, [group(null, 't0', 't1', 't4', 't6'), group(KITCHEN.id, 't3'), group(BATH.id, 't5', 't2')], TODAY);
-      expect(across.tasks.find((t) => t.id === 't5')).toMatchObject({ section_id: BATH.id, position: 0 });
-      expect(across.tasks.find((t) => t.id === 't2')).toMatchObject({ section_id: BATH.id, position: 1 });
-
-      const out = withTasksArranged(base, [group(null, 't2', 't0', 't1', 't4', 't6'), group(KITCHEN.id, 't3', 't5'), group(BATH.id)], TODAY);
-      expect(out.tasks.map((t) => t.id)).toEqual(['t2', 't0', 't1', 't4', 't6', 't3', 't5']);
-      expect(out.tasks[0]).toMatchObject({ section_id: null, position: 0 });
-
-      const garden = withTasksArranged(base, [group(null, 't0', 't1', 't4'), group(KITCHEN.id, 't3', 't5'), group(BATH.id, 't2'), group(GARDEN.id, 't6')], TODAY);
-      expect(garden.tasks.at(-1)).toMatchObject({ id: 't6', section_id: GARDEN.id, position: 0 });
+      const down = withTaskMoved(base, 't3', KITCHEN.id, 1, TODAY);
+      expect(placesOf(down)).toEqual(['t0 - 0', 't1 - 1', 't4 - 2', 't6 - 3', 't5 Kitchen 0', 't3 Kitchen 1', 't2 Bathrooms 0']);
+      const up = withTaskMoved(base, 't6', null, 0, TODAY);
+      expect(placesOf(up).slice(0, 4)).toEqual(['t6 - 0', 't0 - 1', 't1 - 2', 't4 - 3']);
       expect(base).toEqual(before);
     });
 
-    it('withTasksArranged: today’s visit follows, a ticked row keeping its title; last week does not', () => {
+    it('withTaskMoved: into another section at its start, in the middle and past its end; the section it left closes up', () => {
+      const base = sectioned({ sections: [KITCHEN, BATH, GARDEN] });
+      const start = withTaskMoved(base, 't5', BATH.id, 0, TODAY);
+      expect(placesOf(start)).toEqual(['t0 - 0', 't1 - 1', 't4 - 2', 't6 - 3', 't3 Kitchen 0', 't5 Bathrooms 0', 't2 Bathrooms 1']);
+      const middle = withTaskMoved(base, 't0', KITCHEN.id, 1, TODAY);
+      expect(placesOf(middle)).toEqual(['t1 - 0', 't4 - 1', 't6 - 2', 't3 Kitchen 0', 't0 Kitchen 1', 't5 Kitchen 2', 't2 Bathrooms 0']);
+      const end = withTaskMoved(base, 't1', KITCHEN.id, 99, TODAY);
+      expect(placesOf(end).slice(3, 6)).toEqual(['t3 Kitchen 0', 't5 Kitchen 1', 't1 Kitchen 2']);
+    });
+
+    it('withTaskMoved: out of a section to the tasks in no section, and into an empty section', () => {
+      const base = sectioned({ sections: [KITCHEN, BATH, GARDEN] });
+      const out = withTaskMoved(base, 't2', null, 0, TODAY);
+      expect(placesOf(out)).toEqual(['t2 - 0', 't0 - 1', 't1 - 2', 't4 - 3', 't6 - 4', 't3 Kitchen 0', 't5 Kitchen 1']);
+      const garden = withTaskMoved(base, 't6', GARDEN.id, 0, TODAY);
+      expect(placesOf(garden).at(-1)).toBe('t6 Garden 0');
+    });
+
+    it('withTaskMoved: only the task moved and the places in its two sections change (another move made meanwhile stands)', () => {
+      const base = sectioned({ sections: [KITCHEN, BATH, GARDEN] });
+      // Someone else's move (t6 into Garden) is already shown; this one (t0 into Bathrooms) keeps it.
+      const both = withTaskMoved(withTaskMoved(base, 't6', GARDEN.id, 0, TODAY), 't0', BATH.id, 1, TODAY);
+      expect(placesOf(both)).toEqual(['t1 - 0', 't4 - 1', 't3 Kitchen 0', 't5 Kitchen 1', 't2 Bathrooms 0', 't0 Bathrooms 1', 't6 Garden 0']);
+      // Unknown task or section: as it was.
+      expect(withTaskMoved(base, 'nope', KITCHEN.id, 0, TODAY)).toBe(base);
+      expect(withTaskMoved(base, 't0', 'gone', 0, TODAY)).toBe(base);
+    });
+
+    it('withTaskMoved: today’s visit follows, a ticked row keeping its title; last week does not', () => {
       const base = sectioned({ today: true, lastWeek: true });
       const today = visitOn(base.visits, TODAY)!;
       today.tasks = today.tasks.map((r) => (r.task_id === 't6' ? { ...r, title: 'Ironing (old)', done: true, done_by: 'ela', done_at: NOW.toISOString() } : r));
-      const next = withTasksArranged(base, [group(null, 't0', 't1', 't4'), group(KITCHEN.id, 't6', 't3', 't5'), group(BATH.id, 't2')], TODAY);
+      const next = withTaskMoved(base, 't6', KITCHEN.id, 0, TODAY);
       expect(visitOn(next.visits, TODAY)!.tasks.map((r) => [r.title, r.section_id, r.section_title, r.position, r.done])).toEqual([
         ['Change the bed sheets', null, '', 0, false],
         ['Hoover and mop the floors', null, '', 1, false],
@@ -960,14 +969,6 @@ describe('optimistic edits', () => {
       expect(visitOn(next.visits, lastWeek)).toBe(visitOn(base.visits, lastWeek));
     });
 
-    it('withTasksArranged: unknown tasks and sections are passed over; a task named twice keeps its first place', () => {
-      const base = sectioned();
-      const next = withTasksArranged(base, [group(null, 'nope', 't1', 't0', 't4', 't6'), group('gone', 't3'), group(BATH.id, 't2', 't0')], TODAY);
-      expect(next.tasks.find((t) => t.id === 't1')).toMatchObject({ section_id: null, position: 0 });
-      expect(next.tasks.find((t) => t.id === 't0')).toMatchObject({ section_id: null, position: 1 });
-      expect(next.tasks.find((t) => t.id === 't3')).toMatchObject({ section_id: KITCHEN.id, position: 0 });
-      expect(next.tasks.find((t) => t.id === 't2')).toMatchObject({ section_id: BATH.id, position: 0 });
-    });
   });
 
   describe('section edits', () => {
@@ -1037,16 +1038,29 @@ describe('optimistic edits', () => {
       expect(withSectionDeleted(base, 'nope', TODAY)).toBe(base);
     });
 
-    it('withSectionsReordered: a section moved first brings its tasks; today follows, last week does not; unknown ids', () => {
+    it('withSectionMoved: a section moved first brings its tasks; today follows, last week does not; unknown id', () => {
       const base = sectioned({ today: true, lastWeek: true });
-      const next = withSectionsReordered(base, [BATH.id, 'nope', KITCHEN.id], TODAY);
+      const before = clone(base);
+      const next = withSectionMoved(base, BATH.id, 0, TODAY);
       expect(next.sections.map((s) => [s.title, s.position])).toEqual([
         ['Bathrooms', 0],
-        ['Kitchen', 2],
+        ['Kitchen', 1],
       ]);
       expect(next.tasks.map((t) => t.id)).toEqual(['t0', 't1', 't4', 't6', 't2', 't3', 't5']);
       expect(visitOn(next.visits, TODAY)!.tasks.map((r) => r.task_id)).toEqual(['t0', 't1', 't4', 't6', 't2', 't3', 't5']);
       expect(visitOn(next.visits, lastWeek)).toBe(visitOn(base.visits, lastWeek));
+      expect(base).toEqual(before);
+      expect(withSectionMoved(base, 'nope', 0, TODAY)).toBe(base);
+    });
+
+    it('withSectionMoved: down one, and past the end is last; only the order changes', () => {
+      const base = sectioned({ sections: [KITCHEN, BATH, GARDEN] });
+      expect(withSectionMoved(base, KITCHEN.id, 1, TODAY).sections.map((s) => [s.title, s.position])).toEqual([
+        ['Bathrooms', 0],
+        ['Kitchen', 1],
+        ['Garden', 2],
+      ]);
+      expect(withSectionMoved(base, KITCHEN.id, 99, TODAY).sections.map((s) => s.title)).toEqual(['Bathrooms', 'Garden', 'Kitchen']);
     });
   });
 });
@@ -1067,7 +1081,7 @@ describe('sections and the list’s order', () => {
     expect(base).toEqual(before);
   });
 
-  it('taskListGroups and arrangementOf: no section first (always), then every section in order, empty ones too', () => {
+  it('taskListGroups: no section first (always), then every section in order, empty ones too', () => {
     expect(taskListGroups(data()).map((g) => [g.section, g.tasks.length])).toEqual([[null, 7]]);
     const base = sectioned({ sections: [KITCHEN, BATH, GARDEN] });
     expect(taskListGroups(base).map((g) => [g.section?.title ?? null, g.tasks.map((t) => t.id)])).toEqual([
@@ -1076,16 +1090,10 @@ describe('sections and the list’s order', () => {
       ['Bathrooms', ['t2']],
       ['Garden', []],
     ]);
-    expect(arrangementOf(base)).toEqual([
-      { sectionId: null, taskIds: ['t0', 't1', 't4', 't6'] },
-      { sectionId: KITCHEN.id, taskIds: ['t3', 't5'] },
-      { sectionId: BATH.id, taskIds: ['t2'] },
-      { sectionId: GARDEN.id, taskIds: [] },
-    ]);
     // A task whose section is gone is in the first group.
     const odd = { ...base, tasks: [...base.tasks, { ...tasks(['Gone'])[0], id: 'tg', section_id: 'gone', position: 9 }] };
     expect(taskListGroups(odd)[0].tasks.map((t) => t.id)).toEqual(['t0', 't1', 't4', 't6', 'tg']);
-    expect(arrangementOf(data({ tasks: [] }))).toEqual([{ sectionId: null, taskIds: [] }]);
+    expect(taskListGroups(data({ tasks: [] }))).toEqual([{ section: null, tasks: [] }]);
   });
 
   it('relayVisit: rows follow their tasks’ sections, names and order; nothing to change gives the same visit', () => {
@@ -1148,7 +1156,7 @@ describe('sections and the list’s order', () => {
     const last = visitOn(base.visits, '2026-10-01')!;
     last.tasks = last.tasks.map((r) => (r.task_id === 't3' || r.task_id === 't5' || r.task_id === 't1' ? { ...r, done: true } : r));
     // Since then: Kitchen renamed and moved after Bathrooms.
-    const now = withSectionsReordered(withSectionRenamed(base, KITCHEN.id, 'Cooking', TODAY), [BATH.id, KITCHEN.id], TODAY);
+    const now = withSectionMoved(withSectionRenamed(base, KITCHEN.id, 'Cooking', TODAY), BATH.id, 0, TODAY);
     const groups = checklistSections(now, '2026-10-01');
     expect(groups.map((g) => [g.title, g.done, g.rows.length])).toEqual([
       [null, 1, 4],
@@ -1169,15 +1177,48 @@ describe('sections and the list’s order', () => {
     expect(checklistSections({ ...now, visits: [odd] }, '2026-10-01')[0].rows.at(-1)!.title).toBe('Change the bed sheets');
   });
 
+  it('checklistSections: two deleted sections of the same name stay apart, in their places', () => {
+    // A visit whose rows ran: no section, "New section", Kitchen, "New section", Kitchen
+    // (each deleted since, so known only by name), then Bathrooms (still on the list).
+    const v = visit('2026-10-06');
+    const titles: [string | null, string][] = [
+      [null, ''],
+      [null, ''],
+      [null, 'New section'],
+      [null, 'Kitchen'],
+      [null, 'New section'],
+      [null, 'Kitchen'],
+      [BATH.id, 'Bathrooms'],
+    ];
+    v.tasks = v.tasks.map((r, i) => ({ ...r, section_id: titles[i][0], section_title: titles[i][1], done: i === 4 }));
+    const shown = checklistSections({ ...sectioned({ sections: [BATH] }), visits: [v] }, '2026-10-06');
+    expect(shown.map((g) => [g.title, g.rows.map((r) => r.title), g.done])).toEqual([
+      [null, ['Change the bed sheets', 'Hoover and mop the floors'], 0],
+      ['New section', ['Clean the bathrooms'], 0],
+      ['Kitchen', ['Clean the kitchen'], 0],
+      ['New section', ['Dust the surfaces'], 1],
+      ['Kitchen', ['Empty the bins'], 0],
+      ['Bathrooms', ['Ironing'], 0],
+    ]);
+    // Each its own key, so React keeps them apart too.
+    expect(new Set(shown.map((g) => g.key)).size).toBe(shown.length);
+  });
+
   it('sectionProgress and sectionHeadingLabel', () => {
     expect(sectionProgress(2, 5)).toBe('2 of 5');
     expect(sectionProgress(0, 3)).toBe('0 of 3');
+    expect(sectionProgress(3, 3)).toBe('All done');
+    expect(sectionProgress(0, 1)).toBe('0 of 1');
+    expect(sectionProgress(1, 1)).toBe('Done');
     expect(sectionHeadingLabel('Kitchen', 2, 5)).toBe('Kitchen, 2 of 5 done');
     expect(sectionHeadingLabel('Kitchen', 0, 5)).toBe('Kitchen, 0 of 5 done');
     expect(sectionHeadingLabel('Kitchen', 5, 5)).toBe('Kitchen, all 5 done');
-    expect(sectionHeadingLabel('Bins', 1, 1)).toBe('Bins, all 1 done');
+    // One task: plain words, not "all 1 done".
+    expect(sectionHeadingLabel('Bins', 1, 1)).toBe('Bins, done');
+    expect(sectionHeadingLabel('Bins', 0, 1)).toBe('Bins, 0 of 1 done');
     expect(sectionDoneWords(2, 5)).toBe('2 of 5 done');
     expect(sectionDoneWords(5, 5)).toBe('all 5 done');
+    expect(sectionDoneWords(1, 1)).toBe('done');
     expect(sectionDoneWords(0, 0)).toBe('0 of 0 done');
   });
 

@@ -42,7 +42,6 @@ import type {
   HousekeepingData,
   HousekeepingSection,
   HousekeepingTask,
-  HousekeepingTaskGroup,
   HousekeepingTickTarget,
   HousekeepingVisit,
   HousekeepingVisitPatch,
@@ -2097,43 +2096,38 @@ export class DemoBackend implements Backend {
     });
   }
 
-  arrangeHousekeepingTasks(householdId: string, groups: HousekeepingTaskGroup[]): Promise<void> {
+  moveHousekeepingTask(id: string, sectionId: string | null, index: number): Promise<void> {
+    return this.mutate((doc) => {
+      const me = this.meIn(doc);
+      // move_housekeeping_task: a place from 0, the caller's task, a section of its household
+      // (or none). Only this task and the places in its two sections change.
+      if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) throw invalidInput('index');
+      const task = this.taskIn(doc, me, id);
+      const target = sectionId === null || sectionId === undefined ? null : this.sectionIn(doc, task.household_id, sectionId).id;
+      const list = this.tasksOf(doc, task.household_id);
+      if (task.section_id !== target) {
+        // The section it leaves closes up.
+        list.filter((t) => t.section_id === task.section_id && t !== task).forEach((t, position) => (t.position = position));
+      }
+      const joined = list.filter((t) => t.section_id === target && t !== task);
+      joined.splice(Math.min(index, joined.length), 0, task);
+      joined.forEach((t, position) => {
+        t.section_id = target;
+        t.position = position;
+      });
+      this.relayToday(doc, task.household_id);
+    });
+  }
+
+  reorderHousekeepingTasks(householdId: string, orderedIds: string[]): Promise<void> {
     return this.mutate((doc) => {
       this.memberOf(doc, householdId);
-      // arrange_housekeeping_tasks: the shape, then each section once and the household's,
-      // then each task once and the household's, and every task of the household named.
-      const shaped =
-        Array.isArray(groups) &&
-        groups.every(
-          (g) =>
-            typeof g === 'object' &&
-            g !== null &&
-            (g.sectionId === null || typeof g.sectionId === 'string') &&
-            Array.isArray(g.taskIds) &&
-            g.taskIds.every((id) => typeof id === 'string'),
-        );
-      if (!shaped) throw invalidInput('groups');
-      const sectionIds = groups.map((g) => g.sectionId);
-      if (new Set(sectionIds).size !== sectionIds.length) throw invalidInput('groups');
-      for (const id of sectionIds) if (id !== null) this.sectionIn(doc, householdId, id);
-      const taskIds = groups.flatMap((g) => g.taskIds);
-      if (new Set(taskIds).size !== taskIds.length) throw invalidInput('groups');
-      const tasks = taskIds.map((id) => {
+      // reorder_housekeeping_tasks, for an app from before sections still running: position =
+      // index, each task staying in its section; ids from elsewhere are ignored.
+      (orderedIds ?? []).forEach((id, index) => {
         const task = doc.housekeeping_tasks.find((t) => t.id === id && t.household_id === householdId);
-        if (!task) throw new BackendError('not_found', 'Task not found');
-        return task;
+        if (task) task.position = index;
       });
-      if (doc.housekeeping_tasks.some((t) => t.household_id === householdId && !taskIds.includes(t.id))) {
-        throw invalidInput('groups');
-      }
-      let i = 0;
-      for (const group of groups) {
-        group.taskIds.forEach((_, position) => {
-          const task = tasks[i++];
-          task.section_id = group.sectionId;
-          task.position = position;
-        });
-      }
       this.relayToday(doc, householdId);
     });
   }
@@ -2188,18 +2182,16 @@ export class DemoBackend implements Backend {
     });
   }
 
-  reorderHousekeepingSections(householdId: string, orderedIds: string[]): Promise<void> {
+  moveHousekeepingSection(id: string, index: number): Promise<void> {
     return this.mutate((doc) => {
-      this.memberOf(doc, householdId);
-      const seen = new Set<string>();
-      (orderedIds ?? []).forEach((id, index) => {
-        // The first mention wins; ids from elsewhere are ignored.
-        if (seen.has(id)) return;
-        seen.add(id);
-        const section = doc.housekeeping_sections.find((s) => s.id === id && s.household_id === householdId);
-        if (section) section.position = index;
-      });
-      this.relayToday(doc, householdId);
+      const me = this.meIn(doc);
+      // move_housekeeping_section: a place from 0 among the others; the positions run 0…n-1.
+      if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) throw invalidInput('index');
+      const section = this.sectionIn(doc, me.household_id, id);
+      const order = this.sectionsOf(doc, section.household_id).filter((s) => s !== section);
+      order.splice(Math.min(index, order.length), 0, section);
+      order.forEach((s, position) => (s.position = position));
+      this.relayToday(doc, section.household_id);
     });
   }
 

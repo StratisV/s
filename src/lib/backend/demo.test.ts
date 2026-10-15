@@ -1530,6 +1530,13 @@ describe('housekeeping', () => {
   const london = (date: string, hhmm: string) => new Date(`${date}T${hhmm}:00+01:00`).toISOString();
   const hkOf = async (b: DemoBackend, hid: string): Promise<HousekeepingData> => (await b.load(hid)).housekeeping;
   const visitOn = (hk: HousekeepingData, date: string) => hk.visits.find((v) => v.visit_date === date);
+  /**
+   * Lays the list out as `groups` say ({ sectionId, taskIds }, each in order), one move at a
+   * time as the app makes them: each group's tasks end up first in their section, in order.
+   */
+  async function arrange(b: DemoBackend, groups: { sectionId: string | null; taskIds: string[] }[]) {
+    for (const g of groups) for (const [i, id] of g.taskIds.entries()) await b.moveHousekeepingTask(id, g.sectionId, i);
+  }
 
   /** Bob joins Stratis's household; the shared document is left signed in as Bob. */
   async function joinBob(b: DemoBackend, hid: string) {
@@ -1739,20 +1746,18 @@ describe('housekeeping', () => {
       expect((await b.createHousekeepingTask(hid, 'Fridge')).position).toBe(9);
     });
 
-    it('arranges the whole list at once: within and across sections, each task once', async () => {
+    it('moves one task at a time: within and across sections, at a place; the sections close up', async () => {
       const { b, hid } = await setup();
       const ids = (await hkOf(b, hid)).tasks.map((t) => t.id);
       const kitchen = await b.createHousekeepingSection(hid, 'Kitchen');
       const baths = await b.createHousekeepingSection(hid, 'Bathrooms');
-      // Clean the kitchen and Empty the bins into Kitchen, Clean the bathrooms into Bathrooms;
-      // Ironing first in no section.
-      await b.arrangeHousekeepingTasks(hid, [
-        { sectionId: baths.id, taskIds: [ids[2]] },
-        { sectionId: null, taskIds: [ids[6], ids[0], ids[1], ids[4]] },
-        { sectionId: kitchen.id, taskIds: [ids[5], ids[3]] },
-      ]);
+      // Clean the kitchen into Kitchen, Empty the bins in front of it, Clean the bathrooms
+      // past the end of Bathrooms (last), and Ironing to the top of the tasks in no section.
+      await b.moveHousekeepingTask(ids[3], kitchen.id, 0);
+      await b.moveHousekeepingTask(ids[5], kitchen.id, 0);
+      await b.moveHousekeepingTask(ids[2], baths.id, 99);
+      await b.moveHousekeepingTask(ids[6], null, 0);
       const hk = await hkOf(b, hid);
-      // The list's order: no section first, then the sections in their own order (not the groups').
       expect(hk.tasks.map((t) => [t.title, t.section_id, t.position])).toEqual([
         ['Ironing', null, 0],
         ['Change the bed sheets', null, 1],
@@ -1762,12 +1767,49 @@ describe('housekeeping', () => {
         ['Clean the kitchen', kitchen.id, 1],
         ['Clean the bathrooms', baths.id, 0],
       ]);
-      // Back out of the sections, all of them.
-      await b.arrangeHousekeepingTasks(hid, [{ sectionId: null, taskIds: ids }]);
-      expect((await hkOf(b, hid)).tasks.map((t) => [t.id, t.section_id, t.position])).toEqual(ids.map((id, i) => [id, null, i]));
+      // Within a section, and back out of one: the section it leaves closes up.
+      await b.moveHousekeepingTask(ids[5], kitchen.id, 1);
+      await b.moveHousekeepingTask(ids[3], null, 4);
+      expect((await hkOf(b, hid)).tasks.map((t) => [t.title, t.section_id, t.position])).toEqual([
+        ['Ironing', null, 0],
+        ['Change the bed sheets', null, 1],
+        ['Hoover and mop the floors', null, 2],
+        ['Dust the surfaces', null, 3],
+        ['Clean the kitchen', null, 4],
+        ['Empty the bins', kitchen.id, 0],
+        ['Clean the bathrooms', baths.id, 0],
+      ]);
     });
 
-    it('arranging refuses a task twice or left out, a section twice, and anything from elsewhere; nothing changes', async () => {
+    it('two people moving different tasks at the same moment both keep their moves; a task added meanwhile changes nothing', async () => {
+      // Each phone moves the task it sees: one move names only its task and where it goes,
+      // so the other phone's move, made from the list as it was, never undoes this one.
+      const { b, hid } = await setup();
+      const { bob } = await joinBob(b, hid);
+      const ids = (await hkOf(bob, hid)).tasks.map((t) => t.id);
+      await b.signInWithGoogle();
+      const kitchen = await b.createHousekeepingSection(hid, 'Kitchen');
+      const baths = await b.createHousekeepingSection(hid, 'Bathrooms');
+      await b.moveHousekeepingTask(ids[3], kitchen.id, 0);
+      // Bob still has the list from before (nothing in a section) and adds a task too.
+      await bob.signInWithGoogle();
+      const windows = await bob.createHousekeepingTask(hid, 'Windows');
+      await bob.moveHousekeepingTask(ids[2], baths.id, 0);
+      await b.signInWithGoogle();
+      const hk = await hkOf(b, hid);
+      expect(hk.tasks.map((t) => [t.id, t.section_id])).toEqual([
+        [ids[0], null],
+        [ids[1], null],
+        [ids[4], null],
+        [ids[5], null],
+        [ids[6], null],
+        [windows.id, null],
+        [ids[3], kitchen.id],
+        [ids[2], baths.id],
+      ]);
+    });
+
+    it('a move refuses a task or section from elsewhere (or gone) and a place that is not a whole number from 0; nothing changes', async () => {
       const { b, hid } = await setup();
       const bob = make({ user: BOB });
       await bob.signInWithGoogle();
@@ -1779,23 +1821,40 @@ describe('housekeeping', () => {
       const ids = (await hkOf(b, hid)).tasks.map((t) => t.id);
       const kitchen = await b.createHousekeepingSection(hid, 'Kitchen');
       const before = await hkOf(b, hid);
-      const groups = (rest: { sectionId: string | null; taskIds: string[] }[]) => rest;
-      await rejectsWithMessage(b.arrangeHousekeepingTasks(hid, groups([{ sectionId: null, taskIds: [...ids, ids[0]] }])), /^invalid_input: groups$/);
-      await rejectsWithMessage(b.arrangeHousekeepingTasks(hid, groups([{ sectionId: null, taskIds: ids.slice(1) }])), /^invalid_input: groups$/);
-      await rejectsWithMessage(
-        b.arrangeHousekeepingTasks(hid, groups([{ sectionId: kitchen.id, taskIds: ids.slice(0, 3) }, { sectionId: kitchen.id, taskIds: ids.slice(3) }])),
-        /^invalid_input: groups$/,
-      );
-      await rejectsWithMessage(b.arrangeHousekeepingTasks(hid, null as never), /^invalid_input: groups$/);
-      await rejectsWithMessage(b.arrangeHousekeepingTasks(hid, [{ sectionId: 5, taskIds: ids }] as never), /^invalid_input: groups$/);
-      await rejectsWithMessage(b.arrangeHousekeepingTasks(hid, [{ sectionId: null, taskIds: [...ids.slice(1), 7] }] as never), /^invalid_input: groups$/);
-      await rejectsWith(b.arrangeHousekeepingTasks(hid, [{ sectionId: null, taskIds: [...ids, foreignTask.id] }]), 'not_found');
-      await rejectsWith(b.arrangeHousekeepingTasks(hid, [{ sectionId: null, taskIds: [...ids, 'nope'] }]), 'not_found');
-      await rejectsWith(b.arrangeHousekeepingTasks(hid, [{ sectionId: foreignSection.id, taskIds: ids }]), 'not_found');
-      await rejectsWith(b.arrangeHousekeepingTasks(bobHid, [{ sectionId: null, taskIds: [foreignTask.id] }]), 'not_found');
+      await rejectsWithMessage(b.moveHousekeepingTask(ids[0], kitchen.id, -1), /^invalid_input: index$/);
+      await rejectsWithMessage(b.moveHousekeepingTask(ids[0], kitchen.id, 1.5), /^invalid_input: index$/);
+      await rejectsWithMessage(b.moveHousekeepingTask(ids[0], kitchen.id, '0' as never), /^invalid_input: index$/);
+      await rejectsWith(b.moveHousekeepingTask(foreignTask.id, kitchen.id, 0), 'not_found');
+      await rejectsWith(b.moveHousekeepingTask('nope', null, 0), 'not_found');
+      await rejectsWith(b.moveHousekeepingTask(ids[0], foreignSection.id, 0), 'not_found');
+      await rejectsWith(b.moveHousekeepingTask(ids[0], 'gone', 0), 'not_found');
       expect(await hkOf(b, hid)).toEqual(before);
       await bob.signInWithGoogle();
       expect((await hkOf(bob, bobHid)).tasks[0]).toEqual(foreignTask);
+    });
+
+    it("an app from before sections still reorders (reorderHousekeepingTasks): each task keeps its section; today's visit follows", async () => {
+      const { b, hid } = await setup();
+      const ids = (await hkOf(b, hid)).tasks.map((t) => t.id);
+      await b.addHousekeepingVisit(hid, TODAY);
+      const kitchen = await b.createHousekeepingSection(hid, 'Kitchen');
+      await arrange(b, [{ sectionId: kitchen.id, taskIds: [ids[5], ids[6]] }]);
+      // It sends the whole list in the order it shows it, Ironing moved to the top.
+      await b.reorderHousekeepingTasks(hid, [ids[6], ids[0], ids[1], ids[2], ids[3], ids[4], ids[5], 'nope']);
+      const hk = await hkOf(b, hid);
+      expect(hk.tasks.map((t) => [t.title, t.section_id])).toEqual([
+        ['Change the bed sheets', null],
+        ['Hoover and mop the floors', null],
+        ['Clean the bathrooms', null],
+        ['Clean the kitchen', null],
+        ['Dust the surfaces', null],
+        ['Ironing', kitchen.id],
+        ['Empty the bins', kitchen.id],
+      ]);
+      expect(visitOn(hk, TODAY)!.tasks.map((r) => [r.title, r.section_title, r.position]).slice(-2)).toEqual([
+        ['Ironing', 'Kitchen', 5],
+        ['Empty the bins', 'Kitchen', 6],
+      ]);
     });
 
     it('adds a task straight into a section, at its end; a section from elsewhere is not_found', async () => {
@@ -2037,7 +2096,7 @@ describe('housekeeping', () => {
       await b.setHousekeepingTaskDone(hid, TODAY, { taskId: tasks[0].id }, true);
       await b.renameHousekeepingTask(tasks[0].id, 'Bed sheets (all rooms)');
       await b.renameHousekeepingTask(tasks[1].id, 'Hoover and mop everywhere');
-      await b.arrangeHousekeepingTasks(hid, [{ sectionId: null, taskIds: [...tasks.slice(1).map((t) => t.id), tasks[0].id] }]);
+      await arrange(b, [{ sectionId: null, taskIds: [...tasks.slice(1).map((t) => t.id), tasks[0].id] }]);
       const hk = await hkOf(b, hid);
       const today = visitOn(hk, TODAY)!.tasks;
       // Ticked under its old title: that is what was done, so it keeps it; its place follows.
@@ -2084,12 +2143,12 @@ describe('housekeeping', () => {
       const windows = await b.createHousekeepingTask(hid, 'Windows');
       await b.renameHousekeepingTask(tasks[0].id, 'Renamed');
       const kitchen = await b.createHousekeepingSection(hid, 'Kitchen');
-      await b.arrangeHousekeepingTasks(hid, [
+      await arrange(b, [
         { sectionId: null, taskIds: [windows.id, ...tasks.map((t) => t.id).reverse().slice(1)] },
         { sectionId: kitchen.id, taskIds: [tasks[6].id] },
       ]);
       await b.renameHousekeepingSection(kitchen.id, 'Cooking');
-      await b.reorderHousekeepingSections(hid, [kitchen.id]);
+      await b.moveHousekeepingSection(kitchen.id, 0);
       await b.deleteHousekeepingTask(tasks[1].id);
       await b.deleteHousekeepingSection(kitchen.id);
       const after = visitOn(await hkOf(b, hid), '2026-10-07')!;
@@ -2123,7 +2182,7 @@ describe('housekeeping', () => {
       await b.addHousekeepingVisit(hid, TODAY);
       const kitchen = await b.createHousekeepingSection(hid, 'Kitchen');
       const baths = await b.createHousekeepingSection(hid, 'Bathrooms');
-      await b.arrangeHousekeepingTasks(hid, [
+      await arrange(b, [
         { sectionId: null, taskIds: [ids[0], ids[1], ids[4], ids[6]] },
         { sectionId: kitchen.id, taskIds: [ids[3], ids[5]] },
         { sectionId: baths.id, taskIds: [ids[2]] },
@@ -2181,7 +2240,7 @@ describe('housekeeping', () => {
       await b.setHousekeepingTaskDone(hid, TODAY, { taskId: ids[3] }, true);
       await b.renameHousekeepingTask(ids[3], 'Clean the cooker');
       await b.renameHousekeepingSection(kitchen.id, 'Cooking');
-      await b.reorderHousekeepingSections(hid, [baths.id, kitchen.id]);
+      await b.moveHousekeepingSection(baths.id, 0);
       hk = await hkOf(b, hid);
       expect(hk.sections.map((s) => [s.title, s.position])).toEqual([
         ['Bathrooms', 0],
@@ -2260,7 +2319,7 @@ describe('housekeeping', () => {
       expect(tuesday.tasks.find((r) => r.title === 'Clean the bathrooms')).toMatchObject({ section_id: baths.id });
     });
 
-    it('reorders by index; ids from elsewhere and unknown ids are ignored; the first mention wins', async () => {
+    it('moves a section to a place among the others, which close up; a section from elsewhere or a wrong place changes nothing', async () => {
       const { b, hid, kitchen, baths } = await sectioned();
       const bob = make({ user: BOB });
       await bob.signInWithGoogle();
@@ -2268,12 +2327,30 @@ describe('housekeeping', () => {
       const foreign = await bob.createHousekeepingSection(bobHid, 'Theirs');
       await b.signInWithGoogle();
       const garden = await b.createHousekeepingSection(hid, 'Garden');
-      await b.reorderHousekeepingSections(hid, [foreign.id, garden.id, 'nope', kitchen.id, garden.id, baths.id]);
+      await b.moveHousekeepingSection(garden.id, 0);
       expect((await hkOf(b, hid)).sections.map((s) => [s.title, s.position])).toEqual([
-        ['Garden', 1],
-        ['Kitchen', 3],
-        ['Bathrooms', 5],
+        ['Garden', 0],
+        ['Kitchen', 1],
+        ['Bathrooms', 2],
       ]);
+      // Down one, and past the end: last. Their tasks come along.
+      await b.moveHousekeepingSection(garden.id, 1);
+      await b.moveHousekeepingSection(kitchen.id, 99);
+      const hk = await hkOf(b, hid);
+      expect(hk.sections.map((s) => [s.title, s.position])).toEqual([
+        ['Garden', 0],
+        ['Bathrooms', 1],
+        ['Kitchen', 2],
+      ]);
+      expect(hk.tasks.slice(-3).map((t) => [t.title, t.section_id])).toEqual([
+        ['Clean the bathrooms', baths.id],
+        ['Clean the kitchen', kitchen.id],
+        ['Empty the bins', kitchen.id],
+      ]);
+      await rejectsWith(b.moveHousekeepingSection(foreign.id, 0), 'not_found');
+      await rejectsWith(b.moveHousekeepingSection('nope', 0), 'not_found');
+      await rejectsWithMessage(b.moveHousekeepingSection(garden.id, -1), /^invalid_input: index$/);
+      expect(await hkOf(b, hid)).toEqual(hk);
       await bob.signInWithGoogle();
       expect((await hkOf(bob, bobHid)).sections).toEqual([foreign]);
     });
@@ -2303,11 +2380,12 @@ describe('housekeeping', () => {
     await rejectsWith(bob.createHousekeepingTask(hid, 'Hacked'), 'not_found');
     await rejectsWith(bob.renameHousekeepingTask(task.id, 'Hacked'), 'not_found');
     await rejectsWith(bob.deleteHousekeepingTask(task.id), 'not_found');
-    await rejectsWith(bob.arrangeHousekeepingTasks(hid, [{ sectionId: null, taskIds: hk.tasks.map((t) => t.id) }]), 'not_found');
+    await rejectsWith(bob.moveHousekeepingTask(task.id, null, 0), 'not_found');
+    await rejectsWith(bob.reorderHousekeepingTasks(hid, hk.tasks.map((t) => t.id)), 'not_found');
     await rejectsWith(bob.createHousekeepingSection(hid, 'Hacked'), 'not_found');
     await rejectsWith(bob.renameHousekeepingSection(section.id, 'Hacked'), 'not_found');
     await rejectsWith(bob.deleteHousekeepingSection(section.id), 'not_found');
-    await rejectsWith(bob.reorderHousekeepingSections(hid, [section.id]), 'not_found');
+    await rejectsWith(bob.moveHousekeepingSection(section.id, 0), 'not_found');
     await rejectsWith(bob.setHousekeepingTaskDone(hid, TODAY, { taskId: task.id }, true), 'not_found');
     await rejectsWith(bob.saveHousekeepingVisit(hid, TODAY, { comments: 'Hacked' }), 'not_found');
     await rejectsWith(bob.addHousekeepingVisit(hid, TODAY), 'not_found');
@@ -2408,7 +2486,7 @@ describe('housekeeping', () => {
       await c.setHousekeepingTaskDone(hid, TODAY, { taskId: tasks[0].id }, true);
       await c.createHousekeepingTask(hid, 'Windows');
       const kitchen = await c.createHousekeepingSection(hid, 'Kitchen');
-      await c.arrangeHousekeepingTasks(hid, [
+      await arrange(c, [
         { sectionId: null, taskIds: [...tasks.filter((_, i) => i !== 3).map((t) => t.id), (await hkOf(c, hid)).tasks[7].id] },
         { sectionId: kitchen.id, taskIds: [tasks[3].id] },
       ]);

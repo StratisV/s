@@ -565,13 +565,25 @@ test.describe('Housekeeping tab', () => {
     // Rename.
     await names.nth(6).fill('Ironing and folding');
     await names.nth(6).press('Enter');
-    // Add: "New task", selected, typed over.
-    await sheet.getByRole('button', { name: 'Add Task' }).click();
+    // Add: the row becomes the new name's field, focused in the tap; the task is made with
+    // what is typed, and focus is back on Add Task for the next.
+    const addTask = sheet.getByRole('button', { name: 'Add Task' });
+    await addTask.click();
     await expect(names).toHaveCount(8);
     await expect(names.nth(7)).toBeFocused();
-    await expect(names.nth(7)).toHaveValue('New task');
+    await expect(names.nth(7)).toHaveValue('');
+    await expect(names.nth(7)).toHaveAttribute('placeholder', 'New task');
     await page.keyboard.type('Clean the windows');
     await page.keyboard.press('Enter');
+    await expect(addTask).toBeFocused();
+    await expect(names.nth(7)).toHaveValue('Clean the windows');
+    // Escape drops a new one: nothing is added, and the sheet stays.
+    await addTask.click();
+    await page.keyboard.type('Oven');
+    await page.keyboard.press('Escape');
+    await expect(sheet).toBeVisible();
+    await expect(addTask).toBeFocused();
+    await expect(names).toHaveCount(8);
     // Reorder with the keyboard: up one.
     await sheet.getByRole('button', { name: 'Reorder Clean the windows' }).focus();
     await page.keyboard.press('ArrowUp');
@@ -626,12 +638,12 @@ test.describe('Sections', () => {
     await expect(sheet).toHaveCount(0);
   }
 
-  /** Add Section, then its name typed over "New section". */
+  /** Add Section, then its name typed into the field it becomes. */
   async function addSection(page: Page, sheet: Locator, name: string): Promise<void> {
     await sheet.getByRole('button', { name: 'Add Section' }).click();
     const field = sheet.getByRole('textbox', { name: 'Section name' }).last();
     await expect(field).toBeFocused();
-    await expect(field).toHaveValue('New section');
+    await expect(field).toHaveValue('');
     await page.keyboard.type(name);
     await page.keyboard.press('Enter');
     await expect(sheet.getByRole('group', { name, exact: true })).toBeVisible();
@@ -686,9 +698,16 @@ test.describe('Sections', () => {
     await expect(sheet.getByText(/^Sections group the tasks, such as Kitchen or Bathrooms\./)).toBeVisible();
 
     await addSection(page, sheet, 'Kitchen');
+    // The tasks in no section are headed now.
+    await expect(sheet.getByRole('group', { name: 'No Section', exact: true })).toBeVisible();
+    await expect(sheet.getByRole('button', { name: 'Add Task to No Section' })).toBeVisible();
+    const scroller = sheet.locator('[data-sheet-scroll]');
+    const scrolled = await scroller.evaluate((el) => el.scrollTop);
     await moveTo(page, sheet, 'Clean the kitchen', 'Kitchen');
     await expect(taskMoves(sheet)).toHaveText('Clean the kitchen moved to Kitchen, position 1 of 1.');
-    await expect(sheet.getByRole('button', { name: 'Move Clean the kitchen to a section' })).toBeFocused();
+    // The place is kept: focus on the next task's "…", ready for the next move, and no scrolling.
+    await expect(sheet.getByRole('button', { name: 'Move Dust the surfaces to a section' })).toBeFocused();
+    expect(await scroller.evaluate((el) => el.scrollTop)).toBe(scrolled);
     // Dragged onto the kitchen's Add Task: last in the kitchen.
     await drag(page, sheet.getByRole('button', { name: 'Reorder Empty the bins' }), sheet.getByRole('button', { name: 'Add Task to Kitchen' }));
     await expect(taskMoves(sheet)).toHaveText('Empty the bins moved to Kitchen, position 2 of 2.');
@@ -698,11 +717,13 @@ test.describe('Sections', () => {
     await addSection(page, sheet, 'Bathrooms');
     await moveTo(page, sheet, 'Clean the bathrooms', 'Bathrooms');
     await sheet.getByRole('button', { name: 'Add Task to Bathrooms' }).click();
-    const added = sheet.getByRole('group', { name: 'Bathrooms', exact: true }).getByRole('textbox', { name: 'Task name' }).last();
+    const bathrooms = sheet.getByRole('group', { name: 'Bathrooms', exact: true });
+    const added = bathrooms.getByRole('textbox', { name: 'Task name' }).last();
     await expect(added).toBeFocused();
-    await expect(added).toHaveValue('New task');
+    await expect(added).toHaveValue('');
     await page.keyboard.type('Fresh towels');
     await page.keyboard.press('Enter');
+    await expect.poll(() => names(bathrooms)).toEqual(['Clean the bathrooms', 'Fresh towels']);
 
     // The bathrooms up, from its menu; the kitchen renamed from its.
     await sectionMenu(page, sheet, 'Bathrooms', 'Move Up');
@@ -745,6 +766,22 @@ test.describe('Sections', () => {
       'Bathrooms, 0 of 2 done',
       'Kitchen and utility, all 2 done',
     ]);
+  });
+
+  test('a tap on another Add Task while a name is typed: the name is kept and that field opens, in one tap', async ({ page }) => {
+    const screen = await openHousekeeping(page);
+    const sheet = await openEditor(page, screen);
+    await addSection(page, sheet, 'Kitchen');
+    await sheet.getByRole('button', { name: 'Add Task to No Section' }).tap();
+    await page.keyboard.type('Windows');
+    // The kitchen's Add Task is below the field: the list must not move under the finger.
+    await sheet.getByRole('button', { name: 'Add Task to Kitchen' }).tap();
+    const kitchen = sheet.getByRole('group', { name: 'Kitchen', exact: true });
+    await expect(kitchen.getByRole('textbox', { name: 'Task name' })).toBeFocused();
+    await page.keyboard.type('Oven');
+    await page.keyboard.press('Enter');
+    await expect.poll(() => names(kitchen)).toEqual(['Oven']);
+    expect((await names(sheet.getByRole('group', { name: 'No Section', exact: true }))).at(-1)).toBe('Windows');
   });
 
   test('a section moves by dragging its header, and by the arrow keys on its grip', async ({ page }) => {
@@ -794,9 +831,7 @@ test.describe('Sections', () => {
     await sectionMenu(page, sheet, 'Kitchen', 'Delete Section');
     const confirm = await confirmation(page, 'Delete Kitchen?');
     await expect(
-      confirm.getByText("Its 2 tasks stay on the list, at the top with no section, on today's visit too. Earlier visits keep it.", {
-        exact: true,
-      }),
+      confirm.getByText('Its 2 tasks move to the top of the list. Earlier visits keep this section.', { exact: true }),
     ).toBeVisible();
     await confirm.getByRole('button', { name: 'Delete Section' }).click();
     await expect(sheet.getByRole('group', { name: 'Kitchen', exact: true })).toHaveCount(0);

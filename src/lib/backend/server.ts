@@ -14,7 +14,6 @@ import type {
   HouseholdData,
   HousekeepingSection,
   HousekeepingTask,
-  HousekeepingTaskGroup,
   HousekeepingTickTarget,
   HousekeepingVisitPatch,
   ImportPayload,
@@ -695,8 +694,11 @@ export class ServerBackend implements Backend, ServerAccess {
   async deleteHousekeepingTask(id: string): Promise<void> {
     await this.rpc('deleteHousekeepingTask', [id]);
   }
-  async arrangeHousekeepingTasks(householdId: string, groups: HousekeepingTaskGroup[]): Promise<void> {
-    await this.rpc('arrangeHousekeepingTasks', [householdId, groups]);
+  async moveHousekeepingTask(id: string, sectionId: string | null, index: number): Promise<void> {
+    await this.rpc('moveHousekeepingTask', [id, sectionId, index]);
+  }
+  async reorderHousekeepingTasks(householdId: string, orderedIds: string[]): Promise<void> {
+    await this.rpc('reorderHousekeepingTasks', [householdId, orderedIds]);
   }
   async createHousekeepingSection(householdId: string, title: string): Promise<HousekeepingSection> {
     return (await this.rpc('createHousekeepingSection', [householdId, title])) as HousekeepingSection;
@@ -707,8 +709,8 @@ export class ServerBackend implements Backend, ServerAccess {
   async deleteHousekeepingSection(id: string): Promise<void> {
     await this.rpc('deleteHousekeepingSection', [id]);
   }
-  async reorderHousekeepingSections(householdId: string, orderedIds: string[]): Promise<void> {
-    await this.rpc('reorderHousekeepingSections', [householdId, orderedIds]);
+  async moveHousekeepingSection(id: string, index: number): Promise<void> {
+    await this.rpc('moveHousekeepingSection', [id, index]);
   }
   async setHousekeepingTaskDone(
     householdId: string,

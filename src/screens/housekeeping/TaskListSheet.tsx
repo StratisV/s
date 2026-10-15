@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from 'react';
+import { flushSync } from 'react-dom';
 import { HOUSEKEEPING_NEW_SECTION, HOUSEKEEPING_NEW_TASK, HOUSEKEEPING_SECTIONS_MAX, TEXT_LIMITS } from '../../lib/constants';
 import { taskListGroups } from '../../lib/logic/housekeeping';
 import type { HousekeepingSection, HousekeepingTask } from '../../lib/types';
@@ -19,6 +29,7 @@ import {
 import { Menu, type MenuItem } from '../../ui/Menu';
 import { Sheet } from '../../ui/Sheet';
 import { useGroupedReorder } from '../../ui/useReorder';
+import { AutoGrowTextarea } from '../item/AutoGrowTextarea';
 import { InlineText } from '../profile/InlineText';
 import list from '../profile/List.module.css';
 import { SectionIcon } from './SectionIcon';
@@ -31,29 +42,46 @@ interface TaskListSheetProps {
 
 /** The group of the tasks in no section (a section's group is its id). */
 const NONE = 'none';
-/** The one group of the sections' own reorder. */
+/** The one group of the sections' own reorder, and an Add Section's draft. */
 const SECTIONS = 'sections';
 
 /** What the delete confirmation says happens to a section's tasks. */
 export function deleteSectionMessage(tasks: number): string {
   const kept =
-    tasks === 0
-      ? ''
-      : tasks === 1
-        ? "Its task stays on the list, at the top with no section, on today's visit too. "
-        : `Its ${tasks} tasks stay on the list, at the top with no section, on today's visit too. `;
-  return `${kept}Earlier visits keep it.`;
+    tasks === 0 ? '' : tasks === 1 ? 'Its task moves to the top of the list. ' : `Its ${tasks} tasks move to the top of the list. `;
+  return `${kept}Earlier visits keep this section.`;
 }
+
+/** A new task (in its group) or section (SECTIONS) being named: it is made once its name is in. */
+interface Draft {
+  key: number;
+  group: string;
+  /** What the field starts with: '' for a new one, the name again after a save that failed. */
+  text: string;
+}
+
+/** A new task or section being saved: its row shows the name until the stored one arrives. */
+interface Saving {
+  key: number;
+  group: string;
+  title: string;
+}
+
+/** How a draft ended: Enter, leaving the field, Escape, or another Add tapped. */
+type DraftEnd = 'enter' | 'blur' | 'escape' | 'switch';
 
 /**
  * The household's housekeeping task list, edited in place in a page sheet. The tasks in no
- * section come first, in a card with no heading; then a card per section, its drawing and
- * name at the top (renamed in place), its "…" menu (Rename, Move Up, Move Down, Delete
- * Section) and its grip; then Add Section. Each card ends with Add Task. A task is renamed
- * in place, deleted with the red minus (confirmed), moved by dragging its grip (within its
- * section or into another, or the arrow keys on it), or with Move to Section in its "…" menu
- * (there once there are sections). A section moves by its grip too, carried by its header.
- * Today's visit follows the changes; earlier visits keep their own list.
+ * section come first, in a card of their own (headed No Section once there are sections);
+ * then a card per section, its drawing and name at the top (renamed in place), its "…" menu
+ * (Rename, Move Up, Move Down, Delete Section) and its grip; then Add Section. Each card ends
+ * with Add Task. Add Task and Add Section turn into the new name's field at once, inside the
+ * tap, and the task or section is made once the name is in, with what was typed. A task is
+ * renamed in place, deleted with the red minus (confirmed), moved by dragging its grip (within
+ * its section or into another, or the arrow keys on it), or with Move to Section in its "…"
+ * menu (there once there are sections). A section moves by its grip too, carried by its
+ * header. Names wrap, so a long one reads in full. Today's visit follows the changes; earlier
+ * visits keep their own list.
  *
  * App mounts it next to the stage (like the Item sheet), so the screen behind is pushed back.
  */
@@ -71,30 +99,38 @@ function TaskListBody({ onClose }: { onClose(): void }) {
     createHousekeepingTask,
     renameHousekeepingTask,
     deleteHousekeepingTask,
-    arrangeHousekeepingTasks,
+    moveHousekeepingTask,
     createHousekeepingSection,
     renameHousekeepingSection,
     deleteHousekeepingSection,
-    reorderHousekeepingSections,
+    moveHousekeepingSection,
   } = useHousehold();
   const groups = taskListGroups(data.housekeeping);
   const sections = groups.flatMap((g) => (g.section ? [g.section] : []));
   const hasSections = sections.length > 0;
-  const full = sections.length >= HOUSEKEEPING_SECTIONS_MAX;
   const titleId = useId();
+  const noneId = useId();
   const taskHintId = useId();
   const sectionHintId = useId();
   const scrollRef = useRef<HTMLDivElement>(null);
   const listsRef = useRef<HTMLDivElement>(null);
-  const proxyRef = useRef<HTMLInputElement>(null);
-  /** The Add Task or Add Section running (its group, or SECTIONS): one at a time. */
-  const [adding, setAdding] = useState<string | null>(null);
   const [confirmTask, setConfirmTask] = useState<HousekeepingTask | null>(null);
   const [taskConfirmOpen, setTaskConfirmOpen] = useState(false);
   const [confirmSection, setConfirmSection] = useState<HousekeepingSection | null>(null);
   const [sectionConfirmOpen, setSectionConfirmOpen] = useState(false);
   /** A task its menu just moved: lit up for a moment where it landed. */
   const [moved, setMoved] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  /** The draft open now, for the handlers (set as it opens and ends, before React renders). */
+  const draftRef = useRef<Draft | null>(null);
+  const [saving, setSaving] = useState<Saving[]>([]);
+  const keys = useRef(0);
+  /** The groups there are now (a failed save's name comes back only where it can show). */
+  const groupIds = useRef(new Set<string>());
+  groupIds.current = new Set([NONE, SECTIONS, ...sections.map((s) => s.id)]);
+
+  const pendingSections = saving.filter((s) => s.group === SECTIONS).length + (draft?.group === SECTIONS ? 1 : 0);
+  const full = sections.length + pendingSections >= HOUSEKEEPING_SECTIONS_MAX;
 
   const titleOf = (id: string) => data.housekeeping.tasks.find((t) => t.id === id)?.title ?? '';
   const tasks = useGroupedReorder({
@@ -107,8 +143,8 @@ function TaskListBody({ onClose }: { onClose(): void }) {
     nameOf: titleOf,
     rootRef: listsRef,
     scrollRef,
-    onReorder: (arrangement) =>
-      arrangeHousekeepingTasks(arrangement.map((g) => ({ sectionId: g.id === NONE ? null : g.id, taskIds: g.ids }))),
+    // One task and where it goes: a move made on another phone meanwhile stands.
+    onMove: (id, group, index) => moveHousekeepingTask(id, group === NONE ? null : group, index),
   });
   const sectionMoves = useGroupedReorder({
     scope: 'sections',
@@ -116,25 +152,26 @@ function TaskListBody({ onClose }: { onClose(): void }) {
     nameOf: (id) => sections.find((s) => s.id === id)?.title ?? '',
     rootRef: listsRef,
     scrollRef,
-    onReorder: ([all]) => reorderHousekeepingSections(all.ids),
+    onMove: (id, _group, index) => moveHousekeepingSection(id, index),
     liftSelector: '[data-section-head]',
     liftRadius: 20,
   });
 
-  // Where focus goes once the lists show a change: a new task's or section's name (its text
-  // selected, to type over), or a control found by its data attribute.
-  const focusNext = useRef<{ selector: string; select?: boolean } | null>(null);
+  // Where focus goes once the lists show a change: a control found by its data attribute,
+  // without scrolling the sheet (so a task moved by its menu leaves you where you were), or
+  // brought into view when `reveal` (a section moved up or down).
+  const focusNext = useRef<{ selector: string; reveal?: boolean } | null>(null);
   const applyFocus = useCallback(() => {
     const next = focusNext.current;
     const el = next ? listsRef.current?.querySelector<HTMLElement>(next.selector) : null;
     if (!next || !el) return;
     focusNext.current = null;
-    if (document.activeElement !== el) el.focus();
-    if (next.select && el instanceof HTMLInputElement) el.select();
+    if (document.activeElement !== el) el.focus({ preventScroll: true });
+    if (next.reveal) el.scrollIntoView?.({ block: 'nearest' });
   }, []);
   useLayoutEffect(applyFocus);
-  const focusSoon = (selector: string, select = false) => {
-    focusNext.current = { selector, select };
+  const focusSoon = (selector: string) => {
+    focusNext.current = { selector };
     requestAnimationFrame(applyFocus);
   };
 
@@ -146,32 +183,81 @@ function TaskListBody({ onClose }: { onClose(): void }) {
 
   // ── Adding ───────────────────────────────────────────────
 
-  /** Runs an Add: a stand-in field takes the focus inside the tap so iOS raises the keyboard. */
-  const add = <T extends { id: string }>(what: string, create: () => Promise<T>, nameSelector: (id: string) => string) => {
-    if (adding) return;
-    proxyRef.current?.focus({ preventScroll: true });
-    setAdding(what);
-    create()
-      .then((made) => {
-        focusNext.current = { selector: nameSelector(made.id), select: true };
-        applyFocus();
-      })
+  const addButton = (group: string) => (group === SECTIONS ? '[data-add-section]' : `[data-add-task="${group}"]`);
+
+  /** Makes the task or section with its name; its row shows the name until it is stored. */
+  const save = (group: string, title: string) => {
+    const key = ++keys.current;
+    setSaving((s) => [...s, { key, group, title }]);
+    const made = group === SECTIONS ? createHousekeepingSection(title) : createHousekeepingTask(title, group === NONE ? null : group);
+    made
       .catch(() => {
-        // Back to the button pressed (Couldn't save says why).
-        if (document.activeElement === proxyRef.current) {
-          listsRef.current
-            ?.querySelector<HTMLElement>(what === SECTIONS ? '[data-add-section]' : `[data-add-task="${what}"]`)
-            ?.focus();
-        }
+        // Couldn't save (the toast says why): the name comes back in its field to try again,
+        // where that can still show and nothing else is being written.
+        if (draftRef.current || !groupIds.current.has(group)) return;
+        const back = { key: ++keys.current, group, text: title };
+        draftRef.current = back;
+        setDraft(back);
       })
-      .finally(() => setAdding(null));
+      .finally(() => setSaving((s) => s.filter((x) => x.key !== key)));
   };
-  const addTask = (group: string) =>
-    add(group, () => createHousekeepingTask(HOUSEKEEPING_NEW_TASK, group === NONE ? null : group), (id) => `[data-task-input="${id}"]`);
-  const addSection = () => {
-    if (full) return;
-    add(SECTIONS, () => createHousekeepingSection(HOUSEKEEPING_NEW_SECTION), (id) => `[data-section-input="${id}"]`);
+
+  /** Ends the draft `key`: its name, if any, is saved; Escape drops it. */
+  const finishDraft = (key: number, how: DraftEnd, text: string) => {
+    const open = draftRef.current;
+    if (!open || open.key !== key) return;
+    draftRef.current = null;
+    setDraft(null);
+    const title = how === 'escape' ? '' : text.trim();
+    if (title) save(open.group, title);
+    // From the keyboard, back to the button it started from (Enter there adds another).
+    if (how === 'enter' || how === 'escape') focusNext.current = { selector: addButton(open.group) };
   };
+
+  /**
+   * Add Task or Add Section: the row becomes the new name's field, shown and focused inside
+   * the tap, so iOS raises the keyboard and every letter typed lands in it.
+   */
+  const openDraft = (group: string) => {
+    const open = draftRef.current;
+    if (open) {
+      const field = listsRef.current?.querySelector<HTMLTextAreaElement>('[data-draft-input]');
+      finishDraft(open.key, 'switch', field?.value ?? '');
+    }
+    const next = { key: ++keys.current, group, text: '' };
+    draftRef.current = next;
+    flushSync(() => setDraft(next));
+    listsRef.current?.querySelector<HTMLTextAreaElement>('[data-draft-input]')?.focus();
+  };
+
+  // A tap on a button while a new name is being typed (Add Task in the next card, a task's
+  // delete or "…"): the press leaves the name's field focused, and the name is saved as the
+  // click starts (Add hands over to its own field; a grip leaves it open, to go on typing), so
+  // the row saving it cannot push the list down under the finger between the press and the
+  // click and lose the tap.
+  const isButtonPress = (e: ReactMouseEvent) => !!draftRef.current && !!(e.target as Element).closest?.('button');
+  const keepDraftFocus = (e: ReactMouseEvent) => {
+    if (isButtonPress(e)) e.preventDefault();
+  };
+  const saveDraftFirst = (e: ReactMouseEvent) => {
+    const open = draftRef.current;
+    if (!open || !isButtonPress(e) || (e.target as Element).closest('[data-add-task], [data-add-section], [data-grip]')) return;
+    const field = listsRef.current?.querySelector<HTMLTextAreaElement>('[data-draft-input]');
+    flushSync(() => finishDraft(open.key, 'switch', field?.value ?? ''));
+  };
+
+  const draftField = (d: Draft, kind: 'task' | 'section', lead?: (text: string) => ReactNode) => (
+    <DraftField
+      key={d.key}
+      initial={d.text}
+      className={kind === 'task' ? styles.draftName : styles.draftSectionName}
+      label={kind === 'task' ? 'Task name' : 'Section name'}
+      placeholder={kind === 'task' ? HOUSEKEEPING_NEW_TASK : HOUSEKEEPING_NEW_SECTION}
+      maxLength={kind === 'task' ? TEXT_LIMITS.housekeepingTask : TEXT_LIMITS.housekeepingSection}
+      lead={lead}
+      onFinish={(how, text) => finishDraft(d.key, how, text)}
+    />
+  );
 
   // ── Deleting ─────────────────────────────────────────────
 
@@ -183,7 +269,7 @@ function TaskListBody({ onClose }: { onClose(): void }) {
     const nextId = group?.tasks[index + 1]?.id ?? group?.tasks[index - 1]?.id;
     void deleteHousekeepingTask(confirmTask.id).catch(() => {});
     // Keep keyboard focus nearby: the next row's delete button, or its card's Add Task.
-    focusSoon(nextId ? `[data-delete="${nextId}"]` : `[data-add-task="${group?.section?.id ?? NONE}"]`);
+    focusSoon(nextId ? `[data-delete="${nextId}"]` : addButton(group?.section?.id ?? NONE));
   };
 
   const confirmDeleteSection = () => {
@@ -192,6 +278,7 @@ function TaskListBody({ onClose }: { onClose(): void }) {
     const index = sections.findIndex((s) => s.id === confirmSection.id);
     const next = sections[index + 1] ?? sections[index - 1];
     void deleteHousekeepingSection(confirmSection.id).catch(() => {});
+    // The next section's "…", else the one before it, else Add Section.
     focusSoon(next ? `[data-section-menu="${next.id}"]` : '[data-add-section]');
   };
   const sectionTasks = confirmSection ? (groups.find((g) => g.section?.id === confirmSection.id)?.tasks.length ?? 0) : 0;
@@ -200,7 +287,13 @@ function TaskListBody({ onClose }: { onClose(): void }) {
 
   const moveTask = (task: HousekeepingTask, from: string, to: string) => {
     if (from === to) return;
-    focusNext.current = { selector: `[data-task-menu="${task.id}"]` };
+    // Keep the place: focus stays in the card the task left (on the next task's "…", ready for
+    // the next move, else its Add Task) and the sheet does not scroll; the move is announced
+    // and the task lights up where it landed.
+    const group = groups.find((g) => (g.section?.id ?? NONE) === from);
+    const at = group?.tasks.findIndex((t) => t.id === task.id) ?? -1;
+    const stay = group?.tasks[at + 1] ?? group?.tasks[at - 1];
+    focusNext.current = { selector: stay ? `[data-task-menu="${stay.id}"]` : addButton(from) };
     tasks.move(task.id, to);
     setMoved(task.id);
   };
@@ -223,7 +316,7 @@ function TaskListBody({ onClose }: { onClose(): void }) {
   ];
 
   const moveSection = (section: HousekeepingSection, index: number) => {
-    focusNext.current = { selector: `[data-section-menu="${section.id}"]` };
+    focusNext.current = { selector: `[data-section-menu="${section.id}"]`, reveal: true };
     sectionMoves.move(section.id, SECTIONS, index);
   };
   const sectionMenu = (section: HousekeepingSection, index: number): MenuItem[] => [
@@ -231,7 +324,12 @@ function TaskListBody({ onClose }: { onClose(): void }) {
       key: 'rename',
       label: 'Rename',
       icon: <PencilIcon size={20} />,
-      onSelect: () => focusSoon(`[data-section-input="${section.id}"]`, true),
+      // Focused here, inside the tap (Menu runs this in its click), so iOS raises the keyboard.
+      onSelect: () => {
+        const field = listsRef.current?.querySelector<HTMLTextAreaElement>(`[data-section-input="${section.id}"]`);
+        field?.focus();
+        field?.select();
+      },
     },
     ...(index > 0
       ? [{ key: 'up', label: 'Move Up', icon: <ArrowUpIcon size={20} />, onSelect: () => moveSection(section, index - 1) }]
@@ -270,6 +368,7 @@ function TaskListBody({ onClose }: { onClose(): void }) {
       </button>
       <div className={styles.main}>
         <InlineText
+          multiline
           className={styles.name}
           data-task-input={task.id}
           value={task.title}
@@ -307,21 +406,45 @@ function TaskListBody({ onClose }: { onClose(): void }) {
     </li>
   );
 
-  const addTaskRow = (group: string, name: string | null, empty: boolean) => (
-    <button
-      type="button"
-      className={styles.add}
-      data-first={empty || undefined}
-      data-add-task={group}
-      aria-label={name ? `Add Task to ${name}` : undefined}
-      aria-busy={adding === group || undefined}
-      onClick={() => addTask(group)}
-      {...tasks.endProps(group)}
-    >
-      <PlusCircleIcon size={22} />
-      <span className={styles.addLabel}>Add Task</span>
-    </button>
+  /** A new task saving: its name where it will be, and a quiet spinner. */
+  const savingRow = (s: Saving) => (
+    <li key={`saving-${s.key}`} className={`${styles.row} ${styles.saving}`} aria-busy="true">
+      <span className={styles.delete} aria-hidden="true" />
+      <div className={styles.main}>
+        <span className={styles.savingName}>{s.title}</span>
+        <span className={styles.spinner} aria-hidden="true" />
+      </div>
+    </li>
   );
+
+  const addTaskRow = (group: string, name: string, first: boolean) =>
+    draft?.group === group ? (
+      <div className={styles.add} data-first={first || undefined} data-drafting="" {...tasks.endProps(group)}>
+        <PlusCircleIcon size={22} />
+        {draftField(draft, 'task')}
+      </div>
+    ) : (
+      <button
+        type="button"
+        className={styles.add}
+        data-first={first || undefined}
+        data-add-task={group}
+        aria-label={hasSections ? `Add Task to ${name}` : undefined}
+        onClick={() => openDraft(group)}
+        {...tasks.endProps(group)}
+      >
+        <PlusCircleIcon size={22} />
+        <span className={styles.addLabel}>Add Task</span>
+      </button>
+    );
+
+  /** A group's rows: its tasks, then any of its new tasks still saving. */
+  const rows = (group: string, groupTasks: HousekeepingTask[]) => [
+    ...groupTasks.map((task) => taskRow(task, group)),
+    ...saving.filter((s) => s.group === group).map(savingRow),
+  ];
+  const isEmpty = (group: string, groupTasks: HousekeepingTask[]) =>
+    groupTasks.length === 0 && !saving.some((s) => s.group === group);
 
   const loose = groups[0];
 
@@ -341,17 +464,29 @@ function TaskListBody({ onClose }: { onClose(): void }) {
           ref={listsRef}
           className={styles.lists}
           data-reordering={tasks.dragging ? 'tasks' : sectionMoves.dragging ? 'sections' : undefined}
+          onMouseDown={keepDraftFocus}
+          onClickCapture={saveDraftFirst}
         >
-          {/* The tasks in no section: first, with no heading. */}
-          <div className={styles.card}>
-            <ul
-              className={styles.list}
-              aria-labelledby={hasSections ? undefined : titleId}
-              aria-label={hasSections ? 'Tasks in no section' : undefined}
-            >
-              {loose.tasks.map((task) => taskRow(task, NONE))}
+          {/* The tasks in no section: first; headed No Section once there are sections. */}
+          <div
+            className={`${styles.card} ${hasSections ? styles.sectionCard : ''}`}
+            role={hasSections ? 'group' : undefined}
+            aria-labelledby={hasSections ? noneId : undefined}
+          >
+            {hasSections ? (
+              <div className={styles.head} data-none-head="">
+                <span className={`${styles.glyph} ${styles.noneGlyph}`} aria-hidden="true">
+                  <DashedSquareIcon size={19} />
+                </span>
+                <span id={noneId} className={styles.noneName}>
+                  No Section
+                </span>
+              </div>
+            ) : null}
+            <ul className={styles.list} aria-labelledby={hasSections ? undefined : titleId}>
+              {rows(NONE, loose.tasks)}
             </ul>
-            {addTaskRow(NONE, null, loose.tasks.length === 0)}
+            {addTaskRow(NONE, 'No Section', isEmpty(NONE, loose.tasks))}
           </div>
 
           {sections.map((section, index) => {
@@ -364,6 +499,7 @@ function TaskListBody({ onClose }: { onClose(): void }) {
                       <SectionIcon name={section.title} size={19} />
                     </span>
                     <InlineText
+                      multiline
                       className={styles.sectionName}
                       data-section-input={section.id}
                       value={section.title}
@@ -396,31 +532,50 @@ function TaskListBody({ onClose }: { onClose(): void }) {
                       <GripIcon size={22} />
                     </button>
                   </div>
-                  <ul className={styles.list}>{group.tasks.map((task) => taskRow(task, section.id))}</ul>
-                  {addTaskRow(section.id, section.title, group.tasks.length === 0)}
+                  <ul className={styles.list}>{rows(section.id, group.tasks)}</ul>
+                  {addTaskRow(section.id, section.title, isEmpty(section.id, group.tasks))}
                 </div>
               </div>
             );
           })}
 
+          {/* New sections still saving: their names where they will be. */}
+          {saving
+            .filter((s) => s.group === SECTIONS)
+            .map((s) => (
+              <div key={`saving-${s.key}`} className={styles.sectionItem} aria-busy="true">
+                <div className={`${styles.card} ${styles.sectionCard} ${styles.saving}`}>
+                  <div className={styles.head}>
+                    <span className={styles.glyph} aria-hidden="true">
+                      <SectionIcon name={s.title} size={19} />
+                    </span>
+                    <span className={styles.savingSectionName}>{s.title}</span>
+                    <span className={styles.spinner} aria-hidden="true" />
+                  </div>
+                </div>
+              </div>
+            ))}
+
           <div className={styles.addSectionItem} {...sectionMoves.endProps(SECTIONS)}>
             <div className={styles.card}>
-              <button
-                type="button"
-                className={styles.addSection}
-                data-add-section=""
-                disabled={full}
-                aria-busy={adding === SECTIONS || undefined}
-                onClick={addSection}
-              >
-                <AddSectionIcon size={22} />
-                <span className={styles.addLabel}>Add Section</span>
-              </button>
+              {draft?.group === SECTIONS ? (
+                // A section's header being written: its drawing follows the name typed.
+                <div className={`${styles.head} ${styles.draftHead}`} data-drafting="">
+                  {draftField(draft, 'section', (text) => (
+                    <span className={styles.glyph} aria-hidden="true">
+                      <SectionIcon name={text} size={19} />
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <button type="button" className={styles.addSection} data-add-section="" disabled={full} onClick={() => openDraft(SECTIONS)}>
+                  <AddSectionIcon size={22} />
+                  <span className={styles.addLabel}>Add Section</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
-        {/* Not read-only: iOS only raises the keyboard for an editable field. */}
-        <input ref={proxyRef} className="visually-hidden" tabIndex={-1} aria-hidden="true" autoComplete="off" />
         <p className={list.caption}>
           {full
             ? `A list has ${HOUSEKEEPING_SECTIONS_MAX} sections at most. `
@@ -458,5 +613,61 @@ function TaskListBody({ onClose }: { onClose(): void }) {
         onCancel={() => setSectionConfirmOpen(false)}
       />
     </div>
+  );
+}
+
+/**
+ * The name of a new task or section, typed where Add was: it wraps as it grows, Enter or
+ * leaving it makes the item with what is there (nothing typed adds nothing), and Escape drops
+ * it. `lead` draws what comes before it from the text (a section's drawing follows its name).
+ */
+function DraftField({
+  initial,
+  className,
+  label,
+  placeholder,
+  maxLength,
+  lead,
+  onFinish,
+}: {
+  initial: string;
+  className: string;
+  label: string;
+  placeholder: string;
+  maxLength: number;
+  lead?: (text: string) => ReactNode;
+  onFinish(how: DraftEnd, text: string): void;
+}) {
+  const [text, setText] = useState(initial);
+  return (
+    <>
+      {lead?.(text)}
+      <AutoGrowTextarea
+        className={className}
+        data-draft-input=""
+        aria-label={label}
+        placeholder={placeholder}
+        maxLength={maxLength}
+        autoCapitalize="sentences"
+        autoComplete="off"
+        autoCorrect="off"
+        spellCheck={false}
+        enterKeyHint="done"
+        value={text}
+        onChange={(e) => setText(e.target.value.replace(/[\r\n]+/g, ' '))}
+        onBlur={() => onFinish('blur', text)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            onFinish('enter', text);
+          } else if (e.key === 'Escape') {
+            // Dropped, and the Escape kept from closing the sheet.
+            e.preventDefault();
+            e.stopPropagation();
+            onFinish('escape', text);
+          }
+        }}
+      />
+    </>
   );
 }

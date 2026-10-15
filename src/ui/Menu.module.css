@@ -112,12 +112,21 @@
   line-height: 1;
 }
 
+/* A long label (a section's name) goes onto a second line, as iOS menus do, rather than being cut. */
 .label {
   flex: 1 1 auto;
   min-width: 0;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+
+/* Room above and below a label of two lines; one line still sits in the item's 46px. */
+.item > .label {
+  padding: 12px 0;
 }
 
 .words {

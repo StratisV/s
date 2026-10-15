@@ -269,7 +269,7 @@ export function useReorder<T extends { id: string }>({
 
 /** One list of a grouped reorder: the tasks in one section, or in none. */
 export interface ReorderGroup {
-  /** What onReorder gives it back as, and what endProps() takes. */
+  /** What onMove gives it back as, and what endProps() takes. */
   id: string;
   /** What a move into it is announced with ("moved to Kitchen, position 2 of 3"); null: by position only. */
   name: string | null;
@@ -277,7 +277,7 @@ export interface ReorderGroup {
   ids: string[];
 }
 
-/** An arrangement as onReorder gets it: every group, with its items in order. */
+/** An arrangement: every group, with its items in order. */
 export type ReorderArrangement = { id: string; ids: string[] }[];
 
 /** A place in the groups: group `group`, before its item `index` (counted without the moving one). */
@@ -300,8 +300,12 @@ interface GroupedReorderOptions {
   rootRef: RefObject<HTMLElement>;
   /** The scroll area it is in (it scrolls while an item is held near its edges). */
   scrollRef: RefObject<HTMLElement>;
-  /** Saves a new arrangement. Failures are the caller's to report. */
-  onReorder(arrangement: ReorderArrangement): Promise<void>;
+  /**
+   * Saves one move: item `id` into group `groupId` at `index` there (counted without it).
+   * Only the move, never the whole arrangement, so a move someone else made meanwhile stands.
+   * Failures are the caller's to report.
+   */
+  onMove(id: string, groupId: string, index: number): Promise<void>;
   /**
    * The part of an item that is picked up and carried (a section's header, found inside the
    * item); the whole item when absent. The rest folds away while it is carried, and unfolds
@@ -410,13 +414,30 @@ function makeGhost(part: HTMLElement, rect: DOMRect, radius: number): Ghost {
   const copy = part.cloneNode(true) as HTMLElement;
   copy.removeAttribute('id');
   copy.removeAttribute('style');
+  // The picture's own surface shows (the row's card colour would cover it).
+  copy.style.background = 'transparent';
   copy.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
-  const fields = part.querySelectorAll<HTMLInputElement>('input, textarea');
+  const fields = part.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea');
   copy.querySelectorAll('input, textarea').forEach((el, i) => {
+    const field = fields[i];
     const text = document.createElement('span');
     text.className = el.className;
-    text.textContent = fields[i]?.value ?? '';
-    Object.assign(text.style, { display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', overflow: 'hidden' });
+    text.textContent = field?.value ?? '';
+    // The name as the field shows it: a field that wraps keeps its lines; a one-line field's
+    // text is centred in its height and cut with an ellipsis where it was (a block, so
+    // text-overflow applies), never through a letter.
+    Object.assign(
+      text.style,
+      el.tagName === 'TEXTAREA'
+        ? { display: 'block', whiteSpace: 'pre-wrap' }
+        : {
+            display: 'block',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            lineHeight: `${field?.clientHeight ?? 0}px`,
+          },
+    );
     el.replaceWith(text);
   });
   copy.querySelectorAll('button, a, [tabindex]').forEach((el) => el.setAttribute('tabindex', '-1'));
@@ -433,7 +454,8 @@ function makeGhost(part: HTMLElement, rect: DOMRect, radius: number): Ghost {
     pointerEvents: 'none',
     borderRadius: `${radius}px`,
     overflow: 'hidden',
-    background: 'var(--card)',
+    // Lifted off the card: in dark mode a step lighter, as iOS lifts onto an elevated surface.
+    background: 'var(--lift-bg)',
     boxShadow: 'var(--shadow-lift)',
     translate: '0 0',
     scale: '1',
@@ -476,15 +498,15 @@ export function useGroupedReorder({
   nameOf,
   rootRef,
   scrollRef,
-  onReorder,
+  onMove,
   liftSelector,
   liftRadius = 14,
 }: GroupedReorderOptions): GroupedReorder {
   const [carry, setCarry] = useState<Carry | null>(null);
   const [landing, setLanding] = useState<Landing | null>(null);
   const [announcement, setAnnouncement] = useState('');
-  const latest = useRef({ groups, nameOf, onReorder });
-  latest.current = { groups, nameOf, onReorder };
+  const latest = useRef({ groups, nameOf, onMove });
+  latest.current = { groups, nameOf, onMove };
   /** A drag (or its drop) is under way: no second one, and no key moves. */
   const busy = useRef(false);
   const ghostRef = useRef<Ghost | null>(null);
@@ -543,10 +565,10 @@ export function useGroupedReorder({
     const from = slotOf(current, id);
     const target = current[to.group];
     if (!from || !target) return;
-    const next = movedAcross(current, id, to);
-    const ids = next[to.group].ids;
-    const place = `position ${ids.indexOf(id) + 1} of ${ids.length}`;
-    void latest.current.onReorder(next).catch(() => {});
+    const ids = movedAcross(current, id, to)[to.group].ids;
+    const index = ids.indexOf(id);
+    const place = `position ${index + 1} of ${ids.length}`;
+    void latest.current.onMove(id, target.id, index).catch(() => {});
     setAnnouncement(
       from.group === to.group || !target.name
         ? `${name(id)} moved to ${place}.`

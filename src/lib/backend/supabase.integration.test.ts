@@ -1395,8 +1395,9 @@ describe('SupabaseBackend offline: housekeeping requests', () => {
       if (
         [
           'set_housekeeping_note',
-          'reorder_housekeeping_sections',
-          'arrange_housekeeping_tasks',
+          'move_housekeeping_section',
+          'move_housekeeping_task',
+          'reorder_housekeeping_tasks',
           'rename_housekeeping_section',
           'delete_housekeeping_section',
         ].includes(fn)
@@ -1409,12 +1410,10 @@ describe('SupabaseBackend offline: housekeeping requests', () => {
       return { body: uid(99) };
     });
     await backend.setHousekeepingNote(H, '  Spare room first. ');
-    await backend.reorderHousekeepingSections(H, [uid(2), 'not-a-uuid', uid(1)]);
-    const groups = [
-      { sectionId: null, taskIds: [uid(3)] },
-      { sectionId: uid(7), taskIds: [uid(4), uid(5)] },
-    ];
-    await backend.arrangeHousekeepingTasks(H, groups);
+    await backend.moveHousekeepingSection(uid(2), 0);
+    await backend.moveHousekeepingTask(uid(4), uid(7), 1);
+    await backend.moveHousekeepingTask(uid(3), null, 0);
+    await backend.reorderHousekeepingTasks(H, [uid(2), 'not-a-uuid', uid(1)]);
     expect(await backend.createHousekeepingSection(H, '  Kitchen ')).toEqual({ id: uid(7), household_id: H, title: 'Kitchen', position: 0 });
     await backend.renameHousekeepingSection(uid(7), ' Kitchen and dining ');
     await backend.deleteHousekeepingSection(uid(7));
@@ -1429,11 +1428,16 @@ describe('SupabaseBackend offline: housekeeping requests', () => {
     expect(rpcCalls(calls, 'set_housekeeping_note').map((c) => c.body)).toEqual([
       { p_household_id: H, p_body: '  Spare room first. ' },
     ]);
-    // An id that is not a uuid keeps its place in the order but names no section.
-    expect(rpcCalls(calls, 'reorder_housekeeping_sections').map((c) => c.body)).toEqual([
-      { p_household_id: H, p_section_ids: [uid(2), '00000000-0000-0000-0000-000000000000', uid(1)] },
+    // One section or task and where it goes, never the whole order.
+    expect(rpcCalls(calls, 'move_housekeeping_section').map((c) => c.body)).toEqual([{ p_section_id: uid(2), p_index: 0 }]);
+    expect(rpcCalls(calls, 'move_housekeeping_task').map((c) => c.body)).toEqual([
+      { p_task_id: uid(4), p_section_id: uid(7), p_index: 1 },
+      { p_task_id: uid(3), p_section_id: null, p_index: 0 },
     ]);
-    expect(rpcCalls(calls, 'arrange_housekeeping_tasks').map((c) => c.body)).toEqual([{ p_household_id: H, p_groups: groups }]);
+    // The app from before sections: an id that is not a uuid keeps its place but names no task.
+    expect(rpcCalls(calls, 'reorder_housekeeping_tasks').map((c) => c.body)).toEqual([
+      { p_household_id: H, p_task_ids: [uid(2), '00000000-0000-0000-0000-000000000000', uid(1)] },
+    ]);
     // Names are checked for blank here, trimmed by the database.
     expect(rpcCalls(calls, 'create_housekeeping_section').map((c) => c.body)).toEqual([{ p_household_id: H, p_title: 'Kitchen' }]);
     expect(rpcCalls(calls, 'rename_housekeeping_section').map((c) => c.body)).toEqual([
@@ -1548,11 +1552,18 @@ describe('SupabaseBackend offline: housekeeping requests', () => {
     await rejectsWith(backend.renameHousekeepingTask('t1', 'x'), 'not_found');
     await rejectsWith(backend.deleteHousekeepingTask('t1'), 'not_found');
     await rejectsWith(backend.createHousekeepingTask(H, 'x', 's1'), 'not_found');
-    await rejectsWith(backend.arrangeHousekeepingTasks('h1', []), 'not_found');
+    await rejectsWith(backend.moveHousekeepingTask('t1', null, 0), 'not_found');
+    await rejectsWith(backend.moveHousekeepingTask(uid(1), 's1', 0), 'not_found');
+    await rejectsWith(backend.reorderHousekeepingTasks('h1', []), 'not_found');
     await rejectsWith(backend.createHousekeepingSection('h1', 'x'), 'not_found');
     await rejectsWith(backend.renameHousekeepingSection('s1', 'x'), 'not_found');
     await rejectsWith(backend.deleteHousekeepingSection('s1'), 'not_found');
-    await rejectsWith(backend.reorderHousekeepingSections('h1', [uid(1)]), 'not_found');
+    await rejectsWith(backend.moveHousekeepingSection('s1', 0), 'not_found');
+    // A place is a whole number from 0, checked here.
+    for (const index of [-1, 1.5, Number.NaN, '2' as unknown as number]) {
+      await rejectsWith(backend.moveHousekeepingTask(uid(1), null, index), 'unknown', /^invalid_input: index$/);
+      await rejectsWith(backend.moveHousekeepingSection(uid(1), index), 'unknown', /^invalid_input: index$/);
+    }
     await rejectsWith(backend.createHousekeepingSection(H, '   '), 'unknown', /^invalid_input: title$/);
     await rejectsWith(backend.renameHousekeepingSection(uid(7), ''), 'unknown', /^invalid_input: title$/);
     await rejectsWith(backend.setHousekeepingTaskDone('h1', '2026-10-08', { taskId: uid(1) }, true), 'not_found');
@@ -1576,9 +1587,9 @@ describe('SupabaseBackend offline: housekeeping requests', () => {
     await rejectsWith(backend.addHousekeepingVisit(H, '2027-01-01'), 'unknown', /^invalid_input$/);
     await rejectsWith(backend.saveHousekeepingVisit(H, '2027-01-01', { comments: 'x' }), 'unknown', /^invalid_input$/);
     reply = pgError('not_signed_in');
-    await rejectsWith(backend.reorderHousekeepingSections(H, []), 'not_signed_in');
-    reply = pgError('invalid_input'); // a task named twice, or left out
-    await rejectsWith(backend.arrangeHousekeepingTasks(H, []), 'unknown', /^invalid_input$/);
+    await rejectsWith(backend.moveHousekeepingSection(uid(1), 0), 'not_signed_in');
+    reply = pgError('not_found'); // a task or section deleted meanwhile
+    await rejectsWith(backend.moveHousekeepingTask(uid(1), uid(2), 0), 'not_found');
     reply = pgError(
       'new row for relation "housekeeping_sections" violates check constraint "housekeeping_sections_limit"',
       '23514',
@@ -2413,7 +2424,7 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     const added = await B().createHousekeepingTask(hidA, '  Windows \n');
     expect(added).toEqual({ id: added.id, household_id: hidA, title: 'Windows', section_id: null, position: 7 });
     await A().renameHousekeepingTask(tasks[0].id, ' Bed sheets (all rooms) ');
-    await A().arrangeHousekeepingTasks(hidA, [{ sectionId: null, taskIds: [...tasks.slice(1).map((t) => t.id), tasks[0].id, added.id] }]);
+    await A().moveHousekeepingTask(tasks[0].id, null, 6);
     const bins = tasks.find((t) => t.title === 'Empty the bins')!;
     await B().deleteHousekeepingTask(bins.id);
     // Ticked today (by the tick test): it stays on today's visit, as history, after the rows of
@@ -2478,19 +2489,16 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     await rejectsWith(C().createHousekeepingTask(hidA, 'Hacked'), 'not_found');
     await rejectsWith(C().renameHousekeepingTask(task.id, 'Hacked'), 'not_found');
     await rejectsWith(C().deleteHousekeepingTask(task.id), 'not_found');
-    await rejectsWith(C().arrangeHousekeepingTasks(hidA, [{ sectionId: null, taskIds: [task.id] }]), 'not_found');
+    await rejectsWith(C().moveHousekeepingTask(task.id, null, 0), 'not_found');
+    await rejectsWith(C().reorderHousekeepingTasks(hidA, [task.id]), 'not_found');
     await rejectsWith(C().createHousekeepingSection(hidA, 'Hacked'), 'not_found');
-    await rejectsWith(C().reorderHousekeepingSections(hidA, []), 'not_found');
     await rejectsWith(C().setHousekeepingTaskDone(hidA, today, { taskId: task.id }, true), 'not_found');
     await rejectsWith(C().setHousekeepingTaskDone(hidC, today, { visitTaskId: row.id }, true), 'not_found');
     await rejectsWith(C().saveHousekeepingVisit(hidA, today, { comments: 'Hacked' }), 'not_found');
     await rejectsWith(C().addHousekeepingVisit(hidA, today), 'not_found');
     await rejectsWith(C().deleteHousekeepingVisit(visit.id), 'not_found');
-    // A's arrangement can't take C's task: not_found, and nothing moves.
-    await rejectsWith(
-      A().arrangeHousekeepingTasks(hidA, [{ sectionId: null, taskIds: [...before.housekeeping.tasks.map((t) => t.id), foreign.id] }]),
-      'not_found',
-    );
+    // A can't move C's task: not_found, and nothing moves.
+    await rejectsWith(A().moveHousekeepingTask(foreign.id, null, 0), 'not_found');
     expect((await C().load(hidC)).housekeeping.tasks[0]).toEqual(foreign);
     expect((await loadA()).housekeeping.tasks).toEqual(before.housekeeping.tasks);
 

@@ -1003,7 +1003,7 @@ describe('housekeeping', () => {
       expect(home().toast?.message).toBe('Couldn’t save. No connection.');
     });
 
-    it("rename, delete and arrange show at once on the list and today's visit, and fail back", async () => {
+    it("rename, delete and move show at once on the list and today's visit, and fail back", async () => {
       const { backend, home } = await seeded();
       const today = home().today;
       const [first, second, third] = hk(home).tasks;
@@ -1014,19 +1014,20 @@ describe('housekeeping', () => {
       const last = lastVisit(home).visit_date === today ? hk(home).visits[1] : lastVisit(home);
 
       vi.spyOn(backend, 'load').mockRejectedValue(offline());
-      const gates = { rename: deferred(), remove: deferred(), removeTicked: deferred(), arrange: deferred() };
+      const gates = { rename: deferred(), remove: deferred(), removeTicked: deferred(), move: deferred() };
       vi.spyOn(backend, 'renameHousekeepingTask').mockImplementationOnce(() => gates.rename.promise);
       vi.spyOn(backend, 'deleteHousekeepingTask')
         .mockImplementationOnce(() => gates.remove.promise)
         .mockImplementationOnce(() => gates.removeTicked.promise);
-      vi.spyOn(backend, 'arrangeHousekeepingTasks').mockImplementationOnce(() => gates.arrange.promise);
+      vi.spyOn(backend, 'moveHousekeepingTask').mockImplementationOnce(() => gates.move.promise);
 
       const pending: Promise<void>[] = [];
       act(() => {
         pending.push(home().renameHousekeepingTask(first.id, ' Bed sheets (all rooms) '));
         pending.push(home().deleteHousekeepingTask(second.id));
         pending.push(home().deleteHousekeepingTask(third.id));
-        pending.push(home().arrangeHousekeepingTasks([{ sectionId: null, taskIds: hk(home).tasks.map((t) => t.id).reverse() }]));
+        // To the end of the list (past it: last).
+        pending.push(home().moveHousekeepingTask(first.id, null, 99));
       });
       const list = hk(home).tasks;
       expect(list.at(-1)).toMatchObject({ id: first.id, title: 'Bed sheets (all rooms)' });
@@ -1080,13 +1081,10 @@ describe('housekeeping', () => {
         baths = await home().createHousekeepingSection('Bathrooms');
       });
       const ids = hk(home).tasks.map((t) => t.id);
-      await act(() =>
-        home().arrangeHousekeepingTasks([
-          { sectionId: null, taskIds: ids.slice(0, 3) },
-          { sectionId: kitchen.id, taskIds: ids.slice(3, 5) },
-          { sectionId: baths.id, taskIds: ids.slice(5) },
-        ]),
-      );
+      await act(async () => {
+        for (const [i, id] of ids.slice(3, 5).entries()) await home().moveHousekeepingTask(id, kitchen.id, i);
+        for (const [i, id] of ids.slice(5).entries()) await home().moveHousekeepingTask(id, baths.id, i);
+      });
       await flush();
       return { ...seededHome, kitchen, baths, ids };
     }
@@ -1133,7 +1131,7 @@ describe('housekeeping', () => {
       expect(hk(home).tasks[5]).toMatchObject({ id: oven.id, section_id: kitchen.id });
     });
 
-    it("arrange, rename, reorder and delete show at once on the list and today's visit, and fail back", async () => {
+    it("moves, rename and delete show at once on the list and today's visit, and fail back", async () => {
       const { backend, home, kitchen, baths, ids } = await sectionedHome();
       const today = home().today;
       await act(() => home().setHousekeepingTaskDone(today, { taskId: ids[3] }, true));
@@ -1143,24 +1141,21 @@ describe('housekeeping', () => {
       expect(dayVisit(home, today)!.tasks.map((r) => r.section_title)).toEqual(['', '', '', 'Kitchen', 'Kitchen', 'Bathrooms', 'Bathrooms']);
 
       vi.spyOn(backend, 'load').mockRejectedValue(offline());
-      const gates = { arrange: deferred(), rename: deferred(), reorder: deferred(), remove: deferred() };
-      vi.spyOn(backend, 'arrangeHousekeepingTasks').mockImplementationOnce(() => gates.arrange.promise);
+      const gates = { move: deferred(), rename: deferred(), moveSection: deferred(), remove: deferred() };
+      const move = vi.spyOn(backend, 'moveHousekeepingTask').mockImplementationOnce(() => gates.move.promise);
       vi.spyOn(backend, 'renameHousekeepingSection').mockImplementationOnce(() => gates.rename.promise);
-      vi.spyOn(backend, 'reorderHousekeepingSections').mockImplementationOnce(() => gates.reorder.promise);
+      const moveSection = vi.spyOn(backend, 'moveHousekeepingSection').mockImplementationOnce(() => gates.moveSection.promise);
       vi.spyOn(backend, 'deleteHousekeepingSection').mockImplementationOnce(() => gates.remove.promise);
       const pending: Promise<void>[] = [];
       act(() => {
-        // Ironing into the kitchen, first; the kitchen renamed, and moved after the bathrooms.
-        pending.push(
-          home().arrangeHousekeepingTasks([
-            { sectionId: null, taskIds: ids.slice(0, 3) },
-            { sectionId: kitchen.id, taskIds: [ids[6], ids[3], ids[4]] },
-            { sectionId: baths.id, taskIds: [ids[5]] },
-          ]),
-        );
+        // Ironing into the kitchen, first; the kitchen renamed; the bathrooms moved first.
+        pending.push(home().moveHousekeepingTask(ids[6], kitchen.id, 0));
         pending.push(home().renameHousekeepingSection(kitchen.id, ' Kitchen and utility '));
-        pending.push(home().reorderHousekeepingSections([baths.id, kitchen.id]));
+        pending.push(home().moveHousekeepingSection(baths.id, 0));
       });
+      // Each names only what moved and where to (never the whole list).
+      expect(move).toHaveBeenCalledWith(ids[6], kitchen.id, 0);
+      expect(moveSection).toHaveBeenCalledWith(baths.id, 0);
       expect(hk(home).sections.map((s) => s.title)).toEqual(['Bathrooms', 'Kitchen and utility']);
       expect(dayVisit(home, today)!.tasks.map((r) => [r.task_id, r.section_title, r.position])).toEqual([
         [ids[0], '', 0],

@@ -31,7 +31,6 @@ import type {
   HousekeepingNote,
   HousekeepingSection,
   HousekeepingTask,
-  HousekeepingTaskGroup,
   HousekeepingTickTarget,
   HousekeepingVisit,
   HousekeepingVisitPatch,
@@ -103,7 +102,7 @@ const REACTION_EMOJI_MAX = 16;
 /** Message ids per getMessages request, so the URL stays short. */
 const IDS_PER_REQUEST = 100;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** Stands in for an id that is not a uuid in reorderHousekeepingSections: it matches no row. */
+/** Stands in for an id that is not a uuid in reorderHousekeepingTasks: it matches no row. */
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
 /** reconnect() drops and reopens the socket at most this often. */
@@ -228,6 +227,12 @@ function requireDate(value: ISODate): ISODate {
 function requireUuid(id: string): string {
   if (typeof id !== 'string' || !UUID.test(id)) throw new BackendError('not_found');
   return id;
+}
+
+/** A place in a list (a SQL integer from 0); else invalid_input: index, without a request. */
+function requirePlace(index: number): number {
+  if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index > 2_147_483_647) throw invalidInput('index');
+  return index;
 }
 
 /** Copies the allowed keys that are present (undefined means "leave as is"). */
@@ -1152,11 +1157,25 @@ export class SupabaseBackend implements Backend {
     await runAffecting(this.client.from('housekeeping_tasks').delete().eq('id', requireUuid(id)).select('id'));
   }
 
-  async arrangeHousekeepingTasks(householdId: string, groups: HousekeepingTaskGroup[]): Promise<void> {
+  async moveHousekeepingTask(id: string, sectionId: string | null, index: number): Promise<void> {
+    requirePlace(index);
+    // Only this task and the places in its two sections change (the RPC locks the household's
+    // tasks first, then its lock); a task or section that is not the household's is not_found.
+    await run<null>(
+      this.client.rpc('move_housekeeping_task', {
+        p_task_id: requireUuid(id),
+        p_section_id: sectionId === null || sectionId === undefined ? null : requireUuid(sectionId),
+        p_index: index,
+      }),
+    );
+  }
+
+  async reorderHousekeepingTasks(householdId: string, orderedIds: string[]): Promise<void> {
     requireUuid(householdId);
-    // The RPC checks the shape and that every task is named once (invalid_input), and that
-    // every id is the household's (not_found, also for one that is not a uuid).
-    await run<null>(this.client.rpc('arrange_housekeeping_tasks', { p_household_id: householdId, p_groups: groups ?? null }));
+    // For an app from before sections still running: each task keeps its section. An id that
+    // is not a uuid names no task, but still takes its place in the order.
+    const ids = (orderedIds ?? []).map((id) => (typeof id === 'string' && UUID.test(id) ? id : NIL_UUID));
+    await run<null>(this.client.rpc('reorder_housekeeping_tasks', { p_household_id: householdId, p_task_ids: ids }));
   }
 
   // Sections: written only through their RPCs (supabase/migrations/20261015000100_housekeeping_sections.sql),
@@ -1182,11 +1201,9 @@ export class SupabaseBackend implements Backend {
     await run<null>(this.client.rpc('delete_housekeeping_section', { p_section_id: requireUuid(id) }));
   }
 
-  async reorderHousekeepingSections(householdId: string, orderedIds: string[]): Promise<void> {
-    requireUuid(householdId);
-    // An id that is not a uuid names no section, but still takes its place in the order.
-    const ids = (orderedIds ?? []).map((id) => (typeof id === 'string' && UUID.test(id) ? id : NIL_UUID));
-    await run<null>(this.client.rpc('reorder_housekeeping_sections', { p_household_id: householdId, p_section_ids: ids }));
+  async moveHousekeepingSection(id: string, index: number): Promise<void> {
+    requirePlace(index);
+    await run<null>(this.client.rpc('move_housekeeping_section', { p_section_id: requireUuid(id), p_index: index }));
   }
 
   async setHousekeepingTaskDone(

@@ -83,10 +83,10 @@ means under it ("Needs doing now", "Fine for now, keep an eye on it").
   The task list can be divided into sections (Kitchen, Bathrooms…): add, rename, reorder and
   delete them in the task list (Add Section, and each section's "..." menu), add a task straight
   into one, and move tasks between them by dragging, with the arrow keys, or with Move to
-  Section. On the checklist each section is a card of its own, with its room's drawing and a
-  small ring that fills as its tasks are ticked ("2 of 5") and turns into a green tick when
-  they all are. Deleting a section keeps its tasks: they move to the top with no section.
-  Earlier visits keep the sections they had.
+  Section. On the checklist each section is a card of its own under one quiet line: its name,
+  and "2 of 5" on the right, which reads "All done" once its tasks are all ticked. Deleting a
+  section keeps its tasks: they move to the top of the list. Earlier visits keep the sections
+  they had. Two people sorting the list at the same time both keep their moves.
 - **Stats**: who has done what.
 - **Share**: send an item (from its sheet, as the sheet shows it) or a whole area (Share Room
   in its "..." menu) to WhatsApp, Messages or Mail as a short summary with a link, which says
@@ -311,7 +311,10 @@ After pulling an update, **apply the database migrations before anything else**,
 Vercel redeploys the app as soon as the default branch changes and the new app reads the new
 columns (for example `items.kind` or `items.good`): an app deployed ahead of its migrations
 can't load any household. The migrations are backward compatible (new tables and columns with
-defaults), so the app that is live keeps working on the new schema. In order:
+defaults), so the app that is live keeps working on the new schema. A phone with the page from
+before housekeeping sections still open can still reorder its task list: the sections
+migration keeps `reorder_housekeeping_tasks` for it, and server mode keeps
+`reorderHousekeepingTasks` the same way (each task stays in its section). In order:
 
 1. `npx supabase db push` (for this release: the chat, item kind and "What good looks like"
    migrations, `20261010000100_chat.sql`, `20261010000200_item_kind.sql` and

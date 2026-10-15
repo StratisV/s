@@ -201,15 +201,16 @@ describe('ServerBackend: the Backend methods', () => {
     const kitchen = await b.createHousekeepingSection(hid, 'Kitchen');
     const oven = await b.createHousekeepingTask(hid, 'Clean the oven', kitchen.id);
     expect(oven).toMatchObject({ section_id: kitchen.id, position: 0 });
-    await b.arrangeHousekeepingTasks(hid, [
-      { sectionId: null, taskIds: [...tasks].reverse().map((t) => t.id) },
-      { sectionId: kitchen.id, taskIds: [oven.id] },
-    ]);
+    await b.moveHousekeepingTask(tasks[0].id, kitchen.id, 0);
+    await b.moveHousekeepingTask(tasks[0].id, null, 0);
+    // An app from before sections, still open after an update, reorders the whole list.
+    await b.reorderHousekeepingTasks(hid, [...tasks].reverse().map((t) => t.id));
     const baths = await b.createHousekeepingSection(hid, 'Bathrooms');
     await b.renameHousekeepingSection(baths.id, 'Bathroom');
-    await b.reorderHousekeepingSections(hid, [baths.id, kitchen.id]);
+    await b.moveHousekeepingSection(baths.id, 0);
     const arranged = (await b.load(hid)).housekeeping;
     expect(arranged.sections.map((s) => s.title)).toEqual(['Bathroom', 'Kitchen']);
+    expect(arranged.tasks[0]).toMatchObject({ id: tasks.at(-1)!.id, section_id: null });
     expect(arranged.tasks.at(-1)).toMatchObject({ id: oven.id, section_id: kitchen.id });
     // Today's visit (9 Oct on the harness clock) follows the list.
     const todays = arranged.visits.find((v) => v.visit_date === '2026-10-09')!;

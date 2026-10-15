@@ -75,9 +75,17 @@ const tick = (user, hid, date, { taskId = null, visitTaskId = null }, done) =>
 const save = (user, hid, date, patch) => rpc(user, 'save_housekeeping_visit', [hid, date, JSON.stringify(patch)]);
 const addSection = async (user, hid, title) =>
   (await q(user, 'select * from public.create_housekeeping_section($1, $2)', [hid, title])).rows[0];
-/** arrange_housekeeping_tasks with `groups` (a string or null is sent as it is). */
-const arrange = (user, hid, groups) =>
-  rpc(user, 'arrange_housekeeping_tasks', [hid, typeof groups === 'string' || groups === null ? groups : JSON.stringify(groups)]);
+/** move_housekeeping_task: one task into a section (null: none) at a place there. */
+const move = (user, taskId, sectionId, index) => rpc(user, 'move_housekeeping_task', [taskId, sectionId, index]);
+/** move_housekeeping_section: one section to a place among the others. */
+const moveSection = (user, sectionId, index) => rpc(user, 'move_housekeeping_section', [sectionId, index]);
+/**
+ * Lays the list out as `groups` say ({ sectionId, taskIds }, each in order), one move at a
+ * time as the app makes them: each group's tasks end up first in their section, in order.
+ */
+async function arrange(user, groups) {
+  for (const g of groups) for (const [i, id] of g.taskIds.entries()) await move(user, id, g.sectionId, i);
+}
 
 /** Applies the housekeeping migration again (as `sql`), and the sections one after it, as a deployment has them. */
 async function reapply(sql = fs.readFileSync(MIGRATION, 'utf8')) {
@@ -141,11 +149,11 @@ describe('structure', () => {
       'set_housekeeping_note',
       'undo_clear_housekeeping_note',
       'reorder_housekeeping_tasks',
-      'arrange_housekeeping_tasks',
+      'move_housekeeping_task',
       'create_housekeeping_section',
       'rename_housekeeping_section',
       'delete_housekeeping_section',
-      'reorder_housekeeping_sections',
+      'move_housekeeping_section',
       'add_housekeeping_visit',
       'tick_housekeeping_task',
       'save_housekeeping_visit',
@@ -155,6 +163,10 @@ describe('structure', () => {
       assert.equal(byName[name].auth_exec, true, `authenticated cannot execute ${name}`);
       assert.equal(byName[name].anon_exec, false, `anon can execute ${name}`);
     }
+    // Nothing takes the whole order any more: a whole order, as one phone last saw it, undid
+    // a move another phone had just made.
+    assert.equal(byName.arrange_housekeeping_tasks, undefined);
+    assert.equal(byName.reorder_housekeeping_sections, undefined);
     for (const name of [
       'js_trim',
       'housekeeping_starter_tasks',
@@ -1108,6 +1120,21 @@ describe('members, the housekeeper among them, edit everything', () => {
 });
 
 describe('applying the migrations again', () => {
+  test('takes away the whole-order writes of an earlier version of the sections file', async () => {
+    const wholeOrder = () =>
+      db(
+        `select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+         where n.nspname = 'public' and p.proname in ('arrange_housekeeping_tasks', 'reorder_housekeeping_sections')`,
+      );
+    await db(`create function public.arrange_housekeeping_tasks(p_household_id uuid, p_groups jsonb) returns void
+              language plpgsql as 'begin null; end'`);
+    await db(`create function public.reorder_housekeeping_sections(p_household_id uuid, p_section_ids uuid[]) returns void
+              language plpgsql as 'begin null; end'`);
+    assert.equal((await wholeOrder()).rows.length, 2);
+    await reapply();
+    assert.deepEqual((await wholeOrder()).rows, []);
+  });
+
   test('keeps every message, section, task, visit and tick as it was', async () => {
     const h = await createHousehold({ name: 'Rerun home' });
     const today = await todayIn('Europe/London');
@@ -1115,7 +1142,7 @@ describe('applying the migrations again', () => {
     const tasks = await tasksOf(h.id);
     await rpc(h.owner, 'set_housekeeping_note', [h.id, 'Keep me.']);
     const kitchen = await addSection(h.owner, h.id, 'Kitchen');
-    await arrange(h.owner, h.id, [
+    await arrange(h.owner, [
       { sectionId: null, taskIds: tasks.slice(1).map((t) => t.id) },
       { sectionId: kitchen.id, taskIds: [tasks[0].id] },
     ]);
@@ -1214,9 +1241,9 @@ describe('sections', () => {
     await rejects(addSection(outsider.owner, h.id, 'Sneaky'), 'not_found');
     await rejects(rpc(outsider.owner, 'rename_housekeeping_section', [kitchen.id, 'Hacked']), 'not_found');
     await rejects(rpc(outsider.owner, 'delete_housekeeping_section', [kitchen.id]), 'not_found');
-    await rejects(rpc(outsider.owner, 'reorder_housekeeping_sections', [h.id, [kitchen.id]]), 'not_found');
-    await rejects(arrange(outsider.owner, h.id, []), 'not_found');
-    // Nor can their own list use it: a task added into it, or arranged into it.
+    await rejects(moveSection(outsider.owner, kitchen.id, 0), 'not_found');
+    await rejects(move(outsider.owner, (await tasksOf(h.id))[0].id, null, 0), 'not_found');
+    // Nor can their own list use it: a task added into it, or moved into it.
     await rejects(
       q(outsider.owner, "insert into public.housekeeping_tasks (household_id, title, section_id) values ($1, 'Sneaky', $2)", [
         outsider.id,
@@ -1224,8 +1251,8 @@ describe('sections', () => {
       ]),
       'not_found',
     );
-    const theirs = (await tasksOf(outsider.id)).map((t) => t.id);
-    await rejects(arrange(outsider.owner, outsider.id, [{ sectionId: kitchen.id, taskIds: theirs }]), 'not_found');
+    const [theirs] = await tasksOf(outsider.id);
+    await rejects(move(outsider.owner, theirs.id, kitchen.id, 0), 'not_found');
     await rejects(q(null, 'select * from public.housekeeping_sections'), /permission denied/);
     await rejects(addSection(null, h.id, 'Anon'), /permission denied/);
     await rejects(rpc(null, 'delete_housekeeping_section', [kitchen.id]), /permission denied/);
@@ -1253,70 +1280,49 @@ describe('sections', () => {
     assert.deepEqual((await listOf(g.id)).map((t) => t.title), [...STARTER, 'Windows', 'Oven', 'Fridge']);
   });
 
-  test('arrange moves tasks within and across sections at once; a wrong arrangement changes nothing', async () => {
-    const g = await createHousehold({ name: 'Arrange home' });
-    const other = await createHousehold({ name: 'Arrange elsewhere' });
+  test('move: one task within or across sections, at a place; the sections close up; a wrong one changes nothing', async () => {
+    const g = await createHousehold({ name: 'Move home' });
+    const other = await createHousehold({ name: 'Move elsewhere' });
     const kitchen = await addSection(g.owner, g.id, 'Kitchen');
     const baths = await addSection(g.owner, g.id, 'Bathrooms');
     const foreignSection = await addSection(other.owner, other.id, 'Theirs');
     const [foreignTask] = await tasksOf(other.id);
     const t = (await tasksOf(g.id)).map((x) => x.id);
-    // The groups' order does not matter: the sections keep theirs.
-    await arrange(g.owner, g.id, [
-      { sectionId: baths.id, taskIds: [t[2]] },
-      { sectionId: null, taskIds: [t[0], t[1], t[4], t[6]] },
-      { sectionId: kitchen.id, taskIds: [t[3], t[5]] },
+    const places = async () => (await listOf(g.id)).map((x) => [x.id, x.section_id, x.position]);
+    // Into an empty section, another in front of it, and one past the end of another: last.
+    await move(g.owner, t[3], kitchen.id, 0);
+    await move(g.owner, t[5], kitchen.id, 0);
+    await move(g.owner, t[2], baths.id, 99);
+    assert.deepEqual(await places(), [
+      [t[0], null, 0],
+      [t[1], null, 1],
+      [t[4], null, 2],
+      [t[6], null, 3],
+      [t[5], kitchen.id, 0],
+      [t[3], kitchen.id, 1],
+      [t[2], baths.id, 0],
     ]);
-    let list = await listOf(g.id);
-    assert.deepEqual(list.map((x) => x.id), [t[0], t[1], t[4], t[6], t[3], t[5], t[2]]);
-    assert.deepEqual(
-      list.map((x) => [x.section_id, x.position]),
-      [
-        [null, 0],
-        [null, 1],
-        [null, 2],
-        [null, 3],
-        [kitchen.id, 0],
-        [kitchen.id, 1],
-        [baths.id, 0],
-      ],
-    );
-    // Within a section, out of one, and an empty group.
-    await arrange(g.owner, g.id, [
-      { sectionId: null, taskIds: [t[0], t[1], t[4], t[6], t[2]] },
-      { sectionId: kitchen.id, taskIds: [t[5], t[3]] },
-      { sectionId: baths.id, taskIds: [] },
+    // Within a section, and out of one to the top: the section it leaves closes up.
+    await move(g.owner, t[5], kitchen.id, 1);
+    await move(g.owner, t[3], null, 0);
+    assert.deepEqual(await places(), [
+      [t[3], null, 0],
+      [t[0], null, 1],
+      [t[1], null, 2],
+      [t[4], null, 3],
+      [t[6], null, 4],
+      [t[5], kitchen.id, 0],
+      [t[2], baths.id, 0],
     ]);
-    list = await listOf(g.id);
-    assert.deepEqual(list.map((x) => x.id), [t[0], t[1], t[4], t[6], t[2], t[5], t[3]]);
-
-    const top = [t[0], t[1], t[4], t[6], t[2]];
-    const invalid = [
-      // A task left out, named twice (in one group or two), a section named twice.
-      [{ sectionId: null, taskIds: top.slice(1) }, { sectionId: kitchen.id, taskIds: [t[5], t[3]] }],
-      [{ sectionId: null, taskIds: [...top, t[0]] }, { sectionId: kitchen.id, taskIds: [t[5], t[3]] }],
-      [{ sectionId: null, taskIds: top }, { sectionId: kitchen.id, taskIds: [t[5], t[3], t[0]] }],
-      [{ sectionId: kitchen.id, taskIds: top }, { sectionId: kitchen.id, taskIds: [t[5], t[3]] }],
-      [{ sectionId: null, taskIds: top }, { sectionId: null, taskIds: [t[5], t[3]] }],
-      // Not the shape.
-      [{ taskIds: [...top, t[5], t[3]] }],
-      [{ sectionId: 5, taskIds: [...top, t[5], t[3]] }],
-      [{ sectionId: null, taskIds: [...top, t[5], 7] }],
-      [{ sectionId: null }],
-      [null],
-      '{}',
-      '"tasks"',
-      null,
-    ];
-    for (const groups of invalid) await rejects(arrange(g.owner, g.id, groups), 'invalid_input');
-    const notFound = [
-      [{ sectionId: null, taskIds: [...top, t[5], t[3], foreignTask.id] }],
-      [{ sectionId: null, taskIds: [...top, t[5], t[3], 'not-a-uuid'] }],
-      [{ sectionId: null, taskIds: [...top, t[5], t[3]] }, { sectionId: foreignSection.id, taskIds: [] }],
-      [{ sectionId: null, taskIds: [...top, t[5], t[3]] }, { sectionId: 'not-a-uuid', taskIds: [] }],
-    ];
-    for (const groups of notFound) await rejects(arrange(g.owner, g.id, groups), 'not_found');
-    assert.deepEqual(await listOf(g.id), list);
+    const before = await places();
+    // A wrong place, task or section changes nothing.
+    await rejects(move(g.owner, t[0], kitchen.id, -1), 'invalid_input');
+    await rejects(move(g.owner, t[0], kitchen.id, null), 'invalid_input');
+    await rejects(move(g.owner, foreignTask.id, kitchen.id, 0), 'not_found');
+    await rejects(move(g.owner, t[0], foreignSection.id, 0), 'not_found');
+    await rejects(move(g.owner, '00000000-0000-0000-0000-000000000000', null, 0), 'not_found');
+    await rejects(move(null, t[0], null, 0), /permission denied/);
+    assert.deepEqual(await places(), before);
     assert.equal((await one('select section_id from public.housekeeping_tasks where id = $1', [foreignTask.id])).section_id, null);
   });
 
@@ -1330,7 +1336,7 @@ describe('sections', () => {
     const kitchen = await addSection(g.owner, g.id, 'Kitchen');
     // An empty section changes nothing there.
     assert.deepEqual(layout(await rowsOf(todayId)), STARTER.map((title, i) => [title, '', i]));
-    await arrange(g.owner, g.id, [
+    await arrange(g.owner, [
       { sectionId: null, taskIds: [t[0].id, t[1].id, t[2].id, t[4].id, t[6].id] },
       { sectionId: kitchen.id, taskIds: [t[3].id, t[5].id] },
     ]);
@@ -1350,12 +1356,12 @@ describe('sections', () => {
     await rpc(g.owner, 'rename_housekeeping_section', [kitchen.id, 'Kitchen and utility']);
     // A second section, then moved first.
     const baths = await addSection(g.owner, g.id, 'Bathrooms');
-    await arrange(g.owner, g.id, [
+    await arrange(g.owner, [
       { sectionId: null, taskIds: [t[0].id, t[1].id, t[4].id, t[6].id] },
       { sectionId: kitchen.id, taskIds: [t[3].id, t[5].id] },
       { sectionId: baths.id, taskIds: [t[2].id] },
     ]);
-    await rpc(g.owner, 'reorder_housekeeping_sections', [g.id, [baths.id, kitchen.id]]);
+    await moveSection(g.owner, baths.id, 0);
     // A task added into a section joins it there.
     await q(g.owner, "insert into public.housekeeping_tasks (household_id, title, section_id) values ($1, 'Mirrors', $2)", [
       g.id,
@@ -1400,7 +1406,7 @@ describe('sections', () => {
     const today = await todayIn('Europe/London');
     const t = await tasksOf(g.id);
     const kitchen = await addSection(g.owner, g.id, 'Kitchen');
-    await arrange(g.owner, g.id, [
+    await arrange(g.owner, [
       { sectionId: null, taskIds: [t[0].id, t[1].id, t[2].id, t[4].id, t[6].id] },
       { sectionId: kitchen.id, taskIds: [t[3].id, t[5].id] },
     ]);
@@ -1436,7 +1442,7 @@ describe('sections', () => {
     const t = await tasksOf(g.id);
     const kitchen = await addSection(g.owner, g.id, 'Kitchen');
     const baths = await addSection(g.owner, g.id, 'Bathrooms');
-    await arrange(g.owner, g.id, [
+    await arrange(g.owner, [
       { sectionId: null, taskIds: [t[0].id, t[1].id, t[4].id, t[6].id] },
       { sectionId: kitchen.id, taskIds: [t[5].id, t[3].id] },
       { sectionId: baths.id, taskIds: [t[2].id] },
@@ -1476,36 +1482,49 @@ describe('sections', () => {
     assert.deepEqual(after.filter((r) => r.section_title === 'Kitchen').map((r) => r.title), [STARTER[5], STARTER[3]]);
   });
 
-  test('reorder: each section takes its place in the list given (the first mention wins); ids from elsewhere are ignored', async () => {
-    const g = await createHousehold({ name: 'Reorder sections home' });
-    const other = await createHousehold({ name: 'Reorder elsewhere' });
+  test('moving a section: it takes its place among the others, which close up; its tasks come along', async () => {
+    const g = await createHousehold({ name: 'Move sections home' });
+    const other = await createHousehold({ name: 'Move sections elsewhere' });
     const a = await addSection(g.owner, g.id, 'A');
     const b = await addSection(g.owner, g.id, 'B');
     const c = await addSection(g.owner, g.id, 'C');
     const theirs = await addSection(other.owner, other.id, 'Theirs');
     const t = await tasksOf(g.id);
-    await arrange(g.owner, g.id, [
-      { sectionId: null, taskIds: t.slice(3).map((x) => x.id) },
+    await arrange(g.owner, [
       { sectionId: a.id, taskIds: [t[0].id] },
       { sectionId: b.id, taskIds: [t[1].id] },
       { sectionId: c.id, taskIds: [t[2].id] },
     ]);
-    await rpc(g.owner, 'reorder_housekeeping_sections', [g.id, [c.id, a.id, c.id, theirs.id, b.id]]);
+    await moveSection(g.owner, c.id, 0);
     assert.deepEqual((await sectionsOf(g.id)).map((s) => [s.title, s.position]), [
       ['C', 0],
       ['A', 1],
-      ['B', 4],
+      ['B', 2],
     ]);
-    assert.equal((await one('select position from public.housekeeping_sections where id = $1', [theirs.id])).position, 0);
     // Their tasks come along.
     assert.deepEqual((await listOf(g.id)).slice(4).map((x) => x.title), [t[2].title, t[0].title, t[1].title]);
+    // Down one; past the end is last.
+    await moveSection(g.owner, c.id, 1);
+    assert.deepEqual((await sectionsOf(g.id)).map((s) => s.title), ['A', 'C', 'B']);
+    await moveSection(g.owner, a.id, 99);
+    assert.deepEqual((await sectionsOf(g.id)).map((s) => [s.title, s.position]), [
+      ['C', 0],
+      ['B', 1],
+      ['A', 2],
+    ]);
+    // Another household's section, one that is gone, or a wrong place: nothing changes.
+    await rejects(moveSection(g.owner, theirs.id, 0), 'not_found');
+    await rejects(moveSection(g.owner, '00000000-0000-0000-0000-000000000000', 0), 'not_found');
+    await rejects(moveSection(g.owner, a.id, -1), 'invalid_input');
+    assert.deepEqual((await sectionsOf(g.id)).map((s) => s.title), ['C', 'B', 'A']);
+    assert.equal((await one('select position from public.housekeeping_sections where id = $1', [theirs.id])).position, 0);
   });
 
   test("the old app's reorder_housekeeping_tasks still works, and keeps each task in its section", async () => {
     const g = await createHousehold({ name: 'Old app home' });
     const kitchen = await addSection(g.owner, g.id, 'Kitchen');
     const t = await tasksOf(g.id);
-    await arrange(g.owner, g.id, [
+    await arrange(g.owner, [
       { sectionId: null, taskIds: t.slice(0, 5).map((x) => x.id) },
       { sectionId: kitchen.id, taskIds: [t[5].id, t[6].id] },
     ]);
@@ -1528,7 +1547,9 @@ describe('sections', () => {
 
 describe('sections: changes made at the same moment wait for each other', () => {
   const ADD = 'select * from public.create_housekeeping_section($1, $2)';
-  const ARRANGE = 'select public.arrange_housekeeping_tasks($1, $2)';
+  const MOVE = 'select public.move_housekeeping_task($1, $2, $3)';
+  const MOVE_SECTION = 'select public.move_housekeeping_section($1, $2)';
+  const INSERT = 'insert into public.housekeeping_tasks (household_id, title) values ($1, $2)';
   const RENAME = 'update public.housekeeping_tasks set title = $2 where id = $1';
   const DELETE = 'delete from public.housekeeping_tasks where id = $1';
   const DELETE_SECTION = 'select public.delete_housekeeping_section($1)';
@@ -1578,26 +1599,93 @@ describe('sections: changes made at the same moment wait for each other', () => 
     assert.equal((await sectionsOf(g.id)).length, 30);
   });
 
-  test('a task renamed while the list is arranged: one after the other, either way round, both stand', async () => {
-    const g = await createHousehold({ name: 'Rename while arranging home' });
+  test('two people moving different tasks at the same moment: one waits for the other, and both moves stand', async () => {
+    const g = await createHousehold({ name: 'Two moves home' });
+    const shea = await joinHousehold(g, { name: 'Shea' });
+    const kitchen = await addSection(g.owner, g.id, 'Kitchen');
+    const baths = await addSection(g.owner, g.id, 'Bathrooms');
+    const t = (await tasksOf(g.id)).map((x) => x.id);
+    const a = await session(g.owner);
+    const b = await session(shea.user);
+    try {
+      await a.query(MOVE, [t[3], kitchen.id, 0]);
+      const second = b.query(MOVE, [t[2], baths.id, 0]);
+      assert.equal(await stillWaiting(second), true, 'the second waits for the first');
+      await a.commit();
+      await second;
+      await b.commit();
+    } finally {
+      await a.rollback();
+      await b.rollback();
+    }
+    assert.deepEqual(
+      (await listOf(g.id)).map((x) => [x.id, x.section_id]),
+      [
+        [t[0], null],
+        [t[1], null],
+        [t[4], null],
+        [t[5], null],
+        [t[6], null],
+        [t[3], kitchen.id],
+        [t[2], baths.id],
+      ],
+    );
+    // A task added while another is moved: the move names only its task, so both stand.
+    const c = await session(g.owner);
+    const d = await session(shea.user);
+    try {
+      await c.query(MOVE, [t[5], kitchen.id, 1]);
+      const adding = d.query(INSERT, [g.id, 'Windows']);
+      assert.equal(await stillWaiting(adding), true, 'the new task waits for the move');
+      await c.commit();
+      await adding;
+      await d.commit();
+    } finally {
+      await c.rollback();
+      await d.rollback();
+    }
+    const list = await listOf(g.id);
+    assert.deepEqual(list.filter((x) => x.section_id === kitchen.id).map((x) => x.id), [t[3], t[5]]);
+    assert.equal(list.filter((x) => x.section_id === null).at(-1).title, 'Windows');
+  });
+
+  test('two people moving different sections at the same moment: both moves stand', async () => {
+    const g = await createHousehold({ name: 'Two section moves home' });
+    const a = await addSection(g.owner, g.id, 'A');
+    await addSection(g.owner, g.id, 'B');
+    await addSection(g.owner, g.id, 'C');
+    const d = await addSection(g.owner, g.id, 'D');
+    // From A B C D: one moves A down one, the other D up one, each as they saw the list.
+    await oneAfterTheOther(
+      g.owner,
+      (x) => x.query(MOVE_SECTION, [a.id, 1]),
+      (y) => y.query(MOVE_SECTION, [d.id, 2]),
+      'the second waits for the first',
+    );
+    assert.deepEqual((await sectionsOf(g.id)).map((s) => [s.title, s.position]), [
+      ['B', 0],
+      ['A', 1],
+      ['D', 2],
+      ['C', 3],
+    ]);
+  });
+
+  test('a task renamed while it is moved: one after the other, either way round, both stand', async () => {
+    const g = await createHousehold({ name: 'Rename while moving home' });
     const kitchen = await addSection(g.owner, g.id, 'Kitchen');
     const t = (await tasksOf(g.id)).map((x) => x.id);
-    const intoKitchen = JSON.stringify([
-      { sectionId: null, taskIds: t.slice(1) },
-      { sectionId: kitchen.id, taskIds: [t[0]] },
-    ]);
     // A rename locks its row as it starts and takes the household's lock after (its trigger).
-    // The arrangement locks the rows first too, so it waits for the row, the rename gets the
+    // A move locks the rows first too, so it waits for the row, the rename gets the
     // household's lock, and neither waits on the other in a circle.
     const a = await session(g.owner);
     const b = await session(g.owner);
     try {
       await a.query('select id from public.housekeeping_tasks where id = $1 for no key update', [t[0]]);
-      const arranging = b.query(ARRANGE, [g.id, intoKitchen]);
-      assert.equal(await stillWaiting(arranging), true, 'the arrangement waits for the row');
+      const moving = b.query(MOVE, [t[0], kitchen.id, 0]);
+      assert.equal(await stillWaiting(moving), true, 'the move waits for the row');
       await a.query(RENAME, [t[0], 'Bed sheets']);
       await a.commit();
-      await arranging;
+      await moving;
       await b.commit();
     } finally {
       await a.rollback();
@@ -1605,46 +1693,41 @@ describe('sections: changes made at the same moment wait for each other', () => 
     }
     let list = await listOf(g.id);
     assert.deepEqual([list.at(-1).title, list.at(-1).section_id], ['Bed sheets', kitchen.id]);
-    // The arrangement first: the rename waits for it.
+    // The move first: the rename waits for it.
     await oneAfterTheOther(
       g.owner,
-      (x) => x.query(ARRANGE, [g.id, JSON.stringify([{ sectionId: null, taskIds: t }])]),
+      (x) => x.query(MOVE, [t[0], null, 0]),
       (y) => y.query(RENAME, [t[0], 'Change the bed sheets']),
-      'the rename waits for the arrangement',
+      'the rename waits for the move',
     );
     list = await listOf(g.id);
     assert.deepEqual([list[0].title, list[0].section_id], ['Change the bed sheets', null]);
   });
 
-  test("today's visit created while the list is arranged has the arrangement, either way round", async () => {
-    const g = await createHousehold({ name: 'Arrange while creating home' });
+  test("today's visit created while a task is moved has the move, either way round", async () => {
+    const g = await createHousehold({ name: 'Move while creating home' });
     const day = await todayIn('Europe/London');
     const kitchen = await addSection(g.owner, g.id, 'Kitchen');
     const t = (await tasksOf(g.id)).map((x) => x.id);
-    const arrangement = (k) =>
-      JSON.stringify([
-        { sectionId: null, taskIds: t.filter((_, i) => i !== k) },
-        { sectionId: kitchen.id, taskIds: [t[k]] },
-      ]);
     const inKitchen = async () =>
       (await rowsOf((await visitOn(g.id, day)).id)).filter((r) => r.section_id === kitchen.id).map((r) => r.task_id);
-    // The visit first: the arrangement waits, then lays it out.
+    // The visit first: the move waits, then lays it out.
     await oneAfterTheOther(
       g.owner,
       (a) => a.query(TICK, [g.id, day, t[1], null, true]),
-      (b) => b.query(ARRANGE, [g.id, arrangement(3)]),
-      'the arrangement waits for the visit',
+      (b) => b.query(MOVE, [t[3], kitchen.id, 0]),
+      'the move waits for the visit',
     );
     assert.deepEqual(await inKitchen(), [t[3]]);
-    // The arrangement first: the visit waits, then copies it.
+    // The move first: the visit waits, then copies it.
     await db('delete from public.housekeeping_visits where household_id = $1', [g.id]);
     await oneAfterTheOther(
       g.owner,
-      (a) => a.query(ARRANGE, [g.id, arrangement(5)]),
+      (a) => a.query(MOVE, [t[5], kitchen.id, 0]),
       (b) => b.query(TICK, [g.id, day, t[1], null, true]),
-      'the visit waits for the arrangement',
+      'the visit waits for the move',
     );
-    assert.deepEqual(await inKitchen(), [t[5]]);
+    assert.deepEqual(await inKitchen(), [t[5], t[3]]);
   });
 
   test("two tasks deleted at once: one after the other, and today's visit closes up", async () => {
@@ -1665,7 +1748,7 @@ describe('sections: changes made at the same moment wait for each other', () => 
     const g = await createHousehold({ name: 'Delete while renaming home' });
     const kitchen = await addSection(g.owner, g.id, 'Kitchen');
     const t = (await tasksOf(g.id)).map((x) => x.id);
-    await arrange(g.owner, g.id, [
+    await arrange(g.owner, [
       { sectionId: null, taskIds: t.slice(1) },
       { sectionId: kitchen.id, taskIds: [t[0]] },
     ]);

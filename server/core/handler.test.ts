@@ -347,14 +347,8 @@ describe('signed in', () => {
     const kitchen = await rpc(home.stratis, 'createHousekeepingSection', [home.hid, 'Kitchen']);
     expect(kitchen.status).toBe(200);
     const ids = before.housekeeping.tasks.map((t) => t.id);
-    const arranged = await rpc(home.stratis, 'arrangeHousekeepingTasks', [
-      home.hid,
-      [
-        { sectionId: null, taskIds: ids.slice(1) },
-        { sectionId: kitchen.json.result.id, taskIds: [ids[0]] },
-      ],
-    ]);
-    expect(arranged.status).toBe(200);
+    const moved = await rpc(home.stratis, 'moveHousekeepingTask', [ids[0], kitchen.json.result.id, 0]);
+    expect(moved.status).toBe(200);
     const after = await home.load();
     expect(after.housekeeping.sections.map((s) => s.title)).toEqual(['Kitchen']);
     expect(after.housekeeping.visits[0].tasks.at(-1)).toMatchObject({ task_id: ids[0], section_title: 'Kitchen', done: true });
@@ -405,6 +399,45 @@ describe('signed in', () => {
     expect(after.items.find((i) => i.id === item.id)).toMatchObject({ note: 'Booked for Saturday', rag: 'green' });
     expect((await rpc(home.stratis, 'listMessages', [home.hid])).json.result.messages.map((m: { body: string }) => m.body)).toEqual(['On it']);
     expect((await call(home.stratis, 'version')).json.chatRev).toBe(2);
+  });
+
+  it('keeps both when two people move different tasks into sections at the same moment, and a task added meanwhile', async () => {
+    const h = createHarness({ blobs: new MemoryBlobStore(2) });
+    const home = await online(h);
+    const { shea } = await sheaJoins(h, home);
+    const sheaThere = h.browser({ ctx: h.instance() });
+    const code = (await call(shea, 'createCode', { memberId: home.person('Shea').id })).json.code;
+    await call(sheaThere, 'redeem', { code });
+    const kitchen = (await rpc(home.stratis, 'createHousekeepingSection', [home.hid, 'Kitchen'])).json.result;
+    const baths = (await rpc(home.stratis, 'createHousekeepingSection', [home.hid, 'Bathrooms'])).json.result;
+    const [t1, t2] = (await home.load()).housekeeping.tasks;
+    // Each names only its task and where it goes: neither can put the other's back.
+    const results = await Promise.all([
+      rpc(home.stratis, 'moveHousekeepingTask', [t1.id, kitchen.id, 0]),
+      rpc(sheaThere, 'moveHousekeepingTask', [t2.id, baths.id, 0]),
+      rpc(home.stratis, 'createHousekeepingTask', [home.hid, 'Windows', kitchen.id]),
+    ]);
+    expect(results.map((r) => r.status)).toEqual([200, 200, 200]);
+    // Read at least as new as every write (one landed through the other instance).
+    const rev = Math.max(...results.map((r) => r.json.rev as number));
+    const after = ((await rpc(home.stratis, 'load', [home.hid], rev)).json.result as HouseholdData).housekeeping.tasks;
+    expect(after.find((t) => t.id === t1.id)!.section_id).toBe(kitchen.id);
+    expect(after.find((t) => t.id === t2.id)!.section_id).toBe(baths.id);
+    expect(after.filter((t) => t.section_id === kitchen.id).map((t) => t.title).sort()).toEqual([t1.title, 'Windows'].sort());
+  });
+
+  it('still takes the reorder of an app from before sections, open on a phone after an update: each task keeps its section', async () => {
+    const h = createHarness();
+    const home = await online(h);
+    const kitchen = (await rpc(home.stratis, 'createHousekeepingSection', [home.hid, 'Kitchen'])).json.result;
+    const ids = (await home.load()).housekeeping.tasks.map((t) => t.id);
+    expect((await rpc(home.stratis, 'moveHousekeepingTask', [ids[0], kitchen.id, 0])).status).toBe(200);
+    // That app sends the whole list in the order it shows it: here the last task moved to the top.
+    const old = await rpc(home.stratis, 'reorderHousekeepingTasks', [home.hid, [ids.at(-1), ...ids.slice(0, -1)]]);
+    expect(old.status).toBe(200);
+    const after = (await home.load()).housekeeping.tasks;
+    expect(after[0].id).toBe(ids.at(-1));
+    expect(after.at(-1)).toMatchObject({ id: ids[0], section_id: kitchen.id });
   });
 
   it('removes devices: anyone in the home may, and the removed browser is signed out', async () => {

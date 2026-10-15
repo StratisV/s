@@ -2,7 +2,6 @@ import { useId } from 'react';
 import { sectionHeadingLabel, sectionProgress, type ChecklistRow, type ChecklistSection } from '../../lib/logic/housekeeping';
 import { EmojiText } from '../../ui/EmojiText';
 import { CheckIcon } from '../../ui/icons';
-import { SectionIcon } from './SectionIcon';
 import styles from './Checklist.module.css';
 
 interface ChecklistProps {
@@ -17,11 +16,12 @@ interface ChecklistProps {
 
 /**
  * A day's tasks as iOS-style round checkboxes, one per row, section by section: the tasks in
- * no section first, in a card of their own with no heading, then a card per section. A
- * section's card opens with its drawing, its name (an h3, under the day's h2, whose spoken
- * name has the progress too: "Kitchen, 2 of 5 done") and a small ring that fills as its
- * tasks are ticked ("2 of 5"), and becomes a green tick when all are. The whole row toggles;
- * a ticked row says who ticked it and when, which is also the checkbox's description.
+ * no section first, in a card of their own with no heading, then each section's card under
+ * one quiet line of text, as iOS groups a list: its name (an h3, under the day's h2, whose
+ * spoken name has the progress too: "Kitchen, 2 of 5 done") and, on the right, "2 of 5",
+ * which reads "All done" once every task is ticked ("Done" for one). The only round things
+ * are the checkboxes. The whole row toggles; a ticked row says who ticked it and when, which
+ * is also the checkbox's description.
  */
 export function Checklist({ legend, sections, bylineOf, onTick }: ChecklistProps) {
   return (
@@ -33,14 +33,14 @@ export function Checklist({ legend, sections, bylineOf, onTick }: ChecklistProps
             <Rows rows={section.rows} bylineOf={bylineOf} onTick={onTick} />
           </div>
         ) : (
-          <SectionCard key={section.key} section={section} title={section.title} bylineOf={bylineOf} onTick={onTick} />
+          <SectionGroup key={section.key} section={section} title={section.title} bylineOf={bylineOf} onTick={onTick} />
         ),
       )}
     </fieldset>
   );
 }
 
-function SectionCard({
+function SectionGroup({
   section,
   title,
   bylineOf,
@@ -58,56 +58,23 @@ function SectionCard({
     <div
       role="group"
       aria-labelledby={headingId}
-      className={`${styles.card} ${styles.section}`}
+      className={styles.section}
       data-checklist-section={title}
       data-all-done={allDone || undefined}
     >
       <div className={styles.head}>
-        <span className={styles.glyph} aria-hidden="true">
-          <SectionIcon name={title} size={19} />
-        </span>
         {/* Named with its progress, as one phrase: "Kitchen, 2 of 5 done". */}
         <h3 id={headingId} className={styles.name} aria-label={sectionHeadingLabel(title, section.done, total)}>
           {title}
         </h3>
-        <span className={styles.progress} aria-hidden="true">
-          <span className={styles.count}>{allDone ? 'All done' : sectionProgress(section.done, total)}</span>
-          <ProgressRing done={section.done} total={total} />
+        <span className={styles.count} aria-hidden="true">
+          {sectionProgress(section.done, total)}
         </span>
       </div>
-      <Rows rows={section.rows} bylineOf={bylineOf} onTick={onTick} />
+      <div className={styles.card}>
+        <Rows rows={section.rows} bylineOf={bylineOf} onTick={onTick} />
+      </div>
     </div>
-  );
-}
-
-/** The ring's circumference (r = 9.25). */
-const RING = 2 * Math.PI * 9.25;
-
-/** Fills with the tint as tasks are ticked; all ticked, a green disc with a white tick springs in. */
-function ProgressRing({ done, total }: { done: number; total: number }) {
-  const share = total > 0 ? done / total : 0;
-  return (
-    <svg
-      className={styles.ring}
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      focusable="false"
-      data-empty={done === 0 || undefined}
-    >
-      <circle className={styles.ringTrack} cx="12" cy="12" r="9.25" />
-      <circle
-        className={styles.ringFill}
-        cx="12"
-        cy="12"
-        r="9.25"
-        strokeDasharray={RING}
-        strokeDashoffset={RING * (1 - share)}
-      />
-      <circle className={styles.ringDone} cx="12" cy="12" r="11" />
-      <path className={styles.ringTick} d="M7.6 12.3l3 3 5.8-6" pathLength={1} />
-    </svg>
   );
 }
 

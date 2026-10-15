@@ -1,6 +1,7 @@
 /*
  * The task list page sheet: a nav bar (title, Done) over the list's cards: the tasks in no
- * section, then a card per section (its header on top), then Add Section.
+ * section (headed No Section once there are sections), then a card per section (its header on
+ * top), then Add Section. Names wrap onto more lines rather than being cut.
  */
 
 .root {
@@ -106,19 +107,40 @@
   color: var(--label-secondary);
 }
 
-.sectionName {
+/* The name (renamed in place): one line at 58px, more as a long name wraps. */
+.sectionName,
+.draftSectionName,
+.noneName,
+.savingSectionName {
   flex: 1;
   min-width: 0;
-  height: 58px;
+  display: block;
   margin: 0;
-  padding: 0;
+  padding: 18px 0;
   border: 0;
   background: transparent;
   font-size: 17px;
+  line-height: 22px;
   font-weight: 600;
   letter-spacing: -0.4px;
   color: var(--label);
-  text-overflow: ellipsis;
+  resize: none;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* The tasks in no section, once there are sections: a quiet header that is not a section. */
+.noneName {
+  color: var(--label-secondary);
+}
+
+.noneGlyph {
+  color: var(--label-secondary);
+}
+
+/* A new section's header, being written where Add Section was. */
+.draftHead {
+  padding-right: 18px;
 }
 
 /* ── Rows: delete · name · Move to Section · grip (as a Home item row: text at 52px) ── */
@@ -189,28 +211,76 @@
   content: none;
 }
 
-.name {
+/* A task's name (renamed in place): one line at 52px, more as a long name wraps. */
+.name,
+.draftName,
+.savingName {
   flex: 1;
   min-width: 0;
-  height: 52px;
+  display: block;
   margin: 0;
-  padding: 0;
+  padding: 15px 0;
   border: 0;
   background: transparent;
   font-size: 17px;
+  line-height: 22px;
   letter-spacing: -0.4px;
   color: var(--label);
-  text-overflow: ellipsis;
+  resize: none;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .name:focus,
 .name:focus-visible,
 .sectionName:focus,
-.sectionName:focus-visible {
+.sectionName:focus-visible,
+.draftName:focus,
+.draftName:focus-visible,
+.draftSectionName:focus,
+.draftSectionName:focus-visible {
   outline: none;
 }
 
-/* The "…" menus: a task's Move to Section, a section's options. */
+.draftName::placeholder,
+.draftSectionName::placeholder {
+  color: var(--placeholder);
+  opacity: 1;
+}
+
+/* A new task or section saving: its name where it will be, quieter, and a small spinner. */
+.saving .savingName,
+.saving .savingSectionName {
+  color: var(--label-secondary);
+}
+
+.spinner {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0 17px 0 13px;
+  border-radius: 50%;
+  border: 2px solid var(--fill-secondary);
+  border-top-color: var(--label-secondary);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes breathe {
+  from {
+    opacity: 0.35;
+  }
+}
+
+/*
+ * The "…" menus: a task's Move to Section, a section's options. As quiet as the grip beside
+ * it (3:1 against the card, as a control's only mark should be), so a column of them recedes.
+ */
 .more {
   position: relative;
   flex: none;
@@ -219,9 +289,17 @@
   border-radius: 50%;
   display: grid;
   place-items: center;
-  color: var(--label-secondary);
+  color: var(--ring-idle);
   -webkit-tap-highlight-color: transparent;
-  transition: background-color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+/* A section's own "…" (Rename, Move, Delete) keeps its stronger grey. */
+.head .more,
+.more[aria-expanded='true'] {
+  color: var(--label-secondary);
 }
 
 .more:active,
@@ -284,9 +362,14 @@
   color: var(--tint);
 }
 
-.add:active,
+button.add:active,
 .addSection:active:not(:disabled) {
   background: var(--avatar-bg);
+}
+
+/* Add Task, become the new task's field: the plus stays, the field takes the label's place. */
+.add[data-drafting] {
+  cursor: text;
 }
 
 .add:focus-visible,
@@ -368,5 +451,10 @@
 
   .more {
     transition: none;
+  }
+
+  /* Still says it is working, without turning. */
+  .spinner {
+    animation: breathe 0.9s ease-in-out infinite alternate;
   }
 }

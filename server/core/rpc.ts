@@ -35,8 +35,6 @@ export type ArgSpec =
   | { t: 'enum'; of: readonly string[] }
   /** An array of ids, at most `max`. */
   | { t: 'ids'; max: number }
-  /** An array of at most `max` values, each checked by `of`. */
-  | { t: 'list'; of: ArgSpec; max: number }
   /** The value, or null. */
   | { t: 'nullable'; of: ArgSpec }
   /** May be missing (undefined; in an object, the key absent). */
@@ -85,22 +83,19 @@ const ITEM_PATCH: ArgSpec = {
 };
 
 /**
- * arrangeHousekeepingTasks' groups: at most 100 (a household has at most 31: no section and
- * HOUSEKEEPING_SECTIONS_MAX sections), each a section id or null and at most 500 task ids
- * (HOME_ROW_LIMITS allows 200 tasks). DemoBackend checks that they name every task once.
+ * A place in a list (moveHousekeepingTask, moveHousekeepingSection): a whole number from 0.
+ * Past the end means last (DemoBackend clamps it), so the cap only bounds what may be sent.
  */
-const TASK_GROUPS: ArgSpec = {
-  t: 'list',
-  max: 100,
-  of: { t: 'object', keys: { sectionId: nullable(id), taskIds: { t: 'ids', max: 500 } } },
-};
+const PLACE: ArgSpec = { t: 'int', min: 0, max: 100_000 };
 
 /**
  * The argument specs of every allowed method, in the order the method takes them. Notes:
  * - updateMember: only name and emoji (weekly email and push are not in server mode).
  * - addPerson: email must be '' (or absent): no Google emails in server mode.
  * - listMessages: limit 1 to 999, like Supabase's cap; before a timestamp.
- * - reorderAreas: at most 500 ids; reorderHousekeepingSections: at most 100; getMessages: at most 1000.
+ * - reorderAreas / reorderHousekeepingTasks: at most 500 ids; getMessages: at most 1000.
+ * - reorderHousekeepingTasks: only for an app from before sections still running; the app
+ *   moves one task at a time (moveHousekeepingTask).
  * - createHousekeepingTask: its section may be null or left out (no section).
  */
 export const RPC_ARGS: { [M in RpcMethod]: ArgSpec[] } = {
@@ -132,11 +127,12 @@ export const RPC_ARGS: { [M in RpcMethod]: ArgSpec[] } = {
   createHousekeepingTask: [id, text, opt(nullable(id))],
   renameHousekeepingTask: [id, text],
   deleteHousekeepingTask: [id],
-  arrangeHousekeepingTasks: [id, TASK_GROUPS],
+  moveHousekeepingTask: [id, nullable(id), PLACE],
+  reorderHousekeepingTasks: [id, { t: 'ids', max: 500 }],
   createHousekeepingSection: [id, text],
   renameHousekeepingSection: [id, text],
   deleteHousekeepingSection: [id],
-  reorderHousekeepingSections: [id, { t: 'ids', max: 100 }],
+  moveHousekeepingSection: [id, PLACE],
   setHousekeepingTaskDone: [
     id,
     date,
@@ -213,9 +209,6 @@ function check(spec: ArgSpec, value: unknown, path: string): unknown {
     case 'ids':
       if (!Array.isArray(value) || value.length > spec.max) throw refuse(path);
       return value.map((v, i) => check({ t: 'id' }, v, `${path}[${i}]`));
-    case 'list':
-      if (!Array.isArray(value) || value.length > spec.max) throw refuse(path);
-      return value.map((v, i) => check(spec.of, v, `${path}[${i}]`));
     case 'nullable':
       return value === null ? null : check(spec.of, value, path);
     case 'optional':

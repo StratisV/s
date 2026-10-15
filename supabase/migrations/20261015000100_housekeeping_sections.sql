@@ -531,9 +531,18 @@ begin
 end;
 $$;
 
--- reorder_housekeeping_sections: position = index in p_section_ids (the first mention wins);
--- ids from other households are ignored. Each section's tasks come along; today's visit follows.
-create or replace function public.reorder_housekeeping_sections(p_household_id uuid, p_section_ids uuid[])
+-- Moves name one item and where it goes, never the whole order as one phone last saw it: a
+-- whole order would quietly undo a move another phone made a moment before. The whole-order
+-- writes of an earlier version of this file go, wherever it was applied.
+drop function if exists public.arrange_housekeeping_tasks(uuid, jsonb);
+drop function if exists public.reorder_housekeeping_sections(uuid, uuid[]);
+
+-- move_housekeeping_section: the section moved to p_index among the others (0 first; past
+-- the end: last); the sections' positions run 0…n-1 again and its tasks come along. Only this
+-- section's place is decided here, so two people moving different sections at the same
+-- moment both keep their moves. A section of another household (or gone) is not_found; a
+-- null or negative index is invalid_input. Today's visit follows.
+create or replace function public.move_housekeeping_section(p_section_id uuid, p_index integer)
 returns void
 language plpgsql
 security definer
@@ -541,36 +550,54 @@ set search_path = ''
 as $$
 declare
   v_uid uuid := auth.uid();
+  v_household_id uuid;
 begin
   if v_uid is null then
     raise exception 'not_signed_in';
   end if;
-  if not exists (
-    select 1 from public.members m where m.user_id = v_uid and m.household_id = p_household_id
-  ) then
+  if p_index is null or p_index < 0 then
+    raise exception 'invalid_input';
+  end if;
+  select s.household_id into v_household_id
+  from public.housekeeping_sections s
+  join public.members m on m.household_id = s.household_id and m.user_id = v_uid
+  where s.id = p_section_id;
+  if v_household_id is null then
     raise exception 'not_found';
   end if;
-  perform public.housekeeping_lock(p_household_id);
+  perform public.housekeeping_lock(v_household_id);
+  -- As the list stands now: deleted by someone else while this one waited?
+  if not exists (select 1 from public.housekeeping_sections s where s.id = p_section_id) then
+    raise exception 'not_found';
+  end if;
+  with others as (
+    select s.id, (row_number() over (order by s.position, s.created_at, s.id) - 1)::integer as ord
+    from public.housekeeping_sections s
+    where s.household_id = v_household_id and s.id <> p_section_id
+  ), k as (
+    select least(p_index, (select count(*) from others))::integer as at
+  ), laid as (
+    select o.id, case when o.ord < k.at then o.ord else o.ord + 1 end as position from others o, k
+    union all
+    select p_section_id, k.at from k
+  )
   update public.housekeeping_sections s
-  set position = o.ord - 1
-  from (
-    select distinct on (x.id) x.id, x.ord
-    from unnest(coalesce(p_section_ids, '{}'::uuid[])) with ordinality as x(id, ord)
-    order by x.id, x.ord
-  ) o
-  where s.id = o.id
-    and s.household_id = p_household_id
-    and s.position is distinct from o.ord - 1;
-  perform public.housekeeping_relay_today(p_household_id);
+  set position = laid.position
+  from laid
+  where s.id = laid.id
+    and s.position is distinct from laid.position;
+  perform public.housekeeping_relay_today(v_household_id);
 end;
 $$;
 
--- arrange_housekeeping_tasks: the whole list at once, all or nothing. p_groups is a JSON array
--- of { "sectionId": uuid | null, "taskIds": [uuid…] }: each task gets that section and its
--- index there as its position. It must name every task of the household exactly once, and a
--- section at most once (else invalid_input); a task or section that is not the household's is
--- not_found. The groups' order does not matter (sections keep theirs). Today's visit follows.
-create or replace function public.arrange_housekeeping_tasks(p_household_id uuid, p_groups jsonb)
+-- move_housekeeping_task: one task moved into p_section_id (null: the tasks in no section) at
+-- p_index among that section's other tasks (0 first; past the end: last). The places in the
+-- section it joins, and in the one it leaves, run 0…n-1 again; nothing else changes, so two
+-- people moving different tasks at the same moment both keep their moves, and a task added or
+-- deleted meanwhile changes nothing here. A task or section that is not the household's (or
+-- is gone) is not_found; a null or negative index is invalid_input. Today's visit follows
+-- (each moved task's AFTER UPDATE trigger).
+create or replace function public.move_housekeeping_task(p_task_id uuid, p_section_id uuid, p_index integer)
 returns void
 language plpgsql
 security definer
@@ -578,106 +605,73 @@ set search_path = ''
 as $$
 declare
   v_uid uuid := auth.uid();
-  v_groups jsonb := coalesce(p_groups, 'null'::jsonb);
-  v_uuid constant text := '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
-  v_named integer;
+  v_household_id uuid;
+  v_from uuid;
 begin
   if v_uid is null then
     raise exception 'not_signed_in';
   end if;
-  if not exists (
-    select 1 from public.members m where m.user_id = v_uid and m.household_id = p_household_id
+  if p_index is null or p_index < 0 then
+    raise exception 'invalid_input';
+  end if;
+  select t.household_id into v_household_id
+  from public.housekeeping_tasks t
+  join public.members m on m.household_id = t.household_id and m.user_id = v_uid
+  where t.id = p_task_id;
+  if v_household_id is null then
+    raise exception 'not_found';
+  end if;
+  -- The lock order: the household's task rows first (places change in two sections), then
+  -- its lock.
+  perform 1 from public.housekeeping_tasks t where t.household_id = v_household_id order by t.id for no key update;
+  perform public.housekeeping_lock(v_household_id);
+  -- As the list stands now: the task deleted while this one waited, or its section?
+  select t.section_id into v_from from public.housekeeping_tasks t where t.id = p_task_id;
+  if not found then
+    raise exception 'not_found';
+  end if;
+  if p_section_id is not null and not exists (
+    select 1 from public.housekeeping_sections s where s.id = p_section_id and s.household_id = v_household_id
   ) then
     raise exception 'not_found';
   end if;
-  -- The household's tasks first, then the lock. A task added while this waited is not named
-  -- below, so the arrangement is refused (invalid_input) and the app reloads.
-  perform 1 from public.housekeeping_tasks t where t.household_id = p_household_id order by t.id for no key update;
-  perform public.housekeeping_lock(p_household_id);
-
-  -- The shape: an array of objects, each with a sectionId (a string or null) and taskIds (an
-  -- array of strings).
-  if jsonb_typeof(v_groups) <> 'array' or exists (
-    select 1
-    from jsonb_array_elements(v_groups) as e(g)
-    where case
-            when jsonb_typeof(e.g) <> 'object' then true
-            when coalesce(jsonb_typeof(e.g -> 'sectionId'), 'missing') not in ('string', 'null') then true
-            when coalesce(jsonb_typeof(e.g -> 'taskIds'), 'missing') <> 'array' then true
-            else exists (
-              select 1 from jsonb_array_elements(e.g -> 'taskIds') as x(id) where jsonb_typeof(x.id) <> 'string'
-            )
-          end
-  ) then
-    raise exception 'invalid_input';
-  end if;
-  -- Each section at most once.
-  if (select count(*) <> count(distinct lower(coalesce(e.g ->> 'sectionId', '-')))
-      from jsonb_array_elements(v_groups) as e(g)) then
-    raise exception 'invalid_input';
-  end if;
-  -- Each section the household's.
-  if exists (
-    select 1
-    from jsonb_array_elements(v_groups) as e(g)
-    where jsonb_typeof(e.g -> 'sectionId') = 'string'
-      and (
-        e.g ->> 'sectionId' !~ v_uuid
-        or not exists (
-          select 1 from public.housekeeping_sections s
-          where s.id::text = lower(e.g ->> 'sectionId') and s.household_id = p_household_id
-        )
-      )
-  ) then
-    raise exception 'not_found';
-  end if;
-  -- Each task once.
-  select count(*) into v_named
-  from jsonb_array_elements(v_groups) as e(g), jsonb_array_elements_text(e.g -> 'taskIds') as x(id);
-  if v_named <> (
-    select count(distinct lower(x.id))
-    from jsonb_array_elements(v_groups) as e(g), jsonb_array_elements_text(e.g -> 'taskIds') as x(id)
-  ) then
-    raise exception 'invalid_input';
-  end if;
-  -- Each task the household's.
-  if exists (
-    select 1
-    from jsonb_array_elements(v_groups) as e(g), jsonb_array_elements_text(e.g -> 'taskIds') as x(id)
-    where x.id !~ v_uuid
-      or not exists (
-        select 1 from public.housekeeping_tasks t
-        where t.id::text = lower(x.id) and t.household_id = p_household_id
-      )
-  ) then
-    raise exception 'not_found';
-  end if;
-  -- Every task of the household named.
-  if v_named <> (select count(*) from public.housekeeping_tasks t where t.household_id = p_household_id) then
-    raise exception 'invalid_input';
-  end if;
-
-  -- Each moved task's AFTER UPDATE trigger lays today's visit out again.
+  with others as (
+    select t.id, (row_number() over (order by t.position, t.created_at, t.id) - 1)::integer as ord
+    from public.housekeeping_tasks t
+    where t.household_id = v_household_id
+      and t.section_id is not distinct from p_section_id
+      and t.id <> p_task_id
+  ), k as (
+    select least(p_index, (select count(*) from others))::integer as at
+  ), left_behind as (
+    -- The section it leaves closes up (only when it changes section).
+    select t.id, (row_number() over (order by t.position, t.created_at, t.id) - 1)::integer as position
+    from public.housekeeping_tasks t
+    where v_from is distinct from p_section_id
+      and t.household_id = v_household_id
+      and t.section_id is not distinct from v_from
+      and t.id <> p_task_id
+  ), laid as (
+    select o.id, p_section_id as section_id, case when o.ord < k.at then o.ord else o.ord + 1 end as position
+    from others o, k
+    union all
+    select p_task_id, p_section_id, k.at from k
+    union all
+    select l.id, v_from, l.position from left_behind l
+  )
   update public.housekeeping_tasks t
-  set section_id = a.section_id,
-      position = a.position
-  from (
-    select (e.g ->> 'sectionId')::uuid as section_id,
-           x.id::uuid as task_id,
-           (x.ord - 1)::integer as position
-    from jsonb_array_elements(v_groups) as e(g)
-    cross join lateral jsonb_array_elements_text(e.g -> 'taskIds') with ordinality as x(id, ord)
-  ) a
-  where t.id = a.task_id
-    and t.household_id = p_household_id
-    and (t.section_id is distinct from a.section_id or t.position is distinct from a.position);
+  set section_id = laid.section_id,
+      position = laid.position
+  from laid
+  where t.id = laid.id
+    and (t.section_id is distinct from laid.section_id or t.position is distinct from laid.position);
 end;
 $$;
 
 -- reorder_housekeeping_tasks (redefined from 20261010000400_housekeeping.sql, for an app from
 -- before sections still running): position = index in p_task_ids, which keeps each task in
 -- its section; ids from other households are ignored. Today's visit follows (the AFTER UPDATE
--- trigger). The app now arranges the list with arrange_housekeeping_tasks.
+-- trigger). The app now moves one task at a time with move_housekeeping_task.
 create or replace function public.reorder_housekeeping_tasks(p_household_id uuid, p_task_ids uuid[])
 returns void
 language plpgsql
@@ -730,14 +724,14 @@ create policy housekeeping_sections_select on public.housekeeping_sections
 revoke all on function public.create_housekeeping_section(uuid, text) from public, anon;
 revoke all on function public.rename_housekeeping_section(uuid, text) from public, anon;
 revoke all on function public.delete_housekeeping_section(uuid) from public, anon;
-revoke all on function public.reorder_housekeeping_sections(uuid, uuid[]) from public, anon;
-revoke all on function public.arrange_housekeeping_tasks(uuid, jsonb) from public, anon;
+revoke all on function public.move_housekeeping_section(uuid, integer) from public, anon;
+revoke all on function public.move_housekeeping_task(uuid, uuid, integer) from public, anon;
 revoke all on function public.reorder_housekeeping_tasks(uuid, uuid[]) from public, anon;
 grant execute on function public.create_housekeeping_section(uuid, text) to authenticated, service_role;
 grant execute on function public.rename_housekeeping_section(uuid, text) to authenticated, service_role;
 grant execute on function public.delete_housekeeping_section(uuid) to authenticated, service_role;
-grant execute on function public.reorder_housekeeping_sections(uuid, uuid[]) to authenticated, service_role;
-grant execute on function public.arrange_housekeeping_tasks(uuid, jsonb) to authenticated, service_role;
+grant execute on function public.move_housekeeping_section(uuid, integer) to authenticated, service_role;
+grant execute on function public.move_housekeeping_task(uuid, uuid, integer) to authenticated, service_role;
 grant execute on function public.reorder_housekeeping_tasks(uuid, uuid[]) to authenticated, service_role;
 
 revoke all on function public.housekeeping_relay(uuid) from public, anon, authenticated;

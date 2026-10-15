@@ -508,15 +508,6 @@ export interface HousekeepingData {
 }
 
 /**
- * One section's tasks in order, as arrangeHousekeepingTasks takes them: `sectionId` null is
- * the tasks in no section.
- */
-export interface HousekeepingTaskGroup {
-  sectionId: string | null;
-  taskIds: string[];
-}
-
-/**
  * Which checklist row a tick is for. A row whose task is still on the list is named by
  * that task (`taskId`): this also works for a day with no visit yet, which the tick then
  * creates. A row whose task has since been deleted (task_id null) is named by its own id

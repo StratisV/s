@@ -35,14 +35,13 @@ const REAL: { [M in RpcMethod]: unknown[][] } = {
   createHousekeepingTask: [[H, 'Windows'], [H, 'Windows', ID], [H, 'Windows', null]],
   renameHousekeepingTask: [[ID, 'Windows inside']],
   deleteHousekeepingTask: [[ID]],
-  arrangeHousekeepingTasks: [
-    [H, [{ sectionId: null, taskIds: [ID] }, { sectionId: H, taskIds: [] }]],
-    [H, []],
-  ],
+  moveHousekeepingTask: [[ID, H, 0], [ID, null, 3]],
+  // Sent only by the app from before sections (still open on a phone after an update).
+  reorderHousekeepingTasks: [[H, [ID]]],
   createHousekeepingSection: [[H, 'Kitchen']],
   renameHousekeepingSection: [[ID, 'Kitchen and dining']],
   deleteHousekeepingSection: [[ID]],
-  reorderHousekeepingSections: [[H, [ID, H]], [H, []]],
+  moveHousekeepingSection: [[ID, 0], [ID, 2]],
   setHousekeepingTaskDone: [[H, '2026-10-09', { taskId: ID }, true], [H, '2026-10-02', { visitTaskId: ID }, false]],
   saveHousekeepingVisit: [[H, '2026-10-09', { comments: 'Lovely' }], [H, '2026-10-09', { price_pence: 4500 }], [H, '2026-10-09', { price_pence: null }]],
   addHousekeepingVisit: [[H, '2026-10-01']],
@@ -132,17 +131,23 @@ describe('the RPC allow-list', () => {
     refused('addPerson', [H, { name: 'Ela', emoji: '🦊', email: 'ela@example.com' }], 'args[1].email');
   });
 
-  it('checks the task list’s arrangement and sections by shape (DemoBackend checks the rest)', () => {
-    refused('arrangeHousekeepingTasks', [H, null], 'args[1]');
-    refused('arrangeHousekeepingTasks', [H, { sectionId: null, taskIds: [] }], 'args[1]');
-    refused('arrangeHousekeepingTasks', [H, Array.from({ length: 101 }, () => ({ sectionId: null, taskIds: [] }))], 'args[1]');
-    refused('arrangeHousekeepingTasks', [H, [{ sectionId: 3, taskIds: [] }]], 'args[1][0].sectionId');
-    refused('arrangeHousekeepingTasks', [H, [{ taskIds: [] }]], 'args[1][0].sectionId');
-    refused('arrangeHousekeepingTasks', [H, [{ sectionId: null }]], 'args[1][0].taskIds');
-    refused('arrangeHousekeepingTasks', [H, [{ sectionId: null, taskIds: [ID, 7] }]], 'args[1][0].taskIds[1]');
-    refused('arrangeHousekeepingTasks', [H, [{ sectionId: null, taskIds: Array.from({ length: 501 }, () => ID) }]], 'args[1][0].taskIds');
-    refused('arrangeHousekeepingTasks', [H, [{ sectionId: null, taskIds: [], title: 'x' }]], 'args[1][0].title');
-    refused('reorderHousekeepingSections', [H, Array.from({ length: 101 }, () => ID)], 'args[1]');
+  it('checks moves in the task list and its sections by shape (DemoBackend checks the rest)', () => {
+    // One task, into a section or none, at a place from 0.
+    refused('moveHousekeepingTask', [ID, H], 'args[2]');
+    refused('moveHousekeepingTask', [ID, undefined, 0], 'args[1]');
+    refused('moveHousekeepingTask', [ID, 3, 0], 'args[1]');
+    refused('moveHousekeepingTask', [ID, null, -1], 'args[2]');
+    refused('moveHousekeepingTask', [ID, null, 1.5], 'args[2]');
+    refused('moveHousekeepingTask', [ID, null, '2'], 'args[2]');
+    refused('moveHousekeepingTask', [ID, null, 100_001], 'args[2]');
+    // The whole list is not taken any more: that was how one phone undid another's move.
+    refused('moveHousekeepingTask', [H, [{ sectionId: null, taskIds: [ID] }], 0], 'args[1]');
+    refused('moveHousekeepingSection', [ID], 'args[1]');
+    refused('moveHousekeepingSection', [ID, -1], 'args[1]');
+    refused('moveHousekeepingSection', [[ID, H], 0], 'args[0]');
+    refused('reorderHousekeepingTasks', [H, Array.from({ length: 501 }, () => ID)], 'args[1]');
+    expect(isRpcMethod('arrangeHousekeepingTasks')).toBe(false);
+    expect(isRpcMethod('reorderHousekeepingSections')).toBe(false);
     refused('createHousekeepingSection', [H, 40], 'args[1]');
     refused('createHousekeepingTask', [H, 'Windows', 5], 'args[2]');
     refused('createHousekeepingTask', [H, 'Windows', ID, ID], 'args');

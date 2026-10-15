@@ -11,7 +11,6 @@ import type {
   HouseholdData,
   HousekeepingSection,
   HousekeepingTask,
-  HousekeepingTaskGroup,
   HousekeepingTickTarget,
   HousekeepingVisitPatch,
   ImportPayload,
@@ -313,16 +312,22 @@ export interface Backend {
    */
   deleteHousekeepingTask(id: string): Promise<void>;
   /**
-   * Arranges the whole list at once (moving tasks within and between sections): each group
-   * is a section (sectionId null: no section) and its tasks in order; each task gets that
-   * section and its index there as its position. All or nothing. The groups must name every
-   * task of the household exactly once, and a section at most once (sections left out keep
-   * no task); otherwise BackendError('unknown', 'invalid_input: groups') and nothing changes.
-   * A task or section that is not the household's (deleted meanwhile, or elsewhere) is
-   * 'not_found'. The groups' order does not matter: sections keep theirs
-   * (reorderHousekeepingSections changes it).
+   * Moves one task (within its section, or into another): into `sectionId` (null: the tasks
+   * in no section) at `index` among that section's other tasks (0 first; past the end: last).
+   * The places in the section it joins, and in the one it leaves, run 0…n-1 again; nothing
+   * else changes, so two people moving different tasks at the same moment both keep their
+   * moves, and a task added or deleted meanwhile changes nothing here. A task or section that
+   * is not the household's (deleted meanwhile, or elsewhere) is 'not_found'; an index that is
+   * not a whole number from 0 is BackendError('unknown', 'invalid_input: index').
    */
-  arrangeHousekeepingTasks(householdId: string, groups: HousekeepingTaskGroup[]): Promise<void>;
+  moveHousekeepingTask(id: string, sectionId: string | null, index: number): Promise<void>;
+  /**
+   * For an app from before sections that is still running (server mode, and Supabase's
+   * reorder_housekeeping_tasks): sets each named task's position to its index in
+   * `orderedIds` (ids from elsewhere are ignored), each task staying in its section; today's
+   * visit follows. The app moves tasks with moveHousekeepingTask.
+   */
+  reorderHousekeepingTasks(householdId: string, orderedIds: string[]): Promise<void>;
 
   /**
    * Adds a section, trimmed (1 to TEXT_LIMITS.housekeepingSection characters), after the
@@ -342,10 +347,13 @@ export interface Backend {
    */
   deleteHousekeepingSection(id: string): Promise<void>;
   /**
-   * Sets section positions to match the given order (all section ids of the household; ids
-   * from elsewhere are ignored). Each section's tasks come along; today's visit follows.
+   * Moves one section to `index` among the others (0 first; past the end: last); the
+   * sections' positions run 0…n-1 again and its tasks come along; today's visit follows. Only
+   * this section's place is decided here, so two people moving different sections at once
+   * both keep their moves. Gone (or elsewhere): 'not_found'; an index that is not a whole
+   * number from 0 is BackendError('unknown', 'invalid_input: index').
    */
-  reorderHousekeepingSections(householdId: string, orderedIds: string[]): Promise<void>;
+  moveHousekeepingSection(id: string, index: number): Promise<void>;
 
   /**
    * Ticks (done = true) or unticks one task on the visit on `date`, creating the visit if

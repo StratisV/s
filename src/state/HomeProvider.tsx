@@ -18,12 +18,12 @@ import {
   withListSettled,
   withSectionAdded,
   withSectionDeleted,
+  withSectionMoved,
   withSectionRenamed,
-  withSectionsReordered,
   withTaskAdded,
   withTaskDeleted,
+  withTaskMoved,
   withTaskRenamed,
-  withTasksArranged,
 } from '../lib/logic/housekeeping';
 import { disablePush } from '../lib/push';
 import { isIos, isStandalone, linkNeedsChoice } from '../lib/appMode';
@@ -53,7 +53,6 @@ import type {
   HousekeepingNote,
   HousekeepingSection,
   HousekeepingTask,
-  HousekeepingTaskGroup,
   HousekeepingTickTarget,
   HousekeepingVisit,
   HousekeepingVisitPatch,
@@ -342,7 +341,7 @@ export interface HomeContextValue {
   /**
    * Adds a task at the end of a section (`sectionId`), or of the tasks in no section (and to
    * today's visit, if any, in its place). Like createArea it is not optimistic: resolves to
-   * the stored task once written, so the sheet can focus it.
+   * the stored task once written (the sheet shows the name typed, saving, until then).
    */
   createHousekeepingTask(title: string, sectionId?: string | null): Promise<HousekeepingTask>;
   /** Renames a task on the list and on today's visit unless ticked there (withTaskRenamed). */
@@ -350,14 +349,15 @@ export interface HomeContextValue {
   /** Deletes a task from the list; today's visit drops it unless ticked (withTaskDeleted). */
   deleteHousekeepingTask(id: string): Promise<void>;
   /**
-   * Arranges the task list: every task, grouped by section (arrangementOf() gives the list
-   * as it stands, and the editor moves ids within and between the groups). Today's visit
-   * follows (withTasksArranged).
+   * Moves one task into a section (null: the tasks in no section) at `index` among its other
+   * tasks (Backend.moveHousekeepingTask: only this task and the places in its two sections
+   * change, so a move made on another phone at the same moment stands). Today's visit follows
+   * (withTaskMoved).
    */
-  arrangeHousekeepingTasks(groups: HousekeepingTaskGroup[]): Promise<void>;
+  moveHousekeepingTask(id: string, sectionId: string | null, index: number): Promise<void>;
   /**
    * Adds a section at the end of the list, with no task in it. Not optimistic: resolves to
-   * the stored section once written, so the sheet can focus its name.
+   * the stored section once written (the sheet shows the name typed, saving, until then).
    */
   createHousekeepingSection(title: string): Promise<HousekeepingSection>;
   /** Renames a section; today's visit follows, earlier visits keep the name they had (withSectionRenamed). */
@@ -368,8 +368,8 @@ export interface HomeContextValue {
    * confirms first.
    */
   deleteHousekeepingSection(id: string): Promise<void>;
-  /** Puts the sections in this order (all their ids); their tasks come along (withSectionsReordered). */
-  reorderHousekeepingSections(orderedIds: string[]): Promise<void>;
+  /** Moves one section to `index` among the others; its tasks come along (withSectionMoved). */
+  moveHousekeepingSection(id: string, index: number): Promise<void>;
   /**
    * Ticks or unticks one row of the checklist for `date` (ChecklistRow.target). With no
    * visit that day yet, a pending visit (newVisit, rows `pending:<taskId>`) shows at once
@@ -854,9 +854,9 @@ function deleteTaskChange(id: string, today: ISODate): Change {
 }
 
 /**
- * A change to the list's arrangement (`edit`: withTasksArranged(), withSectionsReordered()),
- * today's visit following. The revert puts back each task's section and place, and each
- * section's position, that it set and that still hold, and lays the list out again
+ * A change to the list's arrangement (`edit`: withTaskMoved(), withSectionMoved()), today's
+ * visit following. The revert puts back each task's section and place, and each section's
+ * position, that it set and that still hold, and lays the list out again
  * (withListSettled()).
  */
 function arrangeChange(today: ISODate, edit: (housekeeping: HousekeepingData) => HousekeepingData): Change {
@@ -2125,16 +2125,14 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
           () => backend.renameHousekeepingTask(id, title),
         ),
       deleteHousekeepingTask: (id) => mutate(deleteTaskChange(id, today), () => backend.deleteHousekeepingTask(id)),
-      arrangeHousekeepingTasks: (groups) => {
-        const d = requireData();
-        return mutate(
-          arrangeChange(today, (hk) => withTasksArranged(hk, groups, today)),
-          () => backend.arrangeHousekeepingTasks(d.household.id, groups),
-        );
-      },
+      moveHousekeepingTask: (id, sectionId, index) =>
+        mutate(
+          arrangeChange(today, (hk) => withTaskMoved(hk, id, sectionId, index, today)),
+          () => backend.moveHousekeepingTask(id, sectionId, index),
+        ),
       createHousekeepingSection: async (title) => {
         const d = requireData();
-        // Not optimistic, like a task: shown once stored, so the sheet can focus its name.
+        // Not optimistic, like a task: shown once stored (the sheet shows the name, saving, till then).
         const section = await mutate(null, () => backend.createHousekeepingSection(d.household.id, title));
         const cur = dataRef.current;
         if (cur && cur.household.id === section.household_id) {
@@ -2160,13 +2158,11 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
           () => backend.renameHousekeepingSection(id, title),
         ),
       deleteHousekeepingSection: (id) => mutate(deleteSectionChange(id, today), () => backend.deleteHousekeepingSection(id)),
-      reorderHousekeepingSections: (orderedIds) => {
-        const d = requireData();
-        return mutate(
-          arrangeChange(today, (hk) => withSectionsReordered(hk, orderedIds, today)),
-          () => backend.reorderHousekeepingSections(d.household.id, orderedIds),
-        );
-      },
+      moveHousekeepingSection: (id, index) =>
+        mutate(
+          arrangeChange(today, (hk) => withSectionMoved(hk, id, index, today)),
+          () => backend.moveHousekeepingSection(id, index),
+        ),
       setHousekeepingTaskDone: (date, target, done) => {
         // Visits are never in the future: refused without a write (and without a toast).
         if (!canHaveVisit(date, today)) return Promise.reject(new BackendError('unknown', 'invalid_input: date'));

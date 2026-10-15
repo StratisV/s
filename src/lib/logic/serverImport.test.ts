@@ -224,11 +224,9 @@ describe('buildServerHome: a home the demo set up, then used', () => {
     const ids0 = (await demo.load(hid)).housekeeping.tasks.map((t) => t.id);
     const kitchen = await demo.createHousekeepingSection(hid, 'Kitchen');
     const baths = await demo.createHousekeepingSection(hid, 'Bathrooms');
-    await demo.arrangeHousekeepingTasks(hid, [
-      { sectionId: null, taskIds: [ids0[0], ids0[1], ids0[4], ids0[6]] },
-      { sectionId: kitchen.id, taskIds: [ids0[3], ids0[5]] },
-      { sectionId: baths.id, taskIds: [ids0[2]] },
-    ]);
+    await demo.moveHousekeepingTask(ids0[3], kitchen.id, 0);
+    await demo.moveHousekeepingTask(ids0[5], kitchen.id, 1);
+    await demo.moveHousekeepingTask(ids0[2], baths.id, 0);
     await demo.setHousekeepingTaskDone(hid, '2026-10-09', { taskId: ids0[3] }, true);
     // A section deleted after the visit: the visit keeps it by its name.
     await demo.addHousekeepingVisit(hid, '2026-10-08');

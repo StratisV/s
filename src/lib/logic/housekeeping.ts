@@ -14,7 +14,6 @@ import type {
   HousekeepingNote,
   HousekeepingSection,
   HousekeepingTask,
-  HousekeepingTaskGroup,
   HousekeepingTickTarget,
   HousekeepingVisit,
   HousekeepingVisitPatch,
@@ -98,15 +97,6 @@ export function taskListGroups(housekeeping: HousekeepingData): TaskListGroup[] 
     { section: null, tasks: ordered.filter((t) => inSection(t) === null) },
     ...sections.map((section) => ({ section, tasks: ordered.filter((t) => inSection(t) === section.id) })),
   ];
-}
-
-/**
- * The list's arrangement as arrangeHousekeepingTasks takes it: the tasks in no section, then
- * every section in order, each with its task ids in order.
- * Tests: matches taskListGroups(); every task once.
- */
-export function arrangementOf(housekeeping: HousekeepingData): HousekeepingTaskGroup[] {
-  return taskListGroups(housekeeping).map((g) => ({ sectionId: g.section?.id ?? null, taskIds: g.tasks.map((t) => t.id) }));
 }
 
 /**
@@ -448,7 +438,8 @@ export interface ChecklistRow {
 export interface ChecklistSection {
   /**
    * Stable React key: `none` for the tasks in no section, `section:<id>` for a section, and
-   * `title:<name>` for a section deleted since (an earlier visit keeps it by its name).
+   * `title:<n>:<name>` for a section deleted since (an earlier visit keeps it by its name, in
+   * its place; `n` counts the deleted sections up to it on the visit).
    */
   key: string;
   /** The section's name as the day has it; null for the tasks in no section (no heading). */
@@ -469,16 +460,19 @@ const checklistRow = (row: HousekeepingVisitTask): ChecklistRow => ({
 
 /**
  * The checklist for `date`, section by section. With a visit that day: its rows in their
- * order, grouped by the section each row had on the visit (its id, or for a section deleted
- * since, the name it kept), in the order the sections come on the visit, under the name the
+ * order, grouped by the section each row had on the visit (its id; for a section deleted
+ * since, which its rows know only by the name they kept, each run of rows next to each other
+ * with that name, so two deleted sections of the same name with something between them stay
+ * two, in their places), in the order the sections come on the visit, under the name the
  * visit has for them (an earlier visit keeps the sections it had). Without one: the task
  * list, none done (what ticking would start the visit with), grouped by the list's sections.
  * Either way the tasks in no section come first (title null, no heading), and a section with
  * no tasks is left out.
  * Tests: no sections gives one untitled group; a day without a visit groups the list by its
  * sections in order and leaves an empty one out; a visit keeps the sections and names it had
- * (renamed or reordered since); a section deleted since stays by its name; rows in no section
- * come first; done counts; a visit with no rows gives [].
+ * (renamed or reordered since); a section deleted since stays by its name; two deleted
+ * sections of the same name stay apart, in their places; rows in no section come first; done
+ * counts; a visit with no rows gives [].
  */
 export function checklistSections(housekeeping: HousekeepingData, date: ISODate): ChecklistSection[] {
   const visit = visitOn(housekeeping.visits, date);
@@ -493,9 +487,16 @@ export function checklistSections(housekeeping: HousekeepingData, date: ISODate)
     if (row.done) group.done += 1;
   };
   if (visit) {
+    // A deleted section's rows are told apart only by the name they kept: a run of them next
+    // to each other on the visit is one section, counted so that its key is its own.
+    let runs = 0;
+    let run: string | null = null;
     for (const row of [...visit.tasks].sort(byRowOrder)) {
+      const deleted = row.section_id === null && row.section_title !== '';
+      if (deleted && run !== row.section_title) runs += 1;
+      run = deleted ? row.section_title : null;
       if (row.section_id !== null) add(`section:${row.section_id}`, row.section_title, checklistRow(row));
-      else if (row.section_title !== '') add(`title:${row.section_title}`, row.section_title, checklistRow(row));
+      else if (deleted) add(`title:${runs}:${row.section_title}`, row.section_title, checklistRow(row));
       else add('none', null, checklistRow(row));
     }
   } else {
@@ -530,25 +531,29 @@ export function checklistFor(housekeeping: HousekeepingData, date: ISODate): Che
 }
 
 /**
- * A section's progress on the checklist, as its header shows it: `'2 of 5'`.
- * Tests: some done; none; all.
+ * A section's progress on the checklist, as its header shows it: `'2 of 5'`; once every task
+ * is ticked `'All done'`, or `'Done'` for a section of one task.
+ * Tests: some done; none; all; one task, ticked and not.
  */
 export function sectionProgress(done: number, total: number): string {
+  if (total > 0 && done === total) return total === 1 ? 'Done' : 'All done';
   return `${done} of ${total}`;
 }
 
 /**
- * A section's progress in words, as its heading says it after the name: `'2 of 5 done'`, and
- * once every task is ticked `'all 5 done'`.
- * Tests: some done; all done; one task.
+ * A section's progress in words, as its heading says it after the name: `'2 of 5 done'`;
+ * once every task is ticked `'all 5 done'`, or `'done'` for a section of one task.
+ * Tests: some done; all done; one task, ticked and not.
  */
 export function sectionDoneWords(done: number, total: number): string {
-  return done === total && total > 0 ? `all ${total} done` : `${done} of ${total} done`;
+  if (total > 0 && done === total) return total === 1 ? 'done' : `all ${total} done`;
+  return `${done} of ${total} done`;
 }
 
 /**
  * What a section's heading is called, its progress included, as VoiceOver reads it:
- * `'Kitchen, 2 of 5 done'`, and once every task is ticked `'Kitchen, all 5 done'`.
+ * `'Kitchen, 2 of 5 done'`; once every task is ticked `'Kitchen, all 5 done'` (`'Bins, done'`
+ * for a section of one task).
  * Tests: some done; all done; one task.
  */
 export function sectionHeadingLabel(title: string, done: number, total: number): string {
@@ -854,29 +859,39 @@ export function withTaskDeleted(housekeeping: HousekeepingData, id: string, toda
 }
 
 /**
- * The list arranged as `groups` say (arrangeHousekeepingTasks): each named task moves into
- * its group's section (null: none) at its index there. A task or section that is not on the
- * list is passed over (the backend refuses such an arrangement; the reload then shows what
- * is stored), and a task named twice keeps its first place. Today's visit follows; earlier
- * visits never change.
- * Tests: within a section; across sections; out of a section to the top; into an empty
- * section; today follows (a ticked row keeps its title); last week does not; unknown ids.
+ * The task moved into `sectionId` (null: the tasks in no section) at `index` among that
+ * section's other tasks (0 first; past the end: last), as moveHousekeepingTask() stores it:
+ * the places in the section it joined, and in the one it left, run 0…n-1 again, and every
+ * other task keeps its place. Today's visit follows; earlier visits never change. A task or
+ * a section that is not on the list leaves everything as it was.
+ * Tests: within a section, down and up; into another section at its start, in the middle and
+ * past its end; out of a section to the tasks in no section; into an empty section; today
+ * follows (a ticked row keeps its title), last week does not; unknown task or section; the
+ * input is not mutated.
  */
-export function withTasksArranged(housekeeping: HousekeepingData, groups: HousekeepingTaskGroup[], today: ISODate): HousekeepingData {
-  const sections = new Set(housekeeping.sections.map((s) => s.id));
-  const onList = new Set(housekeeping.tasks.map((t) => t.id));
+export function withTaskMoved(
+  housekeeping: HousekeepingData,
+  id: string,
+  sectionId: string | null,
+  index: number,
+  today: ISODate,
+): HousekeepingData {
+  const groups = taskListGroups(housekeeping);
+  const from = groups.find((g) => g.tasks.some((t) => t.id === id));
+  const to = groups.find((g) => (g.section?.id ?? null) === sectionId);
+  if (!from || !to) return housekeeping;
   const placed = new Map<string, { section_id: string | null; position: number }>();
-  for (const group of groups) {
-    if (group.sectionId !== null && !sections.has(group.sectionId)) continue;
-    let position = 0;
-    for (const id of group.taskIds) {
-      if (!onList.has(id) || placed.has(id)) continue;
-      placed.set(id, { section_id: group.sectionId, position: position++ });
-    }
+  if (from !== to) {
+    from.tasks
+      .filter((t) => t.id !== id)
+      .forEach((t, position) => placed.set(t.id, { section_id: from.section?.id ?? null, position }));
   }
+  const ids = to.tasks.map((t) => t.id).filter((x) => x !== id);
+  ids.splice(Math.min(Math.max(Math.trunc(index) || 0, 0), ids.length), 0, id);
+  ids.forEach((x, position) => placed.set(x, { section_id: sectionId, position }));
   const tasks = housekeeping.tasks.map((t) => {
-    const to = placed.get(t.id);
-    return to && (to.section_id !== t.section_id || to.position !== t.position) ? { ...t, ...to } : t;
+    const at = placed.get(t.id);
+    return at && (at.section_id !== t.section_id || at.position !== t.position) ? { ...t, ...at } : t;
   });
   return withListSettled({ ...housekeeping, tasks }, today);
 }
@@ -931,20 +946,21 @@ export function withSectionDeleted(housekeeping: HousekeepingData, id: string, t
 }
 
 /**
- * Section positions set to the index in `orderedIds` (ids not on the list are passed over,
- * the first mention wins, sections not named keep their position), each section's tasks
- * coming along, and today's visit following.
- * Tests: a section moved first brings its tasks; today follows, last week does not; unknown
- * ids.
+ * The section moved to `index` among the others (0 first; past the end: last), as
+ * moveHousekeepingSection() stores it: the sections' positions run 0…n-1 again, its tasks
+ * coming along. Today's visit follows; earlier visits never change. A section that is not on
+ * the list leaves everything as it was.
+ * Tests: moved first brings its tasks; moved down one; past the end is last; today follows,
+ * last week does not; unknown id.
  */
-export function withSectionsReordered(housekeeping: HousekeepingData, orderedIds: string[], today: ISODate): HousekeepingData {
-  const onList = new Set(housekeeping.sections.map((s) => s.id));
-  const position = new Map<string, number>();
-  orderedIds.forEach((id, index) => {
-    if (onList.has(id) && !position.has(id)) position.set(id, index);
-  });
-  const sections = housekeeping.sections.map((s) =>
-    position.has(s.id) && position.get(s.id) !== s.position ? { ...s, position: position.get(s.id)! } : s,
-  );
+export function withSectionMoved(housekeeping: HousekeepingData, id: string, index: number, today: ISODate): HousekeepingData {
+  if (!housekeeping.sections.some((s) => s.id === id)) return housekeeping;
+  const ids = [...housekeeping.sections]
+    .sort(bySectionPosition)
+    .map((s) => s.id)
+    .filter((x) => x !== id);
+  ids.splice(Math.min(Math.max(Math.trunc(index) || 0, 0), ids.length), 0, id);
+  const position = new Map(ids.map((x, i) => [x, i]));
+  const sections = housekeeping.sections.map((s) => (position.get(s.id) !== s.position ? { ...s, position: position.get(s.id)! } : s));
   return withListSettled({ ...housekeeping, sections }, today);
 }

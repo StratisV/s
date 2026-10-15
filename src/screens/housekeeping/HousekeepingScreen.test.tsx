@@ -6,19 +6,18 @@ import * as provider from '../../state/HomeProvider';
 import {
   withSectionAdded,
   withSectionDeleted,
+  withSectionMoved,
   withSectionRenamed,
-  withSectionsReordered,
   withTaskAdded,
   withTaskDeleted,
+  withTaskMoved,
   withTaskRenamed,
-  withTasksArranged,
 } from '../../lib/logic/housekeeping';
 import type {
   HouseholdData,
   HousekeepingData,
   HousekeepingSection,
   HousekeepingTask,
-  HousekeepingTaskGroup,
   HousekeepingTickTarget,
   HousekeepingVisit,
   HousekeepingVisitPatch,
@@ -28,7 +27,7 @@ import type {
 import { HOUSEKEEPING_CALENDAR_VIEW_KEY } from './Calendar';
 import { HousekeepingScreen } from './HousekeepingScreen';
 import { PRICE_ERROR } from './PriceField';
-import { TaskListSheet } from './TaskListSheet';
+import { deleteSectionMessage, TaskListSheet } from './TaskListSheet';
 import { SAVED_FLASH_MS } from './useSavedText';
 import { NOT_STARTED, NOT_STARTED_NO_TASKS, NOTHING_RECORDED } from './VisitEditor';
 
@@ -145,14 +144,14 @@ const BATHROOMS: HousekeepingSection = { id: 's-bath', household_id: 'h', title:
  * Clean the bathrooms.
  */
 function sectioned(): HousekeepingData {
-  return withTasksArranged(
+  const moves: [string, string, number][] = [
+    ['t4', KITCHEN.id, 0],
+    ['t6', KITCHEN.id, 1],
+    ['t3', BATHROOMS.id, 0],
+  ];
+  return moves.reduce(
+    (hk, [id, sectionId, index]) => withTaskMoved(hk, id, sectionId, index, TODAY),
     { ...seed(), sections: [KITCHEN, BATHROOMS] },
-    [
-      { sectionId: null, taskIds: ['t1', 't2', 't5', 't7'] },
-      { sectionId: KITCHEN.id, taskIds: ['t4', 't6'] },
-      { sectionId: BATHROOMS.id, taskIds: ['t3'] },
-    ],
-    TODAY,
   );
 }
 
@@ -287,8 +286,8 @@ function makeActions(set: () => Dispatch<SetStateAction<HouseholdData>>) {
     deleteHousekeepingTask: vi.fn(async (id: string) => {
       edit((hk) => withTaskDeleted(hk, id, TODAY));
     }),
-    arrangeHousekeepingTasks: vi.fn(async (groups: HousekeepingTaskGroup[]) => {
-      edit((hk) => withTasksArranged(hk, groups, TODAY));
+    moveHousekeepingTask: vi.fn(async (id: string, sectionId: string | null, index: number) => {
+      edit((hk) => withTaskMoved(hk, id, sectionId, index, TODAY));
     }),
     createHousekeepingSection: vi.fn(async (title: string) => {
       const section: HousekeepingSection = {
@@ -306,8 +305,8 @@ function makeActions(set: () => Dispatch<SetStateAction<HouseholdData>>) {
     deleteHousekeepingSection: vi.fn(async (id: string) => {
       edit((hk) => withSectionDeleted(hk, id, TODAY));
     }),
-    reorderHousekeepingSections: vi.fn(async (ids: string[]) => {
-      edit((hk) => withSectionsReordered(hk, ids, TODAY));
+    moveHousekeepingSection: vi.fn(async (id: string, index: number) => {
+      edit((hk) => withSectionMoved(hk, id, index, TODAY));
     }),
     showToast: vi.fn(),
     dismissToast: vi.fn(),
@@ -440,7 +439,7 @@ describe('HousekeepingScreen', () => {
     expect(detail()).toBeNull();
   });
 
-  it('groups today’s tasks by section: a card each, its name a heading with its progress', async () => {
+  it('groups today’s tasks by section: a card each under its name, a heading with its progress', async () => {
     setup(sectioned());
     const tasks = within(today()).getByRole('group', { name: 'Tasks today' });
     // The tasks in no section first, with no heading; then each section in order.
@@ -481,6 +480,17 @@ describe('HousekeepingScreen', () => {
     expect(kitchen.hasAttribute('data-all-done')).toBe(true);
     expect(kitchen.textContent).toContain('All done');
     await waitFor(() => expect(said()).toBe('Empty the bins done. Kitchen, all 2 done'));
+
+    // A section of one task: just "Done".
+    const bathrooms = within(tasks).getByRole('group', { name: 'Bathrooms, 0 of 1 done' });
+    expect(bathrooms.textContent).toContain('0 of 1');
+    await act(async () => {
+      fireEvent.click(within(bathrooms).getByRole('checkbox', { name: 'Clean the bathrooms' }));
+    });
+    expect(within(tasks).getByRole('heading', { level: 3, name: 'Bathrooms, done' })).toBeTruthy();
+    expect(bathrooms.textContent).toContain('Done');
+    expect(bathrooms.textContent).not.toContain('All done');
+    await waitFor(() => expect(said()).toBe('Clean the bathrooms done. Bathrooms, done'));
   });
 
   it('leaves out a section with no tasks; with no sections at all, one card with no heading', () => {
@@ -1104,24 +1114,35 @@ describe('The chosen day', () => {
 
 describe('Task list sheet', () => {
   const sheet = () => screen.getByRole('dialog', { name: 'Task list' });
+  /** The tasks' names, in the sheet or in one of its cards. */
+  const taskNames = (inside: HTMLElement = sheet()) =>
+    within(inside)
+      .getAllByRole('textbox', { name: 'Task name' })
+      .map((i) => (i as HTMLTextAreaElement).value);
+  /** The new name's field that Add Task or Add Section opened: focused inside the tap. */
+  const draft = () => {
+    const field = document.activeElement as HTMLTextAreaElement;
+    expect(field.hasAttribute('data-draft-input')).toBe(true);
+    return field;
+  };
+  const noDraft = () => expect(document.querySelector('[data-draft-input]')).toBeNull();
 
   it('renames, adds, reorders and deletes tasks', async () => {
     const { actions, data } = setup(seed(), { sheet: true });
-    const names = () =>
-      within(sheet())
-        .getAllByRole('textbox', { name: 'Task name' })
-        .map((i) => (i as HTMLInputElement).value);
-    expect(names()).toEqual([...HOUSEKEEPING_STARTER_TASKS]);
+    expect(taskNames()).toEqual([...HOUSEKEEPING_STARTER_TASKS]);
     expect(
       within(sheet()).getByText(
         "Sections group the tasks, such as Kitchen or Bathrooms. Changes show in today's visit too. Earlier visits keep their own list.",
       ),
     ).toBeTruthy();
+    // Names wrap (a field that grows with its text), so a long one reads in full.
+    const first = within(sheet()).getAllByRole('textbox', { name: 'Task name' })[0];
+    expect(first.tagName).toBe('TEXTAREA');
+    // No sections: one card with no heading, and a plain Add Task.
+    expect(within(sheet()).queryByRole('group', { name: 'No Section' })).toBeNull();
+    const addTask = () => within(sheet()).getByRole('button', { name: 'Add Task' });
 
     // Rename in place; blank puts the old title back.
-    const first = within(sheet()).getAllByRole('textbox', {
-      name: 'Task name',
-    })[0];
     act(() => first.focus());
     fireEvent.change(first, { target: { value: '  ' } });
     act(() => first.blur());
@@ -1133,77 +1154,88 @@ describe('Task list sheet', () => {
     // Today's checklist follows.
     expect(within(today()).getByRole('checkbox', { name: 'Change the sheets' })).toBeTruthy();
 
-    // Add Task: "New task", focused with its text selected.
-    fireEvent.click(within(sheet()).getByRole('button', { name: 'Add Task' }));
-    expect(actions.createHousekeepingTask).toHaveBeenCalledWith('New task', null);
-    await waitFor(() => expect((document.activeElement as HTMLInputElement).value).toBe('New task'));
-    const added = document.activeElement as HTMLInputElement;
-    expect([added.selectionStart, added.selectionEnd]).toEqual([0, 8]);
+    // Add Task: the row becomes an empty field for the name, focused in the tap. Nothing is
+    // made until a name is in.
+    fireEvent.click(addTask());
+    let field = draft();
+    expect([field.getAttribute('aria-label'), field.value, field.placeholder]).toEqual(['Task name', '', 'New task']);
+    expect(actions.createHousekeepingTask).not.toHaveBeenCalled();
+    // Escape drops it, and focus goes back to Add Task; so does Enter with nothing typed.
+    fireEvent.keyDown(field, { key: 'Escape' });
+    noDraft();
+    expect(document.activeElement).toBe(addTask());
+    fireEvent.click(addTask());
+    fireEvent.keyDown(draft(), { key: 'Enter' });
+    noDraft();
+    expect(actions.createHousekeepingTask).not.toHaveBeenCalled();
+    // Typed, then Enter: made with that name, last, and focus is back on Add Task for the next.
+    fireEvent.click(addTask());
+    field = draft();
+    fireEvent.change(field, { target: { value: ' Clean the windows ' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(actions.createHousekeepingTask).toHaveBeenCalledWith('Clean the windows', null);
+    await waitFor(() => expect(sheet().querySelector('[aria-busy="true"]')).toBeNull());
+    expect(taskNames().at(-1)).toBe('Clean the windows');
+    expect(document.activeElement).toBe(addTask());
 
     // The arrow keys on a grip move the task and say where to.
-    const grip = within(sheet()).getByRole('button', {
-      name: 'Reorder Ironing',
-    });
+    const grip = within(sheet()).getByRole('button', { name: 'Reorder Ironing' });
     act(() => grip.focus());
     fireEvent.keyDown(grip, { key: 'ArrowUp' });
-    expect(actions.arrangeHousekeepingTasks).toHaveBeenCalledWith([
-      { sectionId: null, taskIds: ['t1', 't2', 't3', 't4', 't5', 't7', 't6', 't-new-1'] },
-    ]);
+    // One task and where it goes, so a move made on another phone meanwhile stands.
+    expect(actions.moveHousekeepingTask).toHaveBeenCalledWith('t7', null, 5);
     expect(within(sheet()).getByText('Ironing moved to position 6 of 8.')).toBeTruthy();
     expect(document.activeElement).toBe(within(sheet()).getByRole('button', { name: 'Reorder Ironing' }));
 
     // Delete asks first.
     fireEvent.click(within(sheet()).getByRole('button', { name: 'Delete Empty the bins' }));
-    const confirm = await screen.findByRole('alertdialog', {
-      name: 'Delete Empty the bins?',
-    });
+    const confirm = await screen.findByRole('alertdialog', { name: 'Delete Empty the bins?' });
     expect(within(confirm).getByText('Earlier visits keep it.')).toBeTruthy();
     fireEvent.click(within(confirm).getByRole('button', { name: 'Delete Task' }));
     expect(actions.deleteHousekeepingTask).toHaveBeenCalledWith('t6');
     expect(data().housekeeping.tasks.map((t) => t.title)).not.toContain('Empty the bins');
-    expect(names()).toEqual([
+    expect(taskNames()).toEqual([
       'Change the sheets',
       'Hoover and mop the floors',
       'Clean the bathrooms',
       'Clean the kitchen',
       'Dust the surfaces',
       'Ironing',
-      'New task',
+      'Clean the windows',
     ]);
   });
 
-  it('adds a section, its name selected to type over; a task added into it goes there, and the checklist shows it', async () => {
+  it('adds a section with the name typed; a task added into it goes there, and the checklist shows it', async () => {
     const { actions } = setup(seed(), { sheet: true });
-    expect(
-      within(sheet()).getByText(
-        "Sections group the tasks, such as Kitchen or Bathrooms. Changes show in today's visit too. Earlier visits keep their own list.",
-      ),
-    ).toBeTruthy();
     // No sections yet: no Move to Section on the rows.
     expect(within(sheet()).queryByRole('button', { name: 'Move Ironing to a section' })).toBeNull();
 
     fireEvent.click(within(sheet()).getByRole('button', { name: 'Add Section' }));
-    expect(actions.createHousekeepingSection).toHaveBeenCalledWith('New section');
-    await waitFor(() => expect((document.activeElement as HTMLInputElement).value).toBe('New section'));
-    const name = document.activeElement as HTMLInputElement;
-    expect(name.getAttribute('aria-label')).toBe('Section name');
-    expect([name.selectionStart, name.selectionEnd]).toEqual([0, 11]);
+    const name = draft();
+    expect([name.getAttribute('aria-label'), name.value, name.placeholder]).toEqual(['Section name', '', 'New section']);
     fireEvent.change(name, { target: { value: ' Kitchen ' } });
     fireEvent.keyDown(name, { key: 'Enter' });
-    expect(actions.renameHousekeepingSection).toHaveBeenCalledWith('s-new-1', 'Kitchen');
+    // Made with its name: nothing to rename afterwards.
+    expect(actions.createHousekeepingSection).toHaveBeenCalledWith('Kitchen');
+    expect(actions.renameHousekeepingSection).not.toHaveBeenCalled();
+    await waitFor(() => expect(sheet().querySelector('[aria-busy="true"]')).toBeNull());
     const card = within(sheet()).getByRole('group', { name: 'Kitchen' });
+    expect(document.activeElement).toBe(within(sheet()).getByRole('button', { name: 'Add Section' }));
     // An empty section is not on the checklist.
     expect(within(today()).queryByRole('heading', { level: 3, name: /^Kitchen/ })).toBeNull();
+    // The tasks in no section are headed now, and each Add Task says where it adds.
+    const none = within(sheet()).getByRole('group', { name: 'No Section' });
+    expect(taskNames(none)).toEqual([...HOUSEKEEPING_STARTER_TASKS]);
+    expect(within(none).getByRole('button', { name: 'Add Task to No Section' })).toBeTruthy();
 
     fireEvent.click(within(card).getByRole('button', { name: 'Add Task to Kitchen' }));
-    expect(actions.createHousekeepingTask).toHaveBeenCalledWith('New task', 's-new-1');
-    await waitFor(() => expect((document.activeElement as HTMLInputElement).value).toBe('New task'));
-    const task = document.activeElement as HTMLInputElement;
+    const task = draft();
+    expect(task.getAttribute('aria-label')).toBe('Task name');
     fireEvent.change(task, { target: { value: 'Clean the oven' } });
     fireEvent.keyDown(task, { key: 'Enter' });
-    expect(within(card).getAllByRole('textbox', { name: 'Task name' }).map((i) => (i as HTMLInputElement).value)).toEqual([
-      'Clean the oven',
-    ]);
+    expect(actions.createHousekeepingTask).toHaveBeenCalledWith('Clean the oven', 's-new-1');
+    await waitFor(() => expect(taskNames(card)).toEqual(['Clean the oven']));
+    expect(document.activeElement).toBe(within(card).getByRole('button', { name: 'Add Task to Kitchen' }));
     // Now the checklist has it, last, under its heading.
     const kitchen = within(today()).getByRole('group', { name: 'Kitchen, 0 of 1 done' });
     expect(within(kitchen).getByRole('checkbox', { name: 'Clean the oven' })).toBeTruthy();
@@ -1211,7 +1243,70 @@ describe('Task list sheet', () => {
     expect(within(sheet()).getByRole('button', { name: 'Move Ironing to a section' })).toBeTruthy();
   });
 
-  it('moves a task with Move to Section, and with the arrow keys from one section to the next', async () => {
+  it('a name typed is kept when the field is left; while it saves its row shows it, and a failed save gives it back', async () => {
+    const { actions, data } = setup(sectioned(), { sheet: true });
+    let fail!: (error: Error) => void;
+    actions.createHousekeepingTask.mockImplementationOnce(
+      () =>
+        new Promise<HousekeepingTask>((_, reject) => {
+          fail = reject;
+        }),
+    );
+    const kitchen = within(sheet()).getByRole('group', { name: 'Kitchen' });
+    fireEvent.click(within(kitchen).getByRole('button', { name: 'Add Task to Kitchen' }));
+    const field = draft();
+    fireEvent.change(field, { target: { value: 'Clean the oven' } });
+    // Leaving the field (a tap elsewhere) makes it too.
+    act(() => field.blur());
+    expect(actions.createHousekeepingTask).toHaveBeenCalledWith('Clean the oven', KITCHEN.id);
+    noDraft();
+    // Saving: the name shows where it will be, busy.
+    expect(kitchen.querySelector('[aria-busy="true"]')!.textContent).toBe('Clean the oven');
+    // It failed (a toast says why): the name is back in its field, to try again.
+    await act(async () => fail(new Error('offline')));
+    expect(kitchen.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(kitchen.querySelector<HTMLTextAreaElement>('[data-draft-input]')!.value).toBe('Clean the oven');
+    expect(data().housekeeping.tasks.map((t) => t.title)).not.toContain('Clean the oven');
+  });
+
+  it('a tap on another button while a name is typed lands: the name is saved first, then the button does its job', async () => {
+    const { actions } = setup(sectioned(), { sheet: true });
+    const none = within(sheet()).getByRole('group', { name: 'No Section' });
+    fireEvent.click(within(none).getByRole('button', { name: 'Add Task to No Section' }));
+    fireEvent.change(draft(), { target: { value: 'Windows' } });
+    // The press keeps the field focused, so nothing moves under the finger before the click...
+    const remove = within(sheet()).getByRole('button', { name: 'Delete Empty the bins' });
+    expect(fireEvent.mouseDown(remove)).toBe(false);
+    draft();
+    // ...which saves the name, then asks about the delete.
+    fireEvent.click(remove);
+    expect(actions.createHousekeepingTask).toHaveBeenCalledWith('Windows', null);
+    const confirm = await screen.findByRole('alertdialog', { name: 'Delete Empty the bins?' });
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+    expect(actions.deleteHousekeepingTask).not.toHaveBeenCalled();
+
+    // Add Task in another card: the name is saved and that card's field opens, in one tap.
+    await waitFor(() => expect(sheet().querySelector('[aria-busy="true"]')).toBeNull());
+    fireEvent.click(within(none).getByRole('button', { name: 'Add Task to No Section' }));
+    fireEvent.change(draft(), { target: { value: 'Oven' } });
+    const addToKitchen = within(sheet()).getByRole('button', { name: 'Add Task to Kitchen' });
+    expect(fireEvent.mouseDown(addToKitchen)).toBe(false);
+    fireEvent.click(addToKitchen);
+    expect(actions.createHousekeepingTask).toHaveBeenLastCalledWith('Oven', null);
+    expect(within(sheet()).getByRole('group', { name: 'Kitchen' }).contains(draft())).toBe(true);
+    await waitFor(() =>
+      expect(taskNames(none)).toEqual([
+        'Change the bed sheets',
+        'Hoover and mop the floors',
+        'Dust the surfaces',
+        'Ironing',
+        'Windows',
+        'Oven',
+      ]),
+    );
+  });
+
+  it('moves a task with Move to Section, keeping your place, and with the arrow keys from one section to the next', async () => {
     const { actions, data } = setup(sectioned(), { sheet: true });
     fireEvent.click(within(sheet()).getByRole('button', { name: 'Move Ironing to a section' }));
     const menu = await screen.findByRole('menu', { name: 'Move to Section' });
@@ -1221,30 +1316,27 @@ describe('Task list sheet', () => {
       ['Bathrooms', 'false'],
     ]);
     fireEvent.click(within(menu).getByRole('menuitemradio', { name: 'Kitchen' }));
-    expect(actions.arrangeHousekeepingTasks).toHaveBeenLastCalledWith([
-      { sectionId: null, taskIds: ['t1', 't2', 't5'] },
-      { sectionId: KITCHEN.id, taskIds: ['t4', 't6', 't7'] },
-      { sectionId: BATHROOMS.id, taskIds: ['t3'] },
-    ]);
+    // To the end of the kitchen.
+    expect(actions.moveHousekeepingTask).toHaveBeenLastCalledWith('t7', KITCHEN.id, 2);
     expect(within(sheet()).getByText('Ironing moved to Kitchen, position 3 of 3.')).toBeTruthy();
-    await waitFor(() =>
-      expect(document.activeElement).toBe(within(sheet()).getByRole('button', { name: 'Move Ironing to a section' })),
-    );
     expect(data().housekeeping.tasks.find((t) => t.id === 't7')!.section_id).toBe(KITCHEN.id);
+    // It lights up where it landed, while focus stays in the card it left: on the "…" of the
+    // task before it (it was last), ready for the next move.
+    expect(within(sheet()).getByRole('button', { name: 'Reorder Ironing' }).closest('li')!.hasAttribute('data-moved')).toBe(true);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(sheet()).getByRole('button', { name: 'Move Dust the surfaces to a section' })),
+    );
 
     // Up from the top of the kitchen: to the end of the tasks in no section.
     const grip = within(sheet()).getByRole('button', { name: 'Reorder Clean the kitchen' });
     act(() => grip.focus());
     fireEvent.keyDown(grip, { key: 'ArrowUp' });
-    expect(actions.arrangeHousekeepingTasks).toHaveBeenLastCalledWith([
-      { sectionId: null, taskIds: ['t1', 't2', 't5', 't4'] },
-      { sectionId: KITCHEN.id, taskIds: ['t6', 't7'] },
-      { sectionId: BATHROOMS.id, taskIds: ['t3'] },
-    ]);
+    expect(actions.moveHousekeepingTask).toHaveBeenLastCalledWith('t4', null, 3);
     expect(within(sheet()).getByText('Clean the kitchen moved to No Section, position 4 of 4.')).toBeTruthy();
     expect(document.activeElement).toBe(within(sheet()).getByRole('button', { name: 'Reorder Clean the kitchen' }));
     // And down again, to the top of the kitchen.
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+    expect(actions.moveHousekeepingTask).toHaveBeenLastCalledWith('t4', KITCHEN.id, 0);
     expect(within(sheet()).getByText('Clean the kitchen moved to Kitchen, position 1 of 3.')).toBeTruthy();
   });
 
@@ -1259,7 +1351,7 @@ describe('Task list sheet', () => {
     let menu = await openMenu('Kitchen');
     expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Rename', 'Move Down', 'Delete Section']);
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Move Down' }));
-    expect(actions.reorderHousekeepingSections).toHaveBeenCalledWith([BATHROOMS.id, KITCHEN.id]);
+    expect(actions.moveHousekeepingSection).toHaveBeenCalledWith(KITCHEN.id, 1);
     expect(within(sheet()).getByText('Kitchen moved to position 2 of 2.')).toBeTruthy();
     await waitFor(() => expect(document.activeElement).toBe(within(sheet()).getByRole('button', { name: 'Kitchen options' })));
     // The checklist follows.
@@ -1268,12 +1360,15 @@ describe('Task list sheet', () => {
       'Kitchen, 0 of 2 done',
     ]);
 
+    // Rename: its name, focused and selected inside the tap (so a phone's keyboard comes up).
     menu = await openMenu('Kitchen');
     expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Rename', 'Move Up', 'Delete Section']);
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Rename' }));
-    await waitFor(() => expect((document.activeElement as HTMLElement).getAttribute('aria-label')).toBe('Section name'));
-    const field = document.activeElement as HTMLInputElement;
+    const field = document.activeElement as HTMLTextAreaElement;
+    expect(field.getAttribute('aria-label')).toBe('Section name');
     expect([field.value, field.selectionStart, field.selectionEnd]).toEqual(['Kitchen', 0, 7]);
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    expect(document.activeElement).toBe(field);
     fireEvent.change(field, { target: { value: 'Kitchen and utility' } });
     fireEvent.keyDown(field, { key: 'Enter' });
     expect(actions.renameHousekeepingSection).toHaveBeenCalledWith(KITCHEN.id, 'Kitchen and utility');
@@ -1281,20 +1376,12 @@ describe('Task list sheet', () => {
     menu = await openMenu('Kitchen and utility');
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Delete Section' }));
     const confirm = await screen.findByRole('alertdialog', { name: 'Delete Kitchen and utility?' });
-    expect(
-      within(confirm).getByText(
-        "Its 2 tasks stay on the list, at the top with no section, on today's visit too. Earlier visits keep it.",
-      ),
-    ).toBeTruthy();
+    expect(within(confirm).getByText('Its 2 tasks move to the top of the list. Earlier visits keep this section.')).toBeTruthy();
     fireEvent.click(within(confirm).getByRole('button', { name: 'Delete Section' }));
     expect(actions.deleteHousekeepingSection).toHaveBeenCalledWith(KITCHEN.id);
     expect(data().housekeeping.sections.map((s) => s.title)).toEqual(['Bathrooms']);
     // Its tasks: at the top, after the ones there, in their order.
-    expect(
-      within(sheet())
-        .getAllByRole('textbox', { name: 'Task name' })
-        .map((i) => (i as HTMLInputElement).value),
-    ).toEqual([
+    expect(taskNames()).toEqual([
       'Change the bed sheets',
       'Hoover and mop the floors',
       'Dust the surfaces',
@@ -1303,7 +1390,14 @@ describe('Task list sheet', () => {
       'Empty the bins',
       'Clean the bathrooms',
     ]);
+    // Focus: the next section's "…", else (as here, it was last) the one before it.
     await waitFor(() => expect(document.activeElement).toBe(within(sheet()).getByRole('button', { name: 'Bathrooms options' })));
+  });
+
+  it('says what deleting a section does to its tasks', () => {
+    expect(deleteSectionMessage(0)).toBe('Earlier visits keep this section.');
+    expect(deleteSectionMessage(1)).toBe('Its task moves to the top of the list. Earlier visits keep this section.');
+    expect(deleteSectionMessage(3)).toBe('Its 3 tasks move to the top of the list. Earlier visits keep this section.');
   });
 
   it("a section's grip moves it with the arrow keys", () => {
@@ -1315,12 +1409,12 @@ describe('Task list sheet', () => {
     );
     act(() => grip.focus());
     fireEvent.keyDown(grip, { key: 'ArrowUp' });
-    expect(actions.reorderHousekeepingSections).toHaveBeenCalledWith([BATHROOMS.id, KITCHEN.id]);
+    expect(actions.moveHousekeepingSection).toHaveBeenCalledWith(BATHROOMS.id, 0);
     expect(within(sheet()).getByText('Bathrooms moved to position 1 of 2.')).toBeTruthy();
     expect(document.activeElement).toBe(within(sheet()).getByRole('button', { name: 'Reorder Bathrooms section' }));
     // Already first: nothing.
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
-    expect(actions.reorderHousekeepingSections).toHaveBeenCalledTimes(1);
+    expect(actions.moveHousekeepingSection).toHaveBeenCalledTimes(1);
   });
 
   it('can be emptied', async () => {
