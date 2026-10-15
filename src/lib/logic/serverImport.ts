@@ -30,14 +30,18 @@
 //   timestamp no later than now (else left out), sender mapped (someone who does not come
 //   along: null, "Former member"). Their reactions by people who come along, emoji one of
 //   REACTION_EMOJIS, once per (message, person, emoji). At most the newest 5000 messages.
-// - Housekeeping: the task list as it is (titles 1 to 200 characters, positions 0…n-1 in the
+// - Housekeeping: the task list's sections as they are (names 1 to 40 characters, at most
+//   HOUSEKEEPING_SECTIONS_MAX, positions 0…n-1 in their order; none in a document from before
+//   sections) and the task list as it is (titles 1 to 200 characters, each in its section, or in
+//   none when that section does not come along, positions 0…n-1 within each section in the
 //   list's order; a document without the housekeeping_tasks key gets HOUSEKEEPING_STARTER_TASKS,
 //   as DemoBackend.read() does); the message for the housekeeper if it was written after the
 //   household was set up (else none: the demo's is made up), without its Clear/Undo copy; the
 //   visits created after the household was set up (the demo's seeded visits are dated before),
 //   one per date, never after today in the household's time zone, with their rows (task_id
-//   mapped to the new task, or null), ticks, comments and price as stored, within the limits
-//   (else the value is cut or, for a price, cleared). At most 2000 visits (the newest).
+//   mapped to the new task, or null; section_id to the new section, or null; the section's
+//   name as stored), ticks, comments and price as stored, within the limits (else the value is
+//   cut or, for a price, cleared). At most 2000 visits (the newest).
 // - Not: invites, push subscriptions, users, the session, the `imported`/`declined` marks.
 //
 // Every row gets a fresh id from `newId`; nothing from the document is used as an id.
@@ -45,6 +49,7 @@
 import { emptyDoc, type DemoDoc, type MemberRow, type ReactionRow } from '../backend/demo';
 import {
   HOUSEKEEPING_PRICE_MAX_PENCE,
+  HOUSEKEEPING_SECTIONS_MAX,
   HOUSEKEEPING_STARTER_TASKS,
   MEMBER_COLORS,
   REACTION_EMOJIS,
@@ -188,15 +193,27 @@ function build(raw: string, opts: BuildServerHomeOptions): ServerHome | null {
       (REACTION_EMOJIS as readonly string[]).includes(r.emoji),
   );
 
+  /** Rows in their order: `rank` (a task's section), then position, created_at, id. */
+  const inOrder =
+    (rank: (r: Row) => number = () => 0) =>
+    (a: Row, b: Row) =>
+      rank(a) - rank(b) ||
+      (typeof a.position === 'number' ? a.position : 0) - (typeof b.position === 'number' ? b.position : 0) ||
+      (str(a.created_at) < str(b.created_at) ? -1 : str(a.created_at) > str(b.created_at) ? 1 : 0) ||
+      (str(a.id) < str(b.id) ? -1 : 1);
+  const sectionRows = rowsOf(parsed.housekeeping_sections)
+    .filter((s) => householdOf(s) && typeof s.id === 'string')
+    .sort(inOrder())
+    .map((s) => ({ row: s, title: cut(s.title, TEXT_LIMITS.housekeepingSection) }))
+    .filter(({ title }) => title !== '')
+    .slice(0, HOUSEKEEPING_SECTIONS_MAX);
+  const sectionRank = new Map(sectionRows.map(({ row }, i) => [row.id as string, i + 1]));
+  /** Where a task's section comes (0: none, or one that does not come along). */
+  const rankOf = (t: Row) => (typeof t.section_id === 'string' ? (sectionRank.get(t.section_id) ?? 0) : 0);
   const hasTaskList = Array.isArray(parsed.housekeeping_tasks);
   const taskRows = rowsOf(parsed.housekeeping_tasks)
     .filter((t) => householdOf(t) && typeof t.id === 'string')
-    .sort(
-      (a, b) =>
-        (typeof a.position === 'number' ? a.position : 0) - (typeof b.position === 'number' ? b.position : 0) ||
-        (str(a.created_at) < str(b.created_at) ? -1 : str(a.created_at) > str(b.created_at) ? 1 : 0) ||
-        (str(a.id) < str(b.id) ? -1 : 1),
-    )
+    .sort(inOrder(rankOf))
     .map((t) => ({ row: t, title: cut(t.title, TEXT_LIMITS.housekeepingTask) }))
     .filter(({ title }) => title !== '');
   const noteRow = rowsOf(parsed.housekeeping_notes).find((n) => householdOf(n) && afterSetUp(n.updated_at));
@@ -362,12 +379,26 @@ function build(raw: string, opts: BuildServerHomeOptions): ServerHome | null {
   }
 
   // ── Housekeeping ──
+  const sectionOf = new Map<string, string>();
+  sectionRows.forEach(({ row, title }, i) => {
+    const id = newId();
+    sectionOf.set(row.id as string, id);
+    home.housekeeping_sections.push({ id, household_id: householdId, title, position: i, created_at: at(i) });
+  });
+  /** The new id of a section that comes along, else null (no section). */
+  const sectionIdOf = (from: unknown): string | null => (typeof from === 'string' ? (sectionOf.get(from) ?? null) : null);
   const taskOf = new Map<string, string>();
-  const titles = hasTaskList ? taskRows.map(({ row, title }) => ({ from: row.id as string, title })) : HOUSEKEEPING_STARTER_TASKS.map((title) => ({ from: '', title }));
-  titles.forEach(({ from, title }, i) => {
+  const titles = hasTaskList
+    ? taskRows.map(({ row, title }) => ({ from: row.id as string, title, section: sectionIdOf(row.section_id) }))
+    : HOUSEKEEPING_STARTER_TASKS.map((title) => ({ from: '', title, section: null }));
+  /** Positions run 0…n-1 within each section (and within no section), in the list's order. */
+  const next = new Map<string | null, number>();
+  titles.forEach(({ from, title, section }, i) => {
     const id = newId();
     if (from) taskOf.set(from, id);
-    home.housekeeping_tasks.push({ id, household_id: householdId, title, position: i, created_at: at(i) });
+    const position = next.get(section) ?? 0;
+    next.set(section, position + 1);
+    home.housekeeping_tasks.push({ id, household_id: householdId, title, section_id: section, position, created_at: at(i) });
   });
   if (noteRow) {
     home.housekeeping_notes.push({
@@ -415,6 +446,9 @@ function build(raw: string, opts: BuildServerHomeOptions): ServerHome | null {
       household_id: householdId,
       task_id: taskId,
       title: cut(r.title, TEXT_LIMITS.housekeepingTask),
+      // The section the row had: the new one when it comes along; its name either way.
+      section_id: sectionIdOf(r.section_id),
+      section_title: cut(r.section_title, TEXT_LIMITS.housekeepingSection),
       position: typeof r.position === 'number' && Number.isInteger(r.position) ? r.position : i,
       done,
       done_by: done ? personOfStored(r.done_by) : null,

@@ -90,6 +90,8 @@ function task(visitId: string, title: string, position: number, done: boolean): 
     household_id: H,
     task_id: null,
     title,
+    section_id: null,
+    section_title: '',
     position,
     done,
     done_by: null,
@@ -180,6 +182,7 @@ function home(): ServerDoc {
       task('v-8oct', 'Bathrooms', 1, true),
       task('v-8oct', 'Floors', 2, false),
     ],
+    housekeeping_sections: [],
   };
   const doc = newServerDoc(demo, new Date(T), { secret: 'c2VjcmV0' });
   doc.auth.devices = [

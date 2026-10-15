@@ -266,7 +266,13 @@ export function makeHome(over: Partial<HomeContextValue> = {}): HomeContextValue
     }),
     renameHousekeepingTask: vi.fn(async () => {}),
     deleteHousekeepingTask: vi.fn(async () => {}),
-    reorderHousekeepingTasks: vi.fn(async () => {}),
+    arrangeHousekeepingTasks: vi.fn(async () => {}),
+    createHousekeepingSection: vi.fn(async () => {
+      throw new Error('createHousekeepingSection not set up in this test');
+    }),
+    renameHousekeepingSection: vi.fn(async () => {}),
+    deleteHousekeepingSection: vi.fn(async () => {}),
+    reorderHousekeepingSections: vi.fn(async () => {}),
     setHousekeepingTaskDone: vi.fn(async () => {}),
     saveHousekeepingVisit: vi.fn(async () => {}),
     addHousekeepingVisit: vi.fn(async () => {}),

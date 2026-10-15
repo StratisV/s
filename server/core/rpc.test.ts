@@ -32,10 +32,17 @@ const REAL: { [M in RpcMethod]: unknown[][] } = {
   setReaction: [[ID, '👍', true], [ID, '👍', false]],
   setHousekeepingNote: [[H, 'Please do the windows'], [H, '']],
   undoClearHousekeepingNote: [[H]],
-  createHousekeepingTask: [[H, 'Windows']],
+  createHousekeepingTask: [[H, 'Windows'], [H, 'Windows', ID], [H, 'Windows', null]],
   renameHousekeepingTask: [[ID, 'Windows inside']],
   deleteHousekeepingTask: [[ID]],
-  reorderHousekeepingTasks: [[H, [ID]]],
+  arrangeHousekeepingTasks: [
+    [H, [{ sectionId: null, taskIds: [ID] }, { sectionId: H, taskIds: [] }]],
+    [H, []],
+  ],
+  createHousekeepingSection: [[H, 'Kitchen']],
+  renameHousekeepingSection: [[ID, 'Kitchen and dining']],
+  deleteHousekeepingSection: [[ID]],
+  reorderHousekeepingSections: [[H, [ID, H]], [H, []]],
   setHousekeepingTaskDone: [[H, '2026-10-09', { taskId: ID }, true], [H, '2026-10-02', { visitTaskId: ID }, false]],
   saveHousekeepingVisit: [[H, '2026-10-09', { comments: 'Lovely' }], [H, '2026-10-09', { price_pence: 4500 }], [H, '2026-10-09', { price_pence: null }]],
   addHousekeepingVisit: [[H, '2026-10-01']],
@@ -123,6 +130,22 @@ describe('the RPC allow-list', () => {
 
   it('takes no Google emails in server mode', () => {
     refused('addPerson', [H, { name: 'Ela', emoji: '🦊', email: 'ela@example.com' }], 'args[1].email');
+  });
+
+  it('checks the task list’s arrangement and sections by shape (DemoBackend checks the rest)', () => {
+    refused('arrangeHousekeepingTasks', [H, null], 'args[1]');
+    refused('arrangeHousekeepingTasks', [H, { sectionId: null, taskIds: [] }], 'args[1]');
+    refused('arrangeHousekeepingTasks', [H, Array.from({ length: 101 }, () => ({ sectionId: null, taskIds: [] }))], 'args[1]');
+    refused('arrangeHousekeepingTasks', [H, [{ sectionId: 3, taskIds: [] }]], 'args[1][0].sectionId');
+    refused('arrangeHousekeepingTasks', [H, [{ taskIds: [] }]], 'args[1][0].sectionId');
+    refused('arrangeHousekeepingTasks', [H, [{ sectionId: null }]], 'args[1][0].taskIds');
+    refused('arrangeHousekeepingTasks', [H, [{ sectionId: null, taskIds: [ID, 7] }]], 'args[1][0].taskIds[1]');
+    refused('arrangeHousekeepingTasks', [H, [{ sectionId: null, taskIds: Array.from({ length: 501 }, () => ID) }]], 'args[1][0].taskIds');
+    refused('arrangeHousekeepingTasks', [H, [{ sectionId: null, taskIds: [], title: 'x' }]], 'args[1][0].title');
+    refused('reorderHousekeepingSections', [H, Array.from({ length: 101 }, () => ID)], 'args[1]');
+    refused('createHousekeepingSection', [H, 40], 'args[1]');
+    refused('createHousekeepingTask', [H, 'Windows', 5], 'args[2]');
+    refused('createHousekeepingTask', [H, 'Windows', ID, ID], 'args');
   });
 
   it('takes exactly one tick target', () => {

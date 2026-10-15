@@ -166,6 +166,8 @@ export const TEXT_LIMITS = {
   chatMessage: 4000,
   /** A task on the housekeeping task list (and its copy on a visit). */
   housekeepingTask: 200,
+  /** A section of the housekeeping task list (and its name on a visit's rows). */
+  housekeepingSection: 40,
   /** The "Message for the housekeeper" (and its copy on a visit). */
   housekeepingNote: 4000,
   /** A visit's comments. */
@@ -221,6 +223,15 @@ export const HOUSEKEEPING_STARTER_TASKS = [
 
 /** Title a task gets from "Add Task" in the task list sheet (then focused to type over). */
 export const HOUSEKEEPING_NEW_TASK = 'New task';
+
+/** Name a section gets from "Add Section" in the task list sheet (then focused to type over). */
+export const HOUSEKEEPING_NEW_SECTION = 'New section';
+
+/**
+ * The most sections a household's task list may have. The database's trigger refuses more
+ * (check_violation housekeeping_sections_limit), DemoBackend too (invalid_input: sections).
+ */
+export const HOUSEKEEPING_SECTIONS_MAX = 30;
 
 /** Comments and the message save this long after the last keystroke (and on blur). */
 export const HOUSEKEEPING_SAVE_DELAY_MS = 1000;

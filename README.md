@@ -80,6 +80,13 @@ means under it ("Needs doing now", "Fine for now, keep an eye on it").
   comments and the price for the day in pounds, all saved as you go; or, for a past day, what
   was asked, what was done, the comments and the price. Any past day's visit can be corrected
   or deleted, and a missed one added.
+  The task list can be divided into sections (Kitchen, Bathrooms…): add, rename, reorder and
+  delete them in the task list (Add Section, and each section's "..." menu), add a task straight
+  into one, and move tasks between them by dragging, with the arrow keys, or with Move to
+  Section. On the checklist each section is a card of its own, with its room's drawing and a
+  small ring that fills as its tasks are ticked ("2 of 5") and turns into a green tick when
+  they all are. Deleting a section keeps its tasks: they move to the top with no section.
+  Earlier visits keep the sections they had.
 - **Stats**: who has done what.
 - **Share**: send an item (from its sheet, as the sheet shows it) or a whole area (Share Room
   in its "..." menu) to WhatsApp, Messages or Mail as a short summary with a link, which says

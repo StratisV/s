@@ -15,6 +15,7 @@ import {
   HOUSEKEEPING_DEMO_NOTE,
   HOUSEKEEPING_DEMO_VISITS,
   HOUSEKEEPING_PRICE_MAX_PENCE,
+  HOUSEKEEPING_SECTIONS_MAX,
   HOUSEKEEPING_STARTER_TASKS,
   MEMBER_COLORS,
   REACTION_EMOJIS,
@@ -39,7 +40,9 @@ import type {
   Household,
   HouseholdData,
   HousekeepingData,
+  HousekeepingSection,
   HousekeepingTask,
+  HousekeepingTaskGroup,
   HousekeepingTickTarget,
   HousekeepingVisit,
   HousekeepingVisitPatch,
@@ -245,12 +248,20 @@ export interface HousekeepingNoteRow {
   cleared_updated_at?: ISOTimestamp | null;
   cleared_updated_by?: string | null;
 }
+/** housekeeping_sections: the task list's sections. */
+export interface HousekeepingSectionRow extends HousekeepingSection {
+  created_at: ISOTimestamp;
+}
+/** housekeeping_tasks; section_id is null (or missing, in documents from before sections) for none. */
 export interface HousekeepingTaskRow extends HousekeepingTask {
   created_at: ISOTimestamp;
 }
 /** housekeeping_visits (unique household_id + visit_date); its tasks are separate rows. */
 export type HousekeepingVisitRow = Omit<HousekeepingVisit, 'tasks'>;
-/** housekeeping_visit_tasks (unique visit_id + task_id); household_id is copied from the visit. */
+/**
+ * housekeeping_visit_tasks (unique visit_id + task_id); household_id is copied from the visit.
+ * section_id and section_title are missing in documents from before sections (none: null, '').
+ */
 export type HousekeepingVisitTaskRow = HousekeepingVisitTask;
 
 /** A member as stored: claimed_at (members.claimed_at) is kept for release_claim only. */
@@ -289,6 +300,12 @@ export interface DemoDoc {
   housekeeping_tasks: HousekeepingTaskRow[];
   housekeeping_visits: HousekeepingVisitRow[];
   housekeeping_visit_tasks: HousekeepingVisitTaskRow[];
+  /**
+   * Sections of the task list came later again: read() fills this in (none) for documents
+   * stored before them, and reads their tasks as in no section and their visits' rows as
+   * having none. The server's live home is such a document until its first write.
+   */
+  housekeeping_sections: HousekeepingSectionRow[];
   /**
    * Set (by markDemoImported in lib/logic/importHome.ts, on the Supabase build) once this
    * document's home was brought over to the shared database. Kept as it is by read/write.
@@ -344,6 +361,7 @@ export function emptyDoc(): DemoDoc {
     housekeeping_tasks: [],
     housekeeping_visits: [],
     housekeeping_visit_tasks: [],
+    housekeeping_sections: [],
   };
 }
 
@@ -464,8 +482,15 @@ function taskTitle(value: string): string {
   return withinLimit(title, TEXT_LIMITS.housekeepingTask, 'title');
 }
 
-/** The task list in its order: position, then created_at, then id. */
-function byTaskOrder(a: HousekeepingTaskRow, b: HousekeepingTaskRow): number {
+/** A section name as the trigger stores it: trimmed, 1 to TEXT_LIMITS.housekeepingSection characters. */
+function sectionTitle(value: string): string {
+  const title = typeof value === 'string' ? value.trim() : '';
+  if (!title) throw invalidInput('title');
+  return withinLimit(title, TEXT_LIMITS.housekeepingSection, 'title');
+}
+
+/** Tasks (or sections) in their order: position, then created_at, then id. */
+function byTaskOrder(a: { position: number; created_at: ISOTimestamp; id: string }, b: { position: number; created_at: ISOTimestamp; id: string }): number {
   return a.position - b.position || compareText(a.created_at, b.created_at) || compareText(a.id, b.id);
 }
 
@@ -501,7 +526,14 @@ const toHousekeepingTask = (t: HousekeepingTaskRow): HousekeepingTask => ({
   id: t.id,
   household_id: t.household_id,
   title: t.title,
+  section_id: t.section_id,
   position: t.position,
+});
+const toSection = (s: HousekeepingSectionRow): HousekeepingSection => ({
+  id: s.id,
+  household_id: s.household_id,
+  title: s.title,
+  position: s.position,
 });
 const toVisitTask = (r: HousekeepingVisitTaskRow): HousekeepingVisitTask => ({
   id: r.id,
@@ -509,6 +541,8 @@ const toVisitTask = (r: HousekeepingVisitTaskRow): HousekeepingVisitTask => ({
   household_id: r.household_id,
   task_id: r.task_id,
   title: r.title,
+  section_id: r.section_id,
+  section_title: r.section_title,
   position: r.position,
   done: r.done,
   done_by: r.done_by,
@@ -586,10 +620,18 @@ export class DemoBackend implements Backend {
       if (!Array.isArray(doc.housekeeping_notes)) doc.housekeeping_notes = [];
       if (!Array.isArray(doc.housekeeping_visits)) doc.housekeeping_visits = [];
       if (!Array.isArray(doc.housekeeping_visit_tasks)) doc.housekeeping_visit_tasks = [];
+      // Sections came after housekeeping: a document from before them has none, its tasks are
+      // in no section and its visits' rows had none (the columns' defaults).
+      if (!Array.isArray(doc.housekeeping_sections)) doc.housekeeping_sections = [];
+      for (const row of doc.housekeeping_visit_tasks) {
+        if (row.section_id === undefined) row.section_id = null;
+        if (typeof row.section_title !== 'string') row.section_title = '';
+      }
       if (!Array.isArray(parsed.housekeeping_tasks)) {
         doc.housekeeping_tasks = [];
         this.backfillStarterTasks(doc);
       }
+      for (const task of doc.housekeeping_tasks) if (task.section_id === undefined) task.section_id = null;
       return doc;
     } catch {
       return emptyDoc();
@@ -1103,7 +1145,7 @@ export class DemoBackend implements Backend {
       };
       // Ticks one minute apart from the start, in list order; the last change a minute later.
       let ticks = 0;
-      for (const task of tasks) {
+      tasks.forEach((task, position) => {
         const done = seed.done.includes(task.title);
         const at = created + ticks * 60_000;
         if (done) ticks += 1;
@@ -1113,12 +1155,14 @@ export class DemoBackend implements Backend {
           household_id: household.id,
           task_id: task.id,
           title: task.title,
-          position: task.position,
+          section_id: null,
+          section_title: '',
+          position,
           done,
           done_by: done ? by : null,
           done_at: done ? new Date(at).toISOString() : null,
         });
-      }
+      });
       if (ticks > 0) visit.updated_at = new Date(created + ticks * 60_000).toISOString();
       doc.housekeeping_visits.push(visit);
     }
@@ -1759,14 +1803,27 @@ export class DemoBackend implements Backend {
   }
 
   // ── Housekeeping (docs/ARCHITECTURE.md "Housekeeping") ──
-  // Mirrors supabase/migrations/20261010000400_housekeeping.sql: the RPCs, the triggers that
-  // keep today's visit in step with the task list, and RLS (every member edits everything;
-  // anything in another household is not_found). A failed call stores nothing (run() only
-  // writes the document when fn succeeds), so a visit created by a failed write goes too.
+  // Mirrors supabase/migrations/20261010000400_housekeeping.sql and
+  // 20261015000100_housekeeping_sections.sql: the RPCs, the triggers that keep today's visit
+  // in step with the task list (relay()), and RLS (every member edits everything; anything in
+  // another household is not_found). A failed call stores nothing (run() only writes the
+  // document when fn succeeds), so a visit created by a failed write goes too.
 
-  /** The household's task list in order (position, created_at, id). */
+  /** The household's sections in order (position, created_at, id). */
+  private sectionsOf(doc: DemoDoc, householdId: string): HousekeepingSectionRow[] {
+    return doc.housekeeping_sections.filter((s) => s.household_id === householdId).sort(byTaskOrder);
+  }
+
+  /**
+   * The household's task list in its order: the tasks in no section first, then section by
+   * section in the sections' order, each by position, created_at, id.
+   */
   private tasksOf(doc: DemoDoc, householdId: string): HousekeepingTaskRow[] {
-    return doc.housekeeping_tasks.filter((t) => t.household_id === householdId).sort(byTaskOrder);
+    const rank = new Map(this.sectionsOf(doc, householdId).map((s, i) => [s.id, i + 1]));
+    const rankOf = (t: HousekeepingTaskRow) => (t.section_id === null ? 0 : (rank.get(t.section_id) ?? 0));
+    return doc.housekeeping_tasks
+      .filter((t) => t.household_id === householdId)
+      .sort((a, b) => rankOf(a) - rankOf(b) || byTaskOrder(a, b));
   }
 
   /** The household's visit on `date`, if any. */
@@ -1780,13 +1837,64 @@ export class DemoBackend implements Backend {
     return this.visitOnDay(doc, householdId, todayIn(household.timezone, this.now()));
   }
 
-  /** housekeeping_tasks insert (and its triggers): last on the list, and on today's visit. */
-  private insertTask(doc: DemoDoc, householdId: string, title: string, createdAt: ISOTimestamp): HousekeepingTaskRow {
-    const siblings = doc.housekeeping_tasks.filter((t) => t.household_id === householdId);
+  /**
+   * housekeeping_relay(): a visit's rows laid out as the list stands. Each row whose task is on
+   * the list takes the task's section (id and name) and place; a row whose task is gone keeps
+   * its section while that is on the list (else none), after the rows of that section's tasks,
+   * in the order it had. Positions run 0…n-1, section by section, no section first. Titles and
+   * ticks are left alone.
+   */
+  private relay(doc: DemoDoc, visit: HousekeepingVisitRow) {
+    const sections = this.sectionsOf(doc, visit.household_id);
+    const sectionRank = new Map(sections.map((s, i) => [s.id, i + 1]));
+    const sectionById = new Map(sections.map((s) => [s.id, s]));
+    const list = this.tasksOf(doc, visit.household_id);
+    const place = new Map(list.map((t, i) => [t.id, i]));
+    const taskById = new Map(list.map((t) => [t.id, t]));
+    const rows = doc.housekeeping_visit_tasks
+      .filter((r) => r.visit_id === visit.id)
+      .sort(byVisitTaskOrder)
+      .map((row) => {
+        const task = row.task_id !== null ? taskById.get(row.task_id) : undefined;
+        const section = sectionById.get((task ? task.section_id : row.section_id) ?? '');
+        return { row, place: task ? place.get(task.id)! : null, section };
+      });
+    rows.sort(
+      (a, b) =>
+        (a.section ? sectionRank.get(a.section.id)! : 0) - (b.section ? sectionRank.get(b.section.id)! : 0) ||
+        (a.place === null ? 1 : 0) - (b.place === null ? 1 : 0) ||
+        (a.place !== null && b.place !== null ? a.place - b.place : 0),
+    );
+    rows.forEach(({ row, section }, position) => {
+      row.position = position;
+      row.section_id = section?.id ?? null;
+      row.section_title = section?.title ?? '';
+    });
+  }
+
+  /** Today's visit (if any) laid out as the list now stands: it follows every change to the list. */
+  private relayToday(doc: DemoDoc, householdId: string) {
+    const today = this.todaysVisit(doc, householdId);
+    if (today) this.relay(doc, today);
+  }
+
+  /**
+   * housekeeping_tasks insert (and its triggers): last in its section (or among the tasks in
+   * no section), and on today's visit, in its place.
+   */
+  private insertTask(
+    doc: DemoDoc,
+    householdId: string,
+    title: string,
+    createdAt: ISOTimestamp,
+    sectionId: string | null = null,
+  ): HousekeepingTaskRow {
+    const siblings = doc.housekeeping_tasks.filter((t) => t.household_id === householdId && t.section_id === sectionId);
     const task: HousekeepingTaskRow = {
       id: uuid(),
       household_id: householdId,
       title,
+      section_id: sectionId,
       position: siblings.length ? Math.max(...siblings.map((t) => t.position)) + 1 : 0,
       created_at: createdAt,
     };
@@ -1799,11 +1907,14 @@ export class DemoBackend implements Backend {
         household_id: householdId,
         task_id: task.id,
         title: task.title,
-        position: task.position,
+        section_id: null,
+        section_title: '',
+        position: Number.MAX_SAFE_INTEGER,
         done: false,
         done_by: null,
         done_at: null,
       });
+      this.relay(doc, today);
     }
     return task;
   }
@@ -1815,6 +1926,13 @@ export class DemoBackend implements Backend {
     return task;
   }
 
+  /** The household's section with this id; not_found when it is gone or in another household. */
+  private sectionIn(doc: DemoDoc, householdId: string, id: unknown): HousekeepingSectionRow {
+    const section = doc.housekeeping_sections.find((s) => s.id === id && s.household_id === householdId);
+    if (!section) throw new BackendError('not_found', 'Section not found');
+    return section;
+  }
+
   /** Today's visit's row for a task (the triggers' target), if any. */
   private todaysRowFor(doc: DemoDoc, task: HousekeepingTaskRow): HousekeepingVisitTaskRow | undefined {
     const today = this.todaysVisit(doc, task.household_id);
@@ -1824,8 +1942,9 @@ export class DemoBackend implements Backend {
   /**
    * housekeeping_visit_for(): the household's visit on `date`, created with its copies if
    * there is none (recorded by `me`). A day after today (household time zone) is
-   * invalid_input: date. A new visit copies the task list (none done) and the message as it
-   * stood that day: its text if it was last changed on or before `date`, else ''.
+   * invalid_input: date. A new visit copies the task list in its order (none done, each row
+   * with its task's section and that section's name) and the message as it stood that day:
+   * its text if it was last changed on or before `date`, else ''.
    */
   private visitFor(doc: DemoDoc, householdId: string, date: ISODate, me: Member): HousekeepingVisitRow {
     const household = this.householdIn(doc, householdId);
@@ -1848,23 +1967,26 @@ export class DemoBackend implements Backend {
       updated_at: at,
     };
     doc.housekeeping_visits.push(visit);
-    for (const task of this.tasksOf(doc, householdId)) {
+    this.tasksOf(doc, householdId).forEach((task, position) => {
       doc.housekeeping_visit_tasks.push({
         id: uuid(),
         visit_id: visit.id,
         household_id: householdId,
         task_id: task.id,
         title: task.title,
-        position: task.position,
+        section_id: task.section_id,
+        section_title: '',
+        position,
         done: false,
         done_by: null,
         done_at: null,
       });
-    }
+    });
+    this.relay(doc, visit);
     return visit;
   }
 
-  /** HouseholdData.housekeeping: the message, the task list and every visit with its rows. */
+  /** HouseholdData.housekeeping: the message, the sections, the task list and every visit with its rows. */
   private housekeepingOf(doc: DemoDoc, householdId: string): HousekeepingData {
     const note = doc.housekeeping_notes.find((n) => n.household_id === householdId);
     const rows = new Map<string, HousekeepingVisitTaskRow[]>();
@@ -1894,6 +2016,7 @@ export class DemoBackend implements Backend {
       note: note
         ? { body: note.body, updated_at: note.updated_at, updated_by: note.updated_by }
         : emptyHousekeeping().note,
+      sections: this.sectionsOf(doc, householdId).map(toSection),
       tasks: this.tasksOf(doc, householdId).map(toHousekeepingTask),
       visits,
     };
@@ -1938,11 +2061,12 @@ export class DemoBackend implements Backend {
     });
   }
 
-  createHousekeepingTask(householdId: string, title: string): Promise<HousekeepingTask> {
+  createHousekeepingTask(householdId: string, title: string, sectionId: string | null = null): Promise<HousekeepingTask> {
     return this.mutate((doc) => {
       const clean = taskTitle(title);
       this.memberOf(doc, householdId);
-      return toHousekeepingTask(this.insertTask(doc, householdId, clean, this.stamp()));
+      const section = sectionId === null || sectionId === undefined ? null : this.sectionIn(doc, householdId, sectionId).id;
+      return toHousekeepingTask(this.insertTask(doc, householdId, clean, this.stamp(), section));
     });
   }
 
@@ -1968,19 +2092,114 @@ export class DemoBackend implements Backend {
       doc.housekeeping_visit_tasks = doc.housekeeping_visit_tasks.filter((r) => !(r === today && !r.done));
       for (const r of doc.housekeeping_visit_tasks) if (r.task_id === task.id) r.task_id = null;
       doc.housekeeping_tasks = doc.housekeeping_tasks.filter((t) => t.id !== task.id);
+      // A ticked row it leaves today goes after the rows of its section's tasks.
+      this.relayToday(doc, task.household_id);
     });
   }
 
-  reorderHousekeepingTasks(householdId: string, orderedIds: string[]): Promise<void> {
+  arrangeHousekeepingTasks(householdId: string, groups: HousekeepingTaskGroup[]): Promise<void> {
     return this.mutate((doc) => {
       this.memberOf(doc, householdId);
-      (orderedIds ?? []).forEach((id, index) => {
+      // arrange_housekeeping_tasks: the shape, then each section once and the household's,
+      // then each task once and the household's, and every task of the household named.
+      const shaped =
+        Array.isArray(groups) &&
+        groups.every(
+          (g) =>
+            typeof g === 'object' &&
+            g !== null &&
+            (g.sectionId === null || typeof g.sectionId === 'string') &&
+            Array.isArray(g.taskIds) &&
+            g.taskIds.every((id) => typeof id === 'string'),
+        );
+      if (!shaped) throw invalidInput('groups');
+      const sectionIds = groups.map((g) => g.sectionId);
+      if (new Set(sectionIds).size !== sectionIds.length) throw invalidInput('groups');
+      for (const id of sectionIds) if (id !== null) this.sectionIn(doc, householdId, id);
+      const taskIds = groups.flatMap((g) => g.taskIds);
+      if (new Set(taskIds).size !== taskIds.length) throw invalidInput('groups');
+      const tasks = taskIds.map((id) => {
         const task = doc.housekeeping_tasks.find((t) => t.id === id && t.household_id === householdId);
-        if (!task || task.position === index) return;
-        task.position = index;
-        const row = this.todaysRowFor(doc, task);
-        if (row) row.position = index;
+        if (!task) throw new BackendError('not_found', 'Task not found');
+        return task;
       });
+      if (doc.housekeeping_tasks.some((t) => t.household_id === householdId && !taskIds.includes(t.id))) {
+        throw invalidInput('groups');
+      }
+      let i = 0;
+      for (const group of groups) {
+        group.taskIds.forEach((_, position) => {
+          const task = tasks[i++];
+          task.section_id = group.sectionId;
+          task.position = position;
+        });
+      }
+      this.relayToday(doc, householdId);
+    });
+  }
+
+  createHousekeepingSection(householdId: string, title: string): Promise<HousekeepingSection> {
+    return this.mutate((doc) => {
+      const clean = sectionTitle(title);
+      this.memberOf(doc, householdId);
+      const siblings = doc.housekeeping_sections.filter((s) => s.household_id === householdId);
+      // housekeeping_sections_limit
+      if (siblings.length >= HOUSEKEEPING_SECTIONS_MAX) throw invalidInput(`sections (at most ${HOUSEKEEPING_SECTIONS_MAX})`);
+      const section: HousekeepingSectionRow = {
+        id: uuid(),
+        household_id: householdId,
+        title: clean,
+        position: siblings.length ? Math.max(...siblings.map((s) => s.position)) + 1 : 0,
+        created_at: this.stamp(),
+      };
+      doc.housekeeping_sections.push(section);
+      return toSection(section);
+    });
+  }
+
+  renameHousekeepingSection(id: string, title: string): Promise<void> {
+    return this.mutate((doc) => {
+      const clean = sectionTitle(title);
+      const me = this.meIn(doc);
+      const section = this.sectionIn(doc, me.household_id, id);
+      if (section.title === clean) return;
+      section.title = clean;
+      // Today's visit shows the new name; earlier visits keep the one they had.
+      this.relayToday(doc, section.household_id);
+    });
+  }
+
+  deleteHousekeepingSection(id: string): Promise<void> {
+    return this.mutate((doc) => {
+      const me = this.meIn(doc);
+      const section = this.sectionIn(doc, me.household_id, id);
+      // Its tasks move to the top, with no section, after the tasks already there, in order.
+      const householdTasks = doc.housekeeping_tasks.filter((t) => t.household_id === section.household_id);
+      let next = householdTasks.reduce((n, t) => (t.section_id === null ? Math.max(n, t.position + 1) : n), 0);
+      for (const task of this.tasksOf(doc, section.household_id)) {
+        if (task.section_id !== section.id) continue;
+        task.section_id = null;
+        task.position = next++;
+      }
+      // Every visit's rows forget it (on delete set null) but keep its name; today's follow below.
+      for (const r of doc.housekeeping_visit_tasks) if (r.section_id === section.id) r.section_id = null;
+      doc.housekeeping_sections = doc.housekeeping_sections.filter((s) => s.id !== section.id);
+      this.relayToday(doc, section.household_id);
+    });
+  }
+
+  reorderHousekeepingSections(householdId: string, orderedIds: string[]): Promise<void> {
+    return this.mutate((doc) => {
+      this.memberOf(doc, householdId);
+      const seen = new Set<string>();
+      (orderedIds ?? []).forEach((id, index) => {
+        // The first mention wins; ids from elsewhere are ignored.
+        if (seen.has(id)) return;
+        seen.add(id);
+        const section = doc.housekeeping_sections.find((s) => s.id === id && s.household_id === householdId);
+        if (section) section.position = index;
+      });
+      this.relayToday(doc, householdId);
     });
   }
 

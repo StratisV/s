@@ -1,12 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { HOUSEKEEPING_PRICE_MAX_PENCE } from '../constants';
-import type { HousekeepingData, HousekeepingTask, HousekeepingVisit, HousekeepingVisitTask, Member } from '../types';
+import type {
+  HousekeepingData,
+  HousekeepingSection,
+  HousekeepingTask,
+  HousekeepingTaskGroup,
+  HousekeepingVisit,
+  HousekeepingVisitTask,
+  Member,
+} from '../types';
 import {
   applyTick,
   applyVisitPatch,
+  arrangementOf,
   calendarDayLabel,
   canHaveVisit,
   checklistFor,
+  checklistSections,
   daySelectedAnnouncement,
   doneByline,
   doneCount,
@@ -15,6 +25,7 @@ import {
   hasNewNote,
   housekeepingSubtitle,
   isRecorded,
+  listOrder,
   longDay,
   matchesTarget,
   monthGrid,
@@ -26,17 +37,27 @@ import {
   noteByline,
   parsePrice,
   priceInputValue,
+  relayVisit,
+  sectionDoneWords,
+  sectionHeadingLabel,
+  sectionProgress,
   shiftMonth,
   snapshotNote,
+  taskListGroups,
   todayLine,
   visitByline,
   visitDays,
   visitOn,
   WEEKDAYS,
+  withSectionAdded,
+  withSectionDeleted,
+  withSectionRenamed,
+  withSectionsReordered,
   withTaskAdded,
   withTaskDeleted,
   withTaskRenamed,
-  withTasksReordered,
+  withListSettled,
+  withTasksArranged,
 } from './housekeeping';
 
 const TZ = 'Europe/London';
@@ -73,7 +94,7 @@ const TITLES = [
 ];
 
 function tasks(titles: string[] = TITLES): HousekeepingTask[] {
-  return titles.map((title, i) => ({ id: `t${i}`, household_id: 'h1', title, position: i }));
+  return titles.map((title, i) => ({ id: `t${i}`, household_id: 'h1', title, section_id: null, position: i }));
 }
 
 function row(visitId: string, i: number, over: Partial<HousekeepingVisitTask> = {}): HousekeepingVisitTask {
@@ -83,6 +104,8 @@ function row(visitId: string, i: number, over: Partial<HousekeepingVisitTask> = 
     household_id: 'h1',
     task_id: `t${i}`,
     title: TITLES[i] ?? `Task ${i}`,
+    section_id: null,
+    section_title: '',
     position: i,
     done: false,
     done_by: null,
@@ -127,15 +150,58 @@ const SEED_VISITS: HousekeepingVisit[] = [
 ];
 
 function data(over: Partial<HousekeepingData> = {}): HousekeepingData {
-  return { note: { body: '', updated_at: null, updated_by: null }, tasks: tasks(), visits: [], ...over };
+  return { note: { body: '', updated_at: null, updated_by: null }, sections: [], tasks: tasks(), visits: [], ...over };
 }
 
 /** Deep copy, to prove a function left its input alone. */
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
+const section = (id: string, title: string, position: number): HousekeepingSection => ({ id, household_id: 'h1', title, position });
+const KITCHEN = section('s-kitchen', 'Kitchen', 0);
+const BATH = section('s-bath', 'Bathrooms', 1);
+const GARDEN = section('s-garden', 'Garden', 2);
+
+/** One group of an arrangement (arrangeHousekeepingTasks). */
+const group = (sectionId: string | null, ...taskIds: string[]): HousekeepingTaskGroup => ({ sectionId, taskIds });
+
+/** The same items in another order (the backends' order is not what decides). */
+const shuffle = <T>(items: T[]): T[] => [...items.slice(3), ...items.slice(0, 3).reverse()];
+
+/**
+ * The starter list in sections: Change the bed sheets, Hoover and mop the floors, Dust the
+ * surfaces and Ironing in no section; Kitchen: Clean the kitchen, Empty the bins; Bathrooms:
+ * Clean the bathrooms. List order: t0, t1, t4, t6, t3, t5, t2. With `today` and `lastWeek`,
+ * visits that copied it (nothing ticked).
+ */
+function sectioned(opts: { sections?: HousekeepingSection[]; today?: boolean; lastWeek?: boolean } = {}): HousekeepingData {
+  const place: Record<string, [string | null, number]> = {
+    t0: [null, 0],
+    t1: [null, 1],
+    t4: [null, 2],
+    t6: [null, 3],
+    t3: [KITCHEN.id, 0],
+    t5: [KITCHEN.id, 1],
+    t2: [BATH.id, 0],
+  };
+  const list = tasks().map((t) => ({ ...t, section_id: place[t.id][0], position: place[t.id][1] }));
+  const base = data({ sections: opts.sections ?? [KITCHEN, BATH], tasks: listOrder(opts.sections ?? [KITCHEN, BATH], list) });
+  const copy = (date: string) =>
+    newVisit(base, {
+      id: `v-${date}`,
+      householdId: 'h1',
+      date,
+      memberId: 'ela',
+      at: `${date}T09:05:00Z`,
+      timeZone: TZ,
+      rowId: (id) => `v-${date}-${id}`,
+    });
+  const visits = [...(opts.today ? [copy(TODAY)] : []), ...(opts.lastWeek ? [copy('2026-10-01')] : [])];
+  return { ...base, visits };
+}
+
 describe('empty state', () => {
-  it('has no message, no tasks and no visits', () => {
-    expect(emptyHousekeeping()).toEqual({ note: { body: '', updated_at: null, updated_by: null }, tasks: [], visits: [] });
+  it('has no message, no sections, no tasks and no visits', () => {
+    expect(emptyHousekeeping()).toEqual({ sections: [], note: { body: '', updated_at: null, updated_by: null }, tasks: [], visits: [] });
     expect(emptyHousekeeping()).not.toBe(emptyHousekeeping());
   });
 });
@@ -642,7 +708,7 @@ describe('optimistic edits', () => {
     rowId: (id: string) => `pending:${id}`,
   };
 
-  it('newVisit: copies the list in position order with the given ids, the note by the rule', () => {
+  it('newVisit: copies the list in its order with the given ids, the note by the rule', () => {
     const list = tasks(['A', 'B', 'C']).map((t, i) => ({ ...t, position: [2, 0, 1][i] }));
     const hk = data({ tasks: list, note: written('2026-10-07T18:20:00Z') });
     const before = clone(hk);
@@ -659,9 +725,9 @@ describe('optimistic edits', () => {
       updated_by: 'me',
       updated_at: NOW.toISOString(),
       tasks: [
-        { id: 'pending:t1', visit_id: 'pending:2026-10-08', household_id: 'h1', task_id: 't1', title: 'B', position: 0, done: false, done_by: null, done_at: null },
-        { id: 'pending:t2', visit_id: 'pending:2026-10-08', household_id: 'h1', task_id: 't2', title: 'C', position: 1, done: false, done_by: null, done_at: null },
-        { id: 'pending:t0', visit_id: 'pending:2026-10-08', household_id: 'h1', task_id: 't0', title: 'A', position: 2, done: false, done_by: null, done_at: null },
+        { id: 'pending:t1', visit_id: 'pending:2026-10-08', household_id: 'h1', task_id: 't1', title: 'B', section_id: null, section_title: '', position: 0, done: false, done_by: null, done_at: null },
+        { id: 'pending:t2', visit_id: 'pending:2026-10-08', household_id: 'h1', task_id: 't2', title: 'C', section_id: null, section_title: '', position: 1, done: false, done_by: null, done_at: null },
+        { id: 'pending:t0', visit_id: 'pending:2026-10-08', household_id: 'h1', task_id: 't0', title: 'A', section_id: null, section_title: '', position: 2, done: false, done_by: null, done_at: null },
       ],
     });
     expect(hk).toEqual(before);
@@ -743,11 +809,19 @@ describe('optimistic edits', () => {
   describe('task list edits', () => {
     const lastWeek = '2026-10-01';
     const hk = () => data({ visits: [visit(TODAY), visit(lastWeek)] });
+    const task7 = (over: Partial<HousekeepingTask> = {}): HousekeepingTask => ({
+      id: 't7',
+      household_id: 'h1',
+      title: 'Windows',
+      section_id: null,
+      position: 7,
+      ...over,
+    });
 
     it('withTaskAdded: on the list and today’s visit, not last week’s', () => {
       const base = hk();
       const before = clone(base);
-      const task = { id: 't7', household_id: 'h1', title: 'Windows', position: 7 };
+      const task = task7();
       const next = withTaskAdded(base, task, TODAY);
       expect(next.tasks.at(-1)).toEqual(task);
       expect(next.visits[0].tasks.at(-1)).toEqual({
@@ -756,6 +830,8 @@ describe('optimistic edits', () => {
         household_id: 'h1',
         task_id: 't7',
         title: 'Windows',
+        section_id: null,
+        section_title: '',
         position: 7,
         done: false,
         done_by: null,
@@ -769,9 +845,26 @@ describe('optimistic edits', () => {
       expect(again.visits[0].tasks.filter((r) => r.task_id === 't7')).toHaveLength(1);
     });
 
+    it('withTaskAdded: into a section, in its place on the list and on today’s visit', () => {
+      const base = sectioned({ today: true });
+      const next = withTaskAdded(base, task7({ section_id: KITCHEN.id, position: 2 }), TODAY);
+      expect(next.tasks.map((t) => t.id)).toEqual(['t0', 't1', 't4', 't6', 't3', 't5', 't7', 't2']);
+      const today = visitOn(next.visits, TODAY)!;
+      expect(today.tasks.map((r) => [r.task_id, r.section_title, r.position])).toEqual([
+        ['t0', '', 0],
+        ['t1', '', 1],
+        ['t4', '', 2],
+        ['t6', '', 3],
+        ['t3', 'Kitchen', 4],
+        ['t5', 'Kitchen', 5],
+        ['t7', 'Kitchen', 6],
+        ['t2', 'Bathrooms', 7],
+      ]);
+    });
+
     it('withTaskAdded: no visit today', () => {
       const base = data({ visits: [visit(lastWeek)] });
-      const next = withTaskAdded(base, { id: 't7', household_id: 'h1', title: 'Windows', position: 7 }, TODAY);
+      const next = withTaskAdded(base, task7(), TODAY);
       expect(next.tasks).toHaveLength(8);
       expect(next.visits[0]).toBe(base.visits[0]);
     });
@@ -811,44 +904,325 @@ describe('optimistic edits', () => {
       expect(withTaskDeleted(base, 'nope', TODAY)).toBe(base);
     });
 
-    it('withTasksReordered: to the top; to the bottom; unknown ids; today follows, last week does not', () => {
-      const base = hk();
-      const before = clone(base);
-      const ids = base.tasks.map((t) => t.id);
-
-      const top = withTasksReordered(base, ['t6', ...ids.slice(0, 6)], TODAY);
-      expect(top.tasks.map((t) => [t.id, t.position])).toEqual([
-        ['t6', 0],
-        ['t0', 1],
-        ['t1', 2],
-        ['t2', 3],
-        ['t3', 4],
-        ['t4', 5],
-        ['t5', 6],
+    it('withTaskDeleted: today’s done row stays in its section, after the others; last week’s keeps its place', () => {
+      const base = sectioned({ today: true, lastWeek: true });
+      const today = visitOn(base.visits, TODAY)!;
+      today.tasks = today.tasks.map((r) => (r.task_id === 't3' ? { ...r, done: true, done_by: 'ela', done_at: NOW.toISOString() } : r));
+      const next = withTaskDeleted(base, 't3', TODAY);
+      expect(visitOn(next.visits, TODAY)!.tasks.map((r) => [r.title, r.section_title, r.position])).toEqual([
+        ['Change the bed sheets', '', 0],
+        ['Hoover and mop the floors', '', 1],
+        ['Dust the surfaces', '', 2],
+        ['Ironing', '', 3],
+        ['Empty the bins', 'Kitchen', 4],
+        ['Clean the kitchen', 'Kitchen', 5],
+        ['Clean the bathrooms', 'Bathrooms', 6],
       ]);
-      expect(top.visits[0].tasks.map((r) => r.title)).toEqual(['Ironing', ...TITLES.slice(0, 6)]);
-      expect(top.visits[0].tasks.map((r) => r.position)).toEqual([0, 1, 2, 3, 4, 5, 6]);
-      expect(top.visits[1]).toBe(base.visits[1]);
+      const before = visitOn(base.visits, lastWeek)!.tasks.find((r) => r.task_id === 't3')!;
+      expect(visitOn(next.visits, lastWeek)!.tasks.find((r) => r.title === 'Clean the kitchen')).toEqual({ ...before, task_id: null });
+    });
 
-      const bottom = withTasksReordered(base, [...ids.slice(1), 't0'], TODAY);
-      expect(bottom.tasks.map((t) => t.id)).toEqual([...ids.slice(1), 't0']);
-      expect(bottom.visits[0].tasks.at(-1)!.title).toBe('Change the bed sheets');
+    it('withTasksArranged: within a section, across sections, out to the top and into an empty section', () => {
+      const base = sectioned({ sections: [KITCHEN, BATH, GARDEN] });
+      const before = clone(base);
 
-      // An unknown id takes its place in the order (like the database) and changes nothing else.
-      const unknown = withTasksReordered(base, ['nope', 't1', 't0'], TODAY);
-      expect(unknown.tasks.find((t) => t.id === 't1')!.position).toBe(1);
-      expect(unknown.tasks.find((t) => t.id === 't0')!.position).toBe(2);
-      expect(unknown.tasks.find((t) => t.id === 't2')!.position).toBe(2);
+      const within = withTasksArranged(base, [group(null, 't0', 't1', 't4', 't6'), group(KITCHEN.id, 't5', 't3'), group(BATH.id, 't2')], TODAY);
+      expect(within.tasks.map((t) => t.id)).toEqual(['t0', 't1', 't4', 't6', 't5', 't3', 't2']);
+      expect(within.tasks.find((t) => t.id === 't5')).toMatchObject({ section_id: KITCHEN.id, position: 0 });
+
+      const across = withTasksArranged(base, [group(null, 't0', 't1', 't4', 't6'), group(KITCHEN.id, 't3'), group(BATH.id, 't5', 't2')], TODAY);
+      expect(across.tasks.find((t) => t.id === 't5')).toMatchObject({ section_id: BATH.id, position: 0 });
+      expect(across.tasks.find((t) => t.id === 't2')).toMatchObject({ section_id: BATH.id, position: 1 });
+
+      const out = withTasksArranged(base, [group(null, 't2', 't0', 't1', 't4', 't6'), group(KITCHEN.id, 't3', 't5'), group(BATH.id)], TODAY);
+      expect(out.tasks.map((t) => t.id)).toEqual(['t2', 't0', 't1', 't4', 't6', 't3', 't5']);
+      expect(out.tasks[0]).toMatchObject({ section_id: null, position: 0 });
+
+      const garden = withTasksArranged(base, [group(null, 't0', 't1', 't4'), group(KITCHEN.id, 't3', 't5'), group(BATH.id, 't2'), group(GARDEN.id, 't6')], TODAY);
+      expect(garden.tasks.at(-1)).toMatchObject({ id: 't6', section_id: GARDEN.id, position: 0 });
       expect(base).toEqual(before);
     });
 
-    it('withTasksReordered: a row whose task is gone keeps its place among today’s rows', () => {
-      const today = visit(TODAY);
-      today.tasks[3] = { ...today.tasks[3], task_id: null, done: true };
-      const base = data({ visits: [today] });
-      const next = withTasksReordered(base, ['t6', 't0', 't1', 't2', 't4', 't5'], TODAY);
-      const orphan = next.visits[0].tasks.find((r) => r.task_id === null)!;
-      expect(orphan.position).toBe(3);
+    it('withTasksArranged: today’s visit follows, a ticked row keeping its title; last week does not', () => {
+      const base = sectioned({ today: true, lastWeek: true });
+      const today = visitOn(base.visits, TODAY)!;
+      today.tasks = today.tasks.map((r) => (r.task_id === 't6' ? { ...r, title: 'Ironing (old)', done: true, done_by: 'ela', done_at: NOW.toISOString() } : r));
+      const next = withTasksArranged(base, [group(null, 't0', 't1', 't4'), group(KITCHEN.id, 't6', 't3', 't5'), group(BATH.id, 't2')], TODAY);
+      expect(visitOn(next.visits, TODAY)!.tasks.map((r) => [r.title, r.section_id, r.section_title, r.position, r.done])).toEqual([
+        ['Change the bed sheets', null, '', 0, false],
+        ['Hoover and mop the floors', null, '', 1, false],
+        ['Dust the surfaces', null, '', 2, false],
+        ['Ironing (old)', KITCHEN.id, 'Kitchen', 3, true],
+        ['Clean the kitchen', KITCHEN.id, 'Kitchen', 4, false],
+        ['Empty the bins', KITCHEN.id, 'Kitchen', 5, false],
+        ['Clean the bathrooms', BATH.id, 'Bathrooms', 6, false],
+      ]);
+      expect(visitOn(next.visits, lastWeek)).toBe(visitOn(base.visits, lastWeek));
     });
+
+    it('withTasksArranged: unknown tasks and sections are passed over; a task named twice keeps its first place', () => {
+      const base = sectioned();
+      const next = withTasksArranged(base, [group(null, 'nope', 't1', 't0', 't4', 't6'), group('gone', 't3'), group(BATH.id, 't2', 't0')], TODAY);
+      expect(next.tasks.find((t) => t.id === 't1')).toMatchObject({ section_id: null, position: 0 });
+      expect(next.tasks.find((t) => t.id === 't0')).toMatchObject({ section_id: null, position: 1 });
+      expect(next.tasks.find((t) => t.id === 't3')).toMatchObject({ section_id: KITCHEN.id, position: 0 });
+      expect(next.tasks.find((t) => t.id === 't2')).toMatchObject({ section_id: BATH.id, position: 0 });
+    });
+  });
+
+  describe('section edits', () => {
+    const lastWeek = '2026-10-01';
+
+    it('withSectionAdded: last; added twice is once', () => {
+      const base = sectioned();
+      const next = withSectionAdded(base, GARDEN);
+      expect(next.sections.map((s) => s.title)).toEqual(['Kitchen', 'Bathrooms', 'Garden']);
+      expect(withSectionAdded(next, GARDEN)).toBe(next);
+    });
+
+    it('withSectionRenamed: the list and today follow (ticked rows too); last week keeps the old name', () => {
+      const base = sectioned({ today: true, lastWeek: true });
+      const today = visitOn(base.visits, TODAY)!;
+      today.tasks = today.tasks.map((r) => (r.task_id === 't3' ? { ...r, done: true, done_by: 'ela', done_at: NOW.toISOString() } : r));
+      const before = clone(base);
+      const next = withSectionRenamed(base, KITCHEN.id, '  Kitchen and dining ', TODAY);
+      expect(next.sections[0].title).toBe('Kitchen and dining');
+      expect(visitOn(next.visits, TODAY)!.tasks.filter((r) => r.section_id === KITCHEN.id).map((r) => r.section_title)).toEqual([
+        'Kitchen and dining',
+        'Kitchen and dining',
+      ]);
+      expect(visitOn(next.visits, lastWeek)!.tasks.filter((r) => r.section_id === KITCHEN.id).map((r) => r.section_title)).toEqual([
+        'Kitchen',
+        'Kitchen',
+      ]);
+      expect(base).toEqual(before);
+      expect(withSectionRenamed(base, 'nope', 'X', TODAY)).toBe(base);
+    });
+
+    it('withSectionDeleted: its tasks move to the top in order, after those already there; today follows; last week keeps the name', () => {
+      const base = sectioned({ today: true, lastWeek: true });
+      const today = visitOn(base.visits, TODAY)!;
+      // A ticked row whose task was deleted earlier today, in Kitchen.
+      today.tasks = [...today.tasks, { ...row(today.id, 9, { task_id: null, title: 'Descale the kettle' }), section_id: KITCHEN.id, section_title: 'Kitchen', position: 9, done: true }];
+      const before = clone(base);
+      const next = withSectionDeleted(base, KITCHEN.id, TODAY);
+      expect(next.sections.map((s) => s.id)).toEqual([BATH.id]);
+      expect(next.tasks.map((t) => [t.id, t.section_id, t.position])).toEqual([
+        ['t0', null, 0],
+        ['t1', null, 1],
+        ['t4', null, 2],
+        ['t6', null, 3],
+        ['t3', null, 4],
+        ['t5', null, 5],
+        ['t2', BATH.id, 0],
+      ]);
+      expect(visitOn(next.visits, TODAY)!.tasks.map((r) => [r.title, r.section_id, r.section_title, r.position])).toEqual([
+        ['Change the bed sheets', null, '', 0],
+        ['Hoover and mop the floors', null, '', 1],
+        ['Dust the surfaces', null, '', 2],
+        ['Ironing', null, '', 3],
+        ['Clean the kitchen', null, '', 4],
+        ['Empty the bins', null, '', 5],
+        ['Descale the kettle', null, '', 6],
+        ['Clean the bathrooms', BATH.id, 'Bathrooms', 7],
+      ]);
+      // Last week keeps the section by its name, in its place.
+      const kept = visitOn(next.visits, lastWeek)!.tasks.filter((r) => r.section_title === 'Kitchen');
+      expect(kept.map((r) => [r.title, r.section_id, r.position])).toEqual([
+        ['Clean the kitchen', null, 4],
+        ['Empty the bins', null, 5],
+      ]);
+      expect(checklistSections(next, lastWeek).map((g) => g.title)).toEqual([null, 'Kitchen', 'Bathrooms']);
+      expect(base).toEqual(before);
+      expect(withSectionDeleted(base, 'nope', TODAY)).toBe(base);
+    });
+
+    it('withSectionsReordered: a section moved first brings its tasks; today follows, last week does not; unknown ids', () => {
+      const base = sectioned({ today: true, lastWeek: true });
+      const next = withSectionsReordered(base, [BATH.id, 'nope', KITCHEN.id], TODAY);
+      expect(next.sections.map((s) => [s.title, s.position])).toEqual([
+        ['Bathrooms', 0],
+        ['Kitchen', 2],
+      ]);
+      expect(next.tasks.map((t) => t.id)).toEqual(['t0', 't1', 't4', 't6', 't2', 't3', 't5']);
+      expect(visitOn(next.visits, TODAY)!.tasks.map((r) => r.task_id)).toEqual(['t0', 't1', 't4', 't6', 't2', 't3', 't5']);
+      expect(visitOn(next.visits, lastWeek)).toBe(visitOn(base.visits, lastWeek));
+    });
+  });
+});
+
+describe('sections and the list’s order', () => {
+  it('listOrder: by position with no sections; no section first, then section by section', () => {
+    const plain = tasks().reverse().map((t, i) => ({ ...t, position: 6 - i }));
+    expect(listOrder([], plain).map((t) => t.id)).toEqual(['t0', 't1', 't2', 't3', 't4', 't5', 't6']);
+    const base = sectioned();
+    const before = clone(base);
+    expect(listOrder(base.sections, shuffle(base.tasks)).map((t) => t.id)).toEqual(['t0', 't1', 't4', 't6', 't3', 't5', 't2']);
+    // Bathrooms first: its task comes before Kitchen's.
+    const moved = [{ ...BATH, position: 0 }, { ...KITCHEN, position: 1 }];
+    expect(listOrder(moved, base.tasks).map((t) => t.id)).toEqual(['t0', 't1', 't4', 't6', 't2', 't3', 't5']);
+    // A task whose section is gone sorts with no section; equal positions keep their order.
+    const odd = [...base.tasks, { ...tasks(['Gone'])[0], id: 'tg', section_id: 'gone', position: 1 }];
+    expect(listOrder(base.sections, odd).map((t) => t.id)).toEqual(['t0', 't1', 'tg', 't4', 't6', 't3', 't5', 't2']);
+    expect(base).toEqual(before);
+  });
+
+  it('taskListGroups and arrangementOf: no section first (always), then every section in order, empty ones too', () => {
+    expect(taskListGroups(data()).map((g) => [g.section, g.tasks.length])).toEqual([[null, 7]]);
+    const base = sectioned({ sections: [KITCHEN, BATH, GARDEN] });
+    expect(taskListGroups(base).map((g) => [g.section?.title ?? null, g.tasks.map((t) => t.id)])).toEqual([
+      [null, ['t0', 't1', 't4', 't6']],
+      ['Kitchen', ['t3', 't5']],
+      ['Bathrooms', ['t2']],
+      ['Garden', []],
+    ]);
+    expect(arrangementOf(base)).toEqual([
+      { sectionId: null, taskIds: ['t0', 't1', 't4', 't6'] },
+      { sectionId: KITCHEN.id, taskIds: ['t3', 't5'] },
+      { sectionId: BATH.id, taskIds: ['t2'] },
+      { sectionId: GARDEN.id, taskIds: [] },
+    ]);
+    // A task whose section is gone is in the first group.
+    const odd = { ...base, tasks: [...base.tasks, { ...tasks(['Gone'])[0], id: 'tg', section_id: 'gone', position: 9 }] };
+    expect(taskListGroups(odd)[0].tasks.map((t) => t.id)).toEqual(['t0', 't1', 't4', 't6', 'tg']);
+    expect(arrangementOf(data({ tasks: [] }))).toEqual([{ sectionId: null, taskIds: [] }]);
+  });
+
+  it('relayVisit: rows follow their tasks’ sections, names and order; nothing to change gives the same visit', () => {
+    const base = sectioned({ today: true });
+    const today = visitOn(base.visits, TODAY)!;
+    expect(relayVisit(today, base.sections, base.tasks)).toBe(today);
+    const before = clone(today);
+    const renamed = base.sections.map((s) => (s.id === KITCHEN.id ? { ...s, title: 'Cooking' } : s));
+    const moved = base.tasks.map((t) => (t.id === 't0' ? { ...t, section_id: BATH.id, position: 1 } : t));
+    const next = relayVisit(today, renamed, moved);
+    expect(next.tasks.map((r) => [r.task_id, r.section_title, r.position])).toEqual([
+      ['t1', '', 0],
+      ['t4', '', 1],
+      ['t6', '', 2],
+      ['t3', 'Cooking', 3],
+      ['t5', 'Cooking', 4],
+      ['t2', 'Bathrooms', 5],
+      ['t0', 'Bathrooms', 6],
+    ]);
+    expect(today).toEqual(before);
+  });
+
+  it('relayVisit: a row whose task is gone stays in its section, after the others, and has none once its section is gone', () => {
+    const base = sectioned({ today: true });
+    const today = visitOn(base.visits, TODAY)!;
+    const orphan = { ...today.tasks[4], task_id: null, done: true }; // was Clean the kitchen
+    const visitWithOrphan = { ...today, tasks: today.tasks.map((r, i) => (i === 4 ? orphan : r)) };
+    const tasksLeft = base.tasks.filter((t) => t.id !== 't3');
+    expect(relayVisit(visitWithOrphan, base.sections, tasksLeft).tasks.map((r) => [r.title, r.section_title])).toEqual([
+      ['Change the bed sheets', ''],
+      ['Hoover and mop the floors', ''],
+      ['Dust the surfaces', ''],
+      ['Ironing', ''],
+      ['Empty the bins', 'Kitchen'],
+      ['Clean the kitchen', 'Kitchen'],
+      ['Clean the bathrooms', 'Bathrooms'],
+    ]);
+    const noKitchen = base.sections.filter((s) => s.id !== KITCHEN.id);
+    const out = relayVisit(visitWithOrphan, noKitchen, tasksLeft.map((t) => (t.section_id === KITCHEN.id ? { ...t, section_id: null, position: 4 } : t)));
+    expect(out.tasks.find((r) => r.task_id === null)).toMatchObject({ section_id: null, section_title: '', position: 5 });
+  });
+
+  it('checklistSections: no sections is one untitled group', () => {
+    const groups = checklistSections(data(), TODAY);
+    expect(groups.map((g) => [g.key, g.title, g.rows.length, g.done])).toEqual([['none', null, 7, 0]]);
+    expect(checklistSections(emptyHousekeeping(), TODAY)).toEqual([]);
+  });
+
+  it('checklistSections: a day without a visit groups the list by its sections and leaves an empty one out', () => {
+    const groups = checklistSections(sectioned({ sections: [KITCHEN, BATH, GARDEN] }), TODAY);
+    expect(groups.map((g) => [g.key, g.title, g.rows.map((r) => r.key)])).toEqual([
+      ['none', null, ['task:t0', 'task:t1', 'task:t4', 'task:t6']],
+      [`section:${KITCHEN.id}`, 'Kitchen', ['task:t3', 'task:t5']],
+      [`section:${BATH.id}`, 'Bathrooms', ['task:t2']],
+    ]);
+  });
+
+  it('checklistSections: a visit keeps the sections and names it had; done counts; no section first', () => {
+    const base = sectioned({ lastWeek: true });
+    const last = visitOn(base.visits, '2026-10-01')!;
+    last.tasks = last.tasks.map((r) => (r.task_id === 't3' || r.task_id === 't5' || r.task_id === 't1' ? { ...r, done: true } : r));
+    // Since then: Kitchen renamed and moved after Bathrooms.
+    const now = withSectionsReordered(withSectionRenamed(base, KITCHEN.id, 'Cooking', TODAY), [BATH.id, KITCHEN.id], TODAY);
+    const groups = checklistSections(now, '2026-10-01');
+    expect(groups.map((g) => [g.title, g.done, g.rows.length])).toEqual([
+      [null, 1, 4],
+      ['Kitchen', 2, 2],
+      ['Bathrooms', 0, 1],
+    ]);
+    expect(checklistFor(now, '2026-10-01').map((r) => r.title)).toEqual([
+      'Change the bed sheets',
+      'Hoover and mop the floors',
+      'Dust the surfaces',
+      'Ironing',
+      'Clean the kitchen',
+      'Empty the bins',
+      'Clean the bathrooms',
+    ]);
+    // Rows in no section come first even if a visit stored them later.
+    const odd = { ...last, tasks: last.tasks.map((r) => (r.task_id === 't0' ? { ...r, position: 99 } : r)) };
+    expect(checklistSections({ ...now, visits: [odd] }, '2026-10-01')[0].rows.at(-1)!.title).toBe('Change the bed sheets');
+  });
+
+  it('sectionProgress and sectionHeadingLabel', () => {
+    expect(sectionProgress(2, 5)).toBe('2 of 5');
+    expect(sectionProgress(0, 3)).toBe('0 of 3');
+    expect(sectionHeadingLabel('Kitchen', 2, 5)).toBe('Kitchen, 2 of 5 done');
+    expect(sectionHeadingLabel('Kitchen', 0, 5)).toBe('Kitchen, 0 of 5 done');
+    expect(sectionHeadingLabel('Kitchen', 5, 5)).toBe('Kitchen, all 5 done');
+    expect(sectionHeadingLabel('Bins', 1, 1)).toBe('Bins, all 1 done');
+    expect(sectionDoneWords(2, 5)).toBe('2 of 5 done');
+    expect(sectionDoneWords(5, 5)).toBe('all 5 done');
+    expect(sectionDoneWords(0, 0)).toBe('0 of 0 done');
+  });
+
+  it('newVisit: copies the list section by section, with each section’s name', () => {
+    const v = newVisit(sectioned(), {
+      id: 'v1',
+      householdId: 'h1',
+      date: TODAY,
+      memberId: 'me',
+      at: NOW.toISOString(),
+      timeZone: TZ,
+      rowId: (id) => `pending:${id}`,
+    });
+    expect(v.tasks.map((r) => [r.task_id, r.section_id, r.section_title, r.position])).toEqual([
+      ['t0', null, '', 0],
+      ['t1', null, '', 1],
+      ['t4', null, '', 2],
+      ['t6', null, '', 3],
+      ['t3', KITCHEN.id, 'Kitchen', 4],
+      ['t5', KITCHEN.id, 'Kitchen', 5],
+      ['t2', BATH.id, 'Bathrooms', 6],
+    ]);
+  });
+
+  it('withListSettled: sorts the sections and the list, and lays out today only', () => {
+    const before = sectioned({ today: true, lastWeek: true });
+    // Kitchen moved after Bathrooms by hand, as a revert puts a position back.
+    const moved = { ...before, sections: [{ ...KITCHEN, position: 5 }, BATH], tasks: shuffle(before.tasks) };
+    const input = clone(moved);
+    const next = withListSettled(moved, TODAY);
+    expect(moved).toEqual(input);
+    expect(next.sections.map((s) => s.id)).toEqual([BATH.id, KITCHEN.id]);
+    expect(next.tasks.map((t) => t.id)).toEqual(['t0', 't1', 't4', 't6', 't2', 't3', 't5']);
+    expect(visitOn(next.visits, TODAY)!.tasks.map((r) => [r.task_id, r.position])).toEqual([
+      ['t0', 0],
+      ['t1', 1],
+      ['t4', 2],
+      ['t6', 3],
+      ['t2', 4],
+      ['t3', 5],
+      ['t5', 6],
+    ]);
+    expect(visitOn(next.visits, '2026-10-01')).toBe(visitOn(moved.visits, '2026-10-01'));
+    // Nothing to change: today's visit is the same object.
+    const settled = withListSettled(before, TODAY);
+    expect(visitOn(settled.visits, TODAY)).toBe(visitOn(before.visits, TODAY));
   });
 });

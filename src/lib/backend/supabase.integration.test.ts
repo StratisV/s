@@ -207,28 +207,33 @@ describe('SupabaseBackend offline: requests', () => {
     expect(q('completions').get('select')).toBe(
       'id,household_id,item_id,item_title,credited_to,completed_by,completed_at',
     );
-    // Housekeeping: never written, no tasks, no visits.
-    expect(data.housekeeping).toEqual({ note: { body: '', updated_at: null, updated_by: null }, tasks: [], visits: [] });
+    // Housekeeping: never written, no sections, no tasks, no visits.
+    expect(data.housekeeping).toEqual({ note: { body: '', updated_at: null, updated_by: null }, sections: [], tasks: [], visits: [] });
     expect(q('housekeeping_notes').get('household_id')).toBe('eq.h1');
     expect(q('housekeeping_notes').get('select')).toBe('body,updated_at,updated_by');
+    expect(q('housekeeping_sections').get('household_id')).toBe('eq.h1');
+    expect(q('housekeeping_sections').get('select')).toBe('id,household_id,title,position');
+    expect(q('housekeeping_sections').get('order')).toBe('position.asc,created_at.asc,id.asc');
     expect(q('housekeeping_tasks').get('household_id')).toBe('eq.h1');
-    expect(q('housekeeping_tasks').get('select')).toBe('id,household_id,title,position');
+    expect(q('housekeeping_tasks').get('select')).toBe('id,household_id,title,section_id,position');
     expect(q('housekeeping_tasks').get('order')).toBe('position.asc,created_at.asc,id.asc');
     expect(q('housekeeping_visits').get('household_id')).toBe('eq.h1');
     expect(q('housekeeping_visits').get('order')).toBe('visit_date.desc,id.asc');
     expect(q('housekeeping_visits').get('select')).toBe(
       'id,household_id,visit_date,note,comments,price_pence,created_by,created_at,updated_by,updated_at,' +
-        'tasks:housekeeping_visit_tasks(id,visit_id,household_id,task_id,title,position,done,done_by,done_at)',
+        'tasks:housekeeping_visit_tasks(id,visit_id,household_id,task_id,title,section_id,section_title,position,done,done_by,done_at)',
     );
   });
 
-  it('load() reads housekeeping: the message, the task list, and visits newest first with their tasks in order', async () => {
+  it('load() reads housekeeping: the message, the sections, the task list in its order, and visits newest first with their tasks in order', async () => {
     const vt = (id: string, position: number, title: string, extra: object = {}) => ({
       id,
       visit_id: 'v1',
       household_id: 'h1',
       task_id: `t-${id}`,
       title,
+      section_id: null,
+      section_title: '',
       position,
       done: false,
       done_by: null,
@@ -255,8 +260,17 @@ describe('SupabaseBackend offline: requests', () => {
           return { body: [{ id: 'h1', weekly_email_time: '08:00:00' }] };
         case '/rest/v1/housekeeping_notes':
           return { body: [{ body: 'Spare room first.', updated_at: '2026-10-07T18:20:00+00:00', updated_by: 'm2' }] };
+        case '/rest/v1/housekeeping_sections':
+          return { body: [{ id: 's1', household_id: 'h1', title: 'Kitchen', position: 0, created_at: 'x' }] };
         case '/rest/v1/housekeeping_tasks':
-          return { body: [{ id: 't1', household_id: 'h1', title: 'Hoover', position: 0, created_at: 'x' }] };
+          // As the database orders them (position first): the section's task comes after the
+          // one with no section once the list is in its order.
+          return {
+            body: [
+              { id: 't2', household_id: 'h1', title: 'Hob', section_id: 's1', position: 0, created_at: 'x' },
+              { id: 't1', household_id: 'h1', title: 'Hoover', section_id: null, position: 0, created_at: 'y' },
+            ],
+          };
         case '/rest/v1/housekeeping_visits':
           return { body: [visit, { ...visit, id: 'v0', visit_date: '2026-09-24', price_pence: null, tasks: null }] };
         default:
@@ -265,7 +279,11 @@ describe('SupabaseBackend offline: requests', () => {
     });
     const { housekeeping } = await backend.load('h1');
     expect(housekeeping.note).toEqual({ body: 'Spare room first.', updated_at: '2026-10-07T18:20:00+00:00', updated_by: 'm2' });
-    expect(housekeeping.tasks).toEqual([{ id: 't1', household_id: 'h1', title: 'Hoover', position: 0 }]);
+    expect(housekeeping.sections).toEqual([{ id: 's1', household_id: 'h1', title: 'Kitchen', position: 0 }]);
+    expect(housekeeping.tasks).toEqual([
+      { id: 't1', household_id: 'h1', title: 'Hoover', section_id: null, position: 0 },
+      { id: 't2', household_id: 'h1', title: 'Hob', section_id: 's1', position: 0 },
+    ]);
     expect(housekeeping.visits.map((v) => [v.id, v.visit_date, v.price_pence])).toEqual([
       ['v1', '2026-10-01', 6000],
       ['v0', '2026-09-24', null],
@@ -278,6 +296,8 @@ describe('SupabaseBackend offline: requests', () => {
       household_id: 'h1',
       task_id: 't-b',
       title: 'Alpha',
+      section_id: null,
+      section_title: '',
       position: 1,
       done: true,
       done_by: 'm1',
@@ -864,6 +884,7 @@ describe('SupabaseBackend offline: auth and realtime wiring', () => {
       ['postgres_changes', 'items', 'household_id=eq.h1', '*', 'public'],
       ['postgres_changes', 'completions', 'household_id=eq.h1', '*', 'public'],
       ['postgres_changes', 'housekeeping_notes', 'household_id=eq.h1', '*', 'public'],
+      ['postgres_changes', 'housekeeping_sections', 'household_id=eq.h1', '*', 'public'],
       ['postgres_changes', 'housekeeping_tasks', 'household_id=eq.h1', '*', 'public'],
       ['postgres_changes', 'housekeeping_visits', 'household_id=eq.h1', '*', 'public'],
       ['postgres_changes', 'housekeeping_visit_tasks', 'household_id=eq.h1', '*', 'public'],
@@ -871,9 +892,9 @@ describe('SupabaseBackend offline: auth and realtime wiring', () => {
 
     rt.handlers[3].cb();
     expect(onChange).toHaveBeenCalledTimes(1);
-    // Housekeeping: a tick, the message, the list, a visit all reload too.
+    // Housekeeping: a tick, the message, a section, the list, a visit all reload too.
     for (const h of rt.handlers.slice(5)) h.cb();
-    expect(onChange).toHaveBeenCalledTimes(5);
+    expect(onChange).toHaveBeenCalledTimes(6);
     onChange.mockClear();
     rt.handlers[3].cb();
     expect(onChange).toHaveBeenCalledTimes(1);
@@ -1371,11 +1392,32 @@ describe('SupabaseBackend offline: housekeeping requests', () => {
   it('calls the RPCs with the documented parameter names', async () => {
     const { backend, calls } = fakeServer((call) => {
       const fn = call.url.pathname.replace('/rest/v1/rpc/', '');
-      if (fn === 'set_housekeeping_note' || fn === 'reorder_housekeeping_tasks') return { status: 204 };
+      if (
+        [
+          'set_housekeeping_note',
+          'reorder_housekeeping_sections',
+          'arrange_housekeeping_tasks',
+          'rename_housekeeping_section',
+          'delete_housekeeping_section',
+        ].includes(fn)
+      ) {
+        return { status: 204 };
+      }
+      if (fn === 'create_housekeeping_section') {
+        return { body: { id: uid(7), household_id: H, title: 'Kitchen', position: 0, created_at: '2026-10-08T09:00:00Z' } };
+      }
       return { body: uid(99) };
     });
     await backend.setHousekeepingNote(H, '  Spare room first. ');
-    await backend.reorderHousekeepingTasks(H, [uid(2), 'not-a-uuid', uid(1)]);
+    await backend.reorderHousekeepingSections(H, [uid(2), 'not-a-uuid', uid(1)]);
+    const groups = [
+      { sectionId: null, taskIds: [uid(3)] },
+      { sectionId: uid(7), taskIds: [uid(4), uid(5)] },
+    ];
+    await backend.arrangeHousekeepingTasks(H, groups);
+    expect(await backend.createHousekeepingSection(H, '  Kitchen ')).toEqual({ id: uid(7), household_id: H, title: 'Kitchen', position: 0 });
+    await backend.renameHousekeepingSection(uid(7), ' Kitchen and dining ');
+    await backend.deleteHousekeepingSection(uid(7));
     expect(await backend.setHousekeepingTaskDone(H, '2026-10-08', { taskId: uid(3) }, true)).toBe(uid(99));
     expect(await backend.setHousekeepingTaskDone(H, '2026-10-01', { visitTaskId: uid(4) }, false)).toBe(uid(99));
     expect(await backend.saveHousekeepingVisit(H, '2026-10-08', { comments: ' Out of bin bags. ' })).toBe(uid(99));
@@ -1387,10 +1429,17 @@ describe('SupabaseBackend offline: housekeeping requests', () => {
     expect(rpcCalls(calls, 'set_housekeeping_note').map((c) => c.body)).toEqual([
       { p_household_id: H, p_body: '  Spare room first. ' },
     ]);
-    // An id that is not a uuid keeps its place in the order but names no task.
-    expect(rpcCalls(calls, 'reorder_housekeeping_tasks').map((c) => c.body)).toEqual([
-      { p_household_id: H, p_task_ids: [uid(2), '00000000-0000-0000-0000-000000000000', uid(1)] },
+    // An id that is not a uuid keeps its place in the order but names no section.
+    expect(rpcCalls(calls, 'reorder_housekeeping_sections').map((c) => c.body)).toEqual([
+      { p_household_id: H, p_section_ids: [uid(2), '00000000-0000-0000-0000-000000000000', uid(1)] },
     ]);
+    expect(rpcCalls(calls, 'arrange_housekeeping_tasks').map((c) => c.body)).toEqual([{ p_household_id: H, p_groups: groups }]);
+    // Names are checked for blank here, trimmed by the database.
+    expect(rpcCalls(calls, 'create_housekeeping_section').map((c) => c.body)).toEqual([{ p_household_id: H, p_title: 'Kitchen' }]);
+    expect(rpcCalls(calls, 'rename_housekeeping_section').map((c) => c.body)).toEqual([
+      { p_section_id: uid(7), p_title: 'Kitchen and dining' },
+    ]);
+    expect(rpcCalls(calls, 'delete_housekeeping_section').map((c) => c.body)).toEqual([{ p_section_id: uid(7) }]);
     expect(rpcCalls(calls, 'tick_housekeeping_task').map((c) => c.body)).toEqual([
       { p_household_id: H, p_visit_date: '2026-10-08', p_task_id: uid(3), p_visit_task_id: null, p_done: true },
       { p_household_id: H, p_visit_date: '2026-10-01', p_task_id: null, p_visit_task_id: uid(4), p_done: false },
@@ -1408,20 +1457,38 @@ describe('SupabaseBackend offline: housekeeping requests', () => {
     expect(calls.every((c) => c.method === 'POST')).toBe(true);
   });
 
-  it('writes the task list directly: add (household and title only), rename, delete', async () => {
-    let reply: Reply = { status: 201, body: [{ id: uid(5), household_id: H, title: 'Windows', position: 7 }] };
+  it('writes the task list directly: add (household, title and section only), rename, delete', async () => {
+    let reply: Reply = { status: 201, body: [{ id: uid(5), household_id: H, title: 'Windows', section_id: null, position: 7 }] };
     const { backend, rest } = fakeServer(() => reply);
-    expect(await backend.createHousekeepingTask(H, '  Windows \n')).toEqual({ id: uid(5), household_id: H, title: 'Windows', position: 7 });
+    expect(await backend.createHousekeepingTask(H, '  Windows \n')).toEqual({
+      id: uid(5),
+      household_id: H,
+      title: 'Windows',
+      section_id: null,
+      position: 7,
+    });
     const post = rest('housekeeping_tasks')[0];
     expect(post.method).toBe('POST');
     expect(post.body).toEqual({ household_id: H, title: 'Windows' });
-    expect(post.url.searchParams.get('select')).toBe('id,household_id,title,position');
+    expect(post.url.searchParams.get('select')).toBe('id,household_id,title,section_id,position');
+    // Straight into a section: the trigger puts it last there.
+    reply = { status: 201, body: [{ id: uid(8), household_id: H, title: 'Oven', section_id: uid(7), position: 2 }] };
+    expect(await backend.createHousekeepingTask(H, 'Oven', uid(7))).toEqual({
+      id: uid(8),
+      household_id: H,
+      title: 'Oven',
+      section_id: uid(7),
+      position: 2,
+    });
+    expect(rest('housekeeping_tasks')[1].body).toEqual({ household_id: H, title: 'Oven', section_id: uid(7) });
+    await rejectsWith(backend.createHousekeepingTask(H, 'Oven', 'not-a-uuid'), 'not_found');
+    expect(rest('housekeeping_tasks')).toHaveLength(2);
 
     reply = { body: [{ id: uid(5) }] };
     await backend.renameHousekeepingTask(uid(5), ' Inside windows ');
     await backend.deleteHousekeepingTask(uid(5));
     await backend.deleteHousekeepingVisit(uid(6));
-    const [, patch, del] = rest('housekeeping_tasks');
+    const [, , patch, del] = rest('housekeeping_tasks');
     expect([patch.method, patch.url.searchParams.get('id'), patch.url.searchParams.get('select')]).toEqual([
       'PATCH',
       `eq.${uid(5)}`,
@@ -1480,7 +1547,14 @@ describe('SupabaseBackend offline: housekeeping requests', () => {
     await rejectsWith(backend.createHousekeepingTask('h1', 'x'), 'not_found');
     await rejectsWith(backend.renameHousekeepingTask('t1', 'x'), 'not_found');
     await rejectsWith(backend.deleteHousekeepingTask('t1'), 'not_found');
-    await rejectsWith(backend.reorderHousekeepingTasks('h1', [uid(1)]), 'not_found');
+    await rejectsWith(backend.createHousekeepingTask(H, 'x', 's1'), 'not_found');
+    await rejectsWith(backend.arrangeHousekeepingTasks('h1', []), 'not_found');
+    await rejectsWith(backend.createHousekeepingSection('h1', 'x'), 'not_found');
+    await rejectsWith(backend.renameHousekeepingSection('s1', 'x'), 'not_found');
+    await rejectsWith(backend.deleteHousekeepingSection('s1'), 'not_found');
+    await rejectsWith(backend.reorderHousekeepingSections('h1', [uid(1)]), 'not_found');
+    await rejectsWith(backend.createHousekeepingSection(H, '   '), 'unknown', /^invalid_input: title$/);
+    await rejectsWith(backend.renameHousekeepingSection(uid(7), ''), 'unknown', /^invalid_input: title$/);
     await rejectsWith(backend.setHousekeepingTaskDone('h1', '2026-10-08', { taskId: uid(1) }, true), 'not_found');
     await rejectsWith(backend.setHousekeepingTaskDone(H, '2026-10-08', { taskId: 'pending:t1' }, true), 'not_found');
     await rejectsWith(backend.setHousekeepingTaskDone(H, '2026-10-08', { visitTaskId: 'pending:t1' }, true), 'not_found');
@@ -1502,7 +1576,14 @@ describe('SupabaseBackend offline: housekeeping requests', () => {
     await rejectsWith(backend.addHousekeepingVisit(H, '2027-01-01'), 'unknown', /^invalid_input$/);
     await rejectsWith(backend.saveHousekeepingVisit(H, '2027-01-01', { comments: 'x' }), 'unknown', /^invalid_input$/);
     reply = pgError('not_signed_in');
-    await rejectsWith(backend.reorderHousekeepingTasks(H, []), 'not_signed_in');
+    await rejectsWith(backend.reorderHousekeepingSections(H, []), 'not_signed_in');
+    reply = pgError('invalid_input'); // a task named twice, or left out
+    await rejectsWith(backend.arrangeHousekeepingTasks(H, []), 'unknown', /^invalid_input$/);
+    reply = pgError(
+      'new row for relation "housekeeping_sections" violates check constraint "housekeeping_sections_limit"',
+      '23514',
+    );
+    await rejectsWith(backend.createHousekeepingSection(H, 'One more'), 'unknown', /^invalid_input: housekeeping_sections_limit$/);
     reply = pgError('new row for relation "housekeeping_visits" violates check constraint "housekeeping_visits_price_range"', '23514');
     await rejectsWith(
       backend.saveHousekeepingVisit(H, '2026-10-08', { price_pence: 1_000_001 }),
@@ -2330,12 +2411,13 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     const tasks = before.housekeeping.tasks;
 
     const added = await B().createHousekeepingTask(hidA, '  Windows \n');
-    expect(added).toEqual({ id: added.id, household_id: hidA, title: 'Windows', position: 7 });
+    expect(added).toEqual({ id: added.id, household_id: hidA, title: 'Windows', section_id: null, position: 7 });
     await A().renameHousekeepingTask(tasks[0].id, ' Bed sheets (all rooms) ');
-    await A().reorderHousekeepingTasks(hidA, [...tasks.slice(1).map((t) => t.id), tasks[0].id, added.id]);
+    await A().arrangeHousekeepingTasks(hidA, [{ sectionId: null, taskIds: [...tasks.slice(1).map((t) => t.id), tasks[0].id, added.id] }]);
     const bins = tasks.find((t) => t.title === 'Empty the bins')!;
     await B().deleteHousekeepingTask(bins.id);
-    // Ticked today (by the tick test): it stays on today's visit, as history.
+    // Ticked today (by the tick test): it stays on today's visit, as history, after the rows of
+    // its section's tasks (it has none: after every row with no section).
     await B().deleteHousekeepingTask(tasks[1].id);
 
     const data = await loadA();
@@ -2349,15 +2431,16 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     ]);
     const todays = visitOnDay(data, today)!.tasks;
     expect(todays.map((r) => r.title)).toEqual([
-      'Hoover and mop the floors',
       'Clean the bathrooms',
       'Clean the kitchen',
       'Dust the surfaces',
       'Ironing',
       'Bed sheets (all rooms)',
       'Windows',
+      'Hoover and mop the floors',
     ]);
-    expect(todays[0]).toMatchObject({ task_id: null, done: true });
+    expect(todays.map((r) => r.position)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(todays.at(-1)).toMatchObject({ task_id: null, done: true, section_id: null, section_title: '' });
     const old = visitOnDay(data, lastWeek)!.tasks;
     expect(old.map((r) => r.title)).toEqual([...HOUSEKEEPING_STARTER_TASKS]);
     expect(old.filter((r) => r.task_id === null).map((r) => r.title)).toEqual(['Hoover and mop the floors', 'Empty the bins']);
@@ -2395,20 +2478,24 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     await rejectsWith(C().createHousekeepingTask(hidA, 'Hacked'), 'not_found');
     await rejectsWith(C().renameHousekeepingTask(task.id, 'Hacked'), 'not_found');
     await rejectsWith(C().deleteHousekeepingTask(task.id), 'not_found');
-    await rejectsWith(C().reorderHousekeepingTasks(hidA, [task.id]), 'not_found');
+    await rejectsWith(C().arrangeHousekeepingTasks(hidA, [{ sectionId: null, taskIds: [task.id] }]), 'not_found');
+    await rejectsWith(C().createHousekeepingSection(hidA, 'Hacked'), 'not_found');
+    await rejectsWith(C().reorderHousekeepingSections(hidA, []), 'not_found');
     await rejectsWith(C().setHousekeepingTaskDone(hidA, today, { taskId: task.id }, true), 'not_found');
     await rejectsWith(C().setHousekeepingTaskDone(hidC, today, { visitTaskId: row.id }, true), 'not_found');
     await rejectsWith(C().saveHousekeepingVisit(hidA, today, { comments: 'Hacked' }), 'not_found');
     await rejectsWith(C().addHousekeepingVisit(hidA, today), 'not_found');
     await rejectsWith(C().deleteHousekeepingVisit(visit.id), 'not_found');
-    // A's reorder ignores C's task: each of A's tasks at its own position, C's after them.
-    const order: string[] = [];
-    for (const t of before.housekeeping.tasks) order[t.position] = t.id;
-    await A().reorderHousekeepingTasks(hidA, [...Array.from(order, (id) => id ?? 'none'), foreign.id]);
+    // A's arrangement can't take C's task: not_found, and nothing moves.
+    await rejectsWith(
+      A().arrangeHousekeepingTasks(hidA, [{ sectionId: null, taskIds: [...before.housekeeping.tasks.map((t) => t.id), foreign.id] }]),
+      'not_found',
+    );
     expect((await C().load(hidC)).housekeeping.tasks[0]).toEqual(foreign);
+    expect((await loadA()).housekeeping.tasks).toEqual(before.housekeeping.tasks);
 
     // Nothing of A's reaches C, even read directly.
-    for (const table of ['housekeeping_notes', 'housekeeping_tasks', 'housekeeping_visits', 'housekeeping_visit_tasks']) {
+    for (const table of ['housekeeping_notes', 'housekeeping_sections', 'housekeeping_tasks', 'housekeeping_visits', 'housekeeping_visit_tasks']) {
       const { data, error } = await people.c.client.from(table).select('household_id').eq('household_id', hidA);
       expect(error, table).toBeNull();
       expect(data, table).toEqual([]);

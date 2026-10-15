@@ -306,7 +306,7 @@ Details beyond the list above (all covered by `supabase/tests`):
   who subscribes without a filter receives DELETE notices from every household, without
   knowing any id. Each notice carries only the deleted row's primary key: the row id for
   `households`, `members`, `areas`, `items`, `completions`, `messages`,
-  `housekeeping_tasks`, `housekeeping_visits` and `housekeeping_visit_tasks`,
+  `housekeeping_sections`, `housekeeping_tasks`, `housekeeping_visits` and `housekeeping_visit_tasks`,
   (message_id, member_id, emoji) for `message_reactions`, where emoji is one of the app's
   reaction emoji, and the household id for `housekeeping_notes` (whose rows are only ever
   deleted with their household, alongside that household's own notice). No text, names or
@@ -912,7 +912,7 @@ goes to the browser as the same code. Nothing else in the server knows the data 
 Server-only rules on top: the auth section (codes, devices), `pruneAuth()` after every write, and
 limits on what one write may grow the home to: `HOME_MAX_BYTES` (4 MiB of JSON, about 16,000 chat
 messages) and `HOME_ROW_LIMITS` (members 50, areas 200, items 2,000, messages 20,000, reactions
-50,000, housekeeping tasks 200, visits 3,000): past them a write that adds is refused with 413
+50,000, housekeeping sections 30, tasks 200, visits 3,000): past them a write that adds is refused with 413
 `too_large` ("Couldn't save. The home is full."); one that keeps or shrinks the home always works.
 
 ### The API (`src/lib/backend/serverApi.ts`, `server/core/handler.ts`)
@@ -998,9 +998,14 @@ objects with only their listed keys; anything else is `invalid_input: args[i].ke
 | `setReaction` | write | message id; emoji text; on boolean |
 | `setHousekeepingNote` | write | household id; body text |
 | `undoClearHousekeepingNote` | write | household id |
-| `createHousekeepingTask`, `renameHousekeepingTask` | write | id; title text |
+| `createHousekeepingTask` | write | household id; title text; optional section id or null |
+| `renameHousekeepingTask` | write | id; title text |
 | `deleteHousekeepingTask` | write | id |
-| `reorderHousekeepingTasks` | write | household id; up to 500 ids |
+| `arrangeHousekeepingTasks` | write | household id; up to 100 groups `{ sectionId: id or null, taskIds: up to 500 ids }` |
+| `createHousekeepingSection` | write | household id; title text |
+| `renameHousekeepingSection` | write | id; title text |
+| `deleteHousekeepingSection` | write | id |
+| `reorderHousekeepingSections` | write | household id; up to 100 ids |
 | `setHousekeepingTaskDone` | write | household id; date; exactly one of `{ taskId }`, `{ visitTaskId }`; done boolean |
 | `saveHousekeepingVisit` | write | household id; date; `{ comments?: text, price_pence?: 0 to 1,000,000 or null }` |
 | `addHousekeepingVisit` | write | household id; date |
@@ -1095,8 +1100,9 @@ second chance, or `home_exists`). In short, from the phone's `homeos.demo.v1`:
   not. A person can always be added again in People.
 - The household's name, address and time zone, areas, every item with all its fields, real
   completions, the **chat the household wrote** (messages after the home was set up on the
-  phone, their reactions), and **housekeeping** (the task list as it is, the message if written
-  after set-up, the visits created after set-up with their ticks, comments and prices).
+  phone, their reactions), and **housekeeping** (the task list as it is, its sections (at most
+  30, names cut to 40) included, the message if written after set-up, the visits created after
+  set-up with their ticks, comments, prices and the sections their rows had).
 - Fresh ids for everything. `serverSetupSummary(raw)` is the same rules' summary for the screen
   (`ServerSetupSummary`: DemoHomeSummary plus `messages`, `visits` and `lastChanged`, the newest
   change that comes along, so an older copy is recognisable).
@@ -2216,10 +2222,23 @@ payments.
   Change the bed sheets; Hoover and mop the floors; Clean the bathrooms; Clean the kitchen;
   Dust the surfaces; Empty the bins; Ironing. Households that existed before the migration get
   the same list once (only those with no task and no visit).
+- **Sections** (`supabase/migrations/20261015000100_housekeeping_sections.sql`): the list can
+  be divided into sections ("Kitchen", "Bathrooms"). Anyone creates, renames, reorders and
+  deletes them, adds a task straight into one, and moves tasks within a section or between
+  sections (dragging, the arrow keys, or Move to Section). Names are trimmed, 1 to 40
+  characters (`TEXT_LIMITS.housekeepingSection`); a household has at most 30
+  (`HOUSEKEEPING_SECTIONS_MAX`). A task's position is its place within its section (or among
+  the tasks in no section). The list's order is the tasks in no section first, with no
+  heading, then section by section in the sections' order (`listOrder()`). Deleting a section
+  keeps its tasks: they move to the top, with no section, after the tasks already there, in
+  their order, on today's visit too; the app asks first. An empty section is not shown on a
+  checklist. A household from before sections has none: every task and row in none.
 - **Visits**: at most one per household and day (the household's time zone), today or earlier,
   never in the future. A visit is created by the first write for its day: ticking or unticking
   a task, saving comments or the price, or "Add a visit". When it is created it copies:
-  - the task list: each task's title and position, none done, one row per task;
+  - the task list: each task's title, its section (its id, and its name then as
+    `section_title`) and its place, none done, one row per task, positions running section by
+    section;
   - the message as it stood that day: its text if it was last changed on or before the visit's
     day (household time; always so for today), otherwise '' (it has changed since, so what it
     said that day is not known).
@@ -2238,8 +2257,11 @@ payments.
 - **Today's visit follows the list**: when today's visit exists, adding a task adds it there
   (not done), reordering moves it there, renaming renames it there unless it is ticked, and
   deleting removes it there unless it is ticked. A ticked row is a record of what was done: it
-  keeps the title it was ticked under and stays when its task is deleted. Visits on earlier
-  days never change.
+  keeps the title it was ticked under and stays when its task is deleted (in its section while
+  that is on the list, after the rows of the section's tasks; else with none). Sections too:
+  after every change to the list, today's rows take their tasks' sections, the sections' names
+  and order (`relayVisit()`, `housekeeping_relay()`). Visits on earlier days never change: they
+  keep the sections they had, by their names then (a deleted section's rows keep its name).
 - **Comments**: free text, trimmed, up to 4000 characters. **Price for the day**: GBP, typed on
   a decimal keypad, stored as whole pence from 0 to 1,000,000 (`HOUSEKEEPING_PRICE_MAX_PENCE`,
   £10,000.00), shown as £45.00; null means not entered.
@@ -2250,43 +2272,68 @@ payments.
 - **Live**: changes by others show up as they happen, like items (`Backend.subscribe`, reload
   on any event).
 
-### Tables (migration `supabase/migrations/20261010000400_housekeeping.sql`)
+### Tables (migrations `supabase/migrations/20261010000400_housekeeping.sql`, `20261015000100_housekeeping_sections.sql`)
 
 | table | columns |
 | --- | --- |
+| `housekeeping_sections` | id, household_id → households on delete cascade, title text not null (trimmed, 1 to 40), position int not null default 0 (a new one goes last), created_at |
 | `housekeeping_notes` | household_id uuid **primary key** → households on delete cascade, body text not null default '' (trimmed, <= 4000), updated_at timestamptz not null default now(), updated_by → members on delete set null; cleared_body text null, cleared_updated_at timestamptz null, cleared_updated_by → members on delete set null (what the last Clear took away, for Undo; null otherwise). No row = never written. |
-| `housekeeping_tasks` | id, household_id → households on delete cascade, title text not null (trimmed, 1 to 200), position int not null default 0, created_at |
+| `housekeeping_tasks` | id, household_id → households on delete cascade, title text not null (trimmed, 1 to 200), section_id → housekeeping_sections on delete set null (null: no section), position int not null default 0 (within its section), created_at |
 | `housekeeping_visits` | id, household_id → households on delete cascade, visit_date date not null, note text not null default '' (the copy of the message, <= 4000), comments text not null default '' (<= 4000), price_pence int null (0 to 1,000,000), created_by → members on delete set null, created_at, updated_by → members on delete set null, updated_at; **unique (household_id, visit_date)** |
-| `housekeeping_visit_tasks` | id, visit_id → housekeeping_visits on delete cascade, household_id → households on delete cascade (copied from the visit), task_id → housekeeping_tasks **on delete set null**, title text not null (1 to 200), position int not null default 0, done bool not null default false, done_by → members on delete set null, done_at timestamptz null; **unique (visit_id, task_id)** |
+| `housekeeping_visit_tasks` | id, visit_id → housekeeping_visits on delete cascade, household_id → households on delete cascade (copied from the visit), task_id → housekeeping_tasks **on delete set null**, title text not null (1 to 200), section_id → housekeeping_sections on delete set null, section_title text not null default '' (<= 40, the section's name then), position int not null default 0 (section by section), done bool not null default false, done_by → members on delete set null, done_at timestamptz null; **unique (visit_id, task_id)** |
 
 Check constraints (SQLSTATE 23514; the client maps them to `invalid_input: <constraint>`):
 `housekeeping_notes_body_length`, `housekeeping_tasks_title_length` (a blank title is trimmed
 to '' and fails it too), `housekeeping_visits_note_length`,
 `housekeeping_visits_comments_length`, `housekeeping_visits_price_range`,
-`housekeeping_visit_tasks_title_length`. Unique constraints: `housekeeping_visits_one_per_day`,
+`housekeeping_visit_tasks_title_length`, `housekeeping_sections_title_length`,
+`housekeeping_visit_tasks_section_title_length`, and `housekeeping_sections_limit` (raised by
+the sections' insert trigger for a 31st). Unique constraints: `housekeeping_visits_one_per_day`,
 `housekeeping_visit_tasks_task_once`.
 
 Triggers on `housekeeping_tasks` (security definer, empty `search_path`, not callable by
 clients):
 
 - BEFORE INSERT or UPDATE (`housekeeping_tasks_before_write`): trims the title (the same
-  whitespace as JavaScript's `trim()`, `js_trim()`); an insert always goes last (position =
-  the household's highest + 1, whatever the client sent); an update keeps household_id and
-  created_at.
-- AFTER INSERT (`housekeeping_tasks_after_insert`): adds the task to today's visit, if any.
-- AFTER UPDATE (`housekeeping_tasks_after_update`): a new position is copied to today's visit's
-  row for the task, and a new title too unless that row is ticked (it keeps the title it was
-  ticked under).
+  whitespace as JavaScript's `trim()`, `js_trim()`); an insert always goes last in its section
+  (or among the tasks in no section: position = the highest there + 1, whatever the client
+  sent), and only into a section of its own household (else `not_found`); an update keeps
+  household_id and created_at.
+- AFTER INSERT (`housekeeping_tasks_after_insert`): adds the task to today's visit, if any, in
+  its place.
+- AFTER UPDATE (`housekeeping_tasks_after_update`): a new title is copied to today's visit's
+  row for the task unless that row is ticked (it keeps the title it was ticked under); a new
+  place or section lays today's visit out again.
 - BEFORE DELETE (`housekeeping_tasks_before_delete`): removes today's visit's row for the task
   unless it is done (before the foreign key sets task_id to null on every visit's rows).
+- AFTER DELETE (`housekeeping_tasks_after_delete`): lays today's visit out again (a ticked row
+  left behind goes after the rows of its section's tasks; the places close up).
 
-Creating a visit, adding a task and the AFTER UPDATE trigger take a per-household
-transaction-level advisory lock (`housekeeping_lock()`), so a task added or renamed at the
-moment today's visit is created is never missed. Creating a visit copies the task list with
+On `housekeeping_sections`: BEFORE INSERT or UPDATE (`housekeeping_sections_before_write`:
+trims the name, a new section goes last, at most 30, an update keeps household_id and
+created_at) and BEFORE DELETE (`housekeeping_sections_before_delete`: its tasks move to the
+top, with no section, after the tasks already there, in their order; today's visit's rows in
+it get none and the visit is laid out again; earlier visits' rows lose the section through
+the foreign key and keep its name).
+
+`housekeeping_relay(visit)` lays a visit out as the list stands (each row takes its task's
+section, the section's name and its place; a row whose task is gone keeps its section while
+that is on the list, after the section's rows; positions 0…n-1 section by section; only rows
+that change are written), and `housekeeping_relay_today(household)` does so for today's visit.
+
+Creating a visit, adding a task, the AFTER UPDATE and BEFORE DELETE triggers and every RPC
+that changes the list take a per-household transaction-level advisory lock
+(`housekeeping_lock()`), so a task added or renamed at the moment today's visit is created is
+never missed. Locks are taken in one order, so two changes at the same moment wait for each
+other instead of deadlocking: the household's task rows first (a delete, rename or move locks
+its row as it starts; `arrange_housekeeping_tasks`, `delete_housekeeping_section` and
+`reorder_housekeeping_tasks` lock them all first; creating a visit locks them `FOR KEY SHARE`),
+then `housekeeping_lock()`, then visit rows. Creating a visit copies the task list with
 `FOR KEY SHARE`, so a task being deleted at that moment is waited for and then left out (the
 tick that created the visit stands) rather than failing the foreign key.
 
-Internal helpers (not callable by clients): `js_trim(text)`, `housekeeping_starter_tasks()`
+Internal helpers (not callable by clients): `js_trim(text)`, `housekeeping_relay(uuid)`,
+`housekeeping_relay_today(uuid)`, `housekeeping_starter_tasks()`
 (the starter list; `src/lib/constants.test.ts` and `supabase/tests/housekeeping.test.mjs`
 compare it with `HOUSEKEEPING_STARTER_TASKS`), `household_today(uuid)`,
 `housekeeping_lock(uuid)`, `housekeeping_lock_visit(uuid)` (locks a visit row for the write,
@@ -2298,9 +2345,11 @@ false when it was deleted meanwhile) and `housekeeping_visit_for(household, date
 
 - `housekeeping_notes`: SELECT where `is_household_member(household_id)`. Written only by
   `set_housekeeping_note` and `undo_clear_housekeeping_note`.
+- `housekeeping_sections`: SELECT where member. Written only by the section RPCs.
 - `housekeeping_tasks`: SELECT, INSERT, UPDATE, DELETE where member. Grants: select, delete,
-  insert (household_id, title), update (title). Positions change only through
-  `reorder_housekeeping_tasks` (and the insert trigger).
+  insert (household_id, title, section_id), update (title). Sections and places change only
+  through `arrange_housekeeping_tasks`, the section RPCs, `reorder_housekeeping_tasks` (and the
+  insert trigger).
 - `housekeeping_visits`: SELECT, DELETE where member. Written only by the RPCs.
 - `housekeeping_visit_tasks`: SELECT where member. Written only by the RPCs and the task
   triggers; deleted with their visit.
@@ -2317,7 +2366,8 @@ Each checks the caller first: no user is `not_signed_in`, and not a member of
    written stores nothing. Otherwise stamps updated_at and updated_by (the caller).
 2. `reorder_housekeeping_tasks(p_household_id uuid, p_task_ids uuid[]) returns void`.
    position = index in the array; ids from other households are ignored. Today's visit
-   follows (trigger).
+   follows (trigger). Redefined by the sections migration for an app from before sections still
+   running: each task stays in its section. The app now uses `arrange_housekeeping_tasks`.
 3. `add_housekeeping_visit(p_household_id uuid, p_visit_date date) returns uuid`. "Add a
    visit": creates the visit on that day (nothing ticked) or returns the one already there.
 4. `tick_housekeeping_task(p_household_id uuid, p_visit_date date, p_task_id uuid,
@@ -2344,6 +2394,27 @@ Each checks the caller first: no user is `not_signed_in`, and not a member of
    stays). Nothing to put back changes nothing. `set_housekeeping_note` fills the `cleared_*`
    columns when it clears a message and empties them when it writes one.
 
+From `20261015000100_housekeeping_sections.sql` (each takes `housekeeping_lock()` before it
+writes; a section of another household is `not_found`):
+
+7. `create_housekeeping_section(p_household_id uuid, p_title text) returns
+   housekeeping_sections` (the row). Trimmed, last, with no task; blank or too long is
+   `housekeeping_sections_title_length`, a 31st `housekeeping_sections_limit`.
+8. `rename_housekeeping_section(p_section_id uuid, p_title text) returns void`. Trimmed; the
+   same name changes nothing. Today's visit shows the new name; earlier visits keep theirs.
+9. `delete_housekeeping_section(p_section_id uuid) returns void`. Keeps its tasks (the BEFORE
+   DELETE trigger moves them to the top, with no section, on today's visit too). Gone already:
+   `not_found`.
+10. `reorder_housekeeping_sections(p_household_id uuid, p_section_ids uuid[]) returns void`.
+    position = index in the array (the first mention wins); ids from elsewhere are ignored.
+    Their tasks come along; today's visit follows.
+11. `arrange_housekeeping_tasks(p_household_id uuid, p_groups jsonb) returns void`. The whole
+    list at once, all or nothing: an array of `{ "sectionId": uuid or null, "taskIds": [uuid…] }`;
+    each task gets that section and its index there as its position. It must name every task
+    of the household exactly once and a section at most once, in that shape (else
+    `invalid_input`); a task or section that is not the household's (or not a uuid) is
+    `not_found`. The groups' order does not matter. Today's visit follows.
+
 `create_household` is redefined (same signature, copied from
 `20261010000300_item_good.sql`) to also insert the starter task list, in order. A visit is
 deleted with a plain DELETE on `housekeeping_visits` (RLS); its rows go with it.
@@ -2354,7 +2425,7 @@ Existing households get the starter list once: on the file's first run (the one 
 task and no visit gets it. Applying the file again changes no data, so a list someone emptied
 stays empty.
 
-Realtime: the four tables join `supabase_realtime` (guarded, so the file also runs on plain
+Realtime: the five tables join `supabase_realtime` (guarded, so the files also run on plain
 Postgres) with replica identity full; `Backend.subscribe` listens to each with
 `household_id=eq.<id>`.
 
@@ -2365,14 +2436,19 @@ with the rest of the household:
 
 - `note: HousekeepingNote`, `{ body, updated_at, updated_by }` (never written:
   `{ body: '', updated_at: null, updated_by: null }`);
-- `tasks: HousekeepingTask[]`, by position (then created_at, id);
+- `sections: HousekeepingSection[]` (`{ id, household_id, title, position }`), in order;
+- `tasks: HousekeepingTask[]` (with `section_id`, null for none), in the list's order: the
+  tasks in no section first, then section by section, each by position (then created_at, id);
 - `visits: HousekeepingVisit[]`, every visit, newest first, each with its
-  `tasks: HousekeepingVisitTask[]` by position, then title, then id.
+  `tasks: HousekeepingVisitTask[]` (with `section_id` and `section_title`) by position, then
+  title, then id.
 
 `HousekeepingTickTarget` is `{ taskId }` (a row whose task is still on the list; this also
 works for a day with no visit yet, which the tick then creates) or `{ visitTaskId }` (a row
 whose task has been deleted). `checklistFor()` picks it. `HousekeepingVisitPatch` is
-`{ comments?, price_pence? }` (only the keys present are written).
+`{ comments?, price_pence? }` (only the keys present are written). `HousekeepingTaskGroup` is
+`{ sectionId: string | null, taskIds: string[] }`, one group of an arrangement
+(`arrangementOf()` gives the list's).
 
 ### Backend methods (`src/lib/backend/types.ts`)
 
@@ -2380,33 +2456,41 @@ whose task has been deleted). `checklistFor()` picks it. `HousekeepingVisitPatch
 | --- | --- | --- |
 | `setHousekeepingNote(householdId, body)` | rpc `set_housekeeping_note` | same rules |
 | `undoClearHousekeepingNote(householdId)` | rpc `undo_clear_housekeeping_note` | same rules |
-| `createHousekeepingTask(householdId, title)` → `HousekeepingTask` | insert `{ household_id, title }`, select `id, household_id, title, position` | appends, adds to today's visit |
+| `createHousekeepingTask(householdId, title, sectionId?)` → `HousekeepingTask` | insert `{ household_id, title, section_id? }`, select `id, household_id, title, section_id, position` | last in its section, adds to today's visit in its place |
 | `renameHousekeepingTask(id, title)` | update `{ title }` (no row: `not_found`) | renames, today's visit too unless ticked there |
 | `deleteHousekeepingTask(id)` | delete (no row: `not_found`) | today's undone row goes, other rows keep it with task_id null |
-| `reorderHousekeepingTasks(householdId, orderedIds)` | rpc `reorder_housekeeping_tasks` | same rules |
+| `arrangeHousekeepingTasks(householdId, groups)` | rpc `arrange_housekeeping_tasks` | same rules |
+| `createHousekeepingSection(householdId, title)` → `HousekeepingSection` | rpc `create_housekeeping_section` | same rules (`invalid_input: sections (at most 30)`) |
+| `renameHousekeepingSection(id, title)` | rpc `rename_housekeeping_section` | same rules |
+| `deleteHousekeepingSection(id)` | rpc `delete_housekeeping_section` | same rules |
+| `reorderHousekeepingSections(householdId, orderedIds)` | rpc `reorder_housekeeping_sections` | same rules |
 | `setHousekeepingTaskDone(householdId, date, target, done)` → visit id | rpc `tick_housekeeping_task` | same rules |
 | `saveHousekeepingVisit(householdId, date, patch)` → visit id | rpc `save_housekeeping_visit` (only the keys present) | same rules |
 | `addHousekeepingVisit(householdId, date)` → visit id | rpc `add_housekeeping_visit` | same rules |
 | `deleteHousekeepingVisit(id)` | delete on `housekeeping_visits` (no row: `not_found`) | rows go with it |
 
-- Supabase: `load` adds three reads to its `Promise.all`, all through `runAll`: the note
-  (`body, updated_at, updated_by`; no row reads as never written), the tasks
-  (`id, household_id, title, position`, ordered by position, created_at, id) and the visits
+- Supabase: `load` adds four reads to its `Promise.all`, all through `runAll`: the note
+  (`body, updated_at, updated_by`; no row reads as never written), the sections
+  (`id, household_id, title, position`, ordered by position, created_at, id), the tasks
+  (`id, household_id, title, section_id, position`, put in the list's order) and the visits
   with their rows embedded (`id, household_id, visit_date, note, comments, price_pence,
   created_by, created_at, updated_by, updated_at, tasks:housekeeping_visit_tasks(id, visit_id,
-  household_id, task_id, title, position, done, done_by, done_at)`, ordered by visit_date
+  household_id, task_id, title, section_id, section_title, position, done, done_by, done_at)`, ordered by visit_date
   descending, rows sorted in the client). An id that is not a uuid is `not_found` without a
   request (like chat); a date that is not `YYYY-MM-DD` is `invalid_input: date`; a blank title
   is `invalid_input: title` (like `requireText`). Also refused before any request: a tick
   target that is not exactly one of `taskId` and `visitTaskId` (`invalid_input: target`), and
   a price that is not a whole number or null (`invalid_input: price`; JSON would send NaN or
-  Infinity as null and clear the price). In `reorderHousekeepingTasks` an id that is not a uuid
-  is sent as the nil uuid, so it keeps its place in the order and names no task.
-  `subscribe` adds the four tables.
-- Demo (`src/lib/backend/demo.ts`): four collections in the document (`housekeeping_notes`,
-  `housekeeping_tasks`, `housekeeping_visits`, `housekeeping_visit_tasks`) with the SQL
-  columns. `read()` fills them in for documents stored before them, and a document without the
-  `housekeeping_tasks` key gets the starter list for each household once, like the migration.
+  Infinity as null and clear the price). In `reorderHousekeepingSections` an id that is not a
+  uuid is sent as the nil uuid, so it keeps its place in the order and names no section.
+  `subscribe` adds the five tables.
+- Demo (`src/lib/backend/demo.ts`): five collections in the document (`housekeeping_notes`,
+  `housekeeping_sections`, `housekeeping_tasks`, `housekeeping_visits`,
+  `housekeeping_visit_tasks`) with the SQL columns. `read()` fills them in for documents stored
+  before them, and a document without the `housekeeping_tasks` key gets the starter list for
+  each household once, like the migration. A document from before sections (the server's live
+  home is one until its first write) reads with no sections and every task and row in none,
+  in memory only: the stored document is not rewritten by reading it.
   The semantics mirror the SQL exactly, the copy rules, today's visit following the list,
   idempotent ticks and the note's "same text" rule included. Errors: `not_found` where SQL
   says so; `invalid_input: date` (future or malformed), `invalid_input: title` (blank or over
@@ -2423,9 +2507,12 @@ whose task has been deleted). `checklistFor()` picks it. `HousekeepingVisitPatch
 `HomeContextValue` actions (the names and signatures are fixed; the data is
 `data.housekeeping`): `setHousekeepingNote(body)`, `undoClearHousekeepingNote(previous)`
 (shows `previous`, the message as it was before Clear, at once, and sends the Undo after any
-message write still in flight, so it never overtakes its Clear), `createHousekeepingTask(title)` →
-`HousekeepingTask`, `renameHousekeepingTask(id, title)`, `deleteHousekeepingTask(id)`,
-`reorderHousekeepingTasks(orderedIds)`, `setHousekeepingTaskDone(date, target, done)`,
+message write still in flight, so it never overtakes its Clear), `createHousekeepingTask(title,
+sectionId?)` → `HousekeepingTask`, `renameHousekeepingTask(id, title)`,
+`deleteHousekeepingTask(id)`, `arrangeHousekeepingTasks(groups)`,
+`createHousekeepingSection(title)` → `HousekeepingSection`, `renameHousekeepingSection(id,
+title)`, `deleteHousekeepingSection(id)`, `reorderHousekeepingSections(orderedIds)`,
+`setHousekeepingTaskDone(date, target, done)`,
 `saveHousekeepingVisit(date, patch)`, `addHousekeepingVisit(date)`,
 `deleteHousekeepingVisit(id)`. All go through `mutate()` with a revert that takes back only
 what the action touched, like the other edits (a failed write shows "Couldn't save." and
@@ -2436,10 +2523,13 @@ rejects). The optimistic copies come from `src/lib/logic/housekeeping.ts`:
   and are sent with `{ taskId }` targets; a failure removes it; the reload swaps in the real
   visit under the same row keys (`ChecklistRow.key`), so a focused checkbox keeps its focus;
 - ticks use `applyTick()`, comments and price `applyVisitPatch()`, list edits
-  `withTaskRenamed()`, `withTaskDeleted()`, `withTasksReordered()` (today's visit follows);
-- `createHousekeepingTask` is not optimistic: it resolves to the stored task, like
-  `createArea`, so the sheet can focus its name; the stored task shows on the list (and on
-  today's visit, `withTaskAdded()`) as soon as it resolves, before the reload;
+  `withTaskRenamed()`, `withTaskDeleted()`, `withTasksArranged()`, `withSectionRenamed()`,
+  `withSectionDeleted()`, `withSectionsReordered()` (today's visit follows); a revert puts
+  back the sections and places it set and lays the list out again (`withListSettled()`);
+- `createHousekeepingTask` and `createHousekeepingSection` are not optimistic: they resolve to
+  the stored row, like `createArea`, so the sheet can focus its name; it shows on the list (a
+  task on today's visit too, `withTaskAdded()`, `withSectionAdded()`) as soon as it resolves,
+  before the reload;
 - the message shows `me` and now as who changed it; unchanged text (after trimming) sends
   nothing;
 - each revert puts back only what its write set, where the screen still shows what it set
@@ -2464,11 +2554,16 @@ for the chosen day), `daySelectedAnnouncement`, `todayLine` ("6 of 7 done today 
 Visits: `isRecorded`, `visitOn`, `visitDays` (a month's, or all), `monthTotals`,
 `monthSummary` ("4 visits · £180.00", "2 visits", "No visits"), `doneCount`,
 `housekeepingSubtitle`. Prices:
-`formatPrice` ("£1,234.50"), `priceInputValue` ("1234.50"), `parsePrice`. Checklist:
-`checklistFor`, `matchesTarget`. Bylines: `visitByline`, `noteByline`, `doneByline`. The tab's
+`formatPrice` ("£1,234.50"), `priceInputValue` ("1234.50"), `parsePrice`. The list's order:
+`listOrder`, `taskListGroups` (the editor's groups), `arrangementOf`, `relayVisit` (a visit laid
+out as the list stands). Checklist: `checklistSections` (a day's rows section by section, by
+the sections the visit had), `checklistFor` (the same as one list), `matchesTarget`,
+`sectionProgress` ("2 of 5"), `sectionDoneWords`, `sectionHeadingLabel` ("Kitchen, 2 of 5
+done", "Kitchen, all 5 done"). Bylines: `visitByline`, `noteByline`, `doneByline`. The tab's
 dot: `hasNewNote`.
 Optimistic edits: `snapshotNote`, `newVisit`, `applyTick`, `applyVisitPatch`,
-`withTaskAdded`, `withTaskRenamed`, `withTaskDeleted`, `withTasksReordered`.
+`withTaskAdded`, `withTaskRenamed`, `withTaskDeleted`, `withTasksArranged`, `withSectionAdded`,
+`withSectionRenamed`, `withSectionDeleted`, `withSectionsReordered`, `withListSettled`.
 `emptyHousekeeping()` is the empty state.
 
 ### UI
@@ -2483,11 +2578,12 @@ Files under `src/screens/housekeeping/` (each with a `.module.css` where it has 
 | `DeleteVisit.tsx` | the Delete Visit card and its confirmation (today's, and the selected day's) |
 | `SaveStatus.tsx` | "✓ Saved" for a moment, and "Not saved. Try again" after a failed save |
 | `useNewNote.ts` | the Housekeeping tab's dot (a new message from someone else) |
-| `Checklist.tsx` | the tasks as checkboxes |
+| `Checklist.tsx` | the tasks as checkboxes, a card per section |
+| `SectionIcon.tsx` | a section's drawing: Home's room drawing for a room's name, else a list |
 | `PriceField.tsx` | the £ field: parse, format, error |
 | `Calendar.tsx` | the visits under the tab switch: `ui/DatePicker.tsx` (Home's date picker, on the card `ui/MonthCalendar.tsx`) with today's line, the month's summary, a dot for each visit (`data-visit`) and `lastDay` today; the view kept under `homeos.calendar.housekeeping` |
 | `DayDetail.tsx` | a chosen day before today, in place of the Today section |
-| `TaskListSheet.tsx` | the page sheet that edits the task list; App mounts it beside the stage, like the Item sheet, so the screen behind is pushed back |
+| `TaskListSheet.tsx` | the page sheet that edits the task list and its sections; App mounts it beside the stage, like the Item sheet, so the screen behind is pushed back |
 | `useSavedText.ts` | the message and comments fields: save after a pause and on blur, keep a draft while editing or after a failed save |
 | `Housekeeping.module.css` | the shared sections, cards, captions, price row and empty states |
 
@@ -2561,13 +2657,26 @@ pops in when you come back from a tab without it.
 4. **Today**, while today is chosen in the calendar (`h2`, `tabIndex={-1}`, with **Edit** on
    the right: 15px tint text, `aria-label="Edit task list"`, opens `TaskListSheet`), then
    `VisitEditor` for `today`:
-   - the checklist card (`Checklist`, rows from `checklistFor()`): each row a `label` with a
+   - the checklist (`Checklist`, groups from `checklistSections()`): the tasks in no section
+     first, in a card with no heading, then a card per section, 12px apart, in the sections'
+     order (an empty section is left out). A section's card opens with a 58px header: its
+     drawing in a 30px rounded tile (`SectionIcon`: Home's room drawing when the name is a
+     room's, such as Kitchen, Bathrooms, Bedrooms, Living room, Hallway, Garden or Laundry, else
+     a list), its name (17/22/600, an `h3`, named with its progress, "Kitchen, 2 of 5 done") and
+     on the right "2 of 5" (15/20 secondary) beside a 24px ring that fills with the tint as
+     tasks are ticked. With every task ticked the words read **All done** (600,
+     `--rag-green-text`) and the ring becomes a green disc (`--done-fill`) whose white tick
+     draws itself, springing in (no motion with Reduce Motion). A hairline under the header,
+     inset to the text. Each row a `label` with a
      native checkbox drawn as a 24px iOS circle (empty: 1.5px #C7C7CC ring; ticked: filled
      `--tint` with a white check), the title at 17/22, and when ticked a second line at 13/18
      secondary, `doneByline()` ("🦊 Ela · 10:42"); rows at least 52px tall, hairlines inset to
      the text. The whole row toggles; the change is saved at once
      (`setHousekeepingTaskDone(date, row.target, checked)`). With no tasks: "No tasks yet." and
-     a tint **Add tasks** button that opens the sheet.
+     a tint **Add tasks** button that opens the sheet. Of the three header treatments tried
+     (the header in the card with a ring; the header above the card, iOS grouped style; the
+     header in the card with a slim bar), the first was kept: it matches Home's room cards,
+     keeps the section names below Today in rank, and its tick is the calmest "done".
    - **Comments** (section header) and a card that is an auto-growing textarea, placeholder
      "Anything to mention, e.g. we're out of bin bags", `maxLength` 4000; saved 1s after the
      last keystroke and on blur when the trimmed text changed.
@@ -2605,20 +2714,48 @@ pops in when you come back from a tab without it.
      After deleting, the day shows "No visit recorded." and focus moves to **Add a visit**.
 6. **Task list sheet** (`TaskListSheet`): a page `Sheet` labelled "Task list". Nav bar
    (`data-sheet-handle`): the title "Task list" centred (17/22/600) and **Done** on the right
-   (17px/600 tint), which closes it. The body (`data-sheet-scroll`) is one card that looks and
-   behaves like the Household editor's areas (`screens/profile/AreaList.tsx`, with the same styles;
-   both take their drag and keyboard reorder from `ui/useReorder.ts`):
-   each row has a red minus (`aria-label="Delete <title>"`), the title edited in place
-   (`InlineText`, `aria-label="Task name"`, `maxLength` 200; blank puts the old title back)
-   and a grip (`aria-label="Reorder <title>"`, drag, or the up and down arrow keys;
-   announced "<title> moved to position 2 of 7."). The last row is **Add Task** (plus icon,
-   tint): it adds `HOUSEKEEPING_NEW_TASK` ("New task") and focuses its name with the text
-   selected (with the same stand-in input trick so iOS raises the keyboard). Under the card,
-   13/18 secondary: "Changes show in today's visit too. Earlier visits keep their own list."
-   Delete asks first: title "Delete <title>?", message "Earlier visits keep it.", action
-   **Delete Task**. The list may be empty. When it closes, focus goes back to the button that
-   opened it (Edit, or Add tasks; Edit if that has gone), however it was opened: a VoiceOver
-   double tap is a tap, and focus moved by script after a tap shows no ring.
+   (17px/600 tint), which closes it. The body (`data-sheet-scroll`): the tasks in no section in
+   a card with no heading, then a card per section (20px apart, a group named after the
+   section), then **Add Section**. Rows look like the Household editor's areas: each row has a
+   red minus (`aria-label="Delete <title>"`), the title edited in place (`InlineText`,
+   `aria-label="Task name"`, `maxLength` 200; blank puts the old title back), once there are
+   sections a "…" button (`aria-label="Move <title> to a section"`) whose menu, titled **Move
+   to Section**, lists **No Section** and every section with its drawing, the current one
+   checked, and a grip (`aria-label="Reorder <title>"`, 44px wide, `--ring-idle`). A section's
+   header: its drawing in a 30px tile (it follows the name), the name edited in place
+   (17/600, `aria-label="Section name"`, `maxLength` 40), a "…" (`aria-label="<name>
+   options"`: **Rename**, **Move Up**, **Move Down** (only where it can), **Delete Section**
+   in red) and a grip (`aria-label="Reorder <name> section"`). Each card ends with **Add Task**
+   (green plus; in a section named "Add Task to <name>"): it adds `HOUSEKEEPING_NEW_TASK` ("New
+   task") there and focuses its name with the text selected (with the same stand-in input
+   trick so iOS raises the keyboard). **Add Section** (a card of its own, tint) adds
+   `HOUSEKEEPING_NEW_SECTION` ("New section") last and focuses its name the same way; with 30
+   it is dimmed and the caption says "A list has 30 sections at most.". Under the cards, 13/18
+   secondary: "Changes show in today's visit too. Earlier visits keep their own list.", after
+   "Sections group the tasks, such as Kitchen or Bathrooms." while there are none.
+
+   Moving (`useGroupedReorder()` in `ui/useReorder.ts`): hold a grip and a picture of the row
+   (or of the section's header) lifts, a touch bigger, with a shadow, and follows the finger;
+   the row folds away where it was, and the rows step aside to open a slot where it would land,
+   within its section or in another, with a soft tint placeholder in it (a dashed outline the
+   shape of a header for a section). The page scrolls near its edges. On release it glides into
+   the slot and the new arrangement is saved at once (`arrangeHousekeepingTasks`, or
+   `reorderHousekeepingSections`); a section unfolds again where it landed. Escape puts it
+   back. A drag never moves the sheet. The up and down arrow keys on a grip move it one place,
+   and at the top or bottom of a section into the one before or after; Move to Section,
+   Move Up and Move Down do the same without dragging. Each move is announced ("Clean the oven
+   moved to Kitchen, position 2 of 3.", "Kitchen moved to position 1 of 3.") and focus stays
+   on the control used; a task its menu moved lights up for a moment where it landed. Reduce
+   Motion: no glide, fold or placeholder fade.
+
+   Delete Task asks first: title "Delete <title>?", message "Earlier visits keep it.", action
+   **Delete Task**. Delete Section asks first: title "Delete <name>?", message "Its 3 tasks
+   stay on the list, at the top with no section, on today's visit too. Earlier visits keep
+   it." ("Its task stays…" for one, only "Earlier visits keep it." for none), action **Delete
+   Section**; focus then goes to the next section's "…", else Add Section. The list may be
+   empty. When it closes, focus goes back to the button that opened it (Edit, or Add tasks;
+   Edit if that has gone), however it was opened: a VoiceOver double tap is a tap, and focus
+   moved by script after a tap shows no ring.
 
 **States.** Everything is in `data.housekeeping`, so the tab never shows a spinner. Ticks,
 comments, the price and the message show at once (optimistic) and come back as stored after the
@@ -2632,7 +2769,10 @@ draft and follows the stored value again once saved or blurred.
 
 - The checklist is a `fieldset` with a visually hidden `legend` ("Tasks today", or "Tasks on
   Thursday 1 October") and real checkboxes named by their titles; the "who ticked it" line is
-  their description (`aria-describedby`).
+  their description (`aria-describedby`). Each section's card is a group labelled by its `h3`,
+  whose name carries the progress ("Kitchen, 2 of 5 done", "Kitchen, all 5 done"); the visible
+  "2 of 5" and the ring are hidden from assistive tech. Ticking a section's last task is said
+  as "<title> done. Kitchen, all 5 done".
 - The calendar is a `table` with `role="grid"`, named by the week ("Week of Monday 5
   October") or labelled by the month title (the titles are `aria-live="polite"`, so changing
   week or month is announced); column headers are `th scope="col"` with the full weekday as
@@ -2700,6 +2840,14 @@ subtitle reads "Last visit Thu 1 Oct", October "1 visit · £60.00", September "
   strip still in sight (with and without Reduce Motion); a tap in a cell's corner chooses it at
   320px; the picker's 44px targets and no sideways scroll at 320, 375 and 402px; the
   Housekeeping dot and reopening on the last tab; focus back on Edit after the task list.
+  Sections: added, filled by Move to Section and by dragging onto a section's Add Task, a task
+  added straight into one, reordered by menu, renamed, today's checklist in sections with each
+  heading's progress, all done shown and said, kept after a reload; a section dragged by its
+  header and moved with the arrow keys, a task's grip crossing into the section before;
+  deleting a section asks first and keeps its tasks at the top, ticks and all; an earlier visit
+  keeps its sections by their names; no sideways scroll and 44px targets at 375 and 430px.
+  Server mode (`e2e-server/sync.spec.ts`): sections added, filled, ticked, renamed, reordered
+  and deleted on one phone show on the other.
   Existing e2e tests keep passing.
 
 ## Edge Function `scheduler` (runs every 15 minutes via pg_cron + pg_net)

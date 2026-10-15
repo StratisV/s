@@ -198,7 +198,25 @@ describe('ServerBackend: the Backend methods', () => {
     const earlier = await b.addHousekeepingVisit(hid, '2026-10-02');
     await b.deleteHousekeepingVisit(earlier);
     const tasks = (await b.load(hid)).housekeeping.tasks;
-    await b.reorderHousekeepingTasks(hid, [...tasks].reverse().map((t) => t.id));
+    const kitchen = await b.createHousekeepingSection(hid, 'Kitchen');
+    const oven = await b.createHousekeepingTask(hid, 'Clean the oven', kitchen.id);
+    expect(oven).toMatchObject({ section_id: kitchen.id, position: 0 });
+    await b.arrangeHousekeepingTasks(hid, [
+      { sectionId: null, taskIds: [...tasks].reverse().map((t) => t.id) },
+      { sectionId: kitchen.id, taskIds: [oven.id] },
+    ]);
+    const baths = await b.createHousekeepingSection(hid, 'Bathrooms');
+    await b.renameHousekeepingSection(baths.id, 'Bathroom');
+    await b.reorderHousekeepingSections(hid, [baths.id, kitchen.id]);
+    const arranged = (await b.load(hid)).housekeeping;
+    expect(arranged.sections.map((s) => s.title)).toEqual(['Bathroom', 'Kitchen']);
+    expect(arranged.tasks.at(-1)).toMatchObject({ id: oven.id, section_id: kitchen.id });
+    // Today's visit (9 Oct on the harness clock) follows the list.
+    const todays = arranged.visits.find((v) => v.visit_date === '2026-10-09')!;
+    expect(todays.tasks.at(-1)).toMatchObject({ task_id: oven.id, section_title: 'Kitchen' });
+    await b.deleteHousekeepingSection(kitchen.id);
+    await b.deleteHousekeepingSection(baths.id);
+    await b.deleteHousekeepingTask(oven.id);
     await b.deleteItem(item.id);
     await b.deleteArea(area.id);
     await b.deleteHousekeepingTask(task.id);

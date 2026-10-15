@@ -15,10 +15,15 @@ import {
   canHaveVisit,
   newVisit,
   visitOn,
+  withListSettled,
+  withSectionAdded,
+  withSectionDeleted,
+  withSectionRenamed,
+  withSectionsReordered,
   withTaskAdded,
   withTaskDeleted,
   withTaskRenamed,
-  withTasksReordered,
+  withTasksArranged,
 } from '../lib/logic/housekeeping';
 import { disablePush } from '../lib/push';
 import { isIos, isStandalone, linkNeedsChoice } from '../lib/appMode';
@@ -46,7 +51,9 @@ import type {
   HouseholdData,
   HousekeepingData,
   HousekeepingNote,
+  HousekeepingSection,
   HousekeepingTask,
+  HousekeepingTaskGroup,
   HousekeepingTickTarget,
   HousekeepingVisit,
   HousekeepingVisitPatch,
@@ -333,16 +340,36 @@ export interface HomeContextValue {
    */
   undoClearHousekeepingNote(previous: HousekeepingNote): Promise<void>;
   /**
-   * Adds a task at the end of the list (and to today's visit, if any). Like createArea it
-   * is not optimistic: resolves to the stored task once written, so the sheet can focus it.
+   * Adds a task at the end of a section (`sectionId`), or of the tasks in no section (and to
+   * today's visit, if any, in its place). Like createArea it is not optimistic: resolves to
+   * the stored task once written, so the sheet can focus it.
    */
-  createHousekeepingTask(title: string): Promise<HousekeepingTask>;
+  createHousekeepingTask(title: string, sectionId?: string | null): Promise<HousekeepingTask>;
   /** Renames a task on the list and on today's visit unless ticked there (withTaskRenamed). */
   renameHousekeepingTask(id: string, title: string): Promise<void>;
   /** Deletes a task from the list; today's visit drops it unless ticked (withTaskDeleted). */
   deleteHousekeepingTask(id: string): Promise<void>;
-  /** Reorders the task list (all its ids); today's visit follows (withTasksReordered). */
-  reorderHousekeepingTasks(orderedIds: string[]): Promise<void>;
+  /**
+   * Arranges the task list: every task, grouped by section (arrangementOf() gives the list
+   * as it stands, and the editor moves ids within and between the groups). Today's visit
+   * follows (withTasksArranged).
+   */
+  arrangeHousekeepingTasks(groups: HousekeepingTaskGroup[]): Promise<void>;
+  /**
+   * Adds a section at the end of the list, with no task in it. Not optimistic: resolves to
+   * the stored section once written, so the sheet can focus its name.
+   */
+  createHousekeepingSection(title: string): Promise<HousekeepingSection>;
+  /** Renames a section; today's visit follows, earlier visits keep the name they had (withSectionRenamed). */
+  renameHousekeepingSection(id: string, title: string): Promise<void>;
+  /**
+   * Deletes a section and keeps its tasks: they move to the top with no section, on today's
+   * visit too; earlier visits keep the section by its name (withSectionDeleted). The UI
+   * confirms first.
+   */
+  deleteHousekeepingSection(id: string): Promise<void>;
+  /** Puts the sections in this order (all their ids); their tasks come along (withSectionsReordered). */
+  reorderHousekeepingSections(orderedIds: string[]): Promise<void>;
   /**
    * Ticks or unticks one row of the checklist for `date` (ChecklistRow.target). With no
    * visit that day yet, a pending visit (newVisit, rows `pending:<taskId>`) shows at once
@@ -685,8 +712,6 @@ const withHousekeeping = (cur: HouseholdData, housekeeping: HousekeepingData): H
 const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 /** Visits newest first, as loaded. */
 const byVisitDate = (a: HousekeepingVisit, b: HousekeepingVisit) => compareText(b.visit_date, a.visit_date);
-/** The task list by position (a stable sort keeps the loaded order otherwise). */
-const byTaskPosition = (a: HousekeepingTask, b: HousekeepingTask) => a.position - b.position;
 /** A visit's tasks by position, then title, then id, as loaded. */
 const byRowOrder = (a: HousekeepingVisitTask, b: HousekeepingVisitTask) =>
   a.position - b.position || compareText(a.title, b.title) || compareText(a.id, b.id);
@@ -790,7 +815,8 @@ function visitChange(
 
 /**
  * Deleting a task (withTaskDeleted()): off the list, today's undone row gone, every other
- * row unlinked. The revert puts back the task, the row it removed and the links it cleared.
+ * row unlinked. The revert puts back the task, the row it removed and the links it cleared,
+ * and lays today's visit out again (withListSettled()).
  */
 function deleteTaskChange(id: string, today: ISODate): Change {
   return (cur) => {
@@ -813,7 +839,7 @@ function deleteTaskChange(id: string, today: ISODate): Change {
       next: withHousekeeping(cur, next),
       revert: (c) => {
         const h = c.housekeeping;
-        const tasks = h.tasks.some((t) => t.id === id) ? h.tasks : [...h.tasks, task].sort(byTaskPosition);
+        const tasks = h.tasks.some((t) => t.id === id) ? h.tasks : [...h.tasks, task];
         const visits = h.visits.map((v) => {
           const back = removed.filter((r) => r.visit_id === v.id && !v.tasks.some((x) => x.id === r.id));
           const relink = v.tasks.some((r) => unlinked.has(r.id) && r.task_id === null);
@@ -821,38 +847,83 @@ function deleteTaskChange(id: string, today: ISODate): Change {
           const rows = v.tasks.map((r) => (unlinked.has(r.id) && r.task_id === null ? { ...r, task_id: id } : r));
           return { ...v, tasks: [...rows, ...back].sort(byRowOrder) };
         });
-        return withHousekeeping(c, { ...h, tasks, visits });
+        return withHousekeeping(c, withListSettled({ ...h, tasks, visits }, today));
       },
     };
   };
 }
 
 /**
- * Reordering the task list (withTasksReordered()), today's visit following. The revert puts
- * back each position it set that still holds, on the list and on today's visit.
+ * A change to the list's arrangement (`edit`: withTasksArranged(), withSectionsReordered()),
+ * today's visit following. The revert puts back each task's section and place, and each
+ * section's position, that it set and that still hold, and lays the list out again
+ * (withListSettled()).
  */
-function reorderTasksChange(orderedIds: string[], today: ISODate): Change {
+function arrangeChange(today: ISODate, edit: (housekeeping: HousekeepingData) => HousekeepingData): Change {
   return (cur) => {
     const hk = cur.housekeeping;
-    const next = withTasksReordered(hk, orderedIds, today);
-    const wasTask = new Map(hk.tasks.map((t) => [t.id, t.position]));
-    const setTask = new Map(next.tasks.map((t) => [t.id, t.position]));
-    const wasRow = new Map((visitOn(hk.visits, today)?.tasks ?? []).map((r) => [r.id, r.position]));
-    const setRow = new Map((visitOn(next.visits, today)?.tasks ?? []).map((r) => [r.id, r.position]));
-    /** The old position where this reorder moved it and it still is there. */
-    const back = (id: string, position: number, was: Map<string, number>, set: Map<string, number>) =>
-      was.has(id) && set.get(id) === position && was.get(id) !== position ? was.get(id)! : position;
+    const next = edit(hk);
+    const wasTask = new Map(hk.tasks.map((t) => [t.id, t]));
+    const setTask = new Map(next.tasks.map((t) => [t.id, t]));
+    const wasSection = new Map(hk.sections.map((s) => [s.id, s.position]));
+    const setSection = new Map(next.sections.map((s) => [s.id, s.position]));
     return {
       next: withHousekeeping(cur, next),
       revert: (c) => {
         const h = c.housekeeping;
-        const tasks = h.tasks.map((t) => ({ ...t, position: back(t.id, t.position, wasTask, setTask) })).sort(byTaskPosition);
-        const visits = h.visits.map((v) =>
-          v.visit_date !== today
-            ? v
-            : { ...v, tasks: v.tasks.map((r) => ({ ...r, position: back(r.id, r.position, wasRow, setRow) })).sort(byRowOrder) },
+        let back = false;
+        const tasks = h.tasks.map((t) => {
+          const was = wasTask.get(t.id);
+          const set = setTask.get(t.id);
+          if (!was || !set || (was.section_id === set.section_id && was.position === set.position)) return t;
+          // Only a task still where this put it.
+          if (t.section_id !== set.section_id || t.position !== set.position) return t;
+          back = true;
+          return { ...t, section_id: was.section_id, position: was.position };
+        });
+        const sections = h.sections.map((s) => {
+          const was = wasSection.get(s.id);
+          const set = setSection.get(s.id);
+          if (was === undefined || set === undefined || was === set || s.position !== set) return s;
+          back = true;
+          return { ...s, position: was };
+        });
+        return back ? withHousekeeping(c, withListSettled({ ...h, sections, tasks }, today)) : c;
+      },
+    };
+  };
+}
+
+/**
+ * Deleting a section (withSectionDeleted()): its tasks to the top with no section, today's
+ * visit following, earlier visits keeping its name. The revert puts back the section, each
+ * task it moved that is still where it put it, and the section on each row it took it from,
+ * and lays the list out again (withListSettled()).
+ */
+function deleteSectionChange(id: string, today: ISODate): Change {
+  return (cur) => {
+    const hk = cur.housekeeping;
+    const section = hk.sections.find((s) => s.id === id);
+    if (!section) return null;
+    const next = withSectionDeleted(hk, id, today);
+    const moved = new Map(hk.tasks.filter((t) => t.section_id === id).map((t) => [t.id, t.position]));
+    const placed = new Map(next.tasks.filter((t) => moved.has(t.id)).map((t) => [t.id, t.position]));
+    const rowsIn = new Set(hk.visits.flatMap((v) => v.tasks.filter((r) => r.section_id === id).map((r) => r.id)));
+    return {
+      next: withHousekeeping(cur, next),
+      revert: (c) => {
+        const h = c.housekeeping;
+        const sections = h.sections.some((s) => s.id === id) ? h.sections : [...h.sections, section];
+        const tasks = h.tasks.map((t) =>
+          moved.has(t.id) && t.section_id === null && t.position === placed.get(t.id)
+            ? { ...t, section_id: id, position: moved.get(t.id)! }
+            : t,
         );
-        return withHousekeeping(c, { ...h, tasks, visits });
+        const back = (r: HousekeepingVisitTask) => rowsIn.has(r.id) && r.section_id === null;
+        const visits = h.visits.map((v) =>
+          v.tasks.some(back) ? { ...v, tasks: v.tasks.map((r) => (back(r) ? { ...r, section_id: id } : r)) } : v,
+        );
+        return withHousekeeping(c, withListSettled({ ...h, sections, tasks, visits }, today));
       },
     };
   };
@@ -2021,11 +2092,15 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
           'undo',
         );
       },
-      createHousekeepingTask: async (title) => {
+      createHousekeepingTask: async (title, sectionId) => {
         const d = requireData();
         // Not optimistic (like createArea): it resolves to the stored task. It shows as soon as
         // it is stored, on today's visit too; the reload that follows confirms it.
-        const task = await mutate(null, () => backend.createHousekeepingTask(d.household.id, title));
+        const task = await mutate(null, () =>
+          sectionId
+            ? backend.createHousekeepingTask(d.household.id, title, sectionId)
+            : backend.createHousekeepingTask(d.household.id, title),
+        );
         const cur = dataRef.current;
         if (cur && cur.household.id === task.household_id) {
           commitData(withHousekeeping(cur, withTaskAdded(cur.housekeeping, task, today)));
@@ -2050,10 +2125,46 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
           () => backend.renameHousekeepingTask(id, title),
         ),
       deleteHousekeepingTask: (id) => mutate(deleteTaskChange(id, today), () => backend.deleteHousekeepingTask(id)),
-      reorderHousekeepingTasks: (orderedIds) => {
+      arrangeHousekeepingTasks: (groups) => {
         const d = requireData();
-        return mutate(reorderTasksChange(orderedIds, today), () =>
-          backend.reorderHousekeepingTasks(d.household.id, orderedIds),
+        return mutate(
+          arrangeChange(today, (hk) => withTasksArranged(hk, groups, today)),
+          () => backend.arrangeHousekeepingTasks(d.household.id, groups),
+        );
+      },
+      createHousekeepingSection: async (title) => {
+        const d = requireData();
+        // Not optimistic, like a task: shown once stored, so the sheet can focus its name.
+        const section = await mutate(null, () => backend.createHousekeepingSection(d.household.id, title));
+        const cur = dataRef.current;
+        if (cur && cur.household.id === section.household_id) {
+          commitData(withHousekeeping(cur, withSectionAdded(cur.housekeeping, section)));
+        }
+        return section;
+      },
+      renameHousekeepingSection: (id, title) =>
+        mutate(
+          (cur) => {
+            const section = cur.housekeeping.sections.find((s) => s.id === id);
+            const clean = (title ?? '').trim();
+            // A blank name is the backend's to refuse; the list keeps showing the old one.
+            if (!section || !clean || clean === section.title) return null;
+            return {
+              next: withHousekeeping(cur, withSectionRenamed(cur.housekeeping, id, clean, today)),
+              revert: (c) =>
+                c.housekeeping.sections.find((s) => s.id === id)?.title === clean
+                  ? withHousekeeping(c, withSectionRenamed(c.housekeeping, id, section.title, today))
+                  : c,
+            };
+          },
+          () => backend.renameHousekeepingSection(id, title),
+        ),
+      deleteHousekeepingSection: (id) => mutate(deleteSectionChange(id, today), () => backend.deleteHousekeepingSection(id)),
+      reorderHousekeepingSections: (orderedIds) => {
+        const d = requireData();
+        return mutate(
+          arrangeChange(today, (hk) => withSectionsReordered(hk, orderedIds, today)),
+          () => backend.reorderHousekeepingSections(d.household.id, orderedIds),
         );
       },
       setHousekeepingTaskDone: (date, target, done) => {

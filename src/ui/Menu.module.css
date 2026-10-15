@@ -17,6 +17,10 @@
   position: absolute;
   min-width: 232px;
   max-width: min(320px, calc(100vw - 24px));
+  /* A long menu (a section for every room) scrolls inside, clear of the screen's edges. */
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 6px;
   border-radius: 24px;
   background: var(--menu-glass);
@@ -42,6 +46,7 @@
 
 /* "Show tasks for": a small grey title over the items. */
 .title {
+  flex: none;
   padding: 8px 14px 6px;
   font-size: 13px;
   line-height: 18px;
@@ -51,6 +56,7 @@
 
 .item {
   position: relative;
+  flex: none;
   min-height: 46px;
   padding: 0 14px;
   border-radius: 16px;
@@ -138,6 +144,11 @@
 
 .item[aria-checked='true'] .label {
   font-weight: 600;
+}
+
+.item[data-destructive],
+.item[data-destructive] .icon {
+  color: var(--destructive);
 }
 
 .detail {

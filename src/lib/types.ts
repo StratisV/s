@@ -403,13 +403,33 @@ export interface HousekeepingNote {
   updated_by: string | null;
 }
 
+/**
+ * A section of the housekeeping task list (table housekeeping_sections): a heading the tasks
+ * are grouped under on the checklist ("Kitchen", "Bathrooms"). The tasks in no section come
+ * first, with no heading. Anyone in the household adds, renames, reorders and deletes them;
+ * deleting one keeps its tasks (they move to the top, with no section).
+ */
+export interface HousekeepingSection {
+  id: string;
+  household_id: string;
+  /** Trimmed, 1 to TEXT_LIMITS.housekeepingSection characters. */
+  title: string;
+  /** Order of the sections (0 first), after the tasks in no section. New sections go last. */
+  position: number;
+}
+
 /** One task on the household's housekeeping task list (the template every visit copies). */
 export interface HousekeepingTask {
   id: string;
   household_id: string;
   /** Trimmed, 1 to TEXT_LIMITS.housekeepingTask characters. */
   title: string;
-  /** Order on the list (0 first). New tasks go last. */
+  /**
+   * The section it is in; null for none. Documents and databases from before sections have
+   * none (null), so their list reads as it always did.
+   */
+  section_id: string | null;
+  /** Order within its section (or among the tasks in no section), 0 first. New tasks go last. */
   position: number;
 }
 
@@ -426,6 +446,14 @@ export interface HousekeepingVisitTask {
   task_id: string | null;
   /** The task's title as it was on that visit. */
   title: string;
+  /**
+   * The section it was in on that visit; null for none, and null once that section is
+   * deleted (its name stays in section_title, so earlier visits keep their sections).
+   */
+  section_id: string | null;
+  /** That section's name on that visit ('' for none): a snapshot, like the title. */
+  section_title: string;
+  /** Order on the visit (0 first). It runs section by section: the tasks in no section first. */
   position: number;
   done: boolean;
   /** Who ticked it (null while not done, or if that member is gone). */
@@ -467,10 +495,25 @@ export interface HousekeepingVisit {
 /** The housekeeping part of HouseholdData, loaded with the rest of the household. */
 export interface HousekeepingData {
   note: HousekeepingNote;
-  /** The task list, by position (then created_at, then id). */
+  /** The task list's sections, by position (then created_at, then id). None before sections. */
+  sections: HousekeepingSection[];
+  /**
+   * The task list in its order: the tasks in no section first, then section by section in
+   * the sections' order, each by position (then created_at, then id). listOrder() in
+   * src/lib/logic/housekeeping.ts sorts a list this way.
+   */
   tasks: HousekeepingTask[];
   /** Every visit (kept forever), newest first (visit_date descending). */
   visits: HousekeepingVisit[];
+}
+
+/**
+ * One section's tasks in order, as arrangeHousekeepingTasks takes them: `sectionId` null is
+ * the tasks in no section.
+ */
+export interface HousekeepingTaskGroup {
+  sectionId: string | null;
+  taskIds: string[];
 }
 
 /**

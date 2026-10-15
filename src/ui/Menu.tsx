@@ -30,6 +30,8 @@ export interface MenuItem {
   checked?: boolean;
   /** A hairline above it: the start of a new group of items. */
   groupStart?: boolean;
+  /** An action that deletes something: drawn in red, as iOS menus draw one. */
+  destructive?: boolean;
   onSelect(): void;
 }
 
@@ -225,6 +227,7 @@ export function Menu({ label, title, items, children }: MenuProps) {
                     tabIndex={-1}
                     className={styles.item}
                     data-group-start={item.groupStart || undefined}
+                    data-destructive={item.destructive || undefined}
                     onClick={() => choose(item)}
                   >
                     {radio ? (

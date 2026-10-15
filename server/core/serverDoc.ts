@@ -196,7 +196,13 @@ export function newServerDoc(home: DemoDoc, now: Date, auth: { secret?: string; 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
 
-/** The DemoDoc lists the server relies on (DemoBackend fills in the rest as it reads). */
+/**
+ * The DemoDoc lists the server relies on (DemoBackend fills in the rest as it reads). Lists
+ * that came later are not required, so a home stored before them still parses: the live
+ * home has no housekeeping_sections until its first write after sections (OPTIONAL_HOME_LISTS:
+ * missing is none, but if present it must be a list).
+ */
+const OPTIONAL_HOME_LISTS = ['housekeeping_sections'] as const;
 const HOME_LISTS = [
   'users',
   'households',
@@ -220,7 +226,12 @@ export function parseServerDoc(body: string): ServerDoc {
   if (!isRecord(doc) || doc.format !== SERVER_DOC_FORMAT) throw new Error('not a home.os server document');
   if (!isCount(doc.rev) || doc.rev < 1 || !isCount(doc.chatRev)) throw new Error('server document: bad rev');
   const home = doc.home;
-  if (!isRecord(home) || home.version !== 1 || !HOME_LISTS.every((key) => Array.isArray(home[key]))) {
+  if (
+    !isRecord(home) ||
+    home.version !== 1 ||
+    !HOME_LISTS.every((key) => Array.isArray(home[key])) ||
+    !OPTIONAL_HOME_LISTS.every((key) => home[key] === undefined || Array.isArray(home[key]))
+  ) {
     throw new Error('server document: bad home');
   }
   const auth = doc.auth;

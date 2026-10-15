@@ -13,7 +13,7 @@ import {
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { CHAT_PAGE_SIZE, REACTION_EMOJIS, TEXT_LIMITS } from '../constants';
 import { instantOf } from '../logic/chat';
-import { emptyHousekeeping } from '../logic/housekeeping';
+import { emptyHousekeeping, listOrder } from '../logic/housekeeping';
 import { isValidEmail, normaliseEmail } from '../logic/people';
 import type {
   Area,
@@ -29,7 +29,9 @@ import type {
   HouseholdData,
   HousekeepingData,
   HousekeepingNote,
+  HousekeepingSection,
   HousekeepingTask,
+  HousekeepingTaskGroup,
   HousekeepingTickTarget,
   HousekeepingVisit,
   HousekeepingVisitPatch,
@@ -68,8 +70,10 @@ const MESSAGE_COLS = 'id, household_id, member_id, body, created_at';
 /** A message with every reaction on it, in one request (PostgREST resource embedding). */
 const MESSAGE_WITH_REACTIONS = `${MESSAGE_COLS}, reactions:message_reactions(message_id, member_id, emoji, created_at)`;
 const HOUSEKEEPING_NOTE_COLS = 'body, updated_at, updated_by';
-const HOUSEKEEPING_TASK_COLS = 'id, household_id, title, position';
-const HOUSEKEEPING_VISIT_TASK_COLS = 'id, visit_id, household_id, task_id, title, position, done, done_by, done_at';
+const HOUSEKEEPING_SECTION_COLS = 'id, household_id, title, position';
+const HOUSEKEEPING_TASK_COLS = 'id, household_id, title, section_id, position';
+const HOUSEKEEPING_VISIT_TASK_COLS =
+  'id, visit_id, household_id, task_id, title, section_id, section_title, position, done, done_by, done_at';
 /** A visit with its tasks, in one request (PostgREST resource embedding). */
 const HOUSEKEEPING_VISIT_WITH_TASKS =
   'id, household_id, visit_date, note, comments, price_pence, created_by, created_at, updated_by, updated_at, ' +
@@ -99,7 +103,7 @@ const REACTION_EMOJI_MAX = 16;
 /** Message ids per getMessages request, so the URL stays short. */
 const IDS_PER_REQUEST = 100;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** Stands in for an id that is not a uuid in reorderHousekeepingTasks: it matches no row. */
+/** Stands in for an id that is not a uuid in reorderHousekeepingSections: it matches no row. */
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
 /** reconnect() drops and reopens the socket at most this often. */
@@ -337,6 +341,8 @@ function toHousekeepingVisit(row: HousekeepingVisitRow): HousekeepingVisit {
       household_id: t.household_id,
       task_id: t.task_id,
       title: t.title,
+      section_id: t.section_id ?? null,
+      section_title: t.section_title ?? '',
       position: t.position,
       done: t.done,
       done_by: t.done_by,
@@ -571,7 +577,7 @@ export class SupabaseBackend implements Backend {
 
   async load(householdId: string): Promise<HouseholdData> {
     const db = this.client;
-    const [households, members, areas, items, completions, notes, housekeepingTasks, visits] = await Promise.all([
+    const [households, members, areas, items, completions, notes, sections, housekeepingTasks, visits] = await Promise.all([
       run<Household[]>(db.from('households').select(HOUSEHOLD_COLS).eq('id', householdId).limit(1)),
       runAll<Member>((from, to) =>
         db
@@ -611,10 +617,20 @@ export class SupabaseBackend implements Backend {
           .order('id')
           .range(from, to),
       ),
-      // Housekeeping: the message (no row = never written), the task list and every visit
-      // with its tasks embedded.
+      // Housekeeping: the message (no row = never written), the sections, the task list and
+      // every visit with its tasks embedded.
       runAll<HousekeepingNote>((from, to) =>
         db.from('housekeeping_notes').select(HOUSEKEEPING_NOTE_COLS).eq('household_id', householdId).range(from, to),
+      ),
+      runAll<HousekeepingSection>((from, to) =>
+        db
+          .from('housekeeping_sections')
+          .select(HOUSEKEEPING_SECTION_COLS)
+          .eq('household_id', householdId)
+          .order('position')
+          .order('created_at')
+          .order('id')
+          .range(from, to),
       ),
       runAll<HousekeepingTask>((from, to) =>
         db
@@ -639,11 +655,23 @@ export class SupabaseBackend implements Backend {
     // RLS hides other households, so "not a member" also lands here.
     if (!households[0]) throw new BackendError('not_found');
     const note = notes[0];
+    const sectionList = sections.map((s) => ({ id: s.id, household_id: s.household_id, title: s.title, position: s.position }));
     const housekeeping: HousekeepingData = {
       note: note
         ? { body: note.body ?? '', updated_at: note.updated_at ?? null, updated_by: note.updated_by ?? null }
         : emptyHousekeeping().note,
-      tasks: housekeepingTasks.map((t) => ({ id: t.id, household_id: t.household_id, title: t.title, position: t.position })),
+      sections: sectionList,
+      // Loaded by position, created_at, id; then section by section (a stable sort keeps the rest).
+      tasks: listOrder(
+        sectionList,
+        housekeepingTasks.map((t) => ({
+          id: t.id,
+          household_id: t.household_id,
+          title: t.title,
+          section_id: t.section_id ?? null,
+          position: t.position,
+        })),
+      ),
       visits: visits.map(toHousekeepingVisit),
     };
     return { household: toHousehold(households[0]), members, areas, items, completions, housekeeping };
@@ -657,6 +685,7 @@ export class SupabaseBackend implements Backend {
       ['items', `household_id=eq.${householdId}`],
       ['completions', `household_id=eq.${householdId}`],
       ['housekeeping_notes', `household_id=eq.${householdId}`],
+      ['housekeeping_sections', `household_id=eq.${householdId}`],
       ['housekeeping_tasks', `household_id=eq.${householdId}`],
       ['housekeeping_visits', `household_id=eq.${householdId}`],
       ['housekeeping_visit_tasks', `household_id=eq.${householdId}`],
@@ -1097,17 +1126,20 @@ export class SupabaseBackend implements Backend {
     await run<null>(this.client.rpc('undo_clear_housekeeping_note', { p_household_id: householdId }));
   }
 
-  async createHousekeepingTask(householdId: string, title: string): Promise<HousekeepingTask> {
+  async createHousekeepingTask(householdId: string, title: string, sectionId?: string | null): Promise<HousekeepingTask> {
     const clean = requireText(title, 'title');
     requireUuid(householdId);
-    // Only household_id and title are insertable: the trigger trims and puts it last (and on
-    // today's visit). Not a member: RLS rejects the insert (not_found).
+    // Only household_id, title and section_id are insertable: the trigger trims, puts it last
+    // in its section (and on today's visit), and refuses a section from elsewhere (not_found).
+    // Not a member: RLS rejects the insert (not_found).
+    const values: Record<string, string> = { household_id: householdId, title: clean };
+    if (sectionId) values.section_id = requireUuid(sectionId);
     const rows = await run<HousekeepingTask[] | null>(
-      this.client.from('housekeeping_tasks').insert({ household_id: householdId, title: clean }).select(HOUSEKEEPING_TASK_COLS),
+      this.client.from('housekeeping_tasks').insert(values).select(HOUSEKEEPING_TASK_COLS),
     );
     const row = rows?.[0];
     if (!row) throw new BackendError('not_found');
-    return { id: row.id, household_id: row.household_id, title: row.title, position: row.position };
+    return { id: row.id, household_id: row.household_id, title: row.title, section_id: row.section_id ?? null, position: row.position };
   }
 
   async renameHousekeepingTask(id: string, title: string): Promise<void> {
@@ -1120,11 +1152,41 @@ export class SupabaseBackend implements Backend {
     await runAffecting(this.client.from('housekeeping_tasks').delete().eq('id', requireUuid(id)).select('id'));
   }
 
-  async reorderHousekeepingTasks(householdId: string, orderedIds: string[]): Promise<void> {
+  async arrangeHousekeepingTasks(householdId: string, groups: HousekeepingTaskGroup[]): Promise<void> {
     requireUuid(householdId);
-    // An id that is not a uuid names no task, but still takes its place in the order.
+    // The RPC checks the shape and that every task is named once (invalid_input), and that
+    // every id is the household's (not_found, also for one that is not a uuid).
+    await run<null>(this.client.rpc('arrange_housekeeping_tasks', { p_household_id: householdId, p_groups: groups ?? null }));
+  }
+
+  // Sections: written only through their RPCs (supabase/migrations/20261015000100_housekeeping_sections.sql),
+  // each of which takes the household's housekeeping lock first.
+
+  async createHousekeepingSection(householdId: string, title: string): Promise<HousekeepingSection> {
+    const clean = requireText(title, 'title');
+    requireUuid(householdId);
+    const row = await run<HousekeepingSection | null>(
+      this.client.rpc('create_housekeeping_section', { p_household_id: householdId, p_title: clean }),
+    );
+    if (!row) throw new BackendError('not_found');
+    return { id: row.id, household_id: row.household_id, title: row.title, position: row.position };
+  }
+
+  async renameHousekeepingSection(id: string, title: string): Promise<void> {
+    const clean = requireText(title, 'title');
+    await run<null>(this.client.rpc('rename_housekeeping_section', { p_section_id: requireUuid(id), p_title: clean }));
+  }
+
+  async deleteHousekeepingSection(id: string): Promise<void> {
+    // Its tasks move to the top, with no section (the trigger), on today's visit too.
+    await run<null>(this.client.rpc('delete_housekeeping_section', { p_section_id: requireUuid(id) }));
+  }
+
+  async reorderHousekeepingSections(householdId: string, orderedIds: string[]): Promise<void> {
+    requireUuid(householdId);
+    // An id that is not a uuid names no section, but still takes its place in the order.
     const ids = (orderedIds ?? []).map((id) => (typeof id === 'string' && UUID.test(id) ? id : NIL_UUID));
-    await run<null>(this.client.rpc('reorder_housekeeping_tasks', { p_household_id: householdId, p_task_ids: ids }));
+    await run<null>(this.client.rpc('reorder_housekeeping_sections', { p_household_id: householdId, p_section_ids: ids }));
   }
 
   async setHousekeepingTaskDone(

@@ -3,10 +3,22 @@ import { useState, type Context, type Dispatch, type ReactNode, type SetStateAct
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HOUSEKEEPING_SAVE_DELAY_MS, HOUSEKEEPING_STARTER_TASKS } from '../../lib/constants';
 import * as provider from '../../state/HomeProvider';
+import {
+  withSectionAdded,
+  withSectionDeleted,
+  withSectionRenamed,
+  withSectionsReordered,
+  withTaskAdded,
+  withTaskDeleted,
+  withTaskRenamed,
+  withTasksArranged,
+} from '../../lib/logic/housekeeping';
 import type {
   HouseholdData,
   HousekeepingData,
+  HousekeepingSection,
   HousekeepingTask,
+  HousekeepingTaskGroup,
   HousekeepingTickTarget,
   HousekeepingVisit,
   HousekeepingVisitPatch,
@@ -64,6 +76,7 @@ const TASKS: HousekeepingTask[] = HOUSEKEEPING_STARTER_TASKS.map((title, i) => (
   id: `t${i + 1}`,
   household_id: 'h',
   title,
+  section_id: null,
   position: i,
 }));
 
@@ -93,6 +106,8 @@ function visit(
       household_id: 'h',
       task_id: t.id,
       title: t.title,
+      section_id: null,
+      section_title: '',
       position: i,
       done: i < done,
       done_by: i < done ? by.id : null,
@@ -115,9 +130,30 @@ function seed(): HousekeepingData {
       updated_at: '2026-10-07T18:20:00Z',
       updated_by: SHEA.id,
     },
+    sections: [],
     tasks: TASKS,
     visits: [OCT_1, SEP_24],
   };
+}
+
+const KITCHEN: HousekeepingSection = { id: 's-kitchen', household_id: 'h', title: 'Kitchen', position: 0 };
+const BATHROOMS: HousekeepingSection = { id: 's-bath', household_id: 'h', title: 'Bathrooms', position: 1 };
+
+/**
+ * The seed's list in sections: Change the bed sheets, Hoover and mop the floors, Dust the
+ * surfaces and Ironing in no section; Kitchen: Clean the kitchen, Empty the bins; Bathrooms:
+ * Clean the bathrooms.
+ */
+function sectioned(): HousekeepingData {
+  return withTasksArranged(
+    { ...seed(), sections: [KITCHEN, BATHROOMS] },
+    [
+      { sectionId: null, taskIds: ['t1', 't2', 't5', 't7'] },
+      { sectionId: KITCHEN.id, taskIds: ['t4', 't6'] },
+      { sectionId: BATHROOMS.id, taskIds: ['t3'] },
+    ],
+    TODAY,
+  );
 }
 
 let households = 0;
@@ -163,6 +199,8 @@ function newVisitOn(hk: HousekeepingData, date: ISODate): HousekeepingVisit {
       household_id: 'h',
       task_id: t.id,
       title: t.title,
+      section_id: hk.sections.some((s) => s.id === t.section_id) ? t.section_id : null,
+      section_title: hk.sections.find((s) => s.id === t.section_id)?.title ?? '',
       position: i,
       done: false,
       done_by: null,
@@ -229,33 +267,47 @@ function makeActions(set: () => Dispatch<SetStateAction<HouseholdData>>) {
     deleteHousekeepingVisit: vi.fn(async (id: string) => {
       edit((hk) => ({ ...hk, visits: hk.visits.filter((v) => v.id !== id) }));
     }),
-    createHousekeepingTask: vi.fn(async (title: string) => {
+    // The list, as the provider shows it: the logic module's helpers (today's visit follows).
+    createHousekeepingTask: vi.fn(async (title: string, sectionId?: string | null) => {
+      const section = sectionId ?? null;
+      const siblings = latest.housekeeping.tasks.filter((t) => t.section_id === section);
       const task: HousekeepingTask = {
         id: `t-new-${++created}`,
         household_id: 'h',
         title,
-        position: 99,
+        section_id: section,
+        position: siblings.reduce((n, t) => Math.max(n, t.position + 1), 0),
       };
-      edit((hk) => ({ ...hk, tasks: [...hk.tasks, task] }));
+      edit((hk) => withTaskAdded(hk, task, TODAY));
       return task;
     }),
     renameHousekeepingTask: vi.fn(async (id: string, title: string) => {
-      edit((hk) => ({
-        ...hk,
-        tasks: hk.tasks.map((t) => (t.id === id ? { ...t, title } : t)),
-      }));
+      edit((hk) => withTaskRenamed(hk, id, title, TODAY));
     }),
     deleteHousekeepingTask: vi.fn(async (id: string) => {
-      edit((hk) => ({ ...hk, tasks: hk.tasks.filter((t) => t.id !== id) }));
+      edit((hk) => withTaskDeleted(hk, id, TODAY));
     }),
-    reorderHousekeepingTasks: vi.fn(async (ids: string[]) => {
-      edit((hk) => ({
-        ...hk,
-        tasks: ids.map((id, i) => ({
-          ...hk.tasks.find((t) => t.id === id)!,
-          position: i,
-        })),
-      }));
+    arrangeHousekeepingTasks: vi.fn(async (groups: HousekeepingTaskGroup[]) => {
+      edit((hk) => withTasksArranged(hk, groups, TODAY));
+    }),
+    createHousekeepingSection: vi.fn(async (title: string) => {
+      const section: HousekeepingSection = {
+        id: `s-new-${++created}`,
+        household_id: 'h',
+        title: title.trim(),
+        position: latest.housekeeping.sections.reduce((n, s) => Math.max(n, s.position + 1), 0),
+      };
+      edit((hk) => withSectionAdded(hk, section));
+      return section;
+    }),
+    renameHousekeepingSection: vi.fn(async (id: string, title: string) => {
+      edit((hk) => withSectionRenamed(hk, id, title, TODAY));
+    }),
+    deleteHousekeepingSection: vi.fn(async (id: string) => {
+      edit((hk) => withSectionDeleted(hk, id, TODAY));
+    }),
+    reorderHousekeepingSections: vi.fn(async (ids: string[]) => {
+      edit((hk) => withSectionsReordered(hk, ids, TODAY));
     }),
     showToast: vi.fn(),
     dismissToast: vi.fn(),
@@ -386,6 +438,75 @@ describe('HousekeepingScreen', () => {
     expect(within(section('Calendar')).queryByRole('button', { name: 'Today' })).toBeNull();
     expect(control('Show month')).toBeTruthy();
     expect(detail()).toBeNull();
+  });
+
+  it('groups today’s tasks by section: a card each, its name a heading with its progress', async () => {
+    setup(sectioned());
+    const tasks = within(today()).getByRole('group', { name: 'Tasks today' });
+    // The tasks in no section first, with no heading; then each section in order.
+    expect(
+      within(tasks)
+        .getAllByRole('checkbox')
+        .map((b) => document.getElementById(b.getAttribute('aria-labelledby')!)!.textContent),
+    ).toEqual([
+      'Change the bed sheets',
+      'Hoover and mop the floors',
+      'Dust the surfaces',
+      'Ironing',
+      'Clean the kitchen',
+      'Empty the bins',
+      'Clean the bathrooms',
+    ]);
+    // h3s under the day's h2, named with their progress.
+    expect(within(tasks).getAllByRole('heading', { level: 3 }).map((h) => h.getAttribute('aria-label'))).toEqual([
+      'Kitchen, 0 of 2 done',
+      'Bathrooms, 0 of 1 done',
+    ]);
+    const kitchen = within(tasks).getByRole('group', { name: 'Kitchen, 0 of 2 done' });
+    expect(within(kitchen).getAllByRole('checkbox')).toHaveLength(2);
+    expect(kitchen.textContent).toContain('0 of 2');
+
+    await act(async () => {
+      fireEvent.click(within(kitchen).getByRole('checkbox', { name: 'Clean the kitchen' }));
+    });
+    expect(within(tasks).getByRole('heading', { level: 3, name: 'Kitchen, 1 of 2 done' })).toBeTruthy();
+    expect(kitchen.textContent).toContain('1 of 2');
+    await waitFor(() => expect(said()).toBe('Clean the kitchen done'));
+
+    // The last one: all done, and said so.
+    await act(async () => {
+      fireEvent.click(within(kitchen).getByRole('checkbox', { name: 'Empty the bins' }));
+    });
+    expect(within(tasks).getByRole('heading', { level: 3, name: 'Kitchen, all 2 done' })).toBeTruthy();
+    expect(kitchen.hasAttribute('data-all-done')).toBe(true);
+    expect(kitchen.textContent).toContain('All done');
+    await waitFor(() => expect(said()).toBe('Empty the bins done. Kitchen, all 2 done'));
+  });
+
+  it('leaves out a section with no tasks; with no sections at all, one card with no heading', () => {
+    const hk = sectioned();
+    setup({ ...hk, sections: [...hk.sections, { id: 's-empty', household_id: 'h', title: 'Garden', position: 2 }] });
+    const tasks = within(today()).getByRole('group', { name: 'Tasks today' });
+    expect(within(tasks).getAllByRole('heading', { level: 3 }).map((h) => h.getAttribute('aria-label'))).toEqual([
+      'Kitchen, 0 of 2 done',
+      'Bathrooms, 0 of 1 done',
+    ]);
+    cleanup();
+    setup();
+    expect(within(today()).queryAllByRole('heading', { level: 3, name: /done$/ })).toHaveLength(0);
+  });
+
+  it('an earlier visit keeps the sections it had, by their names then', () => {
+    const hk = seed();
+    const renamed: HousekeepingVisit = {
+      ...OCT_1,
+      tasks: OCT_1.tasks.map((r, i) =>
+        i < 2 ? { ...r, section_id: null, section_title: 'Upstairs' } : { ...r, section_id: null, section_title: '' },
+      ),
+    };
+    setup({ ...hk, sections: [KITCHEN], visits: [renamed, SEP_24] }, { showDay: '2026-10-01' });
+    const tasks = within(detail()!).getByRole('group', { name: 'Tasks on Thursday 1 October' });
+    expect(within(tasks).getAllByRole('heading', { level: 3 }).map((h) => h.getAttribute('aria-label'))).toEqual(['Upstairs, all 2 done']);
   });
 
   it('ticks and unticks a task at once and says so', async () => {
@@ -992,7 +1113,9 @@ describe('Task list sheet', () => {
         .map((i) => (i as HTMLInputElement).value);
     expect(names()).toEqual([...HOUSEKEEPING_STARTER_TASKS]);
     expect(
-      within(sheet()).getByText("Changes show in today's visit too. Earlier visits keep their own list."),
+      within(sheet()).getByText(
+        "Sections group the tasks, such as Kitchen or Bathrooms. Changes show in today's visit too. Earlier visits keep their own list.",
+      ),
     ).toBeTruthy();
 
     // Rename in place; blank puts the old title back.
@@ -1012,7 +1135,7 @@ describe('Task list sheet', () => {
 
     // Add Task: "New task", focused with its text selected.
     fireEvent.click(within(sheet()).getByRole('button', { name: 'Add Task' }));
-    expect(actions.createHousekeepingTask).toHaveBeenCalledWith('New task');
+    expect(actions.createHousekeepingTask).toHaveBeenCalledWith('New task', null);
     await waitFor(() => expect((document.activeElement as HTMLInputElement).value).toBe('New task'));
     const added = document.activeElement as HTMLInputElement;
     expect([added.selectionStart, added.selectionEnd]).toEqual([0, 8]);
@@ -1023,15 +1146,8 @@ describe('Task list sheet', () => {
     });
     act(() => grip.focus());
     fireEvent.keyDown(grip, { key: 'ArrowUp' });
-    expect(actions.reorderHousekeepingTasks).toHaveBeenCalledWith([
-      't1',
-      't2',
-      't3',
-      't4',
-      't5',
-      't7',
-      't6',
-      't-new-1',
+    expect(actions.arrangeHousekeepingTasks).toHaveBeenCalledWith([
+      { sectionId: null, taskIds: ['t1', 't2', 't3', 't4', 't5', 't7', 't6', 't-new-1'] },
     ]);
     expect(within(sheet()).getByText('Ironing moved to position 6 of 8.')).toBeTruthy();
     expect(document.activeElement).toBe(within(sheet()).getByRole('button', { name: 'Reorder Ironing' }));
@@ -1054,6 +1170,157 @@ describe('Task list sheet', () => {
       'Ironing',
       'New task',
     ]);
+  });
+
+  it('adds a section, its name selected to type over; a task added into it goes there, and the checklist shows it', async () => {
+    const { actions } = setup(seed(), { sheet: true });
+    expect(
+      within(sheet()).getByText(
+        "Sections group the tasks, such as Kitchen or Bathrooms. Changes show in today's visit too. Earlier visits keep their own list.",
+      ),
+    ).toBeTruthy();
+    // No sections yet: no Move to Section on the rows.
+    expect(within(sheet()).queryByRole('button', { name: 'Move Ironing to a section' })).toBeNull();
+
+    fireEvent.click(within(sheet()).getByRole('button', { name: 'Add Section' }));
+    expect(actions.createHousekeepingSection).toHaveBeenCalledWith('New section');
+    await waitFor(() => expect((document.activeElement as HTMLInputElement).value).toBe('New section'));
+    const name = document.activeElement as HTMLInputElement;
+    expect(name.getAttribute('aria-label')).toBe('Section name');
+    expect([name.selectionStart, name.selectionEnd]).toEqual([0, 11]);
+    fireEvent.change(name, { target: { value: ' Kitchen ' } });
+    fireEvent.keyDown(name, { key: 'Enter' });
+    expect(actions.renameHousekeepingSection).toHaveBeenCalledWith('s-new-1', 'Kitchen');
+    const card = within(sheet()).getByRole('group', { name: 'Kitchen' });
+    // An empty section is not on the checklist.
+    expect(within(today()).queryByRole('heading', { level: 3, name: /^Kitchen/ })).toBeNull();
+
+    fireEvent.click(within(card).getByRole('button', { name: 'Add Task to Kitchen' }));
+    expect(actions.createHousekeepingTask).toHaveBeenCalledWith('New task', 's-new-1');
+    await waitFor(() => expect((document.activeElement as HTMLInputElement).value).toBe('New task'));
+    const task = document.activeElement as HTMLInputElement;
+    fireEvent.change(task, { target: { value: 'Clean the oven' } });
+    fireEvent.keyDown(task, { key: 'Enter' });
+    expect(within(card).getAllByRole('textbox', { name: 'Task name' }).map((i) => (i as HTMLInputElement).value)).toEqual([
+      'Clean the oven',
+    ]);
+    // Now the checklist has it, last, under its heading.
+    const kitchen = within(today()).getByRole('group', { name: 'Kitchen, 0 of 1 done' });
+    expect(within(kitchen).getByRole('checkbox', { name: 'Clean the oven' })).toBeTruthy();
+    // Rows have Move to Section once there are sections.
+    expect(within(sheet()).getByRole('button', { name: 'Move Ironing to a section' })).toBeTruthy();
+  });
+
+  it('moves a task with Move to Section, and with the arrow keys from one section to the next', async () => {
+    const { actions, data } = setup(sectioned(), { sheet: true });
+    fireEvent.click(within(sheet()).getByRole('button', { name: 'Move Ironing to a section' }));
+    const menu = await screen.findByRole('menu', { name: 'Move to Section' });
+    expect(within(menu).getAllByRole('menuitemradio').map((i) => [i.textContent, i.getAttribute('aria-checked')])).toEqual([
+      ['No Section', 'true'],
+      ['Kitchen', 'false'],
+      ['Bathrooms', 'false'],
+    ]);
+    fireEvent.click(within(menu).getByRole('menuitemradio', { name: 'Kitchen' }));
+    expect(actions.arrangeHousekeepingTasks).toHaveBeenLastCalledWith([
+      { sectionId: null, taskIds: ['t1', 't2', 't5'] },
+      { sectionId: KITCHEN.id, taskIds: ['t4', 't6', 't7'] },
+      { sectionId: BATHROOMS.id, taskIds: ['t3'] },
+    ]);
+    expect(within(sheet()).getByText('Ironing moved to Kitchen, position 3 of 3.')).toBeTruthy();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(sheet()).getByRole('button', { name: 'Move Ironing to a section' })),
+    );
+    expect(data().housekeeping.tasks.find((t) => t.id === 't7')!.section_id).toBe(KITCHEN.id);
+
+    // Up from the top of the kitchen: to the end of the tasks in no section.
+    const grip = within(sheet()).getByRole('button', { name: 'Reorder Clean the kitchen' });
+    act(() => grip.focus());
+    fireEvent.keyDown(grip, { key: 'ArrowUp' });
+    expect(actions.arrangeHousekeepingTasks).toHaveBeenLastCalledWith([
+      { sectionId: null, taskIds: ['t1', 't2', 't5', 't4'] },
+      { sectionId: KITCHEN.id, taskIds: ['t6', 't7'] },
+      { sectionId: BATHROOMS.id, taskIds: ['t3'] },
+    ]);
+    expect(within(sheet()).getByText('Clean the kitchen moved to No Section, position 4 of 4.')).toBeTruthy();
+    expect(document.activeElement).toBe(within(sheet()).getByRole('button', { name: 'Reorder Clean the kitchen' }));
+    // And down again, to the top of the kitchen.
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+    expect(within(sheet()).getByText('Clean the kitchen moved to Kitchen, position 1 of 3.')).toBeTruthy();
+  });
+
+  it("a section's menu renames it, moves it, and deletes it after asking, keeping its tasks", async () => {
+    const { actions, data } = setup(sectioned(), { sheet: true });
+    const openMenu = async (name: string) => {
+      fireEvent.click(within(sheet()).getByRole('button', { name: `${name} options` }));
+      return screen.findByRole('menu', { name: `${name} options` });
+    };
+
+    // The first has no Move Up, the last no Move Down.
+    let menu = await openMenu('Kitchen');
+    expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Rename', 'Move Down', 'Delete Section']);
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Move Down' }));
+    expect(actions.reorderHousekeepingSections).toHaveBeenCalledWith([BATHROOMS.id, KITCHEN.id]);
+    expect(within(sheet()).getByText('Kitchen moved to position 2 of 2.')).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(within(sheet()).getByRole('button', { name: 'Kitchen options' })));
+    // The checklist follows.
+    expect(within(today()).getAllByRole('heading', { level: 3, name: /done$/ }).map((h) => h.getAttribute('aria-label'))).toEqual([
+      'Bathrooms, 0 of 1 done',
+      'Kitchen, 0 of 2 done',
+    ]);
+
+    menu = await openMenu('Kitchen');
+    expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Rename', 'Move Up', 'Delete Section']);
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Rename' }));
+    await waitFor(() => expect((document.activeElement as HTMLElement).getAttribute('aria-label')).toBe('Section name'));
+    const field = document.activeElement as HTMLInputElement;
+    expect([field.value, field.selectionStart, field.selectionEnd]).toEqual(['Kitchen', 0, 7]);
+    fireEvent.change(field, { target: { value: 'Kitchen and utility' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(actions.renameHousekeepingSection).toHaveBeenCalledWith(KITCHEN.id, 'Kitchen and utility');
+
+    menu = await openMenu('Kitchen and utility');
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Delete Section' }));
+    const confirm = await screen.findByRole('alertdialog', { name: 'Delete Kitchen and utility?' });
+    expect(
+      within(confirm).getByText(
+        "Its 2 tasks stay on the list, at the top with no section, on today's visit too. Earlier visits keep it.",
+      ),
+    ).toBeTruthy();
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Delete Section' }));
+    expect(actions.deleteHousekeepingSection).toHaveBeenCalledWith(KITCHEN.id);
+    expect(data().housekeeping.sections.map((s) => s.title)).toEqual(['Bathrooms']);
+    // Its tasks: at the top, after the ones there, in their order.
+    expect(
+      within(sheet())
+        .getAllByRole('textbox', { name: 'Task name' })
+        .map((i) => (i as HTMLInputElement).value),
+    ).toEqual([
+      'Change the bed sheets',
+      'Hoover and mop the floors',
+      'Dust the surfaces',
+      'Ironing',
+      'Clean the kitchen',
+      'Empty the bins',
+      'Clean the bathrooms',
+    ]);
+    await waitFor(() => expect(document.activeElement).toBe(within(sheet()).getByRole('button', { name: 'Bathrooms options' })));
+  });
+
+  it("a section's grip moves it with the arrow keys", () => {
+    const { actions } = setup(sectioned(), { sheet: true });
+    const grip = within(sheet()).getByRole('button', { name: 'Reorder Bathrooms section' });
+    expect(grip.getAttribute('aria-describedby')).toBeTruthy();
+    expect(document.getElementById(grip.getAttribute('aria-describedby')!)!.textContent).toBe(
+      'Drag, or use the up and down arrow keys, to move this section.',
+    );
+    act(() => grip.focus());
+    fireEvent.keyDown(grip, { key: 'ArrowUp' });
+    expect(actions.reorderHousekeepingSections).toHaveBeenCalledWith([BATHROOMS.id, KITCHEN.id]);
+    expect(within(sheet()).getByText('Bathrooms moved to position 1 of 2.')).toBeTruthy();
+    expect(document.activeElement).toBe(within(sheet()).getByRole('button', { name: 'Reorder Bathrooms section' }));
+    // Already first: nothing.
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
+    expect(actions.reorderHousekeepingSections).toHaveBeenCalledTimes(1);
   });
 
   it('can be emptied', async () => {

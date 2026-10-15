@@ -493,6 +493,106 @@ test('housekeeping: the message, ticks, comments, price, the task list and visit
   await expectNoReload(shea);
 });
 
+test('housekeeping sections: added, filled, renamed, reordered and deleted on one phone show on the other', async () => {
+  const a = stratis.page;
+  const b = shea.page;
+  await goToTab(a, 'Housekeeping');
+  await goToTab(b, 'Housekeeping');
+  const sa = housekeepingScreen(a);
+  const sb = housekeepingScreen(b);
+  const tasksA = today(sa).getByRole('group', { name: 'Tasks today' });
+  const tasksB = today(sb).getByRole('group', { name: 'Tasks today' });
+  await expect(tasksA).toBeVisible();
+  await expect(tasksB).toBeVisible();
+  /** Today's section headings as heard: "Kitchen, 1 of 2 done". */
+  const headings = (tasks: Locator) =>
+    tasks.getByRole('heading', { level: 3 }).evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')));
+  const openList = async (page: Page, screen: Locator) => {
+    await today(screen).getByRole('button', { name: 'Edit task list' }).click();
+    const list = page.getByRole('dialog', { name: 'Task list' });
+    await settled(list.getByRole('button', { name: 'Done' }));
+    return list;
+  };
+  const closeList = async (list: Locator) => {
+    await list.getByRole('button', { name: 'Done' }).click();
+    await expect(list).toHaveCount(0);
+  };
+  const moveTo = async (page: Page, list: Locator, task: string, section: string) => {
+    await list.getByRole('button', { name: `Move ${task} to a section` }).click();
+    await page.getByRole('menu', { name: 'Move to Section' }).getByRole('menuitemradio', { name: section, exact: true }).click();
+  };
+  const sectionMenu = async (page: Page, list: Locator, section: string, item: string) => {
+    await list.getByRole('button', { name: `${section} options` }).click();
+    await page.getByRole('menu', { name: `${section} options` }).getByRole('menuitem', { name: item }).click();
+  };
+  await quiet(stratis);
+  await quiet(shea);
+
+  // Stratis adds two sections and moves tasks into them.
+  let list = await openList(a, sa);
+  for (const [name, tasks] of [
+    ['Kitchen', ['Clean the kitchen', 'Empty the bins']],
+    ['Bathrooms', ['Clean the bathrooms']],
+  ] as const) {
+    await list.getByRole('button', { name: 'Add Section' }).click();
+    await expect(list.getByRole('textbox', { name: 'Section name' }).last()).toBeFocused();
+    await a.keyboard.type(name);
+    await a.keyboard.press('Enter');
+    await expect(list.getByRole('group', { name, exact: true })).toBeVisible();
+    for (const task of tasks) await moveTo(a, list, task, name);
+  }
+  await closeList(list);
+  await expect.poll(() => headings(tasksB), { timeout: SYNC_MS }).toEqual(['Kitchen, 0 of 2 done', 'Bathrooms, 0 of 1 done']);
+  expect((await checklist(tasksB)).map((t) => t.title)).toEqual([
+    'Change the bed sheets',
+    'Hoover and mop the floors',
+    'Dust the surfaces',
+    'Ironing',
+    'Clean the kitchen',
+    'Empty the bins',
+    'Clean the bathrooms',
+  ]);
+
+  // Shea ticks in the kitchen: Stratis sees its progress.
+  await quiet(stratis);
+  await tasksB.getByRole('checkbox', { name: 'Clean the kitchen' }).click();
+  await expect.poll(() => headings(tasksA), { timeout: SYNC_MS }).toEqual(['Kitchen, 1 of 2 done', 'Bathrooms, 0 of 1 done']);
+
+  // Shea renames the kitchen and moves the bathrooms first.
+  await quiet(stratis);
+  list = await openList(b, sb);
+  await sectionMenu(b, list, 'Kitchen', 'Rename');
+  await expect(list.getByRole('group', { name: 'Kitchen', exact: true }).getByRole('textbox', { name: 'Section name' })).toBeFocused();
+  await b.keyboard.type('Kitchen and utility');
+  await b.keyboard.press('Enter');
+  await expect(list.getByRole('group', { name: 'Kitchen and utility', exact: true })).toBeVisible();
+  await sectionMenu(b, list, 'Bathrooms', 'Move Up');
+  await closeList(list);
+  await expect
+    .poll(() => headings(tasksA), { timeout: SYNC_MS })
+    .toEqual(['Bathrooms, 0 of 1 done', 'Kitchen and utility, 1 of 2 done']);
+
+  // Stratis deletes the kitchen: its tasks go to the top on both phones, the tick kept.
+  await quiet(shea);
+  list = await openList(a, sa);
+  await sectionMenu(a, list, 'Kitchen and utility', 'Delete Section');
+  await (await confirmation(a, 'Delete Kitchen and utility?')).getByRole('button', { name: 'Delete Section' }).click();
+  await closeList(list);
+  await expect.poll(() => headings(tasksB), { timeout: SYNC_MS }).toEqual(['Bathrooms, 0 of 1 done']);
+  expect(await checklist(tasksB)).toEqual([
+    { title: 'Change the bed sheets', done: false },
+    { title: 'Hoover and mop the floors', done: false },
+    { title: 'Dust the surfaces', done: false },
+    { title: 'Ironing', done: false },
+    { title: 'Clean the kitchen', done: true },
+    { title: 'Empty the bins', done: false },
+    { title: 'Clean the bathrooms', done: false },
+  ]);
+
+  await expectNoReload(stratis);
+  await expectNoReload(shea);
+});
+
 test('three phones: two people writing at the same moment never lose a change', async ({ browser, baseURL }) => {
   // Stratis's tablet watches as well.
   const tablet = await openDevice(browser, baseURL!, { signIn: { code: await codeFor(stratis.context, 'Stratis') } });

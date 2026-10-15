@@ -1,10 +1,11 @@
 import { useId } from 'react';
 import { TEXT_LIMITS } from '../../lib/constants';
 import {
-  checklistFor,
+  checklistSections,
   doneByline,
   isRecorded,
   matchesTarget,
+  sectionHeadingLabel,
   visitByline,
   visitOn,
   type ChecklistRow,
@@ -54,7 +55,8 @@ export function VisitEditor({ date, legend, dayName, announce, onEditTasks }: Vi
   const { members } = data;
   const timeZone = data.household.timezone;
   const visit = visitOn(housekeeping.visits, date);
-  const rows = checklistFor(housekeeping, date);
+  const sections = checklistSections(housekeeping, date);
+  const rows = sections.flatMap((section) => section.rows);
   const now = new Date();
   const commentsId = useId();
   const [priceSaved, flashPriceSaved] = useSavedFlash();
@@ -64,8 +66,14 @@ export function VisitEditor({ date, legend, dayName, announce, onEditTasks }: Vi
   );
 
   const tick = (row: ChecklistRow, done: boolean) => {
+    // The last one of a section ticked: the section is all done, and is read out as such.
+    const section = sections.find((s) => s.rows.some((r) => r.key === row.key));
+    const finishes = done && !!section?.title && section.done === section.rows.length - 1;
+    const said = `${row.title} ${done ? 'done' : 'not done'}`;
     void setHousekeepingTaskDone(date, row.target, done)
-      .then(() => announce(`${row.title} ${done ? 'done' : 'not done'}`))
+      .then(() =>
+        announce(finishes ? `${said}. ${sectionHeadingLabel(section.title!, section.rows.length, section.rows.length)}` : said),
+      )
       .catch(() => {});
   };
 
@@ -78,6 +86,8 @@ export function VisitEditor({ date, legend, dayName, announce, onEditTasks }: Vi
       household_id: data.household.id,
       task_id: 'taskId' in row.target ? row.target.taskId : null,
       title: row.title,
+      section_id: null,
+      section_title: '',
       position: 0,
       done: row.done,
       done_by: row.doneBy,
@@ -101,7 +111,7 @@ export function VisitEditor({ date, legend, dayName, announce, onEditTasks }: Vi
   return (
     <div>
       {rows.length ? (
-        <Checklist legend={legend} rows={rows} bylineOf={bylineOf} onTick={tick} />
+        <Checklist legend={legend} sections={sections} bylineOf={bylineOf} onTick={tick} />
       ) : date === today ? (
         <div className={styles.card}>
           <p className={styles.emptyText}>No tasks yet.</p>

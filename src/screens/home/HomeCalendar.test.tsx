@@ -57,6 +57,8 @@ function visit(date: ISODate, done: number, price: number | null): HousekeepingV
     household_id: 'h1',
     task_id: `t${i}`,
     title: `Task ${i}`,
+    section_id: null,
+    section_title: '',
     position: i,
     done: i < done,
     done_by: i < done ? 'm-ela' : null,

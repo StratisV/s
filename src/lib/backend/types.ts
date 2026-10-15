@@ -9,7 +9,9 @@ import type {
   HomeEntry,
   Household,
   HouseholdData,
+  HousekeepingSection,
   HousekeepingTask,
+  HousekeepingTaskGroup,
   HousekeepingTickTarget,
   HousekeepingVisitPatch,
   ImportPayload,
@@ -285,11 +287,19 @@ export interface Backend {
    */
   undoClearHousekeepingNote(householdId: string): Promise<void>;
 
+  // The task list's sections (docs/ARCHITECTURE.md "Housekeeping", "Sections"). Today's
+  // visit, if there is one, follows every change to the list: each of its rows takes its
+  // task's section (its id, and its name as section_title) and place, so its positions run
+  // section by section (the tasks in no section first); a ticked row whose task is gone keeps
+  // its section while that is on the list, after the rows of the section's tasks. Earlier
+  // visits never change: they keep the sections they had (a deleted section by its name).
+
   /**
-   * Adds a task, trimmed, at the end of the list, and to today's visit (household time
-   * zone) if there is one, not done. Returns the new task.
+   * Adds a task, trimmed, at the end of its section (`sectionId`; null or left out: the end
+   * of the tasks in no section), and to today's visit (household time zone) if there is
+   * one, not done. A section that is not the household's is 'not_found'. Returns the new task.
    */
-  createHousekeepingTask(householdId: string, title: string): Promise<HousekeepingTask>;
+  createHousekeepingTask(householdId: string, title: string, sectionId?: string | null): Promise<HousekeepingTask>;
   /**
    * Renames a task (trimmed, not blank). Today's visit, if there is one, shows the new
    * title too unless the task is already ticked there (a ticked row keeps the title it was
@@ -297,15 +307,45 @@ export interface Backend {
    */
   renameHousekeepingTask(id: string, title: string): Promise<void>;
   /**
-   * Deletes a task from the list. Today's visit loses it unless it is already ticked there;
-   * earlier visits keep it (their copy's task_id becomes null).
+   * Deletes a task from the list. Today's visit loses it unless it is already ticked there
+   * (that row stays, after the rows of its section's tasks); earlier visits keep it (their
+   * copy's task_id becomes null).
    */
   deleteHousekeepingTask(id: string): Promise<void>;
   /**
-   * Sets positions to match the given order (all task ids of the household; ids from
-   * elsewhere are ignored). Today's visit, if there is one, follows the new order.
+   * Arranges the whole list at once (moving tasks within and between sections): each group
+   * is a section (sectionId null: no section) and its tasks in order; each task gets that
+   * section and its index there as its position. All or nothing. The groups must name every
+   * task of the household exactly once, and a section at most once (sections left out keep
+   * no task); otherwise BackendError('unknown', 'invalid_input: groups') and nothing changes.
+   * A task or section that is not the household's (deleted meanwhile, or elsewhere) is
+   * 'not_found'. The groups' order does not matter: sections keep theirs
+   * (reorderHousekeepingSections changes it).
    */
-  reorderHousekeepingTasks(householdId: string, orderedIds: string[]): Promise<void>;
+  arrangeHousekeepingTasks(householdId: string, groups: HousekeepingTaskGroup[]): Promise<void>;
+
+  /**
+   * Adds a section, trimmed (1 to TEXT_LIMITS.housekeepingSection characters), after the
+   * others, with no task. A household has at most HOUSEKEEPING_SECTIONS_MAX sections: one
+   * more is BackendError('unknown', 'invalid_input: sections…'). Returns the new section.
+   */
+  createHousekeepingSection(householdId: string, title: string): Promise<HousekeepingSection>;
+  /**
+   * Renames a section (trimmed, not blank, up to TEXT_LIMITS.housekeepingSection). Today's
+   * visit shows the new name; earlier visits keep the name they had.
+   */
+  renameHousekeepingSection(id: string, title: string): Promise<void>;
+  /**
+   * Deletes a section, keeping its tasks: they move to the top, with no section (after the
+   * tasks already there, in their order), on today's visit too. Earlier visits keep the
+   * section by its name (their rows' section_id becomes null, section_title stays).
+   */
+  deleteHousekeepingSection(id: string): Promise<void>;
+  /**
+   * Sets section positions to match the given order (all section ids of the household; ids
+   * from elsewhere are ignored). Each section's tasks come along; today's visit follows.
+   */
+  reorderHousekeepingSections(householdId: string, orderedIds: string[]): Promise<void>;
 
   /**
    * Ticks (done = true) or unticks one task on the visit on `date`, creating the visit if

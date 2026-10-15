@@ -12,7 +12,9 @@ import type {
   DeviceInfo,
   HomeEntry,
   HouseholdData,
+  HousekeepingSection,
   HousekeepingTask,
+  HousekeepingTaskGroup,
   HousekeepingTickTarget,
   HousekeepingVisitPatch,
   ImportPayload,
@@ -682,8 +684,10 @@ export class ServerBackend implements Backend, ServerAccess {
   async undoClearHousekeepingNote(householdId: string): Promise<void> {
     await this.rpc('undoClearHousekeepingNote', [householdId]);
   }
-  async createHousekeepingTask(householdId: string, title: string): Promise<HousekeepingTask> {
-    return (await this.rpc('createHousekeepingTask', [householdId, title])) as HousekeepingTask;
+  async createHousekeepingTask(householdId: string, title: string, sectionId?: string | null): Promise<HousekeepingTask> {
+    // No section: left out, so the call reads as it did before sections.
+    const args: [string, string, (string | null)?] = sectionId ? [householdId, title, sectionId] : [householdId, title];
+    return (await this.rpc('createHousekeepingTask', args)) as HousekeepingTask;
   }
   async renameHousekeepingTask(id: string, title: string): Promise<void> {
     await this.rpc('renameHousekeepingTask', [id, title]);
@@ -691,8 +695,20 @@ export class ServerBackend implements Backend, ServerAccess {
   async deleteHousekeepingTask(id: string): Promise<void> {
     await this.rpc('deleteHousekeepingTask', [id]);
   }
-  async reorderHousekeepingTasks(householdId: string, orderedIds: string[]): Promise<void> {
-    await this.rpc('reorderHousekeepingTasks', [householdId, orderedIds]);
+  async arrangeHousekeepingTasks(householdId: string, groups: HousekeepingTaskGroup[]): Promise<void> {
+    await this.rpc('arrangeHousekeepingTasks', [householdId, groups]);
+  }
+  async createHousekeepingSection(householdId: string, title: string): Promise<HousekeepingSection> {
+    return (await this.rpc('createHousekeepingSection', [householdId, title])) as HousekeepingSection;
+  }
+  async renameHousekeepingSection(id: string, title: string): Promise<void> {
+    await this.rpc('renameHousekeepingSection', [id, title]);
+  }
+  async deleteHousekeepingSection(id: string): Promise<void> {
+    await this.rpc('deleteHousekeepingSection', [id]);
+  }
+  async reorderHousekeepingSections(householdId: string, orderedIds: string[]): Promise<void> {
+    await this.rpc('reorderHousekeepingSections', [householdId, orderedIds]);
   }
   async setHousekeepingTaskDone(
     householdId: string,

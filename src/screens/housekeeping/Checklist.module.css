@@ -1,14 +1,153 @@
-/* The day's tasks: a white card of round iOS checkboxes (docs/ARCHITECTURE.md "Housekeeping", UI). */
+/*
+ * The day's tasks (docs/ARCHITECTURE.md "Housekeeping", UI): white cards of round iOS
+ * checkboxes, the tasks in no section first, then a card per section, 12px apart. A
+ * section's card opens with its drawing, its name and a ring of its progress.
+ */
 
-.card {
+.checklist {
   min-width: 0;
-  margin: 0 16px;
+  margin: 0;
   padding: 0;
   border: 0;
+}
+
+.card {
+  margin: 0 16px;
   background: var(--card);
   border-radius: var(--r-card);
   overflow: hidden;
 }
+
+.card + .card {
+  margin-top: 12px;
+}
+
+/* ── A section's header: drawing, name, then "2 of 5" and its ring ── */
+
+/* The drawing's centre and the name's start line up with the rows' circles and titles. */
+.head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 58px;
+  padding: 10px 16px 8px 15px;
+}
+
+.glyph {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: var(--fill-tertiary);
+  color: var(--label-secondary);
+}
+
+.name {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  color: var(--label);
+  overflow-wrap: anywhere;
+}
+
+.progress {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.count {
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.section[data-all-done] .count {
+  font-weight: 600;
+  color: var(--rag-green-text);
+}
+
+/* The ring: a quiet track, the tint filling it clockwise from the top. */
+.ring {
+  flex: none;
+  display: block;
+  overflow: visible;
+}
+
+.ringTrack,
+.ringFill {
+  fill: none;
+  stroke-width: 2.5;
+  transition: opacity 0.2s ease;
+}
+
+.ringTrack {
+  stroke: var(--fill-secondary);
+}
+
+.ringFill {
+  stroke: var(--tint);
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 12px 12px;
+  transition:
+    stroke-dashoffset 0.5s var(--sheet-ease),
+    opacity 0.2s ease;
+}
+
+/* Every task ticked: the green disc springs in and the white tick draws itself. */
+.ringDone {
+  fill: var(--done-fill);
+  opacity: 0;
+  transform: scale(0.4);
+  transform-origin: 12px 12px;
+  transition:
+    transform 0.2s ease,
+    opacity 0.15s ease;
+}
+
+.ringTick {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition: stroke-dashoffset 0.15s ease;
+}
+
+/* Nothing ticked yet: no stray dot where the fill would start. */
+.ring[data-empty] .ringFill,
+.section[data-all-done] .ringTrack,
+.section[data-all-done] .ringFill {
+  opacity: 0;
+}
+
+.section[data-all-done] .ringDone {
+  opacity: 1;
+  transform: none;
+  transition:
+    transform 0.5s var(--spring),
+    opacity 0.18s ease;
+}
+
+.section[data-all-done] .ringTick {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 0.32s ease 0.14s;
+}
+
+/* ── Rows ── */
 
 .list {
   margin: 0;
@@ -29,8 +168,9 @@
   scroll-margin: calc(var(--top-inset) + 72px) 0 40px;
 }
 
-/* Hairline between rows, inset to the text. */
-.item + .item .row::before {
+/* Hairline between rows, and under a section's header, inset to the text. */
+.item + .item .row::before,
+.section .item:first-child .row::before {
   content: '';
   position: absolute;
   top: 0;
@@ -126,10 +266,30 @@
   overflow-wrap: anywhere;
 }
 
+/* The narrowest phones: the header keeps its name on one line beside the progress where it can. */
+@media (max-width: 374px) {
+  .head {
+    gap: 10px;
+  }
+
+  .count {
+    font-size: 14px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .circle,
-  .circle svg {
+  .circle svg,
+  .ringFill,
+  .ringDone,
+  .ringTick,
+  .section[data-all-done] .ringDone,
+  .section[data-all-done] .ringTick {
     transition: none;
+  }
+
+  .ringDone {
+    transform: none;
   }
 
   .row:active .circle {

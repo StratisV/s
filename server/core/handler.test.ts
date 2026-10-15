@@ -321,6 +321,50 @@ describe('signed in', () => {
     expect((await call(home.stratis, 'version')).json.rev).toBe(3);
   });
 
+  it('loads the home as stored before sections (the live home’s shape), and keeps working on it', async () => {
+    const h = createHarness();
+    const home = await online(h);
+    const [task] = (await home.load()).housekeeping.tasks;
+    expect((await rpc(home.stratis, 'setHousekeepingTaskDone', [home.hid, '2026-10-09', { taskId: task.id }, true])).status).toBe(200);
+    const before = await home.load();
+    // Today's shape: no list of sections, no section fields on any row.
+    const path = 'homeos/test/home.json';
+    const blobs = h.blobs as MemoryBlobStore;
+    const stored = JSON.parse(blobs.peek(path)!.body);
+    delete stored.home.housekeeping_sections;
+    for (const t of stored.home.housekeeping_tasks) delete t.section_id;
+    for (const r of stored.home.housekeeping_visit_tasks) {
+      delete r.section_id;
+      delete r.section_title;
+    }
+    await blobs.put(path, JSON.stringify(stored), { ifMatch: blobs.peek(path)!.etag });
+    h.clock.advance(60_000); // past freshMs: the instance reads the store again
+    expect(JSON.stringify(storedDoc(h).home)).not.toContain('section');
+    expect(await home.load()).toEqual(before);
+    expect(before.housekeeping.sections).toEqual([]);
+
+    // Writes work on it, and the first section is stored with the rest.
+    const kitchen = await rpc(home.stratis, 'createHousekeepingSection', [home.hid, 'Kitchen']);
+    expect(kitchen.status).toBe(200);
+    const ids = before.housekeeping.tasks.map((t) => t.id);
+    const arranged = await rpc(home.stratis, 'arrangeHousekeepingTasks', [
+      home.hid,
+      [
+        { sectionId: null, taskIds: ids.slice(1) },
+        { sectionId: kitchen.json.result.id, taskIds: [ids[0]] },
+      ],
+    ]);
+    expect(arranged.status).toBe(200);
+    const after = await home.load();
+    expect(after.housekeeping.sections.map((s) => s.title)).toEqual(['Kitchen']);
+    expect(after.housekeeping.visits[0].tasks.at(-1)).toMatchObject({ task_id: ids[0], section_title: 'Kitchen', done: true });
+    expect(storedDoc(h).home.housekeeping_sections).toHaveLength(1);
+    // The 31st section is refused (DemoBackend's rule; HOME_ROW_LIMITS caps it too).
+    for (let i = 1; i < 30; i++) expect((await rpc(home.stratis, 'createHousekeepingSection', [home.hid, `Room ${i}`])).status).toBe(200);
+    const more = await rpc(home.stratis, 'createHousekeepingSection', [home.hid, 'One more']);
+    expect([more.status, more.json.error.code]).toEqual([400, 'invalid_input']);
+  });
+
   it('answers a read from a copy at least as new as the caller has seen', async () => {
     const h = createHarness();
     const home = await online(h);

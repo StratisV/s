@@ -75,7 +75,7 @@ describe('the RPC allow-list', () => {
     const allowed = Object.keys(RPC_METHODS);
     const not = Object.keys(NOT_RPC);
     expect(allowed.filter((m) => not.includes(m))).toEqual([]);
-    expect(allowed).toHaveLength(30);
+    expect(allowed).toHaveLength(34);
     expect(not).toHaveLength(18);
   });
 });

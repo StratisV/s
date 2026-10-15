@@ -93,8 +93,9 @@ export function Sheet({ open, onRequestClose, onExited, label, children }: Sheet
     let tracking = false;
     let dragging = false;
 
+    // A field, or a reorder grip (a drag there moves a row, never the sheet).
     const isField = (t: EventTarget | null) =>
-      t instanceof Element && !!t.closest('input, textarea, select, [contenteditable="true"]');
+      t instanceof Element && !!t.closest('input, textarea, select, [contenteditable="true"], [data-grip]');
     const scrollerAtTop = (t: EventTarget | null) => {
       const scroller = t instanceof Element ? t.closest<HTMLElement>('[data-sheet-scroll]') : null;
       return !scroller || scroller.scrollTop <= 0;

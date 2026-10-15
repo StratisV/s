@@ -75,6 +75,11 @@
   --rag-amber-text: #9a5b00;
   /* 4.8:1 on the green wash (the picker's chosen "Not urgent" or "Good"); #248a3d was 3.9:1 there. */
   --rag-green-text: #1f7a36;
+  /*
+   * A housekeeping section with every task ticked: the green disc of its ring, under a white
+   * tick. 4.4:1 on a card, and the tick 4.4:1 on it (#34c759 is 2.2:1 on white).
+   */
+  --done-fill: #248a3d;
 
   /* Type */
   --font-text: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', 'Figtree Variable', system-ui,
@@ -97,6 +102,8 @@
   --shadow-menu: 0 12px 40px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.06), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
   /* A raised card on the page (Home's Looking after tiles). */
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
+  /* A row or a section's header picked up to move it: lifted off the page. */
+  --shadow-lift: 0 0 0 0.5px rgba(0, 0, 0, 0.05), 0 10px 30px rgba(0, 0, 0, 0.16);
 
   /* Layout. The OS draws the status bar; we only respect the safe areas. */
   --top-inset: env(safe-area-inset-top, 0px);
@@ -167,12 +174,15 @@
     --rag-red-text: #ff6961;
     --rag-amber-text: #ffb340;
     --rag-green-text: #4ade80;
+    /* 4.7:1 on a dark card, the white tick 3.6:1 on it (#30d158 is 1.9:1 under white). */
+    --done-fill: #2b9a4a;
 
     --shadow-glass: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.4);
     --shadow-add: 0 6px 18px rgba(10, 132, 255, 0.35);
     --shadow-segment: 0 3px 8px rgba(0, 0, 0, 0.3);
     --shadow-menu: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
     --shadow-card: none;
+    --shadow-lift: 0 0 0 0.5px rgba(255, 255, 255, 0.14), 0 12px 32px rgba(0, 0, 0, 0.6);
   }
 }
 

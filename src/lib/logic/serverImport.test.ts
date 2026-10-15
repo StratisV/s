@@ -206,6 +206,72 @@ describe('buildServerHome: a home the demo set up, then used', () => {
     expect(data.housekeeping.note.body).toBe('Windows, please');
   });
 
+  it('brings the task list’s sections: each task in its section, visits keeping theirs by name', async () => {
+    const storage = new MapStorage();
+    let now = new Date('2026-10-08T09:12:00.000Z');
+    const demo = new DemoBackend({ storage, now: () => now, search: '', latency: 0 });
+    await demo.signInWithGoogle();
+    const hid = await demo.createHousehold({
+      name: 'Our home',
+      address: '',
+      timezone: 'Europe/London',
+      memberName: 'Stratis',
+      memberEmoji: '🦆',
+      areas: ['Kitchen'],
+      items: [],
+    });
+    now = new Date('2026-10-09T08:00:00.000Z');
+    const ids0 = (await demo.load(hid)).housekeeping.tasks.map((t) => t.id);
+    const kitchen = await demo.createHousekeepingSection(hid, 'Kitchen');
+    const baths = await demo.createHousekeepingSection(hid, 'Bathrooms');
+    await demo.arrangeHousekeepingTasks(hid, [
+      { sectionId: null, taskIds: [ids0[0], ids0[1], ids0[4], ids0[6]] },
+      { sectionId: kitchen.id, taskIds: [ids0[3], ids0[5]] },
+      { sectionId: baths.id, taskIds: [ids0[2]] },
+    ]);
+    await demo.setHousekeepingTaskDone(hid, '2026-10-09', { taskId: ids0[3] }, true);
+    // A section deleted after the visit: the visit keeps it by its name.
+    await demo.addHousekeepingVisit(hid, '2026-10-08');
+    await demo.deleteHousekeepingSection(baths.id);
+
+    const raw = storage.getItem(DEMO_STORAGE_KEY)!;
+    const built = buildServerHome(raw, { now, ownerUserId: 'u-owner', newId: ids() })!;
+    const { home } = built;
+    expect(home.housekeeping_sections.map((s) => [s.title, s.position])).toEqual([['Kitchen', 0]]);
+    const newKitchen = home.housekeeping_sections[0].id;
+    expect(newKitchen).not.toBe(kitchen.id);
+    expect(home.housekeeping_tasks.map((t) => [t.title, t.section_id, t.position])).toEqual([
+      ['Change the bed sheets', null, 0],
+      ['Hoover and mop the floors', null, 1],
+      ['Dust the surfaces', null, 2],
+      ['Ironing', null, 3],
+      ['Clean the bathrooms', null, 4],
+      ['Clean the kitchen', newKitchen, 0],
+      ['Empty the bins', newKitchen, 1],
+    ]);
+    const { data } = await loadAsOwner(home, built.householdId, now);
+    const day = (date: string) => data.housekeeping.visits.find((v) => v.visit_date === date)!;
+    expect(day('2026-10-09').tasks.filter((r) => r.section_title === 'Kitchen').map((r) => [r.title, r.section_id, r.done])).toEqual([
+      ['Clean the kitchen', newKitchen, true],
+      ['Empty the bins', newKitchen, false],
+    ]);
+    expect(day('2026-10-08').tasks.find((r) => r.title === 'Clean the bathrooms')).toMatchObject({ section_id: null, section_title: 'Bathrooms' });
+    expect(data.housekeeping.sections.map((s) => s.title)).toEqual(['Kitchen']);
+  });
+
+  it('brings at most 30 sections, leaves blank ones out, and none from a home from before sections', () => {
+    const doc = structuredClone(USER_DEMO_DOC) as unknown as Record<string, unknown>;
+    const at = '2026-10-09T08:00:00.000Z';
+    doc.housekeeping_sections = [
+      { id: 's-blank', household_id: 'hh-our-home', title: '   ', position: 0, created_at: at },
+      ...Array.from({ length: 31 }, (_, i) => ({ id: `s-${i}`, household_id: 'hh-our-home', title: ` Room ${i} `, position: i + 1, created_at: at })),
+      { id: 's-other', household_id: 'elsewhere', title: 'Not ours', position: 0, created_at: at },
+    ];
+    const { home } = build(doc)!;
+    expect(home.housekeeping_sections.map((s) => s.title)).toEqual(Array.from({ length: 30 }, (_, i) => `Room ${i}`));
+    expect(build(USER_DEMO_DOC)!.home.housekeeping_sections).toEqual([]);
+  });
+
   it('brings a made-up housemate along when the household used them', async () => {
     const doc = structuredClone(USER_DEMO_DOC) as typeof USER_DEMO_DOC & { message_reactions: unknown[] };
     doc.messages.push({ id: 'msg-2', household_id: 'hh-our-home', member_id: 'm-stratis', body: 'Ela, the firepit?', created_at: '2026-10-09T07:00:00.000Z' });

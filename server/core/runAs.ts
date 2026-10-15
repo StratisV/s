@@ -32,6 +32,8 @@ export const HOME_ROW_LIMITS = {
   message_reactions: 50_000,
   housekeeping_tasks: 200,
   housekeeping_visits: 3000,
+  /** HOUSEKEEPING_SECTIONS_MAX: DemoBackend refuses a 31st section itself; this is the server's cap. */
+  housekeeping_sections: 30,
 } as const satisfies Partial<Record<keyof DemoDoc, number>>;
 
 /** Refuses `after` when it grew past a limit (see the top); `beforeSize` is the home's JSON size before. */

@@ -25,6 +25,14 @@ describe('the stored document', () => {
     expect(() => parseServerDoc(JSON.stringify({ ...doc, meta: { ...doc.meta, usage: { month: '2026-10', puts: -1, reads: 0 } } }))).toThrow();
   });
 
+  it('reads a home stored before sections (the live home’s shape), and refuses sections that are not a list', () => {
+    const doc = newServerDoc(emptyDoc(), NOW);
+    const { housekeeping_sections: _none, ...before } = doc.home;
+    const old = { ...doc, home: before };
+    expect(parseServerDoc(JSON.stringify(old)).home).toEqual(before);
+    expect(() => parseServerDoc(JSON.stringify({ ...doc, home: { ...doc.home, housekeeping_sections: {} } }))).toThrow();
+  });
+
   it('fingerprints only the chat', () => {
     const home = emptyDoc();
     const before = chatFingerprint(home);

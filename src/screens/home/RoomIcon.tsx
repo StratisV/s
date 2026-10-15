@@ -123,6 +123,11 @@ const PATHS: Record<Glyph, ReactNode> = {
 
 /** The room's line icon (decorative: the room's name is always written next to it). */
 export function RoomIcon({ name, size = 20, className }: { name: string; size?: number; className?: string }) {
+  return <GlyphIcon glyph={roomGlyph(name)} size={size} className={className} />;
+}
+
+/** One drawing, by name (decorative). */
+export function GlyphIcon({ glyph, size = 20, className }: { glyph: Glyph; size?: number; className?: string }) {
   return (
     <svg
       width={size}
@@ -137,7 +142,7 @@ export function RoomIcon({ name, size = 20, className }: { name: string; size?: 
       focusable="false"
       className={className}
     >
-      {PATHS[roomGlyph(name)]}
+      {PATHS[glyph]}
     </svg>
   );
 }

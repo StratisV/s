@@ -1,7 +1,8 @@
 // Housekeeping (supabase/migrations/20261010000400_housekeeping.sql): the message for the
-// housekeeper, the task list, visits and their ticks. Contract tests written with the
-// migration; docs/ARCHITECTURE.md "Housekeeping" is the spec. Every member edits
-// everything; outsiders and anon see and change nothing.
+// housekeeper, the task list, visits and their ticks; and the list's sections
+// (20261015000100_housekeeping_sections.sql). Contract tests written with the migrations;
+// docs/ARCHITECTURE.md "Housekeeping" is the spec. Every member edits everything; outsiders
+// and anon see and change nothing.
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -26,8 +27,15 @@ useCleanup();
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const MIGRATION = path.join(root, 'supabase/migrations/20261010000400_housekeeping.sql');
+const SECTIONS_MIGRATION = path.join(root, 'supabase/migrations/20261015000100_housekeeping_sections.sql');
 const CHECK_VIOLATION = '23514';
-const TABLES = ['housekeeping_notes', 'housekeeping_tasks', 'housekeeping_visits', 'housekeeping_visit_tasks'];
+const TABLES = [
+  'housekeeping_notes',
+  'housekeeping_sections',
+  'housekeeping_tasks',
+  'housekeeping_visits',
+  'housekeeping_visit_tasks',
+];
 const STARTER = [
   'Change the bed sheets',
   'Hoover and mop the floors',
@@ -46,10 +54,36 @@ const rowsOf = async (visitId) =>
   (await db('select * from public.housekeeping_visit_tasks where visit_id = $1 order by position, title, id', [visitId])).rows;
 const visitCount = async (hid) =>
   (await one('select count(*)::int as n from public.housekeeping_visits where household_id = $1', [hid])).n;
+const sectionsOf = async (hid) =>
+  (await db('select * from public.housekeeping_sections where household_id = $1 order by position, created_at, id', [hid])).rows;
+/** The task list in its order: the tasks in no section first, then section by section. */
+const listOf = async (hid) =>
+  (
+    await db(
+      `select t.* from public.housekeeping_tasks t
+       left join public.housekeeping_sections s on s.id = t.section_id
+       where t.household_id = $1
+       order by (s.id is not null), s.position, s.created_at, s.id, t.position, t.created_at, t.id`,
+      [hid],
+    )
+  ).rows;
+/** A visit's rows as [title, section name, position], in their order. */
+const layout = (rows) => rows.map((r) => [r.title, r.section_title, r.position]);
 
 const tick = (user, hid, date, { taskId = null, visitTaskId = null }, done) =>
   rpc(user, 'tick_housekeeping_task', [hid, date, taskId, visitTaskId, done]);
 const save = (user, hid, date, patch) => rpc(user, 'save_housekeeping_visit', [hid, date, JSON.stringify(patch)]);
+const addSection = async (user, hid, title) =>
+  (await q(user, 'select * from public.create_housekeeping_section($1, $2)', [hid, title])).rows[0];
+/** arrange_housekeeping_tasks with `groups` (a string or null is sent as it is). */
+const arrange = (user, hid, groups) =>
+  rpc(user, 'arrange_housekeeping_tasks', [hid, typeof groups === 'string' || groups === null ? groups : JSON.stringify(groups)]);
+
+/** Applies the housekeeping migration again (as `sql`), and the sections one after it, as a deployment has them. */
+async function reapply(sql = fs.readFileSync(MIGRATION, 'utf8')) {
+  await db(sql);
+  await db(fs.readFileSync(SECTIONS_MIGRATION, 'utf8'));
+}
 
 async function checkViolation(promise, constraint) {
   await assert.rejects(promise, (err) => {
@@ -66,7 +100,7 @@ describe('structure', () => {
        where n.nspname = 'public' and c.relname = any($1)`,
       [TABLES],
     );
-    assert.equal(rows.length, 4);
+    assert.equal(rows.length, TABLES.length);
     for (const r of rows) {
       assert.equal(r.relrowsecurity, true, `RLS off on ${r.relname}`);
       assert.equal(r.relreplident, 'f', `${r.relname} replica identity`);
@@ -77,6 +111,7 @@ describe('structure', () => {
       (await one("select has_column_privilege('authenticated', $1, $2, $3) as ok", [`public.${table}`, column, p])).ok;
     const expected = {
       housekeeping_notes: ['SELECT'],
+      housekeeping_sections: ['SELECT'],
       housekeeping_tasks: ['SELECT', 'DELETE'],
       housekeeping_visits: ['SELECT', 'DELETE'],
       housekeeping_visit_tasks: ['SELECT'],
@@ -87,8 +122,8 @@ describe('structure', () => {
         assert.equal(await priv('anon', table, p), false, `anon ${table} ${p}`);
       }
     }
-    for (const c of ['id', 'household_id', 'title', 'position', 'created_at']) {
-      assert.equal(await col('housekeeping_tasks', c, 'INSERT'), ['household_id', 'title'].includes(c), `insert ${c}`);
+    for (const c of ['id', 'household_id', 'title', 'section_id', 'position', 'created_at']) {
+      assert.equal(await col('housekeeping_tasks', c, 'INSERT'), ['household_id', 'title', 'section_id'].includes(c), `insert ${c}`);
       assert.equal(await col('housekeeping_tasks', c, 'UPDATE'), c === 'title', `update ${c}`);
     }
   });
@@ -106,6 +141,11 @@ describe('structure', () => {
       'set_housekeeping_note',
       'undo_clear_housekeeping_note',
       'reorder_housekeeping_tasks',
+      'arrange_housekeeping_tasks',
+      'create_housekeeping_section',
+      'rename_housekeeping_section',
+      'delete_housekeeping_section',
+      'reorder_housekeeping_sections',
       'add_housekeeping_visit',
       'tick_housekeeping_task',
       'save_housekeeping_visit',
@@ -126,6 +166,11 @@ describe('structure', () => {
       'housekeeping_tasks_after_insert',
       'housekeeping_tasks_after_update',
       'housekeeping_tasks_before_delete',
+      'housekeeping_tasks_after_delete',
+      'housekeeping_relay',
+      'housekeeping_relay_today',
+      'housekeeping_sections_before_write',
+      'housekeeping_sections_before_delete',
     ]) {
       assert.ok(byName[name], `missing ${name}`);
       assert.equal(byName[name].auth_exec, false, `authenticated can execute ${name}`);
@@ -133,7 +178,7 @@ describe('structure', () => {
     }
   });
 
-  test('the four tables are in the realtime publication', async () => {
+  test('the five tables are in the realtime publication', async () => {
     const pub = await one("select count(*)::int as n from pg_publication where pubname = 'supabase_realtime'");
     if (pub.n !== 1) return;
     const { rows } = await db("select tablename from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public'");
@@ -550,7 +595,7 @@ describe('existing households get the starter list once', () => {
     // As on a database where housekeeping_tasks did not exist yet.
     const sql = fs.readFileSync(MIGRATION, 'utf8');
     assert.ok(sql.includes(FIRST_RUN));
-    await db(sql.replace(FIRST_RUN, "'true'"));
+    await reapply(sql.replace(FIRST_RUN, "'true'"));
     assert.deepEqual((await tasksOf(empty.id)).map((t) => t.title), STARTER);
     assert.equal((await tasksOf(withVisits.id)).length, 0);
     // The run cleared its setting behind it.
@@ -560,7 +605,7 @@ describe('existing households get the starter list once', () => {
   test('applying the migration again never refills a list someone emptied', async () => {
     const emptied = await createHousehold({ name: 'Emptied on purpose' });
     await db('delete from public.housekeeping_tasks where household_id = $1', [emptied.id]);
-    await db(fs.readFileSync(MIGRATION, 'utf8'));
+    await reapply();
     assert.equal((await tasksOf(emptied.id)).length, 0);
   });
 });
@@ -765,6 +810,11 @@ describe('snapshots: history stays true', () => {
     const gone = await createHousehold({ name: 'Short-lived' });
     const day = await todayIn('Europe/London');
     await rpc(gone.owner, 'set_housekeeping_note', [gone.id, 'Bye']);
+    const kitchen = await addSection(gone.owner, gone.id, 'Kitchen');
+    await q(gone.owner, "insert into public.housekeeping_tasks (household_id, title, section_id) values ($1, 'Oven', $2)", [
+      gone.id,
+      kitchen.id,
+    ]);
     await rpc(gone.owner, 'add_housekeeping_visit', [gone.id, day]);
     await db('delete from public.households where id = $1', [gone.id]);
     for (const table of TABLES) {
@@ -1057,21 +1107,596 @@ describe('members, the housekeeper among them, edit everything', () => {
   });
 });
 
-describe('applying the migration again', () => {
-  test('keeps every message, task, visit and tick as it was', async () => {
+describe('applying the migrations again', () => {
+  test('keeps every message, section, task, visit and tick as it was', async () => {
     const h = await createHousehold({ name: 'Rerun home' });
     const today = await todayIn('Europe/London');
-    const [task] = await tasksOf(h.id);
+    const lastWeek = await dateAdd(today, '-7 days');
+    const tasks = await tasksOf(h.id);
     await rpc(h.owner, 'set_housekeeping_note', [h.id, 'Keep me.']);
-    await tick(h.owner, h.id, today, { taskId: task.id }, true);
+    const kitchen = await addSection(h.owner, h.id, 'Kitchen');
+    await arrange(h.owner, h.id, [
+      { sectionId: null, taskIds: tasks.slice(1).map((t) => t.id) },
+      { sectionId: kitchen.id, taskIds: [tasks[0].id] },
+    ]);
+    await tick(h.owner, h.id, lastWeek, { taskId: tasks[0].id }, true);
+    await tick(h.owner, h.id, today, { taskId: tasks[0].id }, true);
+    await rpc(h.owner, 'delete_housekeeping_section', [kitchen.id]);
+    await addSection(h.owner, h.id, 'Bathrooms');
     const snapshot = async () => ({
       note: await one('select * from public.housekeeping_notes where household_id = $1', [h.id]),
+      sections: await sectionsOf(h.id),
       tasks: await tasksOf(h.id),
       visit: await visitOn(h.id, today),
       rows: await rowsOf((await visitOn(h.id, today)).id),
+      lastWeek: await rowsOf((await visitOn(h.id, lastWeek)).id),
     });
     const before = await snapshot();
-    await db(fs.readFileSync(MIGRATION, 'utf8'));
+    // Last week keeps the section it had, by its name.
+    assert.deepEqual(
+      before.lastWeek.filter((r) => r.section_title !== '').map((r) => [r.title, r.section_id, r.section_title]),
+      [[tasks[0].title, null, 'Kitchen']],
+    );
+    await reapply();
     assert.deepEqual(await snapshot(), before);
+  });
+
+  test('a database from before sections reads as it did: every task and row in none', async () => {
+    const h = await createHousehold({ name: 'Old home' });
+    const today = await todayIn('Europe/London');
+    await rpc(h.owner, 'add_housekeeping_visit', [h.id, today]);
+    const tasks = await tasksOf(h.id);
+    assert.deepEqual(tasks.map((t) => [t.section_id, t.position]), STARTER.map((_, i) => [null, i]));
+    const rows = await rowsOf((await visitOn(h.id, today)).id);
+    assert.deepEqual(rows.map((r) => [r.title, r.section_id, r.section_title, r.position]), STARTER.map((t, i) => [t, null, '', i]));
+    assert.deepEqual(await sectionsOf(h.id), []);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sections (20261015000100_housekeeping_sections.sql)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('sections', () => {
+  let h;
+  let shea;
+  let outsider;
+
+  before(async () => {
+    h = await createHousehold({ name: 'Sections home' });
+    shea = await joinHousehold(h, { name: 'Shea' });
+    outsider = await createHousehold({ name: 'Sections elsewhere' });
+  });
+
+  test('members add (trimmed, last), rename and delete them; blank or too long is refused', async () => {
+    const kitchen = await addSection(shea.user, h.id, '  Kitchen \n');
+    assert.deepEqual([kitchen.title, kitchen.position, kitchen.household_id], ['Kitchen', 0, h.id]);
+    const baths = await addSection(h.owner, h.id, 'Bathrooms');
+    assert.equal(baths.position, 1);
+    await rpc(h.owner, 'rename_housekeeping_section', [kitchen.id, ' Kitchen and utility ']);
+    assert.equal((await one('select title from public.housekeeping_sections where id = $1', [kitchen.id])).title, 'Kitchen and utility');
+    const longest = await addSection(h.owner, h.id, 'x'.repeat(40));
+    assert.equal(longest.title.length, 40);
+    await checkViolation(addSection(h.owner, h.id, ' \t '), 'housekeeping_sections_title_length');
+    await checkViolation(addSection(h.owner, h.id, 'x'.repeat(41)), 'housekeeping_sections_title_length');
+    await checkViolation(addSection(h.owner, h.id, null), 'housekeeping_sections_title_length');
+    await checkViolation(rpc(h.owner, 'rename_housekeeping_section', [kitchen.id, '  ']), 'housekeeping_sections_title_length');
+    await rpc(shea.user, 'delete_housekeeping_section', [longest.id]);
+    await rejects(rpc(shea.user, 'delete_housekeeping_section', [longest.id]), 'not_found');
+    await rejects(rpc(shea.user, 'rename_housekeeping_section', [longest.id, 'Gone']), 'not_found');
+    assert.deepEqual((await sectionsOf(h.id)).map((s) => s.title), ['Kitchen and utility', 'Bathrooms']);
+    // Written only through the RPCs.
+    await rejects(
+      q(h.owner, "insert into public.housekeeping_sections (household_id, title) values ($1, 'Direct')", [h.id]),
+      /permission denied/,
+    );
+    await rejects(q(h.owner, "update public.housekeeping_sections set title = 'Direct' where id = $1", [kitchen.id]), /permission denied/);
+    await rejects(q(h.owner, 'delete from public.housekeeping_sections where id = $1', [kitchen.id]), /permission denied/);
+    await rejects(
+      q(h.owner, 'update public.housekeeping_tasks set section_id = $2 where household_id = $1', [h.id, kitchen.id]),
+      /permission denied/,
+    );
+  });
+
+  test('at most 30 in a household', async () => {
+    const g = await createHousehold({ name: 'Thirty home' });
+    for (let i = 1; i <= 30; i += 1) await addSection(g.owner, g.id, `Room ${i}`);
+    await checkViolation(addSection(g.owner, g.id, 'Room 31'), 'housekeeping_sections_limit');
+    assert.equal((await sectionsOf(g.id)).length, 30);
+    // Deleting one makes room again; the new one goes last.
+    await rpc(g.owner, 'delete_housekeeping_section', [(await sectionsOf(g.id))[0].id]);
+    assert.equal((await addSection(g.owner, g.id, 'Room 31')).position, 30);
+  });
+
+  test('outsiders and anon see and change nothing', async () => {
+    const [kitchen] = await sectionsOf(h.id);
+    assert.equal((await q(outsider.owner, 'select * from public.housekeeping_sections where household_id = $1', [h.id])).rowCount, 0);
+    await rejects(addSection(outsider.owner, h.id, 'Sneaky'), 'not_found');
+    await rejects(rpc(outsider.owner, 'rename_housekeeping_section', [kitchen.id, 'Hacked']), 'not_found');
+    await rejects(rpc(outsider.owner, 'delete_housekeeping_section', [kitchen.id]), 'not_found');
+    await rejects(rpc(outsider.owner, 'reorder_housekeeping_sections', [h.id, [kitchen.id]]), 'not_found');
+    await rejects(arrange(outsider.owner, h.id, []), 'not_found');
+    // Nor can their own list use it: a task added into it, or arranged into it.
+    await rejects(
+      q(outsider.owner, "insert into public.housekeeping_tasks (household_id, title, section_id) values ($1, 'Sneaky', $2)", [
+        outsider.id,
+        kitchen.id,
+      ]),
+      'not_found',
+    );
+    const theirs = (await tasksOf(outsider.id)).map((t) => t.id);
+    await rejects(arrange(outsider.owner, outsider.id, [{ sectionId: kitchen.id, taskIds: theirs }]), 'not_found');
+    await rejects(q(null, 'select * from public.housekeeping_sections'), /permission denied/);
+    await rejects(addSection(null, h.id, 'Anon'), /permission denied/);
+    await rejects(rpc(null, 'delete_housekeeping_section', [kitchen.id]), /permission denied/);
+    assert.equal((await one('select title from public.housekeeping_sections where id = $1', [kitchen.id])).title, kitchen.title);
+  });
+
+  test('a task added into a section goes last there; the list runs the tasks in no section first', async () => {
+    const g = await createHousehold({ name: 'Into a section home' });
+    const kitchen = await addSection(g.owner, g.id, 'Kitchen');
+    const add = async (title, sectionId = null) =>
+      (
+        await q(g.owner, 'insert into public.housekeeping_tasks (household_id, title, section_id) values ($1, $2, $3) returning *', [
+          g.id,
+          title,
+          sectionId,
+        ])
+      ).rows[0];
+    const oven = await add('Oven', kitchen.id);
+    const fridge = await add('Fridge', kitchen.id);
+    const windows = await add('Windows');
+    assert.deepEqual(
+      [oven.section_id, oven.position, fridge.position, windows.section_id, windows.position],
+      [kitchen.id, 0, 1, null, 7],
+    );
+    assert.deepEqual((await listOf(g.id)).map((t) => t.title), [...STARTER, 'Windows', 'Oven', 'Fridge']);
+  });
+
+  test('arrange moves tasks within and across sections at once; a wrong arrangement changes nothing', async () => {
+    const g = await createHousehold({ name: 'Arrange home' });
+    const other = await createHousehold({ name: 'Arrange elsewhere' });
+    const kitchen = await addSection(g.owner, g.id, 'Kitchen');
+    const baths = await addSection(g.owner, g.id, 'Bathrooms');
+    const foreignSection = await addSection(other.owner, other.id, 'Theirs');
+    const [foreignTask] = await tasksOf(other.id);
+    const t = (await tasksOf(g.id)).map((x) => x.id);
+    // The groups' order does not matter: the sections keep theirs.
+    await arrange(g.owner, g.id, [
+      { sectionId: baths.id, taskIds: [t[2]] },
+      { sectionId: null, taskIds: [t[0], t[1], t[4], t[6]] },
+      { sectionId: kitchen.id, taskIds: [t[3], t[5]] },
+    ]);
+    let list = await listOf(g.id);
+    assert.deepEqual(list.map((x) => x.id), [t[0], t[1], t[4], t[6], t[3], t[5], t[2]]);
+    assert.deepEqual(
+      list.map((x) => [x.section_id, x.position]),
+      [
+        [null, 0],
+        [null, 1],
+        [null, 2],
+        [null, 3],
+        [kitchen.id, 0],
+        [kitchen.id, 1],
+        [baths.id, 0],
+      ],
+    );
+    // Within a section, out of one, and an empty group.
+    await arrange(g.owner, g.id, [
+      { sectionId: null, taskIds: [t[0], t[1], t[4], t[6], t[2]] },
+      { sectionId: kitchen.id, taskIds: [t[5], t[3]] },
+      { sectionId: baths.id, taskIds: [] },
+    ]);
+    list = await listOf(g.id);
+    assert.deepEqual(list.map((x) => x.id), [t[0], t[1], t[4], t[6], t[2], t[5], t[3]]);
+
+    const top = [t[0], t[1], t[4], t[6], t[2]];
+    const invalid = [
+      // A task left out, named twice (in one group or two), a section named twice.
+      [{ sectionId: null, taskIds: top.slice(1) }, { sectionId: kitchen.id, taskIds: [t[5], t[3]] }],
+      [{ sectionId: null, taskIds: [...top, t[0]] }, { sectionId: kitchen.id, taskIds: [t[5], t[3]] }],
+      [{ sectionId: null, taskIds: top }, { sectionId: kitchen.id, taskIds: [t[5], t[3], t[0]] }],
+      [{ sectionId: kitchen.id, taskIds: top }, { sectionId: kitchen.id, taskIds: [t[5], t[3]] }],
+      [{ sectionId: null, taskIds: top }, { sectionId: null, taskIds: [t[5], t[3]] }],
+      // Not the shape.
+      [{ taskIds: [...top, t[5], t[3]] }],
+      [{ sectionId: 5, taskIds: [...top, t[5], t[3]] }],
+      [{ sectionId: null, taskIds: [...top, t[5], 7] }],
+      [{ sectionId: null }],
+      [null],
+      '{}',
+      '"tasks"',
+      null,
+    ];
+    for (const groups of invalid) await rejects(arrange(g.owner, g.id, groups), 'invalid_input');
+    const notFound = [
+      [{ sectionId: null, taskIds: [...top, t[5], t[3], foreignTask.id] }],
+      [{ sectionId: null, taskIds: [...top, t[5], t[3], 'not-a-uuid'] }],
+      [{ sectionId: null, taskIds: [...top, t[5], t[3]] }, { sectionId: foreignSection.id, taskIds: [] }],
+      [{ sectionId: null, taskIds: [...top, t[5], t[3]] }, { sectionId: 'not-a-uuid', taskIds: [] }],
+    ];
+    for (const groups of notFound) await rejects(arrange(g.owner, g.id, groups), 'not_found');
+    assert.deepEqual(await listOf(g.id), list);
+    assert.equal((await one('select section_id from public.housekeeping_tasks where id = $1', [foreignTask.id])).section_id, null);
+  });
+
+  test("today's visit follows the list: its sections, their names and order; earlier visits keep theirs", async () => {
+    const g = await createHousehold({ name: 'Follow home' });
+    const today = await todayIn('Europe/London');
+    const lastWeek = await dateAdd(today, '-7 days');
+    const t = await tasksOf(g.id);
+    await rpc(g.owner, 'add_housekeeping_visit', [g.id, lastWeek]);
+    const todayId = await rpc(g.owner, 'add_housekeeping_visit', [g.id, today]);
+    const kitchen = await addSection(g.owner, g.id, 'Kitchen');
+    // An empty section changes nothing there.
+    assert.deepEqual(layout(await rowsOf(todayId)), STARTER.map((title, i) => [title, '', i]));
+    await arrange(g.owner, g.id, [
+      { sectionId: null, taskIds: [t[0].id, t[1].id, t[2].id, t[4].id, t[6].id] },
+      { sectionId: kitchen.id, taskIds: [t[3].id, t[5].id] },
+    ]);
+    assert.deepEqual(layout(await rowsOf(todayId)), [
+      [STARTER[0], '', 0],
+      [STARTER[1], '', 1],
+      [STARTER[2], '', 2],
+      [STARTER[4], '', 3],
+      [STARTER[6], '', 4],
+      [STARTER[3], 'Kitchen', 5],
+      [STARTER[5], 'Kitchen', 6],
+    ]);
+    // Ticked in the kitchen, then the task and the section renamed: the row keeps the title
+    // it was ticked under, and takes the section's new name.
+    await tick(g.owner, g.id, today, { taskId: t[3].id }, true);
+    await q(g.owner, "update public.housekeeping_tasks set title = 'Kitchen surfaces' where id = $1", [t[3].id]);
+    await rpc(g.owner, 'rename_housekeeping_section', [kitchen.id, 'Kitchen and utility']);
+    // A second section, then moved first.
+    const baths = await addSection(g.owner, g.id, 'Bathrooms');
+    await arrange(g.owner, g.id, [
+      { sectionId: null, taskIds: [t[0].id, t[1].id, t[4].id, t[6].id] },
+      { sectionId: kitchen.id, taskIds: [t[3].id, t[5].id] },
+      { sectionId: baths.id, taskIds: [t[2].id] },
+    ]);
+    await rpc(g.owner, 'reorder_housekeeping_sections', [g.id, [baths.id, kitchen.id]]);
+    // A task added into a section joins it there.
+    await q(g.owner, "insert into public.housekeeping_tasks (household_id, title, section_id) values ($1, 'Mirrors', $2)", [
+      g.id,
+      baths.id,
+    ]);
+    const rows = await rowsOf(todayId);
+    assert.deepEqual(layout(rows), [
+      [STARTER[0], '', 0],
+      [STARTER[1], '', 1],
+      [STARTER[4], '', 2],
+      [STARTER[6], '', 3],
+      [STARTER[2], 'Bathrooms', 4],
+      ['Mirrors', 'Bathrooms', 5],
+      [STARTER[3], 'Kitchen and utility', 6],
+      [STARTER[5], 'Kitchen and utility', 7],
+    ]);
+    assert.deepEqual(rows.map((r) => r.section_id), [null, null, null, null, baths.id, baths.id, kitchen.id, kitchen.id]);
+    assert.deepEqual([rows[6].done, rows[6].task_id], [true, t[3].id]);
+    // Last week is as it was made: no sections, the order then.
+    assert.deepEqual(layout(await rowsOf((await visitOn(g.id, lastWeek)).id)), STARTER.map((title, i) => [title, '', i]));
+    // A visit recorded now for an earlier day copies the list as it stands, sections and all.
+    const earlier = await dateAdd(today, '-3 days');
+    const earlierId = await rpc(g.owner, 'add_housekeeping_visit', [g.id, earlier]);
+    assert.deepEqual(layout(await rowsOf(earlierId)), [
+      [STARTER[0], '', 0],
+      [STARTER[1], '', 1],
+      [STARTER[4], '', 2],
+      [STARTER[6], '', 3],
+      [STARTER[2], 'Bathrooms', 4],
+      ['Mirrors', 'Bathrooms', 5],
+      ['Kitchen surfaces', 'Kitchen and utility', 6],
+      [STARTER[5], 'Kitchen and utility', 7],
+    ]);
+    // From then on it is history: a rename reaches today only.
+    await rpc(g.owner, 'rename_housekeeping_section', [baths.id, 'Bathroom']);
+    assert.equal((await rowsOf(todayId))[4].section_title, 'Bathroom');
+    assert.equal((await rowsOf(earlierId))[4].section_title, 'Bathrooms');
+  });
+
+  test('a ticked row whose task is deleted stays in its section, after the others; with the section gone it has none', async () => {
+    const g = await createHousehold({ name: 'Orphan home' });
+    const today = await todayIn('Europe/London');
+    const t = await tasksOf(g.id);
+    const kitchen = await addSection(g.owner, g.id, 'Kitchen');
+    await arrange(g.owner, g.id, [
+      { sectionId: null, taskIds: [t[0].id, t[1].id, t[2].id, t[4].id, t[6].id] },
+      { sectionId: kitchen.id, taskIds: [t[3].id, t[5].id] },
+    ]);
+    const todayId = await tick(g.owner, g.id, today, { taskId: t[3].id }, true);
+    await q(g.owner, 'delete from public.housekeeping_tasks where id = $1', [t[3].id]);
+    let rows = await rowsOf(todayId);
+    assert.deepEqual(layout(rows).slice(5), [
+      [STARTER[5], 'Kitchen', 5],
+      [STARTER[3], 'Kitchen', 6],
+    ]);
+    assert.deepEqual([rows[6].task_id, rows[6].done], [null, true]);
+    // A task not ticked deleted: its row goes, and the places close up.
+    await q(g.owner, 'delete from public.housekeeping_tasks where id = $1', [t[1].id]);
+    rows = await rowsOf(todayId);
+    assert.deepEqual(rows.map((r) => r.position), [0, 1, 2, 3, 4, 5]);
+    // The section deleted: its task goes to the top, after the ones there; the ticked row has none either.
+    await rpc(g.owner, 'delete_housekeeping_section', [kitchen.id]);
+    assert.deepEqual(layout(await rowsOf(todayId)), [
+      [STARTER[0], '', 0],
+      [STARTER[2], '', 1],
+      [STARTER[4], '', 2],
+      [STARTER[6], '', 3],
+      [STARTER[5], '', 4],
+      [STARTER[3], '', 5],
+    ]);
+  });
+
+  test('deleting a section keeps its tasks: to the top, after the tasks there, in their order; earlier visits keep its name', async () => {
+    const g = await createHousehold({ name: 'Delete section home' });
+    const housekeeper = await joinHousehold(g, { name: 'Maria', emoji: '🧹' });
+    const today = await todayIn('Europe/London');
+    const lastWeek = await dateAdd(today, '-7 days');
+    const t = await tasksOf(g.id);
+    const kitchen = await addSection(g.owner, g.id, 'Kitchen');
+    const baths = await addSection(g.owner, g.id, 'Bathrooms');
+    await arrange(g.owner, g.id, [
+      { sectionId: null, taskIds: [t[0].id, t[1].id, t[4].id, t[6].id] },
+      { sectionId: kitchen.id, taskIds: [t[5].id, t[3].id] },
+      { sectionId: baths.id, taskIds: [t[2].id] },
+    ]);
+    const lastWeekId = await rpc(g.owner, 'add_housekeeping_visit', [g.id, lastWeek]);
+    const todayId = await rpc(g.owner, 'add_housekeeping_visit', [g.id, today]);
+    const old = await rowsOf(lastWeekId);
+    await rpc(housekeeper.user, 'delete_housekeeping_section', [kitchen.id]);
+    assert.deepEqual((await sectionsOf(g.id)).map((s) => s.title), ['Bathrooms']);
+    assert.deepEqual(
+      (await listOf(g.id)).map((x) => [x.title, x.section_id, x.position]),
+      [
+        [STARTER[0], null, 0],
+        [STARTER[1], null, 1],
+        [STARTER[4], null, 2],
+        [STARTER[6], null, 3],
+        [STARTER[5], null, 4],
+        [STARTER[3], null, 5],
+        [STARTER[2], baths.id, 0],
+      ],
+    );
+    assert.deepEqual(layout(await rowsOf(todayId)), [
+      [STARTER[0], '', 0],
+      [STARTER[1], '', 1],
+      [STARTER[4], '', 2],
+      [STARTER[6], '', 3],
+      [STARTER[5], '', 4],
+      [STARTER[3], '', 5],
+      [STARTER[2], 'Bathrooms', 6],
+    ]);
+    // Last week: the same rows, places and names, the deleted section kept by its name.
+    const after = await rowsOf(lastWeekId);
+    assert.deepEqual(
+      after.map((r) => [r.id, r.title, r.position, r.section_title, r.section_id]),
+      old.map((r) => [r.id, r.title, r.position, r.section_title, r.section_id === kitchen.id ? null : r.section_id]),
+    );
+    assert.deepEqual(after.filter((r) => r.section_title === 'Kitchen').map((r) => r.title), [STARTER[5], STARTER[3]]);
+  });
+
+  test('reorder: each section takes its place in the list given (the first mention wins); ids from elsewhere are ignored', async () => {
+    const g = await createHousehold({ name: 'Reorder sections home' });
+    const other = await createHousehold({ name: 'Reorder elsewhere' });
+    const a = await addSection(g.owner, g.id, 'A');
+    const b = await addSection(g.owner, g.id, 'B');
+    const c = await addSection(g.owner, g.id, 'C');
+    const theirs = await addSection(other.owner, other.id, 'Theirs');
+    const t = await tasksOf(g.id);
+    await arrange(g.owner, g.id, [
+      { sectionId: null, taskIds: t.slice(3).map((x) => x.id) },
+      { sectionId: a.id, taskIds: [t[0].id] },
+      { sectionId: b.id, taskIds: [t[1].id] },
+      { sectionId: c.id, taskIds: [t[2].id] },
+    ]);
+    await rpc(g.owner, 'reorder_housekeeping_sections', [g.id, [c.id, a.id, c.id, theirs.id, b.id]]);
+    assert.deepEqual((await sectionsOf(g.id)).map((s) => [s.title, s.position]), [
+      ['C', 0],
+      ['A', 1],
+      ['B', 4],
+    ]);
+    assert.equal((await one('select position from public.housekeeping_sections where id = $1', [theirs.id])).position, 0);
+    // Their tasks come along.
+    assert.deepEqual((await listOf(g.id)).slice(4).map((x) => x.title), [t[2].title, t[0].title, t[1].title]);
+  });
+
+  test("the old app's reorder_housekeeping_tasks still works, and keeps each task in its section", async () => {
+    const g = await createHousehold({ name: 'Old app home' });
+    const kitchen = await addSection(g.owner, g.id, 'Kitchen');
+    const t = await tasksOf(g.id);
+    await arrange(g.owner, g.id, [
+      { sectionId: null, taskIds: t.slice(0, 5).map((x) => x.id) },
+      { sectionId: kitchen.id, taskIds: [t[5].id, t[6].id] },
+    ]);
+    // It sends the whole list in the order it shows it.
+    await rpc(g.owner, 'reorder_housekeeping_tasks', [g.id, [t[6], t[0], t[1], t[2], t[3], t[4], t[5]].map((x) => x.id)]);
+    assert.deepEqual(
+      (await listOf(g.id)).map((x) => [x.title, x.section_id]),
+      [
+        [t[0].title, null],
+        [t[1].title, null],
+        [t[2].title, null],
+        [t[3].title, null],
+        [t[4].title, null],
+        [t[6].title, kitchen.id],
+        [t[5].title, kitchen.id],
+      ],
+    );
+  });
+});
+
+describe('sections: changes made at the same moment wait for each other', () => {
+  const ADD = 'select * from public.create_housekeeping_section($1, $2)';
+  const ARRANGE = 'select public.arrange_housekeeping_tasks($1, $2)';
+  const RENAME = 'update public.housekeeping_tasks set title = $2 where id = $1';
+  const DELETE = 'delete from public.housekeeping_tasks where id = $1';
+  const DELETE_SECTION = 'select public.delete_housekeeping_section($1)';
+
+  /** `first` in one transaction, then `second` in another: the second waits until the first commits. */
+  async function oneAfterTheOther(user, first, second, what) {
+    const a = await session(user);
+    const b = await session(user);
+    try {
+      await first(a);
+      const waiting = second(b);
+      assert.equal(await stillWaiting(waiting), true, what);
+      await a.commit();
+      await waiting;
+      await b.commit();
+    } finally {
+      await a.rollback();
+      await b.rollback();
+    }
+  }
+
+  test('two sections added at once: both kept, one after the other; never more than 30', async () => {
+    const g = await createHousehold({ name: 'Busy sections home' });
+    await oneAfterTheOther(
+      g.owner,
+      (a) => a.query(ADD, [g.id, 'Kitchen']),
+      (b) => b.query(ADD, [g.id, 'Bathrooms']),
+      'the second waits for the first',
+    );
+    assert.deepEqual((await sectionsOf(g.id)).map((s) => [s.title, s.position]), [
+      ['Kitchen', 0],
+      ['Bathrooms', 1],
+    ]);
+    for (let i = 3; i <= 29; i += 1) await addSection(g.owner, g.id, `Room ${i}`);
+    const a = await session(g.owner);
+    const b = await session(g.owner);
+    try {
+      await a.query(ADD, [g.id, 'Thirtieth']);
+      const late = b.query(ADD, [g.id, 'Thirty-first']);
+      assert.equal(await stillWaiting(late), true);
+      await a.commit();
+      await checkViolation(late, 'housekeeping_sections_limit');
+    } finally {
+      await a.rollback();
+      await b.rollback();
+    }
+    assert.equal((await sectionsOf(g.id)).length, 30);
+  });
+
+  test('a task renamed while the list is arranged: one after the other, either way round, both stand', async () => {
+    const g = await createHousehold({ name: 'Rename while arranging home' });
+    const kitchen = await addSection(g.owner, g.id, 'Kitchen');
+    const t = (await tasksOf(g.id)).map((x) => x.id);
+    const intoKitchen = JSON.stringify([
+      { sectionId: null, taskIds: t.slice(1) },
+      { sectionId: kitchen.id, taskIds: [t[0]] },
+    ]);
+    // A rename locks its row as it starts and takes the household's lock after (its trigger).
+    // The arrangement locks the rows first too, so it waits for the row, the rename gets the
+    // household's lock, and neither waits on the other in a circle.
+    const a = await session(g.owner);
+    const b = await session(g.owner);
+    try {
+      await a.query('select id from public.housekeeping_tasks where id = $1 for no key update', [t[0]]);
+      const arranging = b.query(ARRANGE, [g.id, intoKitchen]);
+      assert.equal(await stillWaiting(arranging), true, 'the arrangement waits for the row');
+      await a.query(RENAME, [t[0], 'Bed sheets']);
+      await a.commit();
+      await arranging;
+      await b.commit();
+    } finally {
+      await a.rollback();
+      await b.rollback();
+    }
+    let list = await listOf(g.id);
+    assert.deepEqual([list.at(-1).title, list.at(-1).section_id], ['Bed sheets', kitchen.id]);
+    // The arrangement first: the rename waits for it.
+    await oneAfterTheOther(
+      g.owner,
+      (x) => x.query(ARRANGE, [g.id, JSON.stringify([{ sectionId: null, taskIds: t }])]),
+      (y) => y.query(RENAME, [t[0], 'Change the bed sheets']),
+      'the rename waits for the arrangement',
+    );
+    list = await listOf(g.id);
+    assert.deepEqual([list[0].title, list[0].section_id], ['Change the bed sheets', null]);
+  });
+
+  test("today's visit created while the list is arranged has the arrangement, either way round", async () => {
+    const g = await createHousehold({ name: 'Arrange while creating home' });
+    const day = await todayIn('Europe/London');
+    const kitchen = await addSection(g.owner, g.id, 'Kitchen');
+    const t = (await tasksOf(g.id)).map((x) => x.id);
+    const arrangement = (k) =>
+      JSON.stringify([
+        { sectionId: null, taskIds: t.filter((_, i) => i !== k) },
+        { sectionId: kitchen.id, taskIds: [t[k]] },
+      ]);
+    const inKitchen = async () =>
+      (await rowsOf((await visitOn(g.id, day)).id)).filter((r) => r.section_id === kitchen.id).map((r) => r.task_id);
+    // The visit first: the arrangement waits, then lays it out.
+    await oneAfterTheOther(
+      g.owner,
+      (a) => a.query(TICK, [g.id, day, t[1], null, true]),
+      (b) => b.query(ARRANGE, [g.id, arrangement(3)]),
+      'the arrangement waits for the visit',
+    );
+    assert.deepEqual(await inKitchen(), [t[3]]);
+    // The arrangement first: the visit waits, then copies it.
+    await db('delete from public.housekeeping_visits where household_id = $1', [g.id]);
+    await oneAfterTheOther(
+      g.owner,
+      (a) => a.query(ARRANGE, [g.id, arrangement(5)]),
+      (b) => b.query(TICK, [g.id, day, t[1], null, true]),
+      'the visit waits for the arrangement',
+    );
+    assert.deepEqual(await inKitchen(), [t[5]]);
+  });
+
+  test("two tasks deleted at once: one after the other, and today's visit closes up", async () => {
+    const g = await createHousehold({ name: 'Two deletes home' });
+    const today = await todayIn('Europe/London');
+    const todayId = await rpc(g.owner, 'add_housekeeping_visit', [g.id, today]);
+    const t = await tasksOf(g.id);
+    await oneAfterTheOther(
+      g.owner,
+      (a) => a.query(DELETE, [t[1].id]),
+      (b) => b.query(DELETE, [t[4].id]),
+      'the second waits for the first',
+    );
+    assert.deepEqual(layout(await rowsOf(todayId)), [t[0], t[2], t[3], t[5], t[6]].map((x, i) => [x.title, '', i]));
+  });
+
+  test('a section deleted while a task in it is renamed: one after the other; the task keeps its new name', async () => {
+    const g = await createHousehold({ name: 'Delete while renaming home' });
+    const kitchen = await addSection(g.owner, g.id, 'Kitchen');
+    const t = (await tasksOf(g.id)).map((x) => x.id);
+    await arrange(g.owner, g.id, [
+      { sectionId: null, taskIds: t.slice(1) },
+      { sectionId: kitchen.id, taskIds: [t[0]] },
+    ]);
+    await oneAfterTheOther(
+      g.owner,
+      (a) => a.query(RENAME, [t[0], 'Bed sheets']),
+      (b) => b.query(DELETE_SECTION, [kitchen.id]),
+      'the delete waits for the rename',
+    );
+    const list = await listOf(g.id);
+    assert.deepEqual([list.at(-1).title, list.at(-1).section_id], ['Bed sheets', null]);
+  });
+
+  test('a task added into a section being deleted waits, then is refused', async () => {
+    const g = await createHousehold({ name: 'Add while deleting home' });
+    const kitchen = await addSection(g.owner, g.id, 'Kitchen');
+    const deleter = await session(g.owner);
+    const adder = await session(g.owner);
+    try {
+      await deleter.query(DELETE_SECTION, [kitchen.id]);
+      const adding = adder.query("insert into public.housekeeping_tasks (household_id, title, section_id) values ($1, 'Oven', $2)", [
+        g.id,
+        kitchen.id,
+      ]);
+      assert.equal(await stillWaiting(adding), true);
+      await deleter.commit();
+      await assert.rejects(adding, (err) => err.message === 'not_found');
+    } finally {
+      await deleter.rollback();
+      await adder.rollback();
+    }
+    assert.equal((await listOf(g.id)).some((x) => x.title === 'Oven'), false);
   });
 });

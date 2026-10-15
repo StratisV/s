@@ -198,3 +198,75 @@ export function SealCheckIcon({ size = 22, ...p }: IconProps) {
     </svg>
   );
 }
+
+/** pencil (Rename). */
+export function PencilIcon({ size = 20, ...p }: IconProps) {
+  return (
+    <svg {...base(size, p)}>
+      <path
+        d="M4.5 19.5l.9-3.9L16.2 4.8a2.1 2.1 0 0 1 3 3L8.4 18.6zM14.3 6.7l3 3"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** arrow.up (Move Up). */
+export function ArrowUpIcon({ size = 20, ...p }: IconProps) {
+  return (
+    <svg {...base(size, p)}>
+      <path d="M12 19.5v-15M6 10.5l6-6 6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** arrow.down (Move Down). */
+export function ArrowDownIcon({ size = 20, ...p }: IconProps) {
+  return (
+    <svg {...base(size, p)}>
+      <path d="M12 4.5v15M6 13.5l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** trash (Delete Section). */
+export function TrashIcon({ size = 20, ...p }: IconProps) {
+  return (
+    <svg {...base(size, p)}>
+      <path
+        d="M4.5 6.5h15M9.5 6.5V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v1.5M6.5 6.5l.8 12.1a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12.1M10 10.5v6M14 10.5v6"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** square.dashed (No Section: the tasks at the top of the list, in no section). */
+export function DashedSquareIcon({ size = 20, ...p }: IconProps) {
+  return (
+    <svg {...base(size, p)}>
+      <rect x="4.5" y="4.5" width="15" height="15" rx="4" stroke="currentColor" strokeWidth="1.8" strokeDasharray="3.2 2.6" />
+    </svg>
+  );
+}
+
+/** rectangle.stack.badge.plus (Add Section). */
+export function AddSectionIcon({ size = 22, ...p }: IconProps) {
+  return (
+    <svg {...base(size, p)}>
+      <path
+        d="M6 4.5h12M4.5 8h15a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5v-9A1.5 1.5 0 0 1 4.5 8zM12 11v6M9 14h6"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
