@@ -1,0 +1,165 @@
+/*
+ * An area's picture (AreaArt.tsx): it fills its box, cropped to cover. Until the drawings
+ * have loaded, the box shows a soft gradient of the scene's own colours. The defaults are
+ * wrapped in :where() so a caller's class can size it.
+ */
+:where(.art) {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  contain: paint;
+}
+
+.svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Settles in over its gradient the first time the drawings load. */
+.svg[data-fade] {
+  animation: artIn 420ms ease-out both;
+}
+
+@keyframes artIn {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ── Idle motion: small and slow, only transform and opacity ─────────────── */
+
+/* Steam from a pot, a mug or the hot tub: wisps rising and thinning out. */
+.steam {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: steam 3.6s ease-in-out infinite;
+}
+
+@keyframes steam {
+  0% {
+    transform: translateY(2px) scaleY(0.86);
+    opacity: 0;
+  }
+  35% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateY(-5px) scaleY(1.06);
+    opacity: 0;
+  }
+}
+
+/* Bubbles in the hot tub and the bath, rising and popping. */
+.bubble {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  animation: bubble 3.2s ease-in infinite;
+}
+
+@keyframes bubble {
+  0% {
+    transform: translateY(3px) scale(0.6);
+    opacity: 0;
+  }
+  25% {
+    opacity: 0.95;
+  }
+  100% {
+    transform: translateY(-9px) scale(1);
+    opacity: 0;
+  }
+}
+
+/* Fairy lights and stars, gently twinkling. */
+.twinkle {
+  animation: twinkle 2.8s ease-in-out infinite;
+}
+
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* A robin, a duck or a cat's tail: a small sway now and then. */
+.bob {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: bob 4.8s ease-in-out infinite;
+}
+
+@keyframes bob {
+  0%,
+  70%,
+  100% {
+    transform: none;
+  }
+  78% {
+    transform: rotate(-6deg);
+  }
+  86% {
+    transform: rotate(3deg);
+  }
+}
+
+/* Water falling in the shower. */
+.drip {
+  animation: drip 1.6s linear infinite;
+}
+
+@keyframes drip {
+  from {
+    transform: translateY(-4px);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.85;
+  }
+  to {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+}
+
+/* A mobile over the cot, turning a little. */
+.sway {
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+  animation: sway 6s ease-in-out infinite;
+}
+
+@keyframes sway {
+  0%,
+  100% {
+    transform: rotate(-4deg);
+  }
+  50% {
+    transform: rotate(4deg);
+  }
+}
+
+/* Held while off screen (AreaArt.tsx). */
+.art[data-paused] * {
+  animation-play-state: paused !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .svg[data-fade],
+  .steam,
+  .bubble,
+  .twinkle,
+  .bob,
+  .drip,
+  .sway {
+    animation: none;
+  }
+}

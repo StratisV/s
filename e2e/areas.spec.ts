@@ -152,8 +152,8 @@ test.describe('An area’s sheet', () => {
     const expectations: [string, string, string][] = [
       ['Hallway', '1 needs attention', 'rgb(215, 0, 21)'],
       ['Jacuzzi', '1 coming up', 'rgb(154, 91, 0)'],
-      ['Kitchen', 'All good', 'rgb(110, 110, 115)'],
-      ['Bedroom Small', 'All clear', 'rgb(110, 110, 115)'],
+      ['Kitchen', 'All good', 'rgb(31, 122, 54)'],
+      ['Bedroom Small', 'All clear', 'rgb(31, 122, 54)'],
     ];
     for (const [name, words, colour] of expectations) {
       await openArea(page, name);

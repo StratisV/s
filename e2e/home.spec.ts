@@ -85,6 +85,27 @@ test.describe('Home', () => {
     await expect(areaCard(page, 'Bedroom Small')).toHaveAccessibleName(/^Bedroom Small\b.*All clear/);
   });
 
+  test('every card has its own drawing of its area, hidden from assistive tech', async ({ page }) => {
+    const art = homeScreen(page).locator('[data-area-grid] [data-area-art]');
+    await expect(art).toHaveCount(DEFAULT_AREAS.length);
+    // The drawings arrive as one chunk, a moment after the cards.
+    await expect(homeScreen(page).locator('[data-area-grid] [data-area-art] svg')).toHaveCount(DEFAULT_AREAS.length);
+    const pictures = await art.evaluateAll((els) =>
+      els.map((el) => ({ key: el.getAttribute('data-area-art') ?? '', hidden: el.getAttribute('aria-hidden') })),
+    );
+    // The scene and its composition come from the name: eleven areas, eleven different scenes.
+    const scenes = pictures.map(({ key }) => key.split(':')[0]);
+    expect(new Set(scenes).size).toBe(DEFAULT_AREAS.length);
+    expect(scenes.slice(2, 6)).toEqual(['bathroom-alt', 'bathroom', 'bedroom-alt', 'bedroom']);
+    for (const { hidden } of pictures) expect(hidden).toBe('true');
+    // Inset in its card, the full width of it but for the card's 6px.
+    const card = (await areaCard(page, 'Kitchen').boundingBox())!;
+    const picture = (await areaCard(page, 'Kitchen').locator('[data-area-art]').boundingBox())!;
+    expect(Math.round(picture.x - card.x)).toBe(6);
+    expect(Math.round(card.x + card.width - (picture.x + picture.width))).toBe(6);
+    expect(Math.round((picture.width / picture.height) * 7)).toBe(8);
+  });
+
   test('the sentence opens Needs attention', async ({ page }) => {
     await homeSummary(page).click();
     await expect(tabButton(page, 'Attention')).toHaveAttribute('aria-current', 'page');

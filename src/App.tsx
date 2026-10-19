@@ -355,7 +355,8 @@ function MainShell() {
       </div>
       {areaId ? (
         <AreaSheet
-          key={areaKey}
+          // Its own key space: the Item sheet beside it counts from 1 too.
+          key={`area-${areaKey}`}
           areaId={areaId}
           open={areaOpen}
           onClose={closeArea}
@@ -369,7 +370,7 @@ function MainShell() {
       ) : null}
       {sheetTarget ? (
         <ItemSheet
-          key={sheetKey}
+          key={`item-${sheetKey}`}
           target={sheetTarget}
           open={sheetOpen}
           onClose={() => setSheetOpen(false)}

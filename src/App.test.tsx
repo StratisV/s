@@ -98,6 +98,7 @@ describe('an area’s sheet', () => {
   });
 
   it('a row opens its item over the sheet; Escape closes only the item, and focus goes back to the row', async () => {
+    const errors = vi.spyOn(console, 'error');
     await setup();
     focusVisible(true);
     const area = await openArea('Kitchen');
@@ -106,6 +107,8 @@ describe('an area’s sheet', () => {
     // The area's sheet steps back under the item's, out of reach.
     expect(area.hasAttribute('data-behind')).toBe(true);
     expect(area.inert).toBe(true);
+    // Both sheets are there at once, each with its own key (both count from 1).
+    expect(errors.mock.calls.flat().join(' ')).not.toMatch(/same key/);
     fireEvent.keyDown(window, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit item' })).toBeNull(), { timeout: 2000 });
     expect(screen.getByRole('dialog', { name: 'Kitchen' })).toBe(area);

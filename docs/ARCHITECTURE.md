@@ -86,8 +86,10 @@ src/
                            (AreaSheet), Needs attention (the summary, the list UpNextView and the
                            calendar HomeCalendar), item rows, the tab bar (TabBar) and the
                            floating + (AddButton)
-  ui/area-art/             AreaArt: an area's illustration for its card and sheet (a stub here,
-                           drawn by the area art work)
+  ui/area-art/             AreaArt: an area's illustration for its card and sheet: a drawn
+                           scene for the kind of room its name says, coloured by its id (pick.ts),
+                           the drawings in one lazy chunk (Scene.tsx, kit.tsx, indoor.tsx,
+                           outdoor.tsx); see "Area art"
   screens/chat/            Household group chat with emoji reactions
   screens/housekeeping/    Housekeeping tab: message, today's checklist, comments, price, calendar,
                            task list sheet
@@ -1637,17 +1639,22 @@ something and always with a word, and few visible controls.
 - **The AreaCard contract** (`screens/home/AreaCard.tsx`, with `AreaCard.module.css`):
   `AreaStatus = 'attention' | 'soon' | 'good'`; props `{ area: { id, name }, status,
   statusText, openCount, people: { id, name, emoji }[], onOpen() }`. The card is one button
-  whose accessible name starts with the area's name, then says the status, the unfinished jobs
-  and who looks after it ("Kitchen, All good, 2 to do, Stratis"); it sizes to its grid cell.
-  Its illustration is `AreaArt` (`ui/area-art/AreaArt.tsx`: `{ name, seed, className? }`, fills
-  its box cropped to cover, `aria-hidden`, light and dark). Both are stubs in this tree (a
-  tinted gradient and the area's `RoomIcon`; the card's words and faces) for the area art
-  work to replace: tests use only the contract (`HomeScreen.test.tsx` mocks `AreaCard` and
-  checks the props).
+  (`data-area-card={id}`) whose accessible name starts with the area's name, then says the
+  status, the unfinished jobs and who looks after it: "Kitchen, All good, 2 to do, Stratis
+  looking after it", "Living Room, 1 coming up, 1 to do, no one looking after it yet". It
+  fills its grid cell: the picture inset 6px at 8:7 with concentric corners (`AreaArt`, see
+  "Area art"), the name (two lines at most), a dot and the status words in red, amber or green
+  (`--rag-*-text`, 4.5:1 or better in both appearances), "3 to do" or "Nothing to do"
+  (`countWords()`), then the faces of whoever is on it (three at most, stacked) and their names
+  ("Shea and Ela", "Stratis, Shea +1"; `peopleWords()`), or "No one yet" beside a dashed
+  place. The people sit at the foot, so cards side by side line up. It shrinks a little while
+  pressed (not with Reduce Motion) and keyboard focus rings it in the tint. Tests of Home use
+  only the contract (`HomeScreen.test.tsx` mocks `AreaCard` and checks the props); the card
+  has its own (`AreaCard.test.tsx`).
 - **An area's sheet** (`AreaSheet.tsx`, a page `Sheet` named after the area): a 188px banner
   of its `AreaArt` (the sheet's drag handle, with the grabber and a Close button), then its
   name (an `h1`, `tabIndex={-1}`, described by the two lines under it), how it is (the card's
-  words, with a dot in its colour, `data-area-status`), who is on it (their faces, then "Shea
+  words and dot, in its red, amber or green, `data-area-status`), who is on it (their faces, then "Shea
   is on it", "Ela and Stratis are on it" or "No one is on it yet"), **Add Item** ("Add item to
   <area>": the new-item sheet with that area chosen) and **Share Room** (see "Sharing") side
   by side, each a 50px target to its corners. Then **To do**: its To dos, most urgent first
@@ -2033,6 +2040,42 @@ elevation, with a softer, pinker morning and a warmer evening.
   sunset".
 - The duck (green) and hedgehog (brown) are SVG drawings in `ui/animals.ts`, used in the
   scene and the confetti (`<img data-animal="duck|hedgehog">`). Avatars are still emoji.
+
+### Area art
+
+`AreaArt` (`ui/area-art/AreaArt.tsx`, props `{ name, seed, className? }`) draws an area's
+picture on its card and across the top of its sheet: a small scene in the hero's style that
+fills its box in any shape (an SVG, `preserveAspectRatio="xMidYMid slice"`). It is a `span`
+(`aria-hidden`, so it can sit in a button) with `data-area-art="<key>"`; a caller's class sizes
+it (the defaults are in `:where()`).
+
+- **The scene** comes from the name (`sceneKind()` in `pick.ts`, first match wins, British and
+  American words): a kitchen (a pot steaming on the hob), a living room (sofa, lamp and a
+  sleeping cat), a bathroom (a roll-top bath with the green duck), a bedroom (a double bed, the
+  moon in the window at night), a hallway (door, coat hooks, wellies, a runner), a garden
+  (striped lawn, flowers, a robin on the fence post), a front garden (a pastel house front,
+  path, gate and bins, sometimes the hedgehog), a garden room (outdoor sofa under fairy
+  lights), a hot tub (bubbles and steam), and a utility room, study, dining room, garage,
+  stairs, loft, balcony (London's skyline with the Shard) and nursery; anything else gets a
+  cosy room with one of three sets of furniture.
+- **A second composition** for every kind (`isAlt()`), picked by words like "small", "guest",
+  "downstairs" or a trailing even number ("Bedroom 2"); "large", "master", "upstairs" and the
+  like keep the first. So Bathroom Small has a shower and Bathroom Large the bath, Bedroom
+  Small a single bed with a suitcase and Bedroom Large the double.
+- **The seed** (the area's id) is hashed (`hashSeed()`) to pick one of eight soft colourways,
+  a mirror image and small details (a plant, a picture, the cat's colour), so no two areas
+  look alike and an area always looks the same. The household's eleven areas are eleven
+  different scenes.
+- **Dark mode** is the scene in the evening (read from `prefers-color-scheme`): colours mix
+  towards the hero's indigo dusk (`dusk()`), lamps glow and windows show stars and the moon.
+- **Motion**: steam, bubbles, drips, twinkling lights, a mobile turning, a robin or a duck
+  bobbing; small and slow (transform and opacity only), paused while off screen (an
+  `IntersectionObserver` sets `data-paused`) and none of it with Reduce Motion.
+- **Loading**: `pick.ts` is small and in the main bundle; the drawings (`Scene.tsx`,
+  `kit.tsx`, `indoor.tsx`, `outdoor.tsx`) load as one chunk the first time a picture shows
+  (`React.lazy`), over a gradient of the scene's own wall and floor (or sky and ground,
+  `backdrop()`), and fade in only that first time. In tests the SVG arrives a tick later
+  (`findBy`/`waitFor`); the card's words are there at once.
 
 ## Sharing
 

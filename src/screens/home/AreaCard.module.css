@@ -1,17 +1,32 @@
-/* STUB (see AreaCard.tsx): a plain card that fills its grid cell. */
+/*
+ * An area's card on Home (AreaCard.tsx): its picture inset in the card with concentric
+ * corners, then its name, its status in words, its open To dos and who is looking after it.
+ * It fills its grid cell (the caller lays out two columns), and the people sit at the
+ * bottom so cards in a row line up.
+ */
 .card {
+  position: relative;
   width: 100%;
   height: 100%;
   min-width: 0;
+  min-height: 44px;
   display: flex;
   flex-direction: column;
-  border-radius: 22px;
-  overflow: hidden;
+  padding: 6px;
+  border-radius: var(--r-card);
   background: var(--card);
-  box-shadow: var(--shadow-card);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 6px 20px rgba(24, 32, 56, 0.06);
   text-align: left;
+  color: var(--label);
   -webkit-tap-highlight-color: transparent;
-  transition: transform 0.15s ease;
+  touch-action: manipulation;
+  transition:
+    transform 0.2s var(--sheet-ease),
+    box-shadow 0.2s ease;
+  /* Keyboard focus brings it clear of the status bar, the round + and the tab bar. */
+  scroll-margin: calc(var(--top-inset) + 12px) 0 calc(var(--add-clear) + 12px);
 }
 
 .card:active {
@@ -20,87 +35,181 @@
 
 .card:focus-visible {
   outline: 2px solid var(--tint);
-  outline-offset: 2px;
+  outline-offset: 3px;
 }
 
-.art {
+@media (hover: hover) {
+  .card:hover {
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.05),
+      0 10px 28px rgba(24, 32, 56, 0.1);
+  }
+}
+
+/* The picture: concentric with the card's corners, a hairline so pale walls keep an edge. */
+.frame {
+  position: relative;
+  display: block;
   flex: none;
-  height: 96px;
+  aspect-ratio: 8 / 7;
+  border-radius: calc(var(--r-card) - 6px);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* Pinned to the frame's edges, so it fills it however the frame's height comes about. */
+.art {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+}
+
+.frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+  pointer-events: none;
 }
 
 .body {
   flex: 1;
   min-width: 0;
-  padding: 10px 12px 12px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  padding: 10px 8px 6px;
 }
 
 .name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-size: 17px;
   line-height: 22px;
-  font-weight: 600;
   letter-spacing: -0.4px;
+  font-weight: 600;
   color: var(--label);
 }
 
+/* How it is: a dot and words, in the status colours (4.5:1 or better on the card). */
 .status {
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: 13px;
   line-height: 18px;
+  letter-spacing: -0.08px;
   font-weight: 600;
-  color: var(--label-secondary);
+  color: var(--rag-green-text);
+}
+
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--rag-green);
+}
+
+.statusText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card[data-status='attention'] .status {
   color: var(--rag-red-text);
 }
 
+.card[data-status='attention'] .dot {
+  background: var(--rag-red);
+}
+
 .card[data-status='soon'] .status {
   color: var(--rag-amber-text);
 }
 
-.meta {
-  margin-top: auto;
-  padding-top: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  font-size: 13px;
-  line-height: 18px;
-  color: var(--label-secondary);
+.card[data-status='soon'] .dot {
+  background: var(--rag-amber);
 }
 
 .count {
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.08px;
+  color: var(--label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Who is looking after it: their faces stacked, then their names. */
+.people {
+  margin-top: auto;
+  padding-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 32px;
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.08px;
+  font-weight: 500;
+  color: var(--label-tertiary);
+}
+
+.faces {
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+
+.face {
+  position: relative;
+  box-shadow: 0 0 0 2px var(--card);
+}
+
+.face + .face {
+  margin-left: -7px;
+}
+
+.names {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.people {
+/* No one yet: an empty, dashed place where a face would be. */
+.people[data-empty]::before {
+  content: '';
   flex: none;
-  display: flex;
-}
-
-.person {
+  box-sizing: border-box;
   width: 22px;
   height: 22px;
-  margin-left: -5px;
   border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 13px;
-  background: var(--avatar-bg);
-  box-shadow: 0 0 0 2px var(--card);
+  border: 1.5px dashed var(--ring-idle);
 }
 
-.person:first-child {
-  margin-left: 0;
+.people[data-empty] .names {
+  font-weight: 400;
+  color: var(--label-secondary);
+}
+
+@media (prefers-color-scheme: dark) {
+  .card {
+    box-shadow: none;
+  }
+
+  .frame::after {
+    box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,42 +1,72 @@
-// STUB, until the illustrated version is merged (it replaces this file). A soft wash in a hue
-// picked from `seed`, with the room's glyph in the middle, so every area looks a little
-// different. Inline styles only, so nothing is left behind when the illustrated file lands.
-import type { CSSProperties } from 'react';
-import { RoomIcon } from '../../screens/home/RoomIcon';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { backdrop, pickArt } from './pick';
+import s from './AreaArt.module.css';
 
 export interface AreaArtProps {
+  /** The area's name: picks the scene ("Kitchen", "Bathroom Small", "Front garden"...). */
   name: string;
+  /** Something that stays the same for the area (its id): picks the colours and small details. */
   seed: string;
   className?: string;
 }
 
-/** A small, steady number from a string (FNV-1a). */
-function hash(text: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return h >>> 0;
+/** True once the drawings' chunk has arrived: later pictures appear at once, without the fade. */
+let loaded = false;
+const Scene = lazy(() =>
+  import('./Scene').then((mod) => {
+    loaded = true;
+    return mod;
+  }),
+);
+
+const DARK = '(prefers-color-scheme: dark)';
+const darkQuery = () => (typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(DARK) : null);
+function subscribe(onChange: () => void): () => void {
+  const query = darkQuery();
+  query?.addEventListener?.('change', onChange);
+  return () => query?.removeEventListener?.('change', onChange);
+}
+/** Dark mode shows each picture's evening: lamplight and a night sky. */
+function useEvening(): boolean {
+  return useSyncExternalStore(subscribe, () => darkQuery()?.matches ?? false, () => false);
 }
 
 /**
- * An area's illustration, filling its box (any aspect ratio, cropped to cover). Decorative:
- * hidden from assistive tech. Works in light and dark (a wash of colour over the card).
+ * An area's illustration: a small hand-made scene for the kind of room
+ * its name says (a pot steaming in the kitchen, a bath with a green rubber duck, a robin on
+ * the garden fence), in colours its seed picks, so no two areas look the same. It fills its
+ * box, cropped to cover, in any shape. Dark mode shows the scene in the evening. Decorative:
+ * hidden from assistive technology (the area's name is said by whatever holds it). The
+ * drawings load as one chunk the first time one is shown, over a soft gradient of the same
+ * colours. Its little motions (steam, bubbles, twinkling lights) pause off screen and stop
+ * for Reduce Motion.
  */
 export function AreaArt({ name, seed, className }: AreaArtProps): JSX.Element {
-  const hue = hash(`${seed}:${name}`) % 360;
-  // The caller's class gives the box; the wash fills it whatever its shape.
-  const style: CSSProperties = {
-    display: 'grid',
-    placeItems: 'center',
-    overflow: 'hidden',
-    background: `radial-gradient(120% 90% at 20% 0%, hsl(${hue} 85% 70% / 0.55), transparent 70%), linear-gradient(160deg, hsl(${hue} 70% 62% / 0.32), hsl(${(hue + 40) % 360} 70% 55% / 0.22)), var(--card)`,
-    color: `hsl(${hue} 45% 45%)`,
-  };
+  const pick = useMemo(() => pickArt(name, seed), [name, seed]);
+  const evening = useEvening();
+  const root = useRef<HTMLSpanElement>(null);
+  // Fade in only if the drawings weren't here yet when this picture first appeared.
+  const [fade] = useState(() => !loaded);
+
+  useEffect(() => {
+    const el = root.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(([entry]) => el.toggleAttribute('data-paused', !entry.isIntersecting));
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
   return (
-    <div className={className} style={style} aria-hidden="true" data-area-art="">
-      <RoomIcon name={name} size={40} />
-    </div>
+    <span
+      ref={root}
+      className={className ? `${s.art} ${className}` : s.art}
+      aria-hidden="true"
+      data-area-art={pick.key}
+      style={{ background: backdrop(pick, evening) }}
+    >
+      <Suspense fallback={null}>
+        <Scene pick={pick} evening={evening} fade={fade} />
+      </Suspense>
+    </span>
   );
 }

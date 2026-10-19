@@ -21,12 +21,13 @@ means under it ("Needs doing now", "Fine for now, keep an eye on it").
   **Stats**. The phone reopens on the tab last open.
 - **Home**: the hero, then one plain sentence on what needs doing ("2 things need attention
   and 1 is due today. Everything else can wait."), which opens Needs attention when tapped.
-  Then the areas of the house, two to a row, one card each with its own illustration (so no
-  two look alike), its name, how it is ("1 needs attention" in red, "1 coming up" in amber,
-  "All good"), how many jobs are unfinished there and who is looking after it. A card opens
-  that area as a sheet: its picture, its name, how it is and who is on it, **Add Item** and
-  **Share Room**, then its jobs, most urgent first (three, then "Show 2 more"), and the things
-  it looks after.
+  Then the areas of the house, two to a row, one card each with its own drawing of the room (a
+  pot steaming in the kitchen, the green duck in the bath, a robin on the garden fence; each
+  in its own colours, so no two look alike, and by lamplight in dark mode), its name, how it
+  is ("1 needs attention" in red, "1 coming up" in amber, "All good" in green), how many jobs
+  are unfinished there and who is looking after it. A card opens that area as a sheet: its
+  picture, its name, how it is and who is on it, **Add Item** and **Share Room**, then its
+  jobs, most urgent first (three, then "Show 2 more"), and the things it looks after.
 - **Needs attention**: the same sentence, then the items two ways, **List** and **Calendar**
   (the phone remembers which), and whose items they are: **Mine** in one tap, or anyone from
   the people menu (Everyone, you, each person or Unassigned, with how many are open; the phone

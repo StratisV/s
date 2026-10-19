@@ -116,7 +116,8 @@
   line-height: 20px;
   font-weight: 600;
   letter-spacing: -0.2px;
-  color: var(--label-secondary);
+  /* In the card's colours: green, amber or red words (4.5:1 or better on the sheet). */
+  color: var(--rag-green-text);
 }
 
 .statusDot {

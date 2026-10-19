@@ -73,8 +73,3 @@ export function peopleText(people: Pick<Member, 'name'>[]): string {
   if (names.length === 1) return names[0];
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
-
-/** "1 to do", "3 to do", "Nothing to do". */
-export function openCountText(openCount: number): string {
-  return openCount ? `${openCount} to do` : 'Nothing to do';
-}

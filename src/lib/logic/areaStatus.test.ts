@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Item, Member, Rag } from '../types';
-import { areaOverview, openCountText, peopleText } from './areaStatus';
+import { areaOverview, peopleText } from './areaStatus';
 
 const TODAY = '2026-10-13';
 
@@ -111,14 +111,11 @@ describe('areaOverview', () => {
   });
 });
 
-describe('peopleText and openCountText', () => {
-  it('say who and how many in words', () => {
+describe('peopleText', () => {
+  it('says who in words', () => {
     expect(peopleText([])).toBe('No one yet');
     expect(peopleText([SHEA])).toBe('Shea');
     expect(peopleText([SHEA, ELA])).toBe('Shea and Ela');
     expect(peopleText([SHEA, ELA, STRATIS])).toBe('Shea, Ela and Stratis');
-    expect(openCountText(0)).toBe('Nothing to do');
-    expect(openCountText(1)).toBe('1 to do');
-    expect(openCountText(4)).toBe('4 to do');
   });
 });
