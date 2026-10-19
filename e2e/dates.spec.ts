@@ -1,4 +1,5 @@
 import {
+  closeArea,
   closeProfile,
   detailValue,
   expect,
@@ -8,6 +9,7 @@ import {
   openNewItem,
   openProfile,
   openSeeded,
+  showItem,
   statsScreen,
   test,
   type Page,
@@ -28,6 +30,8 @@ async function addItemDueToday(page: Page, title: string) {
   await expect(detailValue(sheet, 'Due')).toHaveText('Thu 8 Oct');
   await sheet.getByRole('button', { name: 'Save' }).click();
   await expect(sheet).toHaveCount(0);
+  // Its row, in its area's sheet.
+  await showItem(page, title);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -52,15 +56,18 @@ test.describe('Dates and time zones', () => {
     await jumpTo(page, '2026-10-08T23:30:00+01:00');
     await expect(meta(page, 'Put the recycling out')).toHaveText('Within the month·Today');
 
+    await closeArea(page);
     const dialog = await openProfile(page);
     await dialog.getByRole('button', { name: /^Household/ }).click();
     await dialog.getByLabel('Time zone', { exact: true }).selectOption('Pacific/Auckland');
     await expect(dialog.getByText('Auckland', { exact: true })).toBeVisible();
     await dialog.getByRole('button', { name: 'Profile' }).click();
     await closeProfile(page);
+    await showItem(page, 'Put the recycling out');
     await expect(meta(page, 'Put the recycling out')).toHaveText('Within the month·1 day late');
 
     // New items have no date until someone gives it one, wherever the home is.
+    await closeArea(page);
     await expect(detailValue(await openNewItem(page), 'Due')).toHaveText('None');
   });
 

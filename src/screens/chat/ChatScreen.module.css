@@ -1,6 +1,6 @@
 .screen {
-  /* Where the composer sits: at the bottom, or (typing) on the keyboard. */
-  --composer-bottom: max(10px, var(--bottom-inset));
+  /* Where the composer sits: over the tab bar, or (typing) on the keyboard. */
+  --composer-bottom: calc(var(--tabbar-clear) + 10px);
   --chat-bottom-space: calc(var(--composer-bottom) + var(--composer-h, 48px) + 14px);
   position: absolute;
   inset: 0;
@@ -20,10 +20,10 @@
   -webkit-overflow-scrolling: touch;
   /* Older messages are put in place by hand (ChatScreen), not by the browser. */
   overflow-anchor: none;
-  /* The hero reaches the top of the screen. */
+  /* The header's sky reaches the top of the screen. */
   padding: 0 0 var(--chat-bottom-space);
-  /* Keyboard focus scrolls messages clear of the status bar and the docked tab switch. */
-  scroll-padding-top: calc(var(--top-inset) + 64px);
+  /* Keyboard focus scrolls messages clear of the status bar. */
+  scroll-padding-top: calc(var(--top-inset) + 12px);
 }
 
 .log {

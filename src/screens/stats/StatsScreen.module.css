@@ -1,4 +1,4 @@
-/* Under the tab switch, so smaller and narrower: it only picks the period. */
+/* Under the title, small and narrow: it only picks the period. */
 .period {
   width: min(240px, calc(100% - 32px));
   margin: 14px auto 0;

@@ -1,6 +1,8 @@
 import {
+  closeArea,
   expect,
   goToTab,
+  openArea,
   openSeeded,
   ring,
   settled,
@@ -116,11 +118,15 @@ test.describe('Stats', () => {
   test('a completion counts for the assignee, or for whoever marked an unassigned item done', async ({ page }) => {
     await goToTab(page, 'Home');
     // Assigned to Shea.
+    await openArea(page, 'Bathroom Large');
     await ring(page, 'Shower draining slowly').click();
     await expect(ring(page, 'Shower draining slowly')).toHaveCount(0);
+    await closeArea(page);
     // Unassigned: credited to me (Stratis).
+    await openArea(page, 'Jacuzzi');
     await ring(page, 'Water test strips running low').click();
     await expect(ring(page, 'Water test strips running low')).toHaveCount(0);
+    await closeArea(page);
 
     await goToTab(page, 'Stats');
     await expectStats(page, 9, [['🦔', 'Stratis', 5], ['🦆', 'Shea', 3], ['🦊', 'Ela', 1]], 'this month');
@@ -130,9 +136,11 @@ test.describe('Stats', () => {
 
   test('undoing a completion takes it off again', async ({ page }) => {
     await goToTab(page, 'Home');
+    await openArea(page, 'Garden');
     await ring(page, 'Give away the old firepit').click();
     await toast(page, 'Marked as done').getByRole('button', { name: 'Undo' }).click();
     await expect(ring(page, 'Give away the old firepit')).toBeVisible();
+    await closeArea(page);
     await goToTab(page, 'Stats');
     await expectStats(page, 7, [['🦔', 'Stratis', 4], ['🦆', 'Shea', 2], ['🦊', 'Ela', 1]], 'this month');
   });

@@ -1,4 +1,4 @@
-/* Liquid Glass capsule, like the tab bar. ChatScreen sets its bottom. */
+/* Liquid Glass capsule, like the tab bar it floats over. ChatScreen sets its bottom. */
 .composer {
   position: absolute;
   left: 16px;

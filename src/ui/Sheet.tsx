@@ -9,6 +9,11 @@ interface SheetProps {
   onExited?(): void;
   /** Accessible name of the dialog. */
   label: string;
+  /**
+   * Another sheet is open over this one (the Item sheet over an area's): it is pushed back a
+   * step, dimmed and out of reach, and Escape is the top sheet's.
+   */
+  behind?: boolean;
   children: ReactNode;
 }
 
@@ -26,7 +31,7 @@ const DISMISS_VELOCITY = 0.6; // px per ms
  * The screen-behind push-back effect is done by App (it scales the stage
  * while a sheet is open).
  */
-export function Sheet({ open, onRequestClose, onExited, label, children }: SheetProps) {
+export function Sheet({ open, onRequestClose, onExited, label, behind = false, children }: SheetProps) {
   const [stage, setStage] = useState<Stage>(open ? 'entering' : 'closed');
   const [drag, setDrag] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -72,15 +77,20 @@ export function Sheet({ open, onRequestClose, onExited, label, children }: Sheet
     }
   }, [stage]);
 
-  // Escape closes.
+  // Under another sheet: out of reach (taps, focus, assistive tech).
   useEffect(() => {
-    if (stage !== 'open') return;
+    if (panelRef.current) panelRef.current.inert = behind;
+  }, [behind, stage]);
+
+  // Escape closes (the top sheet only).
+  useEffect(() => {
+    if (stage !== 'open' || behind) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') requestCloseRef.current();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [stage]);
+  }, [stage, behind]);
 
   // Swipe to dismiss (touch: anywhere when scrolled to top; pointer: handle only).
   useEffect(() => {
@@ -191,6 +201,7 @@ export function Sheet({ open, onRequestClose, onExited, label, children }: Sheet
         aria-label={label}
         tabIndex={-1}
         data-shown={shown || undefined}
+        data-behind={behind || undefined}
         style={drag ? { transform: `translateY(${drag}px)` } : undefined}
       >
         {children}

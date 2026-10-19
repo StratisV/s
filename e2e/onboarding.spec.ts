@@ -1,25 +1,36 @@
 import {
+  areaCard,
+  attentionScreen,
+  closeArea,
   confirmation,
-  area,
-  areaHeadings,
   DEFAULT_AREAS,
   DEMO_STORAGE_KEY,
   expect,
+  expectAreas,
+  group,
   homeScreen,
+  homeSummary,
   meta,
+  openArea,
+  openAttention,
   openFresh,
   openProfile,
   openSeeded,
   reopen,
   ring,
   settled,
-  showView,
-  summary,
   test,
   type Page,
-  views,
   who,
 } from './fixtures';
+
+/** How many To dos the house has open: the rings on Needs attention's list (Later opened). */
+async function openTodos(page: Page): Promise<number> {
+  await openAttention(page);
+  const more = group(page, 'later').getByRole('button', { name: /^Show \d+ more$/ });
+  if (await more.count()) await more.click();
+  return attentionScreen(page).getByRole('button', { name: /^Mark .* as done$/ }).count();
+}
 
 /**
  * An invite to the prototype household, opened by a new Google account (the demo account's
@@ -94,27 +105,31 @@ test.describe('Sign-in and setup', () => {
     await expect(done.getByRole('heading', { name: 'You’re all set' })).toBeVisible();
     await done.getByRole('button', { name: 'Continue' }).click();
 
-    // Home: the address, Up next first, then the rooms in order with the seeded items.
+    // Home: the address, the sentence, then a card for each area in order with the seeded items.
     const home = homeScreen(page);
     await expect(home.getByRole('heading', { name: 'Home', level: 1 })).toBeVisible();
     await expect(home.getByText('21 Alderbrook Road', { exact: true })).toBeVisible();
-    await expect(views(page).getByRole('radio', { name: 'Up next' })).toHaveAttribute('aria-checked', 'true');
-    await expect(summary(page)).toHaveText(/^1 thing needs attention/);
-    await showView(page, 'Rooms');
-    await expect(areaHeadings(page)).toHaveText(DEFAULT_AREAS);
-    await expect(home.getByRole('button', { name: /^Mark .* as done$/ })).toHaveCount(13);
+    await expect(homeSummary(page)).toHaveText(/^1 thing needs attention/);
+    await expectAreas(page, DEFAULT_AREAS);
+    await expect(areaCard(page, 'Bedroom Small')).toHaveAccessibleName(/^Bedroom Small\b.*All clear/);
+    await openArea(page, 'Hallway');
     await expect(ring(page, 'Heaters not working')).toBeVisible();
+    await closeArea(page);
+    await openArea(page, 'Living Room');
     await expect(ring(page, 'Mirror lights not level')).toBeVisible();
-    await expect(area(page, 'Bedroom Small').getByText('All clear', { exact: true })).toBeVisible();
+    await closeArea(page);
     // The new profile: the fox avatar and name on the items assigned to "me".
     await expect(page.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🦊');
+    await openArea(page, 'Kitchen');
     await expect(who(page, 'Kitchen paper')).toHaveText('🦊Stratis');
     await expect(meta(page, 'Kitchen paper')).toHaveText('Not urgent·In 4 weeks');
+    await closeArea(page);
+    // Every To do, on Needs attention.
+    expect(await openTodos(page)).toBe(13);
 
-    // It is all still there after a reload, on the view last shown.
+    // It is all still there after a reload, on the tab last shown.
     await reopen(page);
-    await expect(areaHeadings(page)).toHaveText(DEFAULT_AREAS);
-    await expect(ring(page, 'Heaters not working')).toBeVisible();
+    await expect(attentionScreen(page).getByRole('button', { name: 'Mark Heaters not working as done' })).toBeVisible();
   });
 
   test('a new home without the current list starts with empty areas', async ({ page }) => {
@@ -131,15 +146,15 @@ test.describe('Sign-in and setup', () => {
     await page.getByRole('button', { name: 'Continue' }).click();
 
     const home = homeScreen(page);
-    // Nothing open anywhere: Up next says so plainly.
-    await expect(summary(page)).toHaveText('All clear. Nothing to do right now.');
-    await expect(home.getByRole('status').filter({ hasText: 'Nothing open in the house' })).toBeVisible();
-    await showView(page, 'Rooms');
-    await expect(areaHeadings(page)).toHaveText(DEFAULT_AREAS);
-    await expect(home.getByText('All clear', { exact: true })).toHaveCount(DEFAULT_AREAS.length);
-    await expect(home.getByRole('button', { name: /^Mark .* as done$/ })).toHaveCount(0);
+    // Nothing open anywhere: Home says so plainly, and every card is all clear.
+    await expect(homeSummary(page)).toHaveText('All clear. Nothing to do right now.');
+    await expectAreas(page, DEFAULT_AREAS);
+    for (const name of DEFAULT_AREAS) await expect(areaCard(page, name), name).toHaveAccessibleName(/\bAll clear\b/);
     // No address entered: no subtitle under the title.
     await expect(home.getByText('21 Alderbrook Road')).toHaveCount(0);
+    // Needs attention says so too.
+    expect(await openTodos(page)).toBe(0);
+    await expect(attentionScreen(page).getByRole('status').filter({ hasText: 'Nothing open in the house' })).toBeVisible();
   });
 
   test('editing the areas during setup decides the areas and which items are seeded', async ({ page }) => {
@@ -160,11 +175,10 @@ test.describe('Sign-in and setup', () => {
     await page.getByRole('button', { name: 'Continue' }).click();
 
     const expected = DEFAULT_AREAS.filter((n) => n !== 'Jacuzzi' && n !== 'Hallway').concat('Garage');
-    await showView(page, 'Rooms');
-    await expect(areaHeadings(page)).toHaveText(expected);
-    await expect(area(page, 'Garage').getByText('All clear', { exact: true })).toBeVisible();
-    await expect(homeScreen(page).getByRole('button', { name: /^Mark .* as done$/ })).toHaveCount(10);
-    await expect(ring(page, 'Heaters not working')).toHaveCount(0);
+    await expectAreas(page, expected);
+    await expect(areaCard(page, 'Garage', expected)).toHaveAccessibleName(/^Garage\b.*All clear/);
+    expect(await openTodos(page)).toBe(10);
+    await expect(attentionScreen(page).getByRole('button', { name: 'Mark Heaters not working as done' })).toHaveCount(0);
   });
 
   test('Sign Out on the profile step goes back to Welcome', async ({ page }) => {
@@ -195,11 +209,13 @@ test.describe('Sign-in and setup', () => {
     await join.getByRole('button', { name: 'Join' }).click();
     await page.getByRole('button', { name: 'Continue' }).click();
 
-    await expect(areaHeadings(page)).toHaveText(DEFAULT_AREAS);
+    await expectAreas(page, DEFAULT_AREAS);
     await expect(page.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🐼');
     // The new member can edit everything: complete someone else's item, rename the household.
+    await openArea(page, 'Hallway');
     await ring(page, 'Heaters not working').click();
     await expect(ring(page, 'Heaters not working')).toHaveCount(0);
+    await closeArea(page);
     const profileDialog = await openProfile(page);
     await profileDialog.getByRole('button', { name: /^Household/ }).click();
     await settled(profileDialog.getByRole('button', { name: 'Profile' }));
@@ -244,14 +260,14 @@ test.describe('Sign-in and setup', () => {
     await homeStep.getByLabel('Name', { exact: true }).fill('The Flat');
     await homeStep.getByRole('button', { name: 'Create Home' }).click();
     await page.getByRole('button', { name: 'Continue' }).click();
-    await expect(areaHeadings(page)).toHaveText(DEFAULT_AREAS);
+    await expectAreas(page, DEFAULT_AREAS);
     await expect(homeScreen(page).getByText('21 Alderbrook Road')).toHaveCount(0);
   });
 
   test('an invite link opened by someone already at home just opens Home', async ({ page }) => {
     await openSeeded(page);
     await page.goto('/?invite=0123456789abcdef0123456789abcdef');
-    await expect(areaHeadings(page)).toHaveText(DEFAULT_AREAS);
+    await expectAreas(page, DEFAULT_AREAS);
     await expect(page).toHaveURL(/\/$/);
     // Nothing left over: signing out shows a plain Welcome.
     await page.getByRole('button', { name: 'Profile', exact: true }).click();

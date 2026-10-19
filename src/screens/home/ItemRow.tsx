@@ -7,7 +7,7 @@ import type { ISODate, Item, Member, Rag } from '../../lib/types';
 import { useConfetti } from '../../ui/Confetti';
 import { EmojiText } from '../../ui/EmojiText';
 import { RepeatIcon } from '../../ui/icons';
-import { inCollapsedArea, rowFallback, rowsBeside } from './areaPanel';
+import { rowFallback, rowsBeside } from './rowFocus';
 import { RevealContext } from './reveal';
 import { RoomIcon } from './RoomIcon';
 import { ConditionGauge, StatusRing } from './StatusRing';
@@ -131,8 +131,8 @@ interface ItemRowProps {
   onComplete(itemId: string): Promise<void> | void;
   /**
    * The row leaves its list once completed, even when the item repeats: in Up next and under
-   * the calendar a repeating item moves on to a later date. (In a room a one-off leaves and a
-   * repeating item stays.)
+   * the calendar a repeating item moves on to a later date. (In an area's sheet a one-off leaves
+   * and a repeating item stays.)
    */
   leavesOnComplete?: boolean;
 }
@@ -194,10 +194,10 @@ export function ItemRow({
 
     const finish = () => {
       // A row that leaves its list: move keyboard focus to the nearest remaining row in the same
-      // list (rows in a collapsed room can't take it), else to the group's or room's heading.
+      // list, else to its section's heading (a group's, or To do in an area's sheet).
       const own = openRef.current;
       if (leaves && keyboard && document.activeElement === ring && own) {
-        const rows = rowsBeside(own).filter((el) => el === own || !inCollapsedArea(el));
+        const rows = rowsBeside(own);
         const i = rows.indexOf(own);
         const next = rows[i + 1] ?? rows[i - 1] ?? rowFallback(own.closest('section'));
         next?.focus();

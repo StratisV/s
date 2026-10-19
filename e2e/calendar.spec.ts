@@ -1,16 +1,17 @@
 import {
-  areas,
+  areaCards,
+  attentionScreen,
   calendar,
   chooseWho,
+  closeArea,
   expect,
   goToTab,
   housekeepingScreen,
-  homeScreen,
   meta,
+  openArea,
   openSeeded,
   reopen,
   ring,
-  showView,
   tabButton,
   test,
   views,
@@ -18,7 +19,7 @@ import {
   type Page,
 } from './fixtures';
 
-// Home's calendar (docs/ARCHITECTURE.md "Home: the calendar") against the demo seed at the
+// Needs attention's calendar (docs/ARCHITECTURE.md "Needs attention: the calendar") against the demo seed at the
 // e2e clock (Thu 8 Oct 2026, 10:00 London). This week: Heaters missed on Tue 6, the
 // dehumidifier due today (weekly), the plants on Sat 10 (weekly). Wed 14 has four things
 // due (the gutters red, the shower amber, the garden furniture and the bins (weekly) green;
@@ -36,7 +37,7 @@ const said = (page: Page) => calendar(page).locator('[data-announcer]');
 const toggle = (page: Page, name: 'Show month' | 'Show week') => calendar(page).getByRole('button', { name, exact: true });
 const control = (page: Page, name: 'Today' | 'Previous week' | 'Next week' | 'Previous month' | 'Next month') =>
   calendar(page).getByRole('button', { name, exact: true });
-/** The line Housekeeping's bar shows for today; Home never shows it (today's list is open at once). */
+/** The line Housekeeping's bar shows for today; Needs attention never shows it (today's list is open at once). */
 const summary = (page: Page) => calendar(page).locator('[data-today-summary]');
 /** The calendar's heading over the card: "This week", "Next week", "This month"... */
 const heading = (page: Page) => calendar(page).getByRole('heading', { level: 2 });
@@ -58,14 +59,14 @@ test.beforeEach(async ({ page }) => {
   await openSeeded(page, 'Calendar');
 });
 
-test.describe('Home calendar', () => {
+test.describe('Needs attention calendar', () => {
   test('the week strip: this week, today chosen and ringed, each day marked', async ({ page }) => {
-    // Home's third view, under the view switch, on its own: no rooms with it.
+    // Needs attention's second view, under the view switch, on its own: no list with it.
     await expect(views(page).getByRole('radio', { name: 'Calendar' })).toHaveAttribute('aria-checked', 'true');
-    await expect(areas(page)).toHaveCount(0);
+    await expect(attentionScreen(page).locator('section[data-group]')).toHaveCount(0);
     // A section named by its heading, which says which week it is.
     await expect(heading(page)).toHaveText('This week');
-    await expect(homeScreen(page).getByRole('region', { name: 'This week' })).toBeVisible();
+    await expect(attentionScreen(page).getByRole('region', { name: 'This week' })).toBeVisible();
 
     await expect(grid(page)).toHaveAccessibleName('Week of Monday 5 October');
     await expect(grid(page).getByRole('button')).toHaveCount(7);
@@ -251,9 +252,12 @@ test.describe('Home calendar', () => {
     await expect(page.getByRole('dialog', { name: 'Edit item' })).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog', { name: 'Edit item' })).toHaveCount(0);
-    // Everywhere: the rooms say the same.
-    await showView(page, 'Rooms');
+    // Everywhere: the areas say the same.
+    await goToTab(page, 'Home');
+    await openArea(page, 'Garden Lounge');
     await expect(ring(page, 'Cover the garden furniture')).toHaveCount(0);
+    await closeArea(page);
+    await openArea(page, 'Front garden');
     await expect(meta(page, 'Put the bins out')).toHaveText('Not urgent·In 13 days');
   });
 
@@ -365,7 +369,7 @@ test.describe('Home calendar', () => {
   });
 });
 
-test.describe('Home calendar fits', () => {
+test.describe('Needs attention calendar fits', () => {
   for (const width of [320, 375, 402]) {
     test(`at ${width}px: no sideways scroll, days at least 40 by 44, the rest 44px targets`, async ({ page }) => {
       await page.setViewportSize({ width, height: 800 });
@@ -418,18 +422,16 @@ test.describe('Home calendar fits', () => {
     await expect(heading(page)).toBeInViewport({ ratio: 1 });
     await expect(grid(page)).toBeInViewport({ ratio: 1 });
     await expect(panel(page).getByRole('listitem').first()).toBeInViewport({ ratio: 1 });
-    // Rooms has no calendar above it: the first room and its first row on the first screen.
-    await showView(page, 'Rooms');
-    const first = areas(page).first();
-    await expect(first.getByRole('heading', { level: 2 })).toBeInViewport({ ratio: 1 });
-    await expect(first.getByRole('listitem').first()).toBeInViewport({ ratio: 1 });
+    // Home has no calendar: the first cards are on the first screen.
+    await goToTab(page, 'Home');
+    await expect(areaCards(page).first()).toBeInViewport();
+    await expect(areaCards(page).nth(1)).toBeInViewport();
   });
 
-  test('at 320 by 700 the first room’s name shows on the first screen in Rooms', async ({ page }) => {
+  test('at 320 by 700 the first area’s card shows on the first screen of Home', async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 700 });
-    await openSeeded(page, 'Rooms');
-    const name = areas(page).first().getByRole('heading', { level: 2 });
-    await expect(name).toBeInViewport({ ratio: 1 });
+    await openSeeded(page);
+    await expect(areaCards(page).first()).toBeInViewport();
   });
 
   for (const reducedMotion of ['no-preference', 'reduce'] as const) {
@@ -438,7 +440,7 @@ test.describe('Home calendar fits', () => {
       await page.setViewportSize({ width: 320, height: 700 });
       await openSeeded(page, 'Calendar');
       await toggle(page, 'Show month').click();
-      // The month's top just under the docked tab switch, its last row low on the screen.
+      // The month's top near the top of the screen, its last row low on it.
       await calendar(page).evaluate((el) => {
         const scroller = el.closest('[class*="scroll"]')!;
         scroller.scrollTop += el.getBoundingClientRect().top - 60;
@@ -473,7 +475,7 @@ test.describe('the Housekeeping calendar: the same date picker', () => {
     await expect(hkCalendar.getByText('5 to 11 October', { exact: true })).toBeVisible();
     await expect(hkCalendar.getByRole('button', { name: 'Show month', exact: true })).toBeVisible();
     await expect(hkCalendar.getByRole('button', { name: 'Next week' })).toBeDisabled();
-    // The bar is Home's (Home's is 48px tall, for its heading); the card is as wide, a little
+    // The bar is Needs attention's (that one is 48px tall, for its heading); the card is as wide, a little
     // taller without marks under the days.
     const bar = (await hkCalendar.locator('[data-calendar-bar]').boundingBox())!;
     expect([bar.x, bar.width]).toEqual([homeBar.x, homeBar.width]);
@@ -499,8 +501,8 @@ test.describe('the Housekeeping calendar: the same date picker', () => {
     expect((await card.boundingBox())!.height).toBe(328);
     await expect(hkGrid.getByRole('button', { name: /^Thursday 1 October/ })).toHaveAttribute('data-visit', 'true');
     await expect(card.locator('[data-legend], [data-rag]')).toHaveCount(0);
-    // Home's choice is its own.
-    await goToTab(page, 'Home');
+    // Needs attention's choice is its own.
+    await goToTab(page, 'Attention');
     await expect(toggle(page, 'Show month')).toBeVisible();
   });
 
@@ -511,7 +513,7 @@ test.describe('the Housekeeping calendar: the same date picker', () => {
         return { content: after.content, size: `${after.width} x ${after.height}`, colour: after.backgroundColor, bottom: after.bottom };
       });
     await toggle(page, 'Show month').click();
-    // Not chosen on Home, so the dot is the tint.
+    // Not chosen on Needs attention, so the dot is the tint.
     const home = await mark(day(page, 'Thursday 1 October'));
     expect(home).toEqual({ content: '""', size: '5px x 5px', colour: 'rgb(0, 122, 255)', bottom: '4px' });
     await goToTab(page, 'Housekeeping');

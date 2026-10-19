@@ -4,6 +4,7 @@ import { ConfettiProvider } from '../../ui/Confetti';
 import { ItemSheet } from '../item/ItemSheet';
 import { fakeBackend, makeHome, MockHome, sampleData } from '../testing/mockHome';
 import { HomeScreen, READ_ONLY_LINE } from './HomeScreen';
+import { NeedsAttentionScreen } from './NeedsAttentionScreen';
 
 vi.mock('../../state/HomeProvider', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../state/HomeProvider')>();
@@ -17,7 +18,17 @@ function showHome(home: HomeContextValue) {
   render(
     <MockHome initial={home}>
       <ConfettiProvider>
-        <HomeScreen onOpenItem={() => {}} onOpenProfile={() => {}} onAddItem={() => {}} />
+        <HomeScreen onOpenProfile={() => {}} onOpenArea={() => {}} onOpenAttention={() => {}} />
+      </ConfettiProvider>
+    </MockHome>,
+  );
+}
+
+function showAttention(home: HomeContextValue) {
+  render(
+    <MockHome initial={home}>
+      <ConfettiProvider>
+        <NeedsAttentionScreen onOpenItem={() => {}} onOpenProfile={() => {}} />
       </ConfettiProvider>
     </MockHome>,
   );
@@ -41,9 +52,15 @@ describe('Home in server mode', () => {
     const line = screen.getByText(READ_ONLY_LINE);
     expect(line.textContent).toBe('Saving is paused until next month: the free storage limit is used up.');
     expect(line.getAttribute('role')).toBe('status');
-    // Right under the sentence on what needs doing, above the view switch and whose items.
+    // Right under the sentence on what needs doing, above the areas.
     expect(line.previousElementSibling).toBe(document.querySelector('[data-home-summary]'));
-    expect(line.nextElementSibling!.contains(screen.getByRole('radiogroup', { name: 'View' }))).toBe(true);
+    expect(line.nextElementSibling).toBe(screen.getByRole('list', { name: 'Areas' }));
+    cleanup();
+    // On Needs attention too: under its sentence, above the view switch and whose items.
+    showAttention(makeHome({ backend: server(), readOnly: true }));
+    const again = screen.getByText(READ_ONLY_LINE);
+    expect(again.previousElementSibling).toBe(document.querySelector('[data-attention-summary]'));
+    expect(again.nextElementSibling!.contains(screen.getByRole('radiogroup', { name: 'View' }))).toBe(true);
   });
 
   it('says it with no areas too, and not at all while saving works', () => {

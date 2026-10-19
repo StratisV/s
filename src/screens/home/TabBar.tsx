@@ -1,10 +1,56 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import type { Tab } from '../types';
 import { PlusIcon } from '../../ui/icons';
 import styles from './TabBar.module.css';
 
-const TABS: { id: Tab; label: string }[] = [
+/** SF Symbols stand-ins for the tabs (filled, as iOS draws tab bar symbols). */
+const ICONS: Record<Tab, ReactNode> = {
+  // house.fill
+  home: (
+    <path d="M10.9 3.6a1.7 1.7 0 0 1 2.2 0l7.6 6.6c.6.5.2 1.5-.6 1.5H19v7.6c0 .9-.7 1.7-1.6 1.7h-3.1v-4.9c0-.7-.6-1.3-1.3-1.3h-2c-.7 0-1.3.6-1.3 1.3V21H6.6c-.9 0-1.6-.8-1.6-1.7v-7.6H3.9c-.8 0-1.2-1-.6-1.5z" />
+  ),
+  // exclamationmark.circle.fill
+  attention: (
+    <path
+      fillRule="evenodd"
+      d="M12 2.5a9.5 9.5 0 1 0 0 19 9.5 9.5 0 0 0 0-19Zm0 4.1c.76 0 1.36.63 1.32 1.39l-.33 6.06a.99.99 0 0 1-1.98 0l-.33-6.06A1.32 1.32 0 0 1 12 6.6Zm0 11.4a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8Z"
+    />
+  ),
+  // message.fill
+  chat: (
+    <path d="M12 3.3c-5.1 0-9.2 3.4-9.2 7.6 0 2.4 1.3 4.5 3.4 5.9-.2 1.3-.9 2.6-1.9 3.4-.3.2-.1.6.2.6 2 0 3.7-.8 4.9-1.8.8.2 1.7.3 2.6.3 5.1 0 9.2-3.4 9.2-7.6S17.1 3.3 12 3.3Z" />
+  ),
+  // sparkles
+  housekeeping: (
+    <>
+      <path d="M10 5.2c.45 3 1.3 4.9 2.4 6s3 1.95 6 2.4c-3 .45-4.9 1.3-6 2.4s-1.95 3-2.4 6c-.45-3-1.3-4.9-2.4-6s-3-1.95-6-2.4c3-.45 4.9-1.3 6-2.4s1.95-3 2.4-6Z" />
+      <path d="M18.2 1.8c.23 1.5.6 2.4 1.15 2.95s1.45.92 2.95 1.15c-1.5.23-2.4.6-2.95 1.15S18.43 8.5 18.2 10c-.23-1.5-.6-2.4-1.15-2.95S15.6 6.13 14.1 5.9c1.5-.23 2.4-.6 2.95-1.15s.92-1.45 1.15-2.95Z" />
+    </>
+  ),
+  // chart.pie.fill
+  stats: (
+    <>
+      <path d="M11 4.6A8.4 8.4 0 1 0 19.4 13H12a1 1 0 0 1-1-1Z" />
+      <path d="M13 2.6V11h8.4A8.4 8.4 0 0 0 13 2.6Z" />
+    </>
+  ),
+};
+
+function TabIcon({ tab }: { tab: Tab }) {
+  return (
+    <svg width={26} height={26} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+      {ICONS[tab]}
+    </svg>
+  );
+}
+
+/**
+ * The tabs, in this order. "Needs attention" is too long for a tab at 375pt wide (five to a
+ * bar), so its tab says "Attention"; the screen itself is titled "Needs attention".
+ */
+export const TABS: { id: Tab; label: string }[] = [
   { id: 'home', label: 'Home' },
+  { id: 'attention', label: 'Attention' },
   { id: 'chat', label: 'Chat' },
   { id: 'housekeeping', label: 'Housekeeping' },
   { id: 'stats', label: 'Stats' },
@@ -13,148 +59,96 @@ const TABS: { id: Tab; label: string }[] = [
 /** Tabs without the round +: Chat has its composer at the bottom, Housekeeping has nothing to add. */
 const WITHOUT_ADD: readonly Tab[] = ['chat', 'housekeeping'];
 
+/** True for the tabs that show the round +. */
+export function hasAddButton(tab: Tab): boolean {
+  return !WITHOUT_ADD.includes(tab);
+}
+
 interface TabBarProps {
   tab: Tab;
   onTab(tab: Tab): void;
+  /** How many things need attention: a red count on Attention (none at 0). */
+  attention?: number;
   /** Messages from others since the chat was last read: a dot on Chat. */
   unread?: boolean;
   /** A message for the housekeeper from someone else since the tab was last open: a dot on Housekeeping. */
   newNote?: boolean;
 }
 
-/** A tab's name for assistive tech when its dot says something (the dot itself is hidden). */
-function dotLabel(id: Tab, unread: boolean, newNote: boolean): string | undefined {
-  if (id === 'chat' && unread) return 'Chat, unread messages';
-  if (id === 'housekeeping' && newNote) return 'Housekeeping, new message';
+/** "9+" past nine, as iOS shortens a badge. */
+const badgeText = (n: number) => (n > 9 ? '9+' : String(n));
+
+/** A tab's name for assistive tech when its badge or dot says something (they are hidden). */
+function spokenName(id: Tab, label: string, attention: number, unread: boolean, newNote: boolean): string | undefined {
+  if (id === 'attention' && attention > 0) return `${label}, ${attention} ${attention === 1 ? 'item' : 'items'}`;
+  if (id === 'chat' && unread) return `${label}, unread messages`;
+  if (id === 'housekeeping' && newNote) return `${label}, new message`;
   return undefined;
 }
 
 /**
- * The tab the switch showed last. Every screen draws its own switch (in its header), so a
- * new TabBar mounts on each tab change: its thumb starts there and slides across.
+ * The tab bar (docs/ARCHITECTURE.md "Tab bar"): Home, Attention, Chat, Housekeeping and Stats
+ * in a capsule of glass floating over the foot of the screen, iOS 26's tab bar. Each tab is
+ * its symbol over a short name; the open one is in the tint, on a soft glass highlight that
+ * slides to it. A red count on Attention says how many things need attention; a dot on Chat
+ * (unread messages) and on Housekeeping (a new message for the housekeeper).
  */
-let shownTab: Tab | null = null;
-
-const reducedMotion = () => {
-  try {
-    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  } catch {
-    return false;
-  }
-};
-
-/**
- * The Home / Chat / Housekeeping / Stats switch, just under the hero on every tab: a
- * segmented control whose segments size to their labels and whose white thumb slides to
- * the tab that is open (docs/ARCHITECTURE.md "Housekeeping", "Tab switch").
- */
-export function TabBar({ tab, onTab, unread = false, newNote = false }: TabBarProps) {
-  const navRef = useRef<HTMLElement>(null);
-  const thumbRef = useRef<HTMLSpanElement>(null);
-  const tabRef = useRef(tab);
-  tabRef.current = tab;
-  /** Where the thumb was last put, to skip resize callbacks that change nothing. */
-  const placed = useRef({ left: -1, width: -1 });
-  // Hidden until it has been measured (no flash at the left edge).
-  const [measured, setMeasured] = useState(false);
-
-  /** Puts the thumb under `id`'s button; `animate` lets it slide there. False if it can't. */
-  const place = (id: Tab, animate: boolean): boolean => {
-    const thumb = thumbRef.current;
-    const button = navRef.current?.querySelector<HTMLElement>(`[data-tab="${id}"]`);
-    if (!thumb || !button) return false;
-    const left = button.offsetLeft;
-    const width = button.offsetWidth;
-    placed.current = { left, width };
-    thumb.dataset.animate = String(animate);
-    thumb.style.width = `${width}px`;
-    thumb.style.transform = `translateX(${left}px)`;
-    return true;
-  };
-
-  // Slide from the tab shown before (by this switch, or the previous screen's) to this one.
-  useLayoutEffect(() => {
-    const from = shownTab;
-    shownTab = tab;
-    if (from && from !== tab && !reducedMotion() && place(from, false)) {
-      // Style the old position first, so moving to the new one is a transition.
-      void thumbRef.current?.getBoundingClientRect();
-      place(tab, true);
-    } else {
-      place(tab, false);
-    }
-    setMeasured(true);
-  }, [tab]);
-
-  // Labels change size (fonts loading, the window resizing, text zoom): follow at once.
-  useLayoutEffect(() => {
-    const nav = navRef.current;
-    if (!nav || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => {
-      const button = nav.querySelector<HTMLElement>(`[data-tab="${tabRef.current}"]`);
-      if (!button) return;
-      const { left, width } = placed.current;
-      // Observing reports once at the start: leave a slide in progress alone.
-      if (button.offsetLeft === left && button.offsetWidth === width) return;
-      place(tabRef.current, false);
-    });
-    ro.observe(nav);
-    nav.querySelectorAll('button').forEach((b) => ro.observe(b));
-    return () => ro.disconnect();
-  }, []);
-
+export function TabBar({ tab, onTab, attention = 0, unread = false, newNote = false }: TabBarProps) {
+  const index = Math.max(0, TABS.findIndex((t) => t.id === tab));
   return (
-    <nav ref={navRef} className={styles.bar} aria-label="Tabs">
-      <span ref={thumbRef} className={styles.thumb} data-measured={measured || undefined} aria-hidden="true" />
-      {TABS.map((t) => (
-        <button
-          key={t.id}
-          type="button"
-          className={styles.tab}
-          data-tab={t.id}
-          aria-current={tab === t.id ? 'page' : undefined}
-          aria-label={dotLabel(t.id, unread, newNote)}
-          onClick={() => onTab(t.id)}
-        >
-          {/* data-label reserves the bold label's width, so choosing a tab never moves the others. */}
-          <span className={styles.label} data-label={t.label}>
-            {t.label}
-            {dotLabel(t.id, unread, newNote) ? <span className={styles.dot} aria-hidden="true" /> : null}
-          </span>
-        </button>
-      ))}
+    <nav className={styles.bar} aria-label="Tabs" style={{ '--count': TABS.length, '--index': index } as CSSProperties}>
+      <span className={styles.highlight} aria-hidden="true" />
+      {TABS.map((t) => {
+        const badge = t.id === 'attention' && attention > 0;
+        const dot = (t.id === 'chat' && unread) || (t.id === 'housekeeping' && newNote);
+        return (
+          <button
+            key={t.id}
+            type="button"
+            className={styles.tab}
+            data-tab={t.id}
+            aria-current={tab === t.id ? 'page' : undefined}
+            aria-label={spokenName(t.id, t.label, attention, unread, newNote)}
+            onClick={() => onTab(t.id)}
+          >
+            <span className={styles.icon}>
+              <TabIcon tab={t.id} />
+              {badge ? (
+                <span className={styles.badge} aria-hidden="true" data-badge="">
+                  {badgeText(attention)}
+                </span>
+              ) : dot ? (
+                <span className={styles.dot} aria-hidden="true" data-dot="" />
+              ) : null}
+            </span>
+            <span className={styles.label}>{t.label}</span>
+          </button>
+        );
+      })}
     </nav>
   );
 }
 
 /**
- * The round add button, floating at the bottom right on Home and Stats. Given a `room` (Home,
- * after a shared link opened that room), it widens to say where the item goes ("+ Garden")
- * and VoiceOver hears "New item in Garden".
+ * The round add button, floating over the tab bar at the right on Home, Needs attention and
+ * Stats. Opens the new-item sheet.
  */
-export function AddButton({ tab, room = null, onAdd }: { tab: Tab; room?: string | null; onAdd(): void }) {
+export function AddButton({ tab, onAdd }: { tab: Tab; onAdd(): void }) {
   // It pops in when it comes back from a tab without it, not when the app opens.
   const [wasAway, setWasAway] = useState(false);
-  const away = WITHOUT_ADD.includes(tab);
+  const away = !hasAddButton(tab);
   if (away && !wasAway) setWasAway(true);
   if (away) return null;
   return (
     <button
       type="button"
       className={styles.add}
-      aria-label={room ? `New item in ${room}` : 'New item'}
+      aria-label="New item"
       onClick={onAdd}
       data-add-button=""
-      data-room={room ? '' : undefined}
       data-enter={wasAway || undefined}
     >
-      {/* Same visible size as the 32px "add" glyph in the design: 18px across, 3px stroke. */}
-      <PlusIcon size={25} strokeWidth={2.9} />
-      {room ? (
-        <span className={styles.addRoom} aria-hidden="true">
-          {room}
-        </span>
-      ) : null}
+      <PlusIcon size={24} strokeWidth={2.8} />
     </button>
   );
 }

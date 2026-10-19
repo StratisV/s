@@ -36,77 +36,127 @@ export const test = base.extend({
 export { expect };
 export type { Locator, Page };
 
-/** Home's three views, as the view switch names them. */
-export type HomeViewName = 'Up next' | 'Rooms' | 'Calendar';
+/** Needs attention's two views, as its view switch names them. */
+export type ViewName = 'List' | 'Calendar';
 
 /**
- * Signed in as Stratis in the prototype household (Shea, Ela, seeded items and history). Most
- * tests are about the rooms and their rows, so Home is switched to its Rooms view (the phone
- * then remembers it) unless `view` says otherwise; Up next is what Home opens on at first.
+ * Signed in as Stratis in the prototype household (Shea, Ela, seeded items and history), on
+ * Home: the hero, the sentence, a card for each area. `view` opens Needs attention instead, on
+ * its list or its calendar (the phone then remembers the view).
  */
-export async function openSeeded(page: Page, view: HomeViewName = 'Rooms'): Promise<void> {
+export async function openSeeded(page: Page, view?: ViewName): Promise<void> {
   await page.goto('/?demo-seed=1');
+  // The phone reopens on the tab last open: back to Home.
+  await expect(tabs(page)).toBeVisible();
+  if ((await tabButton(page, 'Home').getAttribute('aria-current')) !== 'page') await goToTab(page, 'Home');
   await expect(homeScreen(page).getByRole('heading', { name: 'Home', level: 1 })).toBeVisible();
-  if (view !== 'Up next') await showView(page, view);
+  if (view) await openAttention(page, view);
 }
 
-/** The view switch under Home's summary sentence (a radio group "View"). */
+/** The Needs attention tab, on its list (or its calendar). */
+export async function openAttention(page: Page, view: ViewName = 'List'): Promise<void> {
+  await goToTab(page, 'Attention');
+  await expect(attentionScreen(page).getByRole('heading', { name: 'Needs attention', level: 1 })).toBeVisible();
+  await showView(page, view);
+}
+
+/** The view switch under Needs attention's sentence (a radio group "View"). */
 export function views(page: Page): Locator {
-  return homeScreen(page).getByRole('radiogroup', { name: 'View' });
+  return attentionScreen(page).getByRole('radiogroup', { name: 'View' });
 }
 
-/** Chooses one of Home's views. */
-export async function showView(page: Page, name: HomeViewName): Promise<void> {
+/** Chooses one of Needs attention's views. */
+export async function showView(page: Page, name: ViewName): Promise<void> {
   const radio = views(page).getByRole('radio', { name, exact: true });
   await radio.click();
   await expect(radio).toHaveAttribute('aria-checked', 'true');
 }
 
-/** Home's one sentence on what needs doing. */
+/** Needs attention's one sentence on what needs doing (whose items it shows). */
 export function summary(page: Page): Locator {
+  return attentionScreen(page).locator('[data-attention-summary]');
+}
+
+/** Home's one sentence on what needs doing across the house (a button: it opens Needs attention). */
+export function homeSummary(page: Page): Locator {
   return homeScreen(page).locator('[data-home-summary]');
 }
 
-/** A group of Up next ('attention', 'today', 'week', 'later', 'looking'). */
+/** A group of Needs attention's list ('attention', 'today', 'week', 'later', 'looking'). */
 export function group(page: Page, id: 'attention' | 'today' | 'week' | 'later' | 'looking'): Locator {
-  return homeScreen(page).locator(`section[data-group="${id}"]`);
+  return attentionScreen(page).locator(`section[data-group="${id}"]`);
 }
 
 /** Mine: one tap for only your items. */
 export function mine(page: Page): Locator {
-  return homeScreen(page).getByRole('button', { name: 'Mine', exact: true });
+  return attentionScreen(page).getByRole('button', { name: 'Mine', exact: true });
 }
 
 /** The people menu's button, "Show tasks for: Everyone" (or whoever is chosen). */
 export function peopleButton(page: Page): Locator {
-  return homeScreen(page).getByRole('button', { name: /^Show tasks for: / });
+  return attentionScreen(page).getByRole('button', { name: /^Show tasks for: / });
 }
 
-/** Chooses whose items Home shows from the people menu ("Everyone", "Shea", "Unassigned"...). */
+/** Chooses whose items Needs attention shows from the people menu ("Everyone", "Shea", "Unassigned"...). */
 export async function chooseWho(page: Page, name: RegExp): Promise<void> {
   await peopleButton(page).click();
   await page.getByRole('menu', { name: 'Show tasks for' }).getByRole('menuitemradio', { name }).click();
   await expect(page.getByRole('menu')).toHaveCount(0);
 }
 
+const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /**
- * Opens a room's "..." menu; resolves to the menu. A scroll closes a menu, so while rooms are
- * still folding (the page shrinking under it) it may take a second tap.
+ * The accessible name of an area's card: it starts with the area's name (the agreed contract:
+ * then its state, how many To dos and who). Not one of a longer name that starts the same
+ * ("Garden" is not "Garden Lounge").
  */
-export async function openRoomMenu(page: Page, room: string): Promise<Locator> {
-  const button = homeScreen(page).getByRole('button', { name: `${room} options`, exact: true });
-  const menu = page.getByRole('menu', { name: room, exact: true });
-  await expect(async () => {
-    if (!(await menu.isVisible())) await button.click();
-    await expect(menu).toBeVisible({ timeout: 1_000 });
-  }).toPass();
-  return menu;
+export function cardName(name: string, all: readonly string[] = DEFAULT_AREAS): RegExp {
+  const longer = all.filter((n) => n !== name && n.startsWith(name)).map((n) => escapeRe(n.slice(name.length)));
+  return new RegExp(`^${escapeRe(name)}${longer.length ? `(?!${longer.join('|')})` : ''}`);
 }
 
-/** Chooses `item` in a room's "..." menu ("Add item to Garden", "Share Room"). */
-export async function roomMenu(page: Page, room: string, item: string): Promise<void> {
-  const menu = await openRoomMenu(page, room);
-  await menu.getByRole('menuitem', { name: item, exact: true }).click();
+/** Home's grid of areas: one list item a card. */
+export function areaCards(page: Page): Locator {
+  return homeScreen(page).getByRole('list', { name: 'Areas' }).getByRole('listitem');
+}
+
+/** An area's card on Home: one button, named first by its area. */
+export function areaCard(page: Page, name: string, all?: readonly string[]): Locator {
+  return homeScreen(page).getByRole('list', { name: 'Areas' }).getByRole('button', { name: cardName(name, all) });
+}
+
+/** The cards on Home are these areas, in this order. */
+export async function expectAreas(page: Page, names: readonly string[]): Promise<void> {
+  await expect(areaCards(page)).toHaveCount(names.length);
+  for (const [i, name] of names.entries()) {
+    await expect(areaCards(page).nth(i).getByRole('button'), name).toHaveAccessibleName(cardName(name, names));
+  }
+}
+
+/** Opens an area's sheet from its card on Home; resolves once the sheet is in place. */
+export async function openArea(page: Page, name: string, all?: readonly string[]): Promise<Locator> {
+  await areaCard(page, name, all).click();
+  const sheet = area(page, name);
+  await settled(sheet.getByRole('button', { name: 'Close', exact: true }));
+  return sheet;
+}
+
+/** Closes the open area's sheet with its Close button. */
+export async function closeArea(page: Page): Promise<void> {
+  const sheet = areas(page);
+  await sheet.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(sheet).toHaveCount(0);
+}
+
+/** An area's sheet's Add Item ("Add item to Garden") or Share Room. */
+export function areaAction(page: Page, name: string, action: 'Add Item' | 'Share Room'): Locator {
+  return area(page, name).getByRole('button', { name: action === 'Add Item' ? `Add item to ${name}` : 'Share Room', exact: true });
+}
+
+/** An area's state in its sheet ("1 needs attention", "1 coming up", "All good"). */
+export function areaStatus(page: Page, name: string): Locator {
+  return area(page, name).locator('[data-area-status]');
 }
 
 /** Signed out with nothing stored. */
@@ -146,6 +196,11 @@ export function homeScreen(page: Page): Locator {
   return page.getByRole('region', { name: 'Home', exact: true });
 }
 
+/** The Needs attention tab (the outer region: its first group is named "Needs attention" too). */
+export function attentionScreen(page: Page): Locator {
+  return page.getByRole('region', { name: 'Needs attention', exact: true }).first();
+}
+
 export function statsScreen(page: Page): Locator {
   return page.getByRole('region', { name: 'Stats', exact: true });
 }
@@ -158,24 +213,29 @@ export function housekeepingScreen(page: Page): Locator {
   return page.getByRole('region', { name: 'Housekeeping', exact: true });
 }
 
-export type TabName = 'Home' | 'Chat' | 'Housekeeping' | 'Stats';
+export type TabName = 'Home' | 'Attention' | 'Chat' | 'Housekeeping' | 'Stats';
 
 export function tabs(page: Page): Locator {
   return page.getByRole('navigation', { name: 'Tabs' });
 }
 
-/** The round + floating at the bottom right on Home and Stats. */
+/** The round + floating over the tab bar on Home, Needs attention and Stats. */
 export function addButton(page: Page): Locator {
   return page.getByRole('button', { name: 'New item', exact: true });
 }
 
 /**
- * A tab button. Chat is named "Chat, unread messages" while it has its dot, Housekeeping
- * "Housekeeping, new message" while it has its.
+ * A tab button. Attention is named "Attention, 2 items" while things need attention, Chat
+ * "Chat, unread messages" while it has its dot, Housekeeping "Housekeeping, new message"
+ * while it has its.
  */
 export function tabButton(page: Page, name: TabName): Locator {
-  const dotted = { Chat: /^Chat(, unread messages)?$/, Housekeeping: /^Housekeeping(, new message)?$/ } as const;
-  return tabs(page).getByRole('button', { name: name === 'Chat' || name === 'Housekeeping' ? dotted[name] : name, exact: true });
+  const named = {
+    Attention: /^Attention(, \d+ items?)?$/,
+    Chat: /^Chat(, unread messages)?$/,
+    Housekeeping: /^Housekeeping(, new message)?$/,
+  } as const;
+  return tabs(page).getByRole('button', { name: name in named ? named[name as keyof typeof named] : name, exact: true });
 }
 
 export async function goToTab(page: Page, name: TabName): Promise<void> {
@@ -183,35 +243,30 @@ export async function goToTab(page: Page, name: TabName): Promise<void> {
   await expect(tabButton(page, name)).toHaveAttribute('aria-current', 'page');
 }
 
-/** An area section on Home. */
+/** An area's sheet (open from its card), named by its area. */
 export function area(page: Page, name: string): Locator {
-  return homeScreen(page).getByRole('region', { name, exact: true });
+  return page.getByRole('dialog', { name, exact: true });
 }
 
-/** Home's areas (not the calendar above them, whose chosen day lists rows of its own). */
+/** The area sheet that is open (its rows; never Needs attention's). */
 export function areas(page: Page): Locator {
-  return homeScreen(page).locator('section[data-area-id]');
+  return page.locator('[role="dialog"]:has([data-area-sheet])');
 }
 
-/** Area names on Home, top to bottom. */
-export function areaHeadings(page: Page): Locator {
-  return areas(page).getByRole('heading', { level: 2 });
-}
-
-/** The status ring that completes an item, in its area. */
+/** The status ring that completes an item, in the open area's sheet. */
 export function ring(page: Page, title: string): Locator {
   return areas(page).getByRole('button', { name: `Mark ${title} as done`, exact: true });
 }
 
-/** A Home row in its area (ring + title, note, meta). */
+/** A row in the open area's sheet (ring + title, meta). */
 export function row(page: Page, title: string): Locator {
   const ringButton = page.getByRole('button', { name: `Mark ${title} as done`, exact: true });
   return areas(page).getByRole('listitem').filter({ has: ringButton });
 }
 
-/** Home's calendar section, its own view (the week strip or the month, and the chosen day under it). */
+/** Needs attention's calendar, its own view (the week strip or the month, and the chosen day under it). */
 export function calendar(page: Page): Locator {
-  return homeScreen(page).locator('section[data-calendar]');
+  return attentionScreen(page).locator('section[data-calendar]');
 }
 
 /** The part of a row that opens the Item sheet. */
@@ -219,7 +274,7 @@ export function rowButton(page: Page, title: string): Locator {
   return row(page, title).getByRole('button').nth(1);
 }
 
-/** Item titles in an area, top to bottom. */
+/** Item titles in an area's sheet (open), To dos top to bottom. */
 export async function titlesIn(page: Page, areaName: string): Promise<string[]> {
   const rings = area(page, areaName).getByRole('button', { name: /^Mark .* as done$/ });
   const labels = await rings.evaluateAll((els) => els.map((el) => el.getAttribute('aria-label') ?? ''));
@@ -261,10 +316,37 @@ export async function settled(control: Locator): Promise<void> {
 
 /** Opens an item from its Home row; resolves once the sheet is in place. */
 export async function openItem(page: Page, title: string): Promise<Locator> {
+  if (!(await row(page, title).count())) await showItem(page, title);
   await rowButton(page, title).click();
   const sheet = itemSheet(page);
   await settled(sheet.getByRole('button', { name: 'Close' }));
   return sheet;
+}
+
+/**
+ * Opens the sheet of the area an open item is in (found in the stored demo household), from
+ * Home, closing another area's sheet first; resolves to it. Its rows then answer ring(),
+ * row(), meta() and who().
+ */
+export async function showItem(page: Page, title: string): Promise<Locator> {
+  const found = await page.evaluate(
+    ([key, wanted]) => {
+      const doc = JSON.parse(localStorage.getItem(key)!);
+      const item = doc.items.find((i: { title: string; status: string }) => i.title === wanted && i.status === 'open');
+      const areas = [...doc.areas].sort((a: { position: number }, b: { position: number }) => a.position - b.position);
+      return {
+        name: item ? (areas.find((a: { id: string }) => a.id === item.area_id)?.name ?? null) : null,
+        all: areas.map((a: { name: string }) => a.name as string),
+      };
+    },
+    [DEMO_STORAGE_KEY, title] as const,
+  );
+  if (!found.name) throw new Error(`No open item called ${title}`);
+  const sheet = area(page, found.name);
+  if (await sheet.count()) return sheet;
+  if (await areas(page).count()) await closeArea(page);
+  if ((await tabButton(page, 'Home').getAttribute('aria-current')) !== 'page') await goToTab(page, 'Home');
+  return openArea(page, found.name, found.all);
 }
 
 /** The + button; resolves once the new-item sheet is in place. */

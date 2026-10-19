@@ -81,7 +81,7 @@
   gap: 14px;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  scroll-margin: calc(var(--top-inset) + 72px) 0 40px;
+  scroll-margin: calc(var(--top-inset) + 72px) 0 calc(var(--tabbar-clear) + 16px);
 }
 
 /* Hairline between rows, inset to the text. */
@@ -110,8 +110,8 @@
   margin: -12px 0 0;
   opacity: 0;
   cursor: pointer;
-  /* Keyboard focus scrolls the row clear of the sticky tab switch. */
-  scroll-margin: calc(var(--top-inset) + 72px) 0 40px;
+  /* Keyboard focus scrolls the row clear of the status bar and of the tab bar. */
+  scroll-margin: calc(var(--top-inset) + 72px) 0 calc(var(--tabbar-clear) + 16px);
 }
 
 /* 24px circle: a 1.5px grey ring, or filled with the tint and a white check. */

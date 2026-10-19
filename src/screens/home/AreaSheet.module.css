@@ -1,0 +1,286 @@
+/*
+ * An area's page sheet (AreaSheet.tsx): its illustration as a wide banner under the sheet's
+ * rounded top, the name and its state, two actions, then the rows in cards, as on Needs
+ * attention.
+ */
+
+.root {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: calc(40px + var(--bottom-inset));
+  scroll-padding-top: 12px;
+}
+
+/* Rows taken into view from the keyboard: clear of the sheet's foot (no tab bar here). */
+.scroll :global([data-item-open]),
+.scroll :global(button[aria-label^='Mark ']) {
+  scroll-margin-bottom: calc(24px + var(--bottom-inset));
+}
+
+/* ── The banner ────────────────────────────────────────── */
+
+.banner {
+  position: relative;
+  height: 188px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.art {
+  position: absolute;
+  inset: 0;
+}
+
+/* The sheet's grabber, on the drawing. */
+.grabber {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  width: 36px;
+  height: 5px;
+  margin-left: -18px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+  pointer-events: none;
+}
+
+/* Close: a 36px glass circle over the drawing, a 44px target. */
+.close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--label-strong);
+  background: var(--glass-strong);
+  backdrop-filter: blur(16px) saturate(170%);
+  -webkit-backdrop-filter: blur(16px) saturate(170%);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.12),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.4);
+  transition: transform 0.12s ease;
+}
+
+.close::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+}
+
+.close:active {
+  transform: scale(0.92);
+}
+
+/* ── Name, state, who ──────────────────────────────────── */
+
+.head {
+  padding: 18px 20px 0;
+}
+
+.title {
+  margin: 0;
+  font-size: 28px;
+  line-height: 34px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--label);
+  overflow-wrap: anywhere;
+}
+
+.title:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.status {
+  margin: 6px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
+}
+
+.statusDot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--rag-green);
+}
+
+.status[data-status='attention'] {
+  color: var(--rag-red-text);
+}
+
+.status[data-status='attention'] .statusDot {
+  background: var(--rag-red);
+}
+
+.status[data-status='soon'] {
+  color: var(--rag-amber-text);
+}
+
+.status[data-status='soon'] .statusDot {
+  background: var(--rag-amber);
+}
+
+.people {
+  margin: 8px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  color: var(--label-secondary);
+}
+
+.faces {
+  flex: none;
+  display: flex;
+}
+
+.face {
+  width: 26px;
+  height: 26px;
+  margin-left: -6px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  background: var(--avatar-bg);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+
+.face:first-child {
+  margin-left: 0;
+}
+
+/* ── Add Item, Share Room ──────────────────────────────── */
+
+.actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 18px 16px 0;
+}
+
+/* The whole box takes taps, corners too: the rounded fill is drawn behind the words. */
+.action {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  min-height: 50px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  background: none;
+  color: var(--tint-text);
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.12s ease;
+}
+
+.action::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 16px;
+  background: var(--card);
+}
+
+.action:active {
+  transform: scale(0.97);
+}
+
+.action:active::before {
+  background: var(--fill-tertiary);
+}
+
+.action:focus-visible {
+  outline: none;
+}
+
+.action:focus-visible::before {
+  outline: 2px solid var(--tint);
+  outline-offset: 2px;
+}
+
+/* ── The rows ──────────────────────────────────────────── */
+
+.section {
+  padding-top: 24px;
+}
+
+.sectionTitle {
+  composes: sectionTitle from '../../ui/type.module.css';
+  margin: 0;
+  padding: 0 20px 10px;
+}
+
+.sectionTitle:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.card {
+  margin: 0 16px;
+  background: var(--card);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.empty {
+  margin: 0;
+  padding: 15px 18px;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label-secondary);
+}
+
+/* The narrowest phones: the two actions keep their words. */
+@media (max-width: 359px) {
+  .action {
+    font-size: 15px;
+    letter-spacing: -0.2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .close,
+  .action {
+    transition: none;
+  }
+}

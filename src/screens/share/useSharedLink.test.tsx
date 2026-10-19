@@ -6,7 +6,6 @@ import { captureSharedLink } from '../../lib/sharedLink';
 import type { HouseholdData } from '../../lib/types';
 import { HomeProvider } from '../../state/HomeProvider';
 import { ConfettiProvider } from '../../ui/Confetti';
-import { collapsedKey } from '../home/HomeScreen';
 import { UNKNOWN_AREA_TOAST, UNKNOWN_ITEM_TOAST } from './useSharedLink';
 
 class MemoryStorage implements StorageLike {
@@ -81,22 +80,19 @@ describe('opening a shared item link', () => {
 });
 
 describe('opening a shared area link', () => {
-  it('shows the area on Home, opened if it was collapsed', async () => {
-    const scrolled: Element[] = [];
-    Element.prototype.scrollIntoView = function (this: Element) {
-      scrolled.push(this);
-    };
-    const data = await openLink((data) => {
-      localStorage.setItem(collapsedKey(data.household.id), JSON.stringify([areaId(data, 'Hallway')]));
-      return `?frame&area=${areaId(data, 'Hallway')}`;
-    });
+  it('opens the area in its sheet on Home, whichever tab the app last showed', async () => {
+    localStorage.setItem('homeos.tab', 'housekeeping');
+    const data = await openLink((data) => `?frame&area=${areaId(data, 'Hallway')}`);
     expect(window.location.search).toBe('?frame');
-    // Home switches to its Rooms view for the link.
-    const hallway = await screen.findByRole('button', { name: 'Hallway' });
-    await waitFor(() => expect(hallway.getAttribute('aria-expanded')).toBe('true'));
-    await waitFor(() => expect(scrolled).toEqual([hallway.closest('section')]));
-    expect(hallway.closest('section')!.getAttribute('data-area-id')).toBe(areaId(data, 'Hallway'));
-    expect(screen.getByRole('button', { name: 'Kitchen' }).getAttribute('aria-expanded')).toBe('true');
+    const sheet = await screen.findByRole('dialog', { name: 'Hallway' });
+    expect(sheet.querySelector('[data-area-sheet]')!.getAttribute('data-area-id')).toBe(areaId(data, 'Hallway'));
+    expect(within(sheet).getByRole('heading', { level: 1 }).textContent).toBe('Hallway');
+    expect(within(sheet).getByRole('button', { name: 'Mark Heaters not working as done' })).toBeTruthy();
+    // On Home, behind it.
+    const tabs = screen.getByRole('navigation', { name: 'Tabs', hidden: true });
+    expect(within(tabs).getByRole('button', { name: 'Home', hidden: true }).getAttribute('aria-current')).toBe('page');
+    // Only once: nothing is left waiting.
+    expect(localStorage.getItem('homeos.link')).toBeNull();
   });
 
   it('an area this home doesn’t have only gets a toast', async () => {

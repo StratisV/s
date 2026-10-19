@@ -1,109 +1,132 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { Avatar } from './Avatar';
-import { Hero } from './Hero';
+import { Hero, useMinuteClock } from './Hero';
+import { heroLook } from './hero-art/look';
 import { useHeroAtTop } from './StatusSky';
 import styles from './Screen.module.css';
 
 interface HeaderProps {
   title: string;
   subtitle?: ReactNode;
-  /** A small line at the top left of the hero, level with the avatar (Home shows today's date). */
+  /** A small line at the top left, level with the avatar (today's date on Home and Housekeeping). */
   eyebrow?: ReactNode;
-  /** The avatar on the hero; tapping it opens Profile. */
+  /** The avatar at the top right; tapping it opens Profile. */
   avatarEmoji: string;
   onAvatar(): void;
-  /** The Home / Chat / Housekeeping / Stats switch: just under the hero, then held at the top as the page scrolls. */
-  tabs?: ReactNode;
+  /**
+   * Home's illustrated hero (the cottage under London's sky), with the title on it. Without
+   * it (every other tab), a calm compact header: a slim band of the same sky with the date and
+   * the avatar on it, then the large title on the page.
+   */
+  hero?: boolean;
   /** The scroll area the header scrolls in. */
   scrollRef: RefObject<HTMLElement>;
 }
 
 /**
- * How far the page has scrolled under the status bar: `atTop` while the hero's sky is
- * still behind it (until the nav row starts to slide under), `stuck` once `dock` has
- * scrolled up to where it sticks (its `top`).
+ * Scrolled further than this, the sky (the hero's, or the band's) starts to pass under the
+ * status bar, so the strip of sky (StatusSky) fades in behind its white text.
  */
-function useScrollState(dock: RefObject<HTMLElement>, scroller: RefObject<HTMLElement>): { atTop: boolean; stuck: boolean } {
-  const [state, setState] = useState({ atTop: true, stuck: false });
+const AT_TOP = 40;
+
+/** True while the page is scrolled less than AT_TOP: the header's sky is still under the status bar. */
+function useAtTop(scroller: RefObject<HTMLElement>): boolean {
+  const [atTop, setAtTop] = useState(true);
   useEffect(() => {
-    const el = dock.current;
     const sc = scroller.current;
-    if (!el || !sc) return;
+    if (!sc) return;
     let frame = 0;
     const check = () => {
       frame = 0;
-      const top = parseFloat(getComputedStyle(el).top) || 0;
-      const offset = el.getBoundingClientRect().top - sc.getBoundingClientRect().top;
-      const stuck = sc.scrollTop > 0 && offset <= top + 0.5;
-      const atTop = sc.scrollTop < AT_TOP;
-      setState((s) => (s.stuck === stuck && s.atTop === atTop ? s : { atTop, stuck }));
+      setAtTop(sc.scrollTop < AT_TOP);
     };
     const onScroll = () => {
       if (!frame) frame = requestAnimationFrame(check);
     };
     check();
     sc.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onScroll);
     return () => {
       cancelAnimationFrame(frame);
       sc.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', onScroll);
     };
-  }, [dock, scroller]);
-  return state;
+  }, [scroller]);
+  return atTop;
 }
 
 /**
- * Scrolled further than this, the hero's land and the page start to pass under the
- * status bar, so the strip of sky (StatusSky) fades in behind its white text.
+ * A slim band of the hero's sky at the top of a tab without the hero: the sky as it is in
+ * London right now (the colours of the hero's, from its top), behind the status bar and the
+ * row with the date and the avatar, ending in the page's rounded edge as the hero does. The
+ * status bar over it stays white, as over the hero.
  */
-const AT_TOP = 40;
+function SkyBand({ children }: { children: ReactNode }) {
+  const now = useMinuteClock(undefined);
+  const minute = Math.floor(now.getTime() / 60_000);
+  const sky = useMemo(() => heroLook(new Date(minute * 60_000)).sky, [minute]);
+  return (
+    <div
+      className={styles.band}
+      data-sky-band=""
+      data-status-bar="light"
+      style={{ '--sky-0': sky[0], '--sky-1': sky[1], '--sky-2': sky[2] } as CSSProperties}
+    >
+      <div className={styles.bandOverlay}>{children}</div>
+      <div className={styles.bandEdge} aria-hidden="true" />
+    </div>
+  );
+}
 
 /**
- * The top of a tab screen: the hero from the very top of the screen (under the
- * status bar) with the title, a secondary line and the avatar on it, then the
- * tab switch, which stays at the top once the hero has scrolled away.
+ * The top of a tab screen. Home: the hero from the very top of the screen (under the status
+ * bar) with the date, the avatar, the title and the address on it. Every other tab: the slim
+ * band of sky with the date (if any) and the avatar, then the large title and its line under
+ * it. Both scroll away with the page.
  */
-export function ScreenHeader({ title, subtitle, eyebrow, avatarEmoji, onAvatar, tabs, scrollRef }: HeaderProps) {
-  const dockRef = useRef<HTMLDivElement>(null);
-  const { atTop, stuck } = useScrollState(dockRef, scrollRef);
-  useHeroAtTop(atTop);
-  return (
-    <>
+export function ScreenHeader({ hero = false, title, subtitle, eyebrow, avatarEmoji, onAvatar, scrollRef }: HeaderProps) {
+  useHeroAtTop(useAtTop(scrollRef));
+  const nav = (
+    <div className={styles.heroNav}>
+      {eyebrow ? <span className={styles.eyebrow}>{eyebrow}</span> : null}
+      <button type="button" className={styles.avatarButton} onClick={onAvatar} aria-label="Profile">
+        <Avatar emoji={avatarEmoji} size={38} emojiSize={22} background="transparent" className={styles.avatar} />
+      </button>
+    </div>
+  );
+  if (hero) {
+    return (
       <Hero>
-        <div className={styles.heroNav}>
-          {eyebrow ? <span className={styles.eyebrow}>{eyebrow}</span> : null}
-          <button type="button" className={styles.avatarButton} onClick={onAvatar} aria-label="Profile">
-            <Avatar emoji={avatarEmoji} size={38} emojiSize={22} background="transparent" className={styles.avatar} />
-          </button>
-        </div>
+        {nav}
         <div className={styles.titleBlock}>
           <h1 className={styles.title}>{title}</h1>
           {subtitle ? <span className={styles.subtitle}>{subtitle}</span> : null}
         </div>
       </Hero>
-      {tabs ? (
-        <div ref={dockRef} className={styles.dock} data-stuck={stuck || undefined}>
-          {tabs}
-        </div>
-      ) : null}
+    );
+  }
+  return (
+    <>
+      <SkyBand>{nav}</SkyBand>
+      <div className={styles.compactTitle} data-compact-title="">
+        <h1 className={styles.plainTitle}>{title}</h1>
+        {subtitle ? <span className={styles.plainSubtitle}>{subtitle}</span> : null}
+      </div>
     </>
   );
 }
 
 interface ScreenProps extends Omit<HeaderProps, 'scrollRef'> {
   children: ReactNode;
-  /** Room at the bottom for the floating add button (default true). */
+  /** Room at the bottom for the round + over the tab bar (default true). */
   withAdd?: boolean;
   label: string;
 }
 
-/** A tab screen (Home, Housekeeping, Stats): one scroll area, the header (hero and tab switch) at its top. */
+/** A tab screen (Home, Needs attention, Housekeeping, Stats): one scroll area, the header at its top. */
 export function Screen({ children, withAdd = true, label, ...header }: ScreenProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   return (
     <section className={styles.screen} aria-label={label}>
-      <div ref={scrollRef} className={styles.scroll} data-add={withAdd || undefined}>
+      <div ref={scrollRef} className={styles.scroll} data-add={withAdd || undefined} data-screen-scroll="">
         <ScreenHeader {...header} scrollRef={scrollRef} />
         {children}
       </div>

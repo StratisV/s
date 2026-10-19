@@ -1254,7 +1254,7 @@ export class DemoBackend implements Backend {
       memberName: user.name,
       memberEmoji: '🦔',
       areas: [...DEFAULT_AREAS],
-      // The household's list, and a few more so Home's calendar has a lively month.
+      // The household's list, and a few more so Needs attention's calendar has a lively month.
       items: [...SEED_ITEMS, ...DEMO_CALENDAR_ITEMS],
     });
     this.write(doc);

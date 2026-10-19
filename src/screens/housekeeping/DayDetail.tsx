@@ -11,7 +11,7 @@ interface DayDetailProps {
   /** The day chosen in the calendar, before today (today has the Today section). */
   date: ISODate;
   announce(text: string): void;
-  /** The day's heading: brought into view when the day is chosen, focused when Home's calendar opens it here. */
+  /** The day's heading: brought into view when the day is chosen, focused when Needs attention's calendar opens it here. */
   headingRef?: Ref<HTMLHeadingElement>;
 }
 
@@ -73,7 +73,7 @@ export function DayDetail({ date, announce, headingRef }: DayDetailProps) {
   return (
     <section ref={rootRef} aria-labelledby={headingId} data-day-detail={date}>
       <div className={styles.headerRow}>
-        {/* Focused when Home's calendar opens this day here. */}
+        {/* Focused when Needs attention's calendar opens this day here. */}
         <h2 id={headingId} ref={headingRef} className={`${styles.header} ${styles.target}`} tabIndex={-1}>
           {heading}
         </h2>

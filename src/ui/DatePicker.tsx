@@ -68,8 +68,8 @@ export function scrollParent(el: HTMLElement): HTMLElement | null {
  * Brings a chosen day's details (`panel`, under its `heading`) up when they are low on the
  * screen: as much of them as fits above the bottom of the scroll area (its bottom padding
  * keeps the floating + clear), or only `room` px under the heading when that is less (a
- * long day, so the calendar stays in sight), without taking the heading up under the docked
- * tab switch (the scroll area's scroll-padding-top). Measured, as `scrollIntoView` with
+ * long day, so the calendar stays in sight), without taking the heading up under the top of
+ * the screen (the scroll area's scroll-padding-top). Measured, as `scrollIntoView` with
  * `block: 'nearest'` ignores the room wanted under the heading.
  */
 export function revealDay(panel: HTMLElement, heading: HTMLElement, room = Infinity): void {
@@ -165,7 +165,7 @@ interface DatePickerProps {
   /** Under the grid, in the week strip and the month alike (Home: what the marks mean, in words). */
   legend?: ReactNode;
   /**
-   * Home's calendar: a visible heading on the bar, relative ("This week", "In 8 weeks",
+   * Needs attention's calendar: a visible heading on the bar, relative ("This week", "In 8 weeks",
    * "Next month"), with Today and Show month beside it on the right. The heading is an h2
    * with this id, which names the calendar's section.
    */
@@ -173,7 +173,7 @@ interface DatePickerProps {
 }
 
 /**
- * The date picker Home and Housekeeping share (docs/ARCHITECTURE.md "Home: the calendar"):
+ * The date picker Home and Housekeeping share (docs/ARCHITECTURE.md "Needs attention: the calendar"):
  * a 44px bar, then the calendar card (src/ui/MonthCalendar.tsx) as a week strip or the whole
  * month. On the bar's left, Today whenever today isn't the chosen day or isn't shown, else
  * `line`; on its right, Show month / Show week, remembered on this device under `viewKey`.

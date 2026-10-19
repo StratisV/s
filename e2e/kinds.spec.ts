@@ -1,8 +1,9 @@
 import {
   area,
+  areas,
+  areaStatus,
   detailValue,
   expect,
-  homeScreen,
   itemSheet,
   meta,
   openItem,
@@ -11,6 +12,7 @@ import {
   reopen,
   ring,
   settled,
+  showItem,
   test,
   titlesIn,
   toast,
@@ -20,7 +22,7 @@ import {
 
 // "To do" (task) and "To maintain" (state) items. A state has a condition gauge instead of
 // the ring, is never completed, has no due date, repeat or reminder, and reads
-// "<condition> · Updated <day>" on Home.
+// "<condition> · Updated <day>" in its area's sheet.
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
 
@@ -38,13 +40,14 @@ function stateName(title: string): RegExp {
   return new RegExp(`^${escape(title)} ?, to maintain, (Needs work|Okay|Good),`);
 }
 
+/** A state's row button, in the open area's sheet. */
 function stateButton(page: Page, title: string): Locator {
-  return homeScreen(page).getByRole('button', { name: stateName(title) });
+  return areas(page).getByRole('button', { name: stateName(title) });
 }
 
 function stateRow(page: Page, title: string): Locator {
   // `has` is matched inside each list item.
-  return homeScreen(page).getByRole('listitem').filter({ has: page.getByRole('button', { name: stateName(title) }) });
+  return areas(page).getByRole('listitem').filter({ has: page.getByRole('button', { name: stateName(title) }) });
 }
 
 /** The quiet line of a state's row: `Good·Updated today`, its condition in words. */
@@ -65,8 +68,9 @@ function gauge(page: Page, title: string): Locator {
   return stateRow(page, title).locator('[data-variant="row"]');
 }
 
-/** Opens a state from its Home row; resolves once the sheet is in place. */
+/** Opens a state from its row in its area's sheet; resolves once the Item sheet is in place. */
 async function openState(page: Page, title: string): Promise<Locator> {
+  if (!(await stateButton(page, title).count())) await showItem(page, title);
   await stateButton(page, title).click();
   const sheet = itemSheet(page);
   await settled(sheet.getByRole('button', { name: 'Close' }));
@@ -101,9 +105,10 @@ async function expectTaskRows(sheet: Locator, shown: boolean, saved = true): Pro
 
 test.describe('To maintain', () => {
   test('the seeded Firepit is a state in the Garden: a gauge, under "Looking after", "Good", "Updated"', async ({ page }) => {
+    await showItem(page, 'Firepit');
     const firepit = stateRow(page, 'Firepit');
     await expect(firepit).toBeVisible();
-    // The note is in the sheet, not on Home.
+    // The note is in the Item sheet, not on its row.
     await expect(firepit).not.toContainText('New one installed');
     await expect(stateMeta(page, 'Firepit')).toHaveText('Good·Updated today');
     await expect(stateButton(page, 'Firepit').locator('[data-who]')).toHaveText('🦊Ela');
@@ -121,7 +126,8 @@ test.describe('To maintain', () => {
     await expect(area(page, 'Garden').getByText('Looking after', { exact: true })).toBeVisible();
   });
 
-  test('cannot be completed from Home: tapping the gauge opens it instead', async ({ page }) => {
+  test('cannot be completed from its row: tapping the gauge opens it instead', async ({ page }) => {
+    await showItem(page, 'Firepit');
     await gauge(page, 'Firepit').click({ force: true });
     const sheet = itemSheet(page);
     await settled(sheet.getByRole('button', { name: 'Close' }));
@@ -134,6 +140,7 @@ test.describe('To maintain', () => {
   });
 
   test('opens from the keyboard', async ({ page }) => {
+    await showItem(page, 'Firepit');
     const open = stateButton(page, 'Firepit');
     await keyboardFocus(open);
     await page.keyboard.press('Enter');
@@ -181,12 +188,13 @@ test.describe('To maintain', () => {
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
 
+    await showItem(page, 'Jacuzzi water');
     const created = stateRow(page, 'Jacuzzi water');
     await expect(created).toBeVisible();
     await expect(stateMeta(page, 'Jacuzzi water')).toHaveText('Needs workUpdated today');
     expect(await filled(gauge(page, 'Jacuzzi water'))).toEqual({ colour: RED, bars: 1 });
-    // It needs work: the room says so, in red.
-    await expect(area(page, 'Jacuzzi').locator('h2 + span')).toHaveText('1 needs work');
+    // It needs work: the area says so, in red.
+    await expect(areaStatus(page, 'Jacuzzi')).toHaveText('1 needs attention');
     await expect(ring(page, 'Jacuzzi water')).toHaveCount(0);
     expect(await rowTitlesIn(page, 'Jacuzzi')).toEqual(['Water test strips running low', 'Change the filter', 'Jacuzzi water']);
 
@@ -234,7 +242,8 @@ test.describe('To maintain', () => {
     // Its colour carries over as its condition: amber is Okay, two bars.
     expect(await filled(gauge(page, 'Mirror lights not level'))).toEqual({ colour: AMBER, bars: 2 });
     await expect(stateMeta(page, 'Mirror lights not level')).toHaveText('Okay·Updated today');
-    await expect(area(page, 'Living Room').getByText('All clear')).toHaveCount(0);
+    // Okay: something to keep an eye on.
+    await expect(areaStatus(page, 'Living Room')).toHaveText('1 to keep an eye on');
   });
 
   test('switching kinds back and forth without saving changes nothing', async ({ page }) => {
@@ -316,6 +325,7 @@ test.describe('What good looks like', () => {
     await sheet.getByLabel('Area', { exact: true }).selectOption({ label: 'Garden' });
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
+    await showItem(page, 'Log store');
     await expect(stateRow(page, 'Log store')).toBeVisible();
 
     const again = await openState(page, 'Log store');

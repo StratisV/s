@@ -1,5 +1,5 @@
 /*
- * Home's calendar (HomeCalendar.tsx): the bar and the card are src/ui/DatePicker and
+ * Needs attention's calendar (HomeCalendar.tsx): the bar and the card are src/ui/DatePicker and
  * src/ui/MonthCalendar; these are its marks, what they mean, and the day under it.
  */
 
@@ -261,7 +261,7 @@
   gap: 14px;
   text-align: left;
   -webkit-tap-highlight-color: transparent;
-  scroll-margin: 8px 0 calc(104px + var(--bottom-inset));
+  scroll-margin: 8px 0 calc(var(--add-clear) + 8px);
 }
 
 .visitRow:active {

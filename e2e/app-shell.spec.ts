@@ -1,4 +1,8 @@
 import {
+  areaCard,
+  areaCards,
+  attentionScreen,
+  closeArea,
   closeProfile,
   confirmation,
   expect,
@@ -6,6 +10,8 @@ import {
   homeScreen,
   itemSheet,
   NOW,
+  openArea,
+  openAttention,
   openFresh,
   openItem,
   openNewItem,
@@ -14,10 +20,12 @@ import {
   ring,
   rowButton,
   statsScreen,
+  tabButton,
   tabs,
   test,
   toast,
   addButton,
+  type TabName,
 } from './fixtures';
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
@@ -49,6 +57,8 @@ test.describe('App shell', () => {
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
     await goToTab(page, 'Home');
+    // In the first area, Kitchen.
+    await openArea(page, 'Kitchen');
     await expect(ring(page, 'Order more salt')).toBeVisible();
   });
 
@@ -67,6 +77,7 @@ test.describe('App shell', () => {
 
   test('dragging the sheet down dismisses it (and asks first when there are changes)', async ({ page }) => {
     await openSeeded(page);
+    await openArea(page, 'Kitchen');
     const sheet = await openItem(page, 'Olive oil');
     await expect(sheet).toBeFocused();
     const handle = sheet.locator('[data-sheet-handle]');
@@ -92,6 +103,7 @@ test.describe('App shell', () => {
 
   test('swiping the sheet down with a finger dismisses it', async ({ page, context }) => {
     await openSeeded(page);
+    await openArea(page, 'Kitchen');
     const sheet = await openItem(page, 'Olive oil');
     const status = sheet.getByRole('radiogroup', { name: 'How urgent?' });
     await status.hover(); // waits for the sheet to finish sliding up
@@ -105,41 +117,91 @@ test.describe('App shell', () => {
     for (let i = 1; i <= 10; i++) await touch('touchMove', i * 25);
     await touch('touchEnd');
     await expect(sheet).toHaveCount(0);
+    // Only the item's sheet: the area's is still there.
+    await expect(page.getByRole('dialog', { name: 'Kitchen' })).toBeVisible();
   });
 
   test('a finger tap on a ring completes the item', async ({ page }) => {
     await openSeeded(page);
+    await openArea(page, 'Kitchen');
     await ring(page, 'Olive oil').tap();
     await expect(toast(page, 'Done. Next one in 2 months')).toBeVisible();
+    await closeArea(page);
+    await openArea(page, 'Living Room');
     await rowButton(page, 'Mirror lights not level').tap();
     await expect(itemSheet(page)).toBeVisible();
   });
 
-  test('the last item can be scrolled clear of the floating add button', async ({ page }) => {
+  test('the last card, and the last row, can be scrolled clear of the round + and the tab bar', async ({ page }) => {
     await openSeeded(page);
-    // Scroll Home all the way down.
-    await homeScreen(page).evaluate((el) => {
-      const scroller = el.firstElementChild as HTMLElement;
-      scroller.scrollTop = scroller.scrollHeight;
-    });
-    const row = (await rowButton(page, 'Trim the hedges').boundingBox())!;
+    const toBottom = (screen: ReturnType<typeof homeScreen>) =>
+      screen.evaluate((el) => {
+        const scroller = el.firstElementChild as HTMLElement;
+        scroller.scrollTop = scroller.scrollHeight;
+      });
+    await toBottom(homeScreen(page));
+    const card = (await areaCards(page).last().boundingBox())!;
     const add = (await addButton(page).boundingBox())!;
-    expect(row.y + row.height).toBeLessThanOrEqual(add.y);
+    expect(card.y + card.height).toBeLessThanOrEqual(add.y);
+    // Needs attention's list too: its last row (Later opened).
+    await openAttention(page);
+    await attentionScreen(page).getByRole('button', { name: /^Show \d+ more$/ }).click();
+    await toBottom(attentionScreen(page));
+    const last = (await attentionScreen(page).locator('[data-item-open]').last().boundingBox())!;
+    expect(last.y + last.height).toBeLessThanOrEqual((await addButton(page).boundingBox())!.y);
   });
 
-  test('the tab switch is just under the hero, then stays at the top while Home scrolls', async ({ page }) => {
+  test('the tab bar floats over the foot of every tab, 22px over the bottom, and stays there as pages scroll', async ({ page }) => {
     await openSeeded(page);
     const hero = homeScreen(page).locator('[data-phase]').first();
-    const heroBox = (await hero.boundingBox())!;
-    expect(heroBox.y).toBe(0); // the hero reaches the top of the screen
-    const before = (await tabs(page).boundingBox())!;
-    expect(before.y).toBeGreaterThanOrEqual(heroBox.y + heroBox.height - 1);
-    expect(before.y).toBeLessThan(heroBox.y + heroBox.height + 24);
+    expect((await hero.boundingBox())!.y).toBe(0); // the hero reaches the top of the screen
+    const at = async () => {
+      const box = (await tabs(page).boundingBox())!;
+      return [Math.round(box.x), Math.round(box.y + box.height), Math.round(box.width), Math.round(box.height)];
+    };
+    expect(await at()).toEqual([12, 874 - 22, 402 - 24, 62]);
     await homeScreen(page).evaluate((el) => {
       (el.firstElementChild as HTMLElement).scrollTop = 900;
     });
-    await expect.poll(async () => (await tabs(page).boundingBox())!.y).toBeLessThan(40);
-    await expect(tabs(page).getByRole('button', { name: 'Stats' })).toBeVisible();
+    expect(await at()).toEqual([12, 874 - 22, 402 - 24, 62]);
+    // The round + over it, its right edge in line with the bar's.
+    const add = (await addButton(page).boundingBox())!;
+    expect(Math.round(add.x + add.width)).toBe(402 - 12);
+    expect(add.y + add.height).toBeLessThanOrEqual(874 - 22 - 62 - 8);
+    for (const name of ['Attention', 'Chat', 'Housekeeping', 'Stats'] as TabName[]) {
+      await goToTab(page, name);
+      expect(await at(), name).toEqual([12, 874 - 22, 402 - 24, 62]);
+      // Each tab keeps Profile in reach, at the top right.
+      const profile = (await page.getByRole('button', { name: 'Profile', exact: true }).boundingBox())!;
+      expect(profile.y, name).toBeLessThan(60);
+    }
+    // Chat's composer floats over the bar.
+    await goToTab(page, 'Chat');
+    const composer = (await page.getByRole('form', { name: 'New message' }).boundingBox())!;
+    expect(composer.y + composer.height).toBeLessThanOrEqual(874 - 22 - 62);
+  });
+
+  test('the open tab is in the tint, on a soft highlight; every tab a target of 44 by 44 or more', async ({ page }) => {
+    await openSeeded(page);
+    for (const name of ['Home', 'Attention', 'Chat', 'Housekeeping', 'Stats'] as TabName[]) {
+      await goToTab(page, name);
+      const open = tabButton(page, name);
+      await expect(open).toHaveCSS('color', 'rgb(0, 122, 255)');
+      const box = (await open.boundingBox())!;
+      expect(box.width, name).toBeGreaterThanOrEqual(44);
+      expect(box.height, name).toBeGreaterThanOrEqual(44);
+      // The highlight sits under it once it has slid there.
+      const highlight = tabs(page).locator(':scope > span[aria-hidden="true"]');
+      await expect
+        .poll(async () => {
+          const h = (await highlight.boundingBox())!;
+          return Math.abs(h.x - box.x) + Math.abs(h.width - box.width);
+        })
+        .toBeLessThan(1);
+      for (const other of ['Home', 'Chat', 'Stats'] as TabName[]) {
+        if (other !== name) await expect(tabButton(page, other)).toHaveCSS('color', 'rgb(28, 28, 30)');
+      }
+    }
   });
 
   test('signing out in one tab signs out the other', async ({ page, context }) => {
@@ -147,7 +209,7 @@ test.describe('App shell', () => {
     const other = await context.newPage();
     await other.clock.install({ time: NOW });
     await other.goto('/');
-    await expect(ring(other, 'Olive oil')).toBeVisible();
+    await expect(areaCard(other, 'Kitchen')).toBeVisible();
 
     const dialog = await openProfile(page);
     await dialog.getByRole('button', { name: 'Sign Out' }).click();
@@ -158,13 +220,27 @@ test.describe('App shell', () => {
 
   test('the screen behind a sheet or Profile cannot be used', async ({ page }) => {
     await openSeeded(page);
-    await openItem(page, 'Olive oil');
-    await expect(itemSheet(page)).toBeFocused();
+    await openNewItem(page);
+    // Focus is in the sheet (a new item starts on its title).
+    await expect(itemSheet(page, 'New item').getByLabel('Title', { exact: true })).toBeFocused();
     // Inert while covered: no taps, no focus.
     const coveredTabs = tabs(page).locator('xpath=ancestor::*[@inert]');
     await expect(coveredTabs).toHaveCount(1);
     await page.keyboard.press('Escape');
+    await expect(itemSheet(page, 'New item')).toHaveCount(0);
+    await expect(coveredTabs).toHaveCount(0);
+
+    // An area's sheet, and an item's over it.
+    await openArea(page, 'Kitchen');
+    await expect(coveredTabs).toHaveCount(1);
+    await openItem(page, 'Olive oil');
+    await expect(page.getByRole('dialog', { name: 'Kitchen' })).toHaveAttribute('inert', '');
+    await page.keyboard.press('Escape');
     await expect(itemSheet(page)).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'Kitchen' })).not.toHaveAttribute('inert');
+    await expect(coveredTabs).toHaveCount(1);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: 'Kitchen' })).toHaveCount(0);
     await expect(coveredTabs).toHaveCount(0);
 
     await openProfile(page);
@@ -227,16 +303,22 @@ for (const width of [320, 375]) {
 
       await openSeeded(page);
       await noSideways('Home');
-      // The tab switch and the add button both fit.
+      // The tab bar and the add button both fit.
       const add = (await addButton(page).boundingBox())!;
       const bar = (await tabs(page).boundingBox())!;
       expect(bar.x).toBeGreaterThanOrEqual(0);
       expect(bar.x + bar.width).toBeLessThanOrEqual(width);
       expect(add.x + add.width).toBeLessThanOrEqual(width);
 
+      await openArea(page, 'Hallway');
+      await noSideways('Area sheet');
       await openItem(page, 'Heaters not working');
       await noSideways('Item sheet');
       await page.keyboard.press('Escape');
+      await expect(itemSheet(page)).toHaveCount(0);
+      await closeArea(page);
+      await openAttention(page);
+      await noSideways('Needs attention');
       await goToTab(page, 'Stats');
       await noSideways('Stats');
       await goToTab(page, 'Chat');

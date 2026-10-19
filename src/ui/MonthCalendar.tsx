@@ -62,7 +62,7 @@ export interface MonthCalendarProps {
 
 /**
  * The calendar card Home and Housekeeping share (docs/ARCHITECTURE.md "Housekeeping" UI 4 and
- * "Home: the calendar"): a month with its title between Previous and Next, or one week as
+ * "Needs attention: the calendar"): a month with its title between Previous and Next, or one week as
  * a strip with its title between Previous week and Next week. Days are a grid, Monday
  * first. Today has a tint ring, the selected day is filled; a day can carry a dot in its
  * circle and marks under it. Each day's button fills its cell, so a tap anywhere in the cell

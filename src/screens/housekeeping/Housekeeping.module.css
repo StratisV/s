@@ -25,8 +25,8 @@
 }
 
 /*
- * The chosen day's heading (Today, or the day's date): clear of the sticky tab switch when
- * Home's calendar opens the day here.
+ * The chosen day's heading (Today, or the day's date): clear of the top of the screen when
+ * Needs attention's calendar opens the day here.
  */
 .target {
   scroll-margin-top: calc(var(--top-inset) + 64px);
@@ -110,8 +110,8 @@
   line-height: 22px;
   letter-spacing: -0.4px;
   color: var(--label);
-  /* Keyboard focus scrolls it clear of the sticky tab switch. */
-  scroll-margin: calc(var(--top-inset) + 72px) 0 24px;
+  /* Keyboard focus scrolls it clear of the status bar and of the tab bar. */
+  scroll-margin: calc(var(--top-inset) + 72px) 0 calc(var(--tabbar-clear) + 12px);
 }
 
 .textField::placeholder {
@@ -183,7 +183,7 @@
   color: var(--label);
   caret-color: var(--tint);
   outline: none;
-  scroll-margin: calc(var(--top-inset) + 72px) 0 24px;
+  scroll-margin: calc(var(--top-inset) + 72px) 0 calc(var(--tabbar-clear) + 12px);
 }
 
 /* Where the engine can size a field to its text, it does (no estimate needed). */

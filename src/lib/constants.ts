@@ -134,7 +134,7 @@ export const SEED_ITEMS: SeedItem[] = [
 
 /**
  * More To do items for the demo household (`?demo-seed=1` only, after SEED_ITEMS; never a
- * real household's list), so Home's calendar has a lively month: something due today, three
+ * real household's list), so Needs attention's calendar has a lively month: something due today, three
  * weekly jobs whose repeats show faint through the month, and a busy day six days on with
  * four things due (three dots and "+1"). Due offsets are from today, like SEED_ITEMS'.
  * Garden Lounge keeps one status (green) and Front garden two, so their names still fit

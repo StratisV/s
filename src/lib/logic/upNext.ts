@@ -1,4 +1,4 @@
-// Home's "Up next" view: every open item in the house, grouped by when it needs doing rather
+// Needs attention's list ("Up next"): every open item in the house, grouped by when it needs doing rather
 // than where it is, so what needs someone now is always at the top of the screen. Pure:
 // callers pass today (the household's day) and the items already narrowed to whoever the
 // person filter shows.
@@ -8,7 +8,7 @@ import type { ISODate, Item, Rag } from '../types';
 import { addDays, daysBetween, formatDay } from './dates';
 import { isState } from './items';
 
-/** The groups of the Up next view, top to bottom. */
+/** The groups of Needs attention's list, top to bottom. */
 export type UpNextGroupId = 'attention' | 'today' | 'week' | 'later';
 
 export const UP_NEXT_TITLE: Record<UpNextGroupId, string> = {
@@ -61,7 +61,7 @@ function byAge(a: Item, b: Item): number {
 /**
  * Urgency first (red, amber, green), then the earliest date (none last), then the oldest.
  * Late items come before everything else and To maintain items last. Needs attention and
- * Later sort this way, and Rooms each room, so the most urgent row is always at the top.
+ * Later sort this way, and an area's sheet its To dos, so the most urgent row is always at the top.
  */
 export function compareByUrgency(today: ISODate) {
   return (a: Item, b: Item): number => {
@@ -75,7 +75,7 @@ export function compareByUrgency(today: ISODate) {
 }
 
 /**
- * A room's open items as Rooms shows them (and Share Room lists them): its To dos most urgent
+ * An area's open items as its sheet shows them (and Share Room lists them): its To dos most urgent
  * first (compareByUrgency()), then the things it looks after, by name.
  */
 export function roomOrder(items: Item[], today: ISODate): Item[] {

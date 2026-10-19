@@ -1,15 +1,16 @@
 /*
- * Home (HomeScreen.tsx, UpNextView.tsx). One page gutter: cards sit 16px in, text 20px in.
- * One accent (the tint) for what can be tapped; colour otherwise only where it means
- * something (Urgent, Within the month, a late date, a condition).
+ * Home (HomeScreen.tsx) and Needs attention (NeedsAttentionScreen.tsx, UpNextView.tsx). One
+ * page gutter: cards sit 16px in, text 20px in. One accent (the tint) for what can be tapped;
+ * colour otherwise only where it means something (Urgent, Within the month, a late date, a
+ * condition).
  */
 
 /* ── The summary sentence ──────────────────────────────── */
 
 /*
- * What needs doing, in words, right under the tab switch: the lead in the label colour and
- * the rest in grey, both semibold, as Apple sets a headline and its follow-on. A step under
- * the hero's title, so the two never compete.
+ * What needs doing, in words, under the title: the lead in the label colour and the rest in
+ * grey, both semibold, as Apple sets a headline and its follow-on. A step under the title, so
+ * the two never compete.
  */
 .summary {
   margin: 0;
@@ -24,6 +25,33 @@
 
 .summaryLead {
   color: var(--label);
+}
+
+/* On Home the sentence is one button: a tap opens Needs attention (the chevron says so). */
+.summaryButton {
+  composes: summary;
+  display: block;
+  width: 100%;
+  padding: 2px 20px 4px;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.15s ease;
+}
+
+.summaryButton:active {
+  opacity: 0.55;
+}
+
+.summaryButton:focus-visible {
+  outline-offset: -2px;
+  border-radius: 14px;
+}
+
+.summaryChevron {
+  display: inline-block;
+  margin-left: 6px;
+  vertical-align: 0;
+  color: var(--tint);
 }
 
 .summaryRest {
@@ -49,10 +77,7 @@
   padding: 16px 16px 0;
 }
 
-/*
- * Up next, Rooms, Calendar: a step down from the tab switch above (32px, 14px words, against
- * its 44px and 17px), so the two never read as one.
- */
+/* List or Calendar: 32px, 14px words, quieter than the title and the sentence above it. */
 .views {
   position: relative;
   flex: 1 1 auto;
@@ -122,7 +147,7 @@
   outline-offset: -2px;
 }
 
-/* ── Groups (Up next) ──────────────────────────────────── */
+/* ── Groups (the list on Needs attention) ──────────────── */
 
 .view {
   padding-bottom: 8px;
@@ -152,7 +177,7 @@
   color: var(--label-secondary);
 }
 
-/* Every card on Home: a group's rows, a room, and the one-line messages ("All clear"). */
+/* Every list card: a group's rows, and the one-line messages ("All clear"). */
 .card {
   margin: 0 16px;
   background: var(--card);
@@ -183,7 +208,7 @@
   color: var(--tint-text);
   text-align: left;
   -webkit-tap-highlight-color: transparent;
-  scroll-margin: 8px 0 calc(104px + var(--bottom-inset));
+  scroll-margin: 8px 0 calc(var(--add-clear) + 8px);
 }
 
 .more::before {
@@ -214,7 +239,7 @@
   transform: rotate(180deg);
 }
 
-/* ── Looking after (Up next): tiles ────────────────────── */
+/* ── Looking after (the list): tiles ───────────────────── */
 
 .tiles {
   list-style: none;
@@ -244,7 +269,7 @@
   text-align: left;
   -webkit-tap-highlight-color: transparent;
   transition: transform 0.15s ease;
-  scroll-margin: 8px 0 calc(104px + var(--bottom-inset));
+  scroll-margin: 8px 0 calc(var(--add-clear) + 8px);
 }
 
 .tile:active {
@@ -313,7 +338,7 @@
   color: var(--rag-amber-text);
 }
 
-/* Just saved (HomeScreen.tsx revealItem): a tint ring that fades, as a room from a shared link. */
+/* Just saved (NeedsAttentionScreen.tsx revealItem): a tint ring that fades. */
 .tileCell[data-lit] .tile {
   animation: tileLit 2.4s ease-out;
 }
@@ -360,322 +385,43 @@
   color: var(--label);
 }
 
-/* The filter picked someone with nothing open (Rooms). */
-.nobody {
-  margin-top: 26px;
-  padding: 14px 18px;
-  font-size: 17px;
-  line-height: 22px;
-  letter-spacing: -0.4px;
-  color: var(--label-secondary);
-}
+/* ── Areas (Home): two cards to a row ──────────────────── */
 
-/* ── Rooms ─────────────────────────────────────────────── */
-
-.view[data-view='rooms'] {
-  padding-top: 6px;
-}
-
-/*
- * Collapse all / Expand all: a quiet text button on the right, where the other views have
- * their first heading, so the first card starts at the same height in all three.
- */
-.roomsBar {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  min-height: 48px;
-  margin-top: 8px;
-  padding: 0 20px;
-}
-
-.foldAll {
-  min-height: 44px;
-  padding: 0 4px;
-  margin: 0 -4px;
-  border-radius: 8px;
-  font-size: 15px;
-  line-height: 20px;
-  letter-spacing: -0.2px;
-  color: var(--tint-text);
-  -webkit-tap-highlight-color: transparent;
-}
-
-.foldAll:active {
-  opacity: 0.5;
-}
-
-.foldAll:focus-visible {
-  outline-offset: -2px;
-}
-
-/* One card per room, 12px apart (Apple Home's rooms). */
-.section {
-  padding-top: 12px;
-}
-
-.roomsBar + .section {
-  padding-top: 0;
-}
-
-/*
- * The room's drawing and name (one disclosure button), its one quiet word, and its "..."
- * menu, which lines up with the rows' right edge. Above the rows, so its tap targets win.
- */
-.headerRow {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 58px;
-  padding: 7px 4px 7px 12px;
-}
-
-.header {
-  flex: 1 1 auto;
-  min-width: 0;
+.grid {
+  list-style: none;
   margin: 0;
-  font-size: 17px;
-  line-height: 22px;
-  font-weight: 600;
-  letter-spacing: -0.4px;
-  /* Between words; inside one only when a single word is wider than the line. */
-  overflow-wrap: break-word;
-}
-
-.header:focus:not(:focus-visible) {
-  outline: none;
-}
-
-/* A room with nothing open: one quiet line, its name in grey (an idle room on Apple Home). */
-.section[data-empty] .header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-weight: 500;
-  color: var(--label-secondary);
-}
-
-/* The room's drawing in a soft rounded square; tinted red while something there is late or urgent. */
-.roomIcon {
-  flex: none;
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
+  padding: 18px 16px 0;
   display: grid;
-  place-items: center;
-  background: var(--fill-tertiary);
-  color: var(--label-secondary);
-}
-
-.roomIcon[data-alert] {
-  background: var(--rag-red-tint);
-  color: var(--rag-red-text);
-}
-
-.disclosure {
-  position: relative;
-  width: 100%;
-  min-height: 44px;
-  display: flex;
-  align-items: center;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  text-align: left;
-  border-radius: 12px;
-  -webkit-tap-highlight-color: transparent;
-  /* Keyboard focus scrolls it clear of the top fade and the floating tab bar. */
-  scroll-margin: calc(var(--top-inset) + 16px) 0 112px;
 }
 
-/* The whole header up to the card's edge is the tap target. */
-.disclosure::before {
-  content: '';
-  position: absolute;
-  inset: -7px -6px -7px -12px;
+/* A card fills its cell; the cells of a row share the tallest card's height. */
+.cell {
+  display: flex;
+  min-width: 0;
+  border-radius: 24px;
+  /* Brought into view clear of the status bar, the round + and the tab bar. */
+  scroll-margin: calc(var(--top-inset) + 12px) 0 calc(var(--add-clear) + 12px);
 }
 
-.disclosure:active {
-  opacity: 0.6;
-}
-
-.disclosure:focus-visible {
-  outline-offset: 2px;
-}
-
-.headerText {
+.cell > * {
+  flex: 1;
   min-width: 0;
 }
 
-/* Focused for a shared link (HomeScreen.tsx quietFocus): no ring until a key is pressed. */
-[data-quiet-focus]:focus-visible {
-  outline: none;
+/* An item was just saved into this area: a tint ring round its card that fades. */
+.cell[data-lit] {
+  animation: cardLit 2.4s ease-out;
 }
 
-/* The last letter and the chevron: no line break between them. */
-.nameTail {
-  white-space: nowrap;
-}
-
-/* Open: pointing down. Folded: pointing at the name's end, as a row you can open. */
-.chevron {
-  display: inline-block;
-  margin-left: 7px;
-  vertical-align: 1px;
-  color: var(--label-quaternary);
-  transform: rotate(90deg);
-  transition: transform 0.28s var(--sheet-ease);
-}
-
-section[data-collapsed] .chevron {
-  transform: none;
-}
-
-/* "1 urgent" or "1 late" in red; "All clear" or, folded, "3 open" in grey. */
-.roomStatus {
-  /* Shrinks with the name when both are long, down to its longest part. */
-  flex: 0 1 auto;
-  padding-left: 4px;
-  font-size: 15px;
-  line-height: 20px;
-  letter-spacing: -0.2px;
-  color: var(--label-secondary);
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.statusPart {
-  white-space: nowrap;
-}
-
-.roomStatus[data-alert] {
-  font-weight: 600;
-  color: var(--rag-red-text);
-}
-
-.roomStatus[data-toggles] {
-  align-self: stretch;
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.roomStatus[data-toggles]:active {
-  opacity: 0.6;
-}
-
-/* The room's menu: a borderless "..." with a 44px target. */
-.roomMenu {
-  position: relative;
-  flex: none;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  color: var(--label-secondary);
-  -webkit-tap-highlight-color: transparent;
-  scroll-margin: calc(var(--top-inset) + 16px) 0 112px;
-  transition: background-color 0.2s ease;
-}
-
-.roomMenu:active,
-.roomMenu[aria-expanded='true'] {
-  background: var(--fill-tertiary);
-}
-
-.roomMenu:focus-visible {
-  outline-offset: -2px;
-}
-
-.roomBody {
-  padding-bottom: 2px;
-}
-
-.roomBody > .list > li:first-child [data-item-open] {
-  border-top-color: var(--separator);
-}
-
-/*
- * The card collapses to nothing: grid rows animate between 1fr and 0fr, and
- * once closed the rows are hidden from taps, focus and assistive tech.
- */
-.panel {
-  display: grid;
-  grid-template-rows: 1fr;
-  transition:
-    grid-template-rows 0.32s var(--sheet-ease),
-    visibility 0s;
-}
-
-.panel[data-collapsed] {
-  grid-template-rows: 0fr;
-  visibility: hidden;
-  transition:
-    grid-template-rows 0.32s var(--sheet-ease),
-    visibility 0s linear 0.32s;
-}
-
-.panelInner {
-  min-height: 0;
-  overflow: hidden;
-}
-
-.panel .roomBody {
-  transition: opacity 0.24s ease;
-}
-
-.panel[data-collapsed] .roomBody {
-  opacity: 0;
-}
-
-/* The things a room looks after (To maintain), under its To dos. */
-.looking[data-has-tasks] {
-  position: relative;
-}
-
-.looking[data-has-tasks]::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 16px;
-  right: 16px;
-  border-top: 0.5px solid var(--separator);
-}
-
-.lookingLabel {
-  margin: 0;
-  padding: 12px 16px 0 54px;
-  font-size: 13px;
-  line-height: 18px;
-  font-weight: 600;
-  letter-spacing: -0.05px;
-  color: var(--label-secondary);
-}
-
-.looking .list > li:first-child [data-item-open] {
-  border-top-color: transparent;
-}
-
-/*
- * Opened from a shared link: a tint ring that fades out, so it is clear which
- * area was meant. An outline inside the edge (the panel clips anything outside).
- */
-.section[data-linked] .card {
-  outline: 3px solid transparent;
-  outline-offset: -3px;
-  border-radius: var(--r-card);
-  animation: linked 2.4s ease-out;
-}
-
-@keyframes linked {
+@keyframes cardLit {
   0%,
   45% {
-    outline-color: color-mix(in srgb, var(--tint) 50%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--tint) 55%, transparent);
   }
   100% {
-    outline-color: transparent;
+    box-shadow: 0 0 0 3px transparent;
   }
 }
 
@@ -716,8 +462,8 @@ section[data-collapsed] .chevron {
   text-align: left;
   /* The darker tint keeps 4.5:1 on the card (the system blue is 4:1). */
   color: var(--tint-text);
-  /* Keyboard focus scrolls it clear of the top fade and the floating tab bar. */
-  scroll-margin: calc(var(--top-inset) + 16px) 0 112px;
+  /* Keyboard focus scrolls it clear of the status bar and the floating tab bar. */
+  scroll-margin: calc(var(--top-inset) + 16px) 0 calc(var(--add-clear) + 12px);
 }
 
 .noAreasButton::before {
@@ -753,71 +499,18 @@ section[data-collapsed] .chevron {
   }
 }
 
-/*
- * The smallest phones: the view switch takes a line of its own (every word whole), Mine and
- * the people menu the line under it. 12px apart, so their 44px targets never overlap.
- */
-@media (max-width: 349px) {
-  .controls {
-    flex-wrap: wrap;
-    row-gap: 12px;
-  }
-
-  .views {
-    flex-basis: 100%;
-  }
-}
-
-/* The smallest phones: a room's name keeps to one line beside its word where it can. */
-@media (max-width: 374px) {
-  .headerRow {
-    gap: 4px;
-    padding-left: 10px;
-  }
-
-  .roomIcon {
-    width: 28px;
-    height: 28px;
-    border-radius: 9px;
-  }
-
-  .disclosure,
-  .section[data-empty] .header {
-    gap: 10px;
-  }
-
-  .disclosure::before {
-    inset: -7px -4px -7px -10px;
-  }
-
-  .chevron {
-    margin-left: 5px;
-  }
-
-  .roomStatus {
-    padding-left: 2px;
-    font-size: 13px;
-    line-height: 18px;
-    letter-spacing: -0.05px;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .viewThumb,
-  .panel,
-  .panel[data-collapsed],
-  .panel .roomBody,
-  .chevron,
   .moreChevron,
   .tile,
-  .roomMenu {
+  .summaryButton {
     transition: none;
   }
 
   /* No fade: the ring is simply there for a moment. */
-  .section[data-linked] .card {
+  .cell[data-lit] {
     animation: none;
-    outline-color: color-mix(in srgb, var(--tint) 50%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--tint) 55%, transparent);
   }
 
   .tileCell[data-lit] .tile {

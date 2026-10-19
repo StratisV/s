@@ -5,21 +5,24 @@
   background: var(--bg);
 }
 
-/* The hero reaches the top of the screen, so the scroll area starts at 0, not under the status bar. */
+/*
+ * The header's sky reaches the top of the screen, so the scroll area starts at 0, not under
+ * the status bar. At its foot, room to scroll the last thing clear of the floating tab bar.
+ */
 .scroll {
   position: absolute;
   inset: 0;
   overflow-y: auto;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
-  padding: 0 0 calc(60px + var(--bottom-inset));
-  /* Keyboard focus scrolls things clear of the status bar and the docked tab switch. */
-  scroll-padding-top: calc(var(--top-inset) + 64px);
+  padding: 0 0 calc(var(--tabbar-clear) + 24px);
+  /* Keyboard focus scrolls things clear of the status bar. */
+  scroll-padding-top: calc(var(--top-inset) + 12px);
 }
 
-/* Room for the floating add button. */
+/* Room for the round + over the tab bar too. */
 .scroll[data-add] {
-  padding-bottom: calc(104px + var(--bottom-inset));
+  padding-bottom: calc(var(--add-clear) + 16px);
 }
 
 /* ── On the hero ───────────────────────────────────────── */
@@ -105,25 +108,53 @@
   overflow-wrap: anywhere;
 }
 
-/* ── Tab switch dock ───────────────────────────────────── */
+/* ── The compact header (every tab but Home) ───────────── */
 
-/* Just under the hero; held under the status bar once the hero has scrolled away. */
-.dock {
-  position: sticky;
-  top: var(--top-inset);
-  z-index: 5;
-  padding: 6px 16px 10px;
-  background: var(--bg);
-  transition:
-    background-color 0.2s ease,
-    box-shadow 0.2s ease;
+/*
+ * A slim band of the hero's sky: behind the status bar and the row with the date and the
+ * avatar, then the page's rounded edge (as under the hero). Its words are white, as over the
+ * hero's sky; a faint shade keeps them clear on the palest skies.
+ */
+.band {
+  --hero-ink-secondary: rgba(255, 255, 255, 0.94);
+  --hero-text-shadow: 0 1px 2px rgba(6, 12, 40, 0.3), 0 0 14px rgba(6, 12, 40, 0.18);
+  --hero-glass: rgba(255, 255, 255, 0.2);
+  --hero-glass-edge: rgba(255, 255, 255, 0.36);
+  position: relative;
+  overflow: hidden;
+  height: calc(var(--top-inset) + var(--nav-row) + 22px);
+  background:
+    linear-gradient(rgba(6, 12, 40, 0.12), rgba(6, 12, 40, 0) 70%),
+    linear-gradient(var(--sky-0, #164faa), var(--sky-1, #2d6fd1) 80%, var(--sky-2, #5b93e0) 160%);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-.dock[data-stuck] {
-  background: var(--bar-glass);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  box-shadow: 0 0.5px 0 var(--separator);
+.bandOverlay {
+  position: relative;
+  z-index: 1;
+  padding-top: var(--top-inset);
+}
+
+/* The page continues below, under a soft rounded edge. */
+.bandEdge {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 25px;
+  border-radius: 24px 24px 0 0;
+  background: var(--bg);
+}
+
+/* The large title, on the page just under the band. */
+.compactTitle {
+  margin-top: -12px;
+  padding: 0 20px 2px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 /* ── Large title (pages without a hero) ────────────────── */
@@ -148,10 +179,4 @@
   line-height: 20px;
   letter-spacing: -0.4px;
   color: var(--label-secondary);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .dock {
-    transition: none;
-  }
 }

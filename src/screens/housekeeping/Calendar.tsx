@@ -17,9 +17,9 @@ interface CalendarProps {
 }
 
 /**
- * The visits, under the tab switch: Home's date picker (src/ui/DatePicker.tsx), the week as a
- * strip or the whole month (Show month / Show week, remembered on this device apart from
- * Home's), named by a visually hidden "Calendar" heading. While today is chosen and shown, a
+ * The visits, under the title: Needs attention's date picker (src/ui/DatePicker.tsx), the week
+ * as a strip or the whole month (Show month / Show week, remembered on this device apart from
+ * Needs attention's), named by a visually hidden "Calendar" heading. While today is chosen and shown, a
  * line beside it says how today's visit is going ("6 of 7 done today · £60.00"). Visit days
  * have a dot (and `data-visit`); days after today are dimmed and can't be chosen, and Next
  * is off once the week or month after would be all future, since no visit can be ahead. The

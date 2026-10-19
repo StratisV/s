@@ -1,14 +1,13 @@
 import {
   addButton,
+  attentionScreen,
   confirmation,
   expect,
   goToTab,
-  homeScreen,
   housekeepingScreen,
   openSeeded,
   reopen,
   settled,
-  showView,
   tabButton,
   tabs,
   test,
@@ -20,7 +19,7 @@ import {
 // The Housekeeping tab (docs/ARCHITECTURE.md "Housekeeping") against the demo seed, at the
 // e2e clock (Thu 8 Oct 2026, 10:00 London): the message from Shea yesterday at 19:20, the
 // starter task list, no visit today, and visits on Thu 1 Oct, 24 Sep, 17 Sep, 10 Sep and
-// 3 Sep (HOUSEKEEPING_DEMO_VISITS). The calendar is Home's date picker: this week (5 to 11
+// 3 Sep (HOUSEKEEPING_DEMO_VISITS). The calendar is Needs attention's date picker: this week (5 to 11
 // October) at first, with today chosen.
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
@@ -75,12 +74,12 @@ async function checklist(group: Locator): Promise<{ title: string; done: boolean
 }
 
 test.describe('Housekeeping tab', () => {
-  test('is the third tab; the + is not on it and pops back on Stats', async ({ page }) => {
+  test('is the fourth tab; the + is not on it and pops back on Stats', async ({ page }) => {
     await openSeeded(page);
-    await expect(tabs(page).getByRole('button')).toHaveText(['Home', /^Chat/, 'Housekeeping', 'Stats']);
+    await expect(tabs(page).getByRole('button')).toHaveText(['Home', /Attention$/, /^Chat/, 'Housekeeping', 'Stats']);
     await expect(addButton(page)).toBeVisible();
     await goToTab(page, 'Housekeeping');
-    for (const name of ['Home', 'Chat', 'Stats'] as const) {
+    for (const name of ['Home', 'Attention', 'Chat', 'Stats'] as const) {
       await expect(tabButton(page, name)).not.toHaveAttribute('aria-current', 'page');
     }
     await expect(addButton(page)).toHaveCount(0);
@@ -88,40 +87,52 @@ test.describe('Housekeeping tab', () => {
     await expect(addButton(page)).toBeVisible();
   });
 
-  for (const width of [320, 375, 402]) {
-    test(`the four tabs fit at ${width}px, untruncated, with the thumb under the open one`, async ({ page }) => {
+  for (const width of [320, 375, 402, 430]) {
+    test(`the five tabs fit at ${width}px, untruncated, with the highlight under the open one`, async ({ page }) => {
       await page.setViewportSize({ width, height: 800 });
       const screen = await openHousekeeping(page);
       const fit = await tabs(page).evaluate((nav) => {
         const buttons = Array.from(nav.querySelectorAll('button'));
-        /** The label's words fit inside the button: not cut off, not spilling out. */
+        /** The name's words fit inside the button: not cut off, not spilling out. */
         const whole = (b: HTMLElement) => {
+          const label = b.querySelector<HTMLElement>(':scope > span:last-child')!;
           const range = document.createRange();
-          range.selectNodeContents(b.querySelector('span')!.firstChild!);
+          range.selectNodeContents(label.firstChild!);
           const text = range.getBoundingClientRect();
           const box = b.getBoundingClientRect();
-          return text.left >= box.left - 0.5 && text.right <= box.right + 0.5 && b.scrollWidth <= b.clientWidth;
+          return (
+            text.left >= box.left - 0.5 &&
+            text.right <= box.right + 0.5 &&
+            label.scrollWidth <= label.clientWidth &&
+            b.scrollWidth <= b.clientWidth
+          );
         };
         return {
           nav: nav.getBoundingClientRect().toJSON() as DOMRect,
           scroll: document.scrollingElement!.scrollWidth,
           inner: window.innerWidth,
           tops: buttons.map((b) => b.getBoundingClientRect().top),
+          sizes: buttons.map((b) => [b.getBoundingClientRect().width, b.getBoundingClientRect().height]),
           clipped: buttons.filter((b) => !whole(b)).map((b) => b.textContent),
           overflow: nav.scrollWidth > nav.clientWidth,
-          last: buttons[3].getBoundingClientRect().right,
+          last: buttons[4].getBoundingClientRect().right,
         };
       });
       expect(fit.scroll).toBeLessThanOrEqual(fit.inner);
-      expect(fit.nav.x).toBeGreaterThanOrEqual(16);
-      expect(fit.nav.x + fit.nav.width).toBeLessThanOrEqual(width - 16 + 0.5);
+      expect(fit.nav.x).toBeGreaterThanOrEqual(6);
+      expect(fit.nav.x + fit.nav.width).toBeLessThanOrEqual(width - 6 + 0.5);
       expect(fit.last).toBeLessThanOrEqual(fit.nav.x + fit.nav.width);
       expect(new Set(fit.tops).size).toBe(1);
+      // Every tab a target of 44 by 44 or more.
+      for (const [w, h] of fit.sizes) {
+        expect(w).toBeGreaterThanOrEqual(44);
+        expect(h).toBeGreaterThanOrEqual(44);
+      }
       expect(fit.clipped).toEqual([]);
       expect(fit.overflow).toBe(false);
-      // The white thumb sits under Housekeeping once it has slid there.
+      // The highlight sits under Housekeeping once it has slid there.
       const open = tabButton(page, 'Housekeeping');
-      const thumb = tabs(page).locator('span[aria-hidden="true"]').first();
+      const thumb = tabs(page).locator(':scope > span[aria-hidden="true"]').first();
       await expect
         .poll(async () => {
           const [a, b] = [(await open.boundingBox())!, (await thumb.boundingBox())!];
@@ -134,10 +145,10 @@ test.describe('Housekeeping tab', () => {
     });
   }
 
-  test('shows today’s date, the date picker under the tab switch, the message, then today’s list', async ({ page }) => {
+  test('shows today’s date, the date picker under the title, the message, then today’s list', async ({ page }) => {
     const screen = await openHousekeeping(page);
     await expect(screen.getByText('Last visit Thu 1 Oct', { exact: true })).toBeVisible();
-    // Today's date over the title, as on Home.
+    // Today's date over the title (on the band of sky), as on Home.
     await expect(screen.locator('time')).toHaveText('THURSDAY 8 OCTOBER', { useInnerText: true });
     await expect(screen.locator('time')).toHaveAttribute('datetime', '2026-10-08');
     await expect(screen.getByRole('heading', { level: 2 })).toHaveText([
@@ -152,13 +163,11 @@ test.describe('Housekeeping tab', () => {
     expect(await checklist(tasks)).toEqual(STARTER.map((title) => ({ title, done: false })));
     await expect(today(screen).getByText("Not started yet. Ticking a task starts today's visit.")).toBeVisible();
 
-    // Right under the tab switch: this week, today chosen and ringed, a line on today's visit.
-    const below = await calendar(screen).evaluate((el) => {
-      const nav = document.querySelector('nav[aria-label="Tabs"]')!.getBoundingClientRect();
-      return el.getBoundingClientRect().top - nav.bottom;
-    });
+    // Right under the title and its line: this week, today chosen and ringed, a line on today's visit.
+    const lineBottom = (await screen.getByText('Last visit Thu 1 Oct', { exact: true }).boundingBox())!;
+    const below = (await calendar(screen).boundingBox())!.y - (lineBottom.y + lineBottom.height);
     expect(below).toBeGreaterThanOrEqual(0);
-    expect(below).toBeLessThanOrEqual(12);
+    expect(below).toBeLessThanOrEqual(24);
     await expect(grid(screen)).toHaveAccessibleName('Week of Monday 5 October');
     await expect(calendar(screen).getByText('5 to 11 October', { exact: true })).toBeVisible();
     await expect(day(screen, 'Thursday 8 October')).toHaveAccessibleName('Thursday 8 October, today, selected');
@@ -271,11 +280,10 @@ test.describe('Housekeeping tab', () => {
     for (const button of buttons) await expect(button).toHaveCSS('color', 'rgb(0, 88, 185)');
     await page.emulateMedia({ colorScheme: 'dark' });
     for (const button of buttons) await expect(button).toHaveCSS('color', 'rgb(90, 169, 255)');
-    // Section headings weigh the same as Home's.
+    // Section headings weigh the same as Needs attention's.
     await expect(screen.getByRole('heading', { name: 'Today', level: 2 })).toHaveCSS('font-weight', '600');
-    await goToTab(page, 'Home');
-    await showView(page, 'Up next');
-    await expect(homeScreen(page).getByRole('heading', { name: 'Needs attention', level: 2 })).toHaveCSS('font-weight', '600');
+    await goToTab(page, 'Attention');
+    await expect(attentionScreen(page).getByRole('heading', { name: 'Needs attention', level: 2 })).toHaveCSS('font-weight', '600');
   });
 
   test('the message saves itself, and Clear can be undone', async ({ page }) => {
@@ -469,13 +477,16 @@ test.describe('Housekeeping tab', () => {
       await target.click();
       const heading = detail(screen).getByRole('heading', { level: 2 });
       await expect(heading).toHaveText('Tuesday 6 October');
-      await expect(detail(screen).getByRole('button', { name: 'Add a visit' })).toBeInViewport({ ratio: 1 });
-      // The week strip is still there to choose another day, clear of the docked tab switch.
+      const add = detail(screen).getByRole('button', { name: 'Add a visit' });
+      await expect(add).toBeInViewport({ ratio: 1 });
+      // The week strip is still there to choose another day, and both are clear of the tab bar.
+      await expect(target).toBeInViewport({ ratio: 1 });
       await expect
         .poll(async () => {
-          const nav = (await tabs(page).boundingBox())!;
+          const bar = (await tabs(page).boundingBox())!;
           const days = (await target.boundingBox())!;
-          return days.y >= nav.y + nav.height;
+          const button = (await add.boundingBox())!;
+          return days.y + days.height <= bar.y && button.y + button.height <= bar.y;
         })
         .toBe(true);
       await expect(target).toBeFocused();

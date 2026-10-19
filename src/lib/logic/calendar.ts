@@ -1,4 +1,4 @@
-// Home's calendar (docs/ARCHITECTURE.md "Home: the calendar"): what each day holds. The To
+// Needs attention's calendar (docs/ARCHITECTURE.md "Needs attention: the calendar"): what each day holds. The To
 // do items due that day (missed when the day is past), the later repeats of repeating items
 // (projected, shown faint), and the housekeeping visit. Pure: callers pass today (the
 // household's day) and the items already narrowed to whoever the person filter shows.
@@ -16,7 +16,7 @@ import { SHARE_REPEAT } from './share';
 /** The compact week strip, or the whole month. */
 export type CalendarView = 'week' | 'month';
 
-/** What one day holds on Home's calendar. */
+/** What one day holds on Needs attention's calendar. */
 export interface CalendarDay {
   /** Open To do items due that day, when it is today or later, in the order given (Home's). */
   due: Item[];
@@ -226,7 +226,7 @@ function dayParts(day: CalendarDay): string[] {
 }
 
 /**
- * The accessible name of a day's button on Home's calendar: fullDay() ("Friday 16 October",
+ * The accessible name of a day's button on Needs attention's calendar: fullDay() ("Friday 16 October",
  * with the year when it is not this year's), `', today'`, then what it holds, with how
  * urgent in words for the coloured dots (`', 3 due (1 urgent, 2 not urgent)'`, `', 1 missed
  * (urgent)'`, `', 2 repeats'`, `', housekeeping visit'`), then `', selected'` for the day

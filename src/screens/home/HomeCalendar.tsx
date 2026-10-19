@@ -57,7 +57,7 @@ interface HomeCalendarProps {
 }
 
 /**
- * Home's calendar (docs/ARCHITECTURE.md "Home: the calendar"), Home's third view: the week
+ * Needs attention's calendar (docs/ARCHITECTURE.md "Needs attention: the calendar"), Home's third view: the week
  * as a strip, or the whole month (Show month / Show week, remembered on this device), with
  * Previous and Next for the week or the month and Today to come back: the date picker
  * Housekeeping uses too (src/ui/DatePicker.tsx). Each day shows the To do items due (dots in

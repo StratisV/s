@@ -36,7 +36,7 @@
   --ring-idle: #8e8e93;
   /* The sliding thumb of a segmented control. */
   --thumb: #ffffff;
-  /* Bars that float over the page (the docked tab switch). */
+  /* Bars that float over the page. */
   --bar-glass: rgba(242, 242, 247, 0.92);
   /* Menus and action sheets: frosted glass over the page. */
   --menu-glass: rgba(250, 250, 252, 0.98);
@@ -106,8 +106,20 @@
   --top-inset: env(safe-area-inset-top, 0px);
   --bottom-inset: env(safe-area-inset-bottom, 0px);
   --nav-row: 52px;
-  --tabbar-bottom: 22px;
+  /*
+   * The floating tab bar (TabBar.tsx): 62px of glass, 22px over the bottom edge (the home
+   * indicator runs beneath it), higher where the safe area asks for more.
+   */
+  --tabbar-bottom: max(22px, calc(var(--bottom-inset) - 12px));
   --tabbar-height: 62px;
+  --tabbar-side: 12px;
+  /* How much of the screen's foot the tab bar covers. */
+  --tabbar-clear: calc(var(--tabbar-bottom) + var(--tabbar-height));
+  /* The round + floats over the tab bar, at the right (Home, Needs attention and Stats). */
+  --add-size: 56px;
+  --add-bottom: calc(var(--tabbar-clear) + 12px);
+  /* How much of the screen's foot the tab bar and the + cover together. */
+  --add-clear: calc(var(--add-bottom) + var(--add-size));
   /* Page sheet top edge; the pushed-back screen peeks 12px above it. */
   --sheet-top: max(calc(var(--top-inset) + 8px), 24px);
 
@@ -187,5 +199,12 @@
 @media (prefers-contrast: more) {
   :root {
     --tint-fill: #0040dd;
+  }
+}
+
+/* The narrowest phones (320pt): the tab bar takes a little more of the width. */
+@media (max-width: 359px) {
+  :root {
+    --tabbar-side: 6px;
   }
 }

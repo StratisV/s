@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState } from 'react';
 import { countCompletions } from '../../lib/logic/stats';
 import type { StatsPeriod } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
@@ -23,11 +23,9 @@ let lastPeriod: StatsPeriod = 'month';
  */
 export function StatsScreen({
   onOpenProfile,
-  tabs,
   onOpenDone,
 }: {
   onOpenProfile(): void;
-  tabs?: ReactNode;
   onOpenDone?(target: DoneTarget, opener: HTMLElement): void;
 }) {
   const { data, me, today } = useHousehold();
@@ -51,13 +49,7 @@ export function StatsScreen({
     (rows.length ? `: ${rows.map((r) => `${r.member.name} ${r.count}`).join(', ')}.` : '.');
 
   return (
-    <Screen
-      label="Stats"
-      title="Stats"
-      avatarEmoji={me.emoji}
-      onAvatar={onOpenProfile}
-      tabs={tabs}
-    >
+    <Screen label="Stats" title="Stats" avatarEmoji={me.emoji} onAvatar={onOpenProfile}>
       <SegmentedControl
         label="Period"
         options={PERIODS}

@@ -29,8 +29,8 @@ interface UpNextViewProps {
 }
 
 /**
- * Home's first view (Things' Today, Todoist's Overdue, Reminders' Today): one list across
- * every room, grouped by when it needs doing, so what needs someone now is at the top of the
+ * Needs attention's list (Things' Today, Todoist's Overdue, Reminders' Today): one list across
+ * every area, grouped by when it needs doing, so what needs someone now is at the top of the
  * screen. Needs attention (late or urgent, and anything looked after that needs work), Today,
  * Next 7 days, then Later, folded after three rows. Needs attention and Later are sorted
  * urgency first, then date; Today and Next 7 days date first. Things looked after that are

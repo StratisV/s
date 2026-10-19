@@ -1,128 +1,157 @@
 /*
- * The segmented control (as Stats' period switch), one segment per tab. Segments size to
- * their labels and share the space left over equally (Housekeeping is the longest), so all
- * four fit on one line from 320px wide up.
+ * The tab bar: a capsule of glass floating over the foot of the screen (iOS 26), 12px in
+ * from each side (so five names fit at 375pt, Housekeeping the longest) and 22px over the
+ * bottom edge (var(--tabbar-bottom): higher where the safe area asks for more). Five equal
+ * tabs, each a 56px tall target: the symbol over its name.
  */
 .bar {
-  position: relative;
+  position: absolute;
+  left: var(--tabbar-side);
+  right: var(--tabbar-side);
+  bottom: var(--tabbar-bottom);
+  z-index: 6;
+  height: var(--tabbar-height);
   padding: 3px;
-  border-radius: 100px;
-  background: var(--fill-tertiary);
-  display: flex;
+  border-radius: var(--r-tab);
+  display: grid;
+  grid-template-columns: repeat(var(--count), minmax(0, 1fr));
+  background: var(--glass-fill);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 0.5px solid var(--tabbar-edge);
+  box-shadow:
+    var(--shadow-glass),
+    inset 1.5px 1.5px 1px var(--glass-highlight);
   user-select: none;
   -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  --tabbar-edge: rgba(0, 0, 0, 0.06);
+  /* The open tab's soft glass highlight. */
+  --tab-highlight: rgba(0, 0, 0, 0.065);
 }
 
-/*
- * The open tab's white pill, sliding under the labels. TabBar sets its width and
- * translateX from the open segment (offsetWidth, offsetLeft); hidden until measured.
- */
-.thumb {
+@media (prefers-color-scheme: dark) {
+  .bar {
+    --tabbar-edge: rgba(255, 255, 255, 0.1);
+    --tab-highlight: rgba(255, 255, 255, 0.13);
+  }
+}
+
+/* Where there is no glass, a solid bar (the words must never sit on the page behind). */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .bar {
+    background: var(--glass-strong);
+  }
+}
+
+/* The open tab's highlight: a capsule as wide as a tab, sliding to the one chosen. */
+.highlight {
   position: absolute;
   top: 3px;
   bottom: 3px;
-  left: 0;
-  width: 0;
-  border-radius: 100px;
-  background: var(--thumb);
-  box-shadow: var(--shadow-segment);
-  visibility: hidden;
-}
-
-.thumb[data-measured] {
-  visibility: visible;
-}
-
-.thumb[data-animate='true'] {
-  transition:
-    transform 0.34s var(--sheet-ease),
-    width 0.34s var(--sheet-ease);
+  left: 3px;
+  width: calc((100% - 6px) / var(--count));
+  border-radius: 28px;
+  background: var(--tab-highlight);
+  transform: translateX(calc(100% * var(--index)));
+  transition: transform 0.36s var(--sheet-ease);
 }
 
 .tab {
   position: relative;
-  flex: 1 1 auto;
-  height: 38px;
-  padding: 0 10px;
-  border-radius: 100px;
+  z-index: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border-radius: 28px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
-  line-height: 20px;
-  letter-spacing: -0.2px;
-  font-weight: 500;
-  white-space: nowrap;
-  color: var(--label);
+  gap: 1px;
+  color: var(--label-strong);
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.2s ease;
 }
 
 .tab[aria-current] {
-  font-weight: 600;
+  color: var(--tint);
 }
 
 .tab:focus-visible {
   outline-offset: -2px;
 }
 
-.tab:not([aria-current]):active {
-  opacity: 0.6;
-}
-
-/* As wide as the label in bold (the hidden copy below), so the open tab never shifts the others. */
-.label {
+.icon {
   position: relative;
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 26px;
+  transition: transform 0.12s ease;
 }
 
-.label::after {
-  content: attr(data-label);
-  content: attr(data-label) / '';
-  height: 0;
+.tab:active .icon {
+  transform: scale(0.9);
+}
+
+.label {
+  max-width: 100%;
   overflow: hidden;
-  visibility: hidden;
-  font-weight: 600;
-  pointer-events: none;
-  user-select: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* iOS's tab names: 10pt medium. */
+  font-size: 10px;
+  line-height: 13px;
+  font-weight: 500;
+  letter-spacing: -0.1px;
+}
+
+/* Small words in the tint: the darker tint keeps them readable on the glass. */
+.tab[aria-current] .label {
+  color: var(--tint-text);
+}
+
+/* How many things need attention, on Attention: white on red (4.5:1), over the symbol's corner. */
+.badge {
+  position: absolute;
+  top: -5px;
+  left: calc(50% + 5px);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #e5251b;
+  color: #fff;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Unread messages on Chat; a new message for the housekeeper on Housekeeping. */
 .dot {
   position: absolute;
   top: -1px;
-  right: -10px;
-  width: 8px;
-  height: 8px;
+  right: 0;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   background: var(--rag-red);
 }
 
-/* The narrowest phones (320px: 282px inside the switch). */
-@media (max-width: 339px) {
-  .tab {
-    padding: 0 6px;
-    font-size: 14px;
-    letter-spacing: -0.3px;
-  }
-
-  /* Kept inside the segment. */
-  .dot {
-    right: -8px;
-    width: 7px;
-    height: 7px;
-  }
-}
-
 /* ── Add button ────────────────────────────────────────── */
 
+/* Over the tab bar, its right edge in line with the bar's. */
 .add {
   position: absolute;
-  right: 16px;
-  bottom: var(--tabbar-bottom);
+  right: var(--tabbar-side);
+  bottom: var(--add-bottom);
   z-index: 6;
-  width: 62px;
-  height: 62px;
+  width: var(--add-size);
+  height: var(--add-size);
   border-radius: 50%;
   background: var(--tint-fill);
   color: #fff;
@@ -130,28 +159,6 @@
   display: grid;
   place-items: center;
   transition: transform 0.12s ease;
-}
-
-/* Adding to a room (opened from a shared link): a capsule that says which, "+ Garden". */
-.add[data-room] {
-  width: auto;
-  max-width: calc(100% - 32px);
-  padding: 0 24px 0 19px;
-  border-radius: 31px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.addRoom {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font-size: 17px;
-  line-height: 22px;
-  font-weight: 600;
-  letter-spacing: -0.4px;
 }
 
 /* Back from Chat or Housekeeping: the button pops in. */
@@ -170,8 +177,18 @@
   }
 }
 
+/* The narrowest phones (320pt): the names a step smaller, so most still fit whole. */
+@media (max-width: 359px) {
+  .label {
+    font-size: 9px;
+    letter-spacing: -0.25px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .thumb[data-animate='true'],
+  .highlight,
+  .tab,
+  .icon,
   .add,
   .add[data-enter] {
     transition: none;

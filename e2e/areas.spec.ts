@@ -1,24 +1,30 @@
 import {
+  addButton,
   area,
-  areas,
+  areaAction,
+  areaCard,
+  areaCards,
+  areaStatus,
+  closeArea,
   confirmation,
+  DEFAULT_AREAS,
   DEMO_STORAGE_KEY,
   detailValue,
   expect,
   homeScreen,
   itemSheet,
-  openRoomMenu,
+  openArea,
   openSeeded,
   reopen,
-  roomMenu,
   ring,
   rowButton,
   settled,
+  tabs,
   test,
   titlesIn,
+  toast,
   type Locator,
   type Page,
-  addButton,
 } from './fixtures';
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
@@ -27,157 +33,99 @@ test.beforeEach(async ({ page }) => {
   await openSeeded(page);
 });
 
-/** The room's name: a disclosure button that folds or opens the room's card. */
-function disclosure(page: Page, name: string) {
-  return area(page, name).getByRole('button', { name, exact: true });
+/** Focuses a control as the keyboard would (so it matches :focus-visible). */
+async function keyboardFocus(control: Locator): Promise<void> {
+  // A key press first, so focus is shown even after a tap.
+  await control.page().keyboard.press('Shift');
+  await control.focus();
+  await expect.poll(() => control.evaluate((el) => el.matches(':focus-visible'))).toBe(true);
 }
 
-/** The chevron after a room's name (the last glyph in its button; the room's drawing comes first). */
-function chevron(page: Page, name: string) {
-  return disclosure(page, name).locator('svg').last();
+/** Drags from the middle of `handle` down by `dy` with the mouse. */
+async function dragDown(page: Page, handle: Locator, dy: number): Promise<void> {
+  await handle.hover();
+  const box = (await handle.boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y + dy, { steps: 8 });
+  await page.mouse.up();
 }
 
-/** The rooms with something open (a room with nothing open has nothing to fold). */
-async function roomsWithItems(page: Page): Promise<string[]> {
-  const doc = await stored(page);
-  return doc.areas.filter((a) => doc.items.some((it) => it.area_id === a.id && it.status === 'open')).map((a) => a.name);
-}
-
-interface StoredDoc {
-  areas: { id: string; name: string; household_id: string }[];
-  items: { area_id: string; rag: 'red' | 'amber' | 'green'; status: string }[];
-}
-
-async function stored(page: Page): Promise<StoredDoc> {
-  return page.evaluate((key) => JSON.parse(localStorage.getItem(key)!), DEMO_STORAGE_KEY);
-}
-
-test.describe('Collapsible rooms', () => {
-  test('tapping a room’s name folds and opens just that room', async ({ page }) => {
-    const kitchen = disclosure(page, 'Kitchen');
-    await expect(kitchen).toHaveAttribute('aria-expanded', 'true');
-    const panelId = await kitchen.getAttribute('aria-controls');
-    const panel = page.locator(`[id="${panelId}"]`);
-    await expect(panel.getByRole('button', { name: 'Mark Kitchen paper as done' })).toBeVisible();
-
-    await kitchen.click();
-    await expect(kitchen).toHaveAttribute('aria-expanded', 'false');
-    await expect(ring(page, 'Kitchen paper')).toBeHidden();
-    await expect(ring(page, 'Olive oil')).toBeHidden();
-    // The rows shrink away (animated), leaving the header: one line, with how many are open.
-    await expect.poll(async () => (await panel.boundingBox())?.height ?? 0).toBe(0);
-    await expect(area(page, 'Kitchen').getByRole('heading', { level: 2, name: 'Kitchen' })).toBeVisible();
-    await expect(area(page, 'Kitchen').getByText('2 open', { exact: true })).toBeVisible();
-    // The chevron turns from down to pointing at the name.
-    await expect(chevron(page, 'Kitchen')).toHaveCSS('transform', 'none');
-    // Other rooms stay open.
-    await expect(ring(page, 'Mirror lights not level')).toBeVisible();
-
-    await kitchen.click();
-    await expect(kitchen).toHaveAttribute('aria-expanded', 'true');
-    await expect(ring(page, 'Kitchen paper')).toBeVisible();
-    expect(await titlesIn(page, 'Kitchen')).toEqual(['Kitchen paper', 'Olive oil']);
-    await expect(chevron(page, 'Kitchen')).not.toHaveCSS('transform', 'none');
-  });
-
-  test('works from the keyboard', async ({ page }) => {
-    const garden = disclosure(page, 'Garden');
-    await garden.focus();
-    await page.keyboard.press('Enter');
-    await expect(garden).toHaveAttribute('aria-expanded', 'false');
-    // Folded rows are out of the tab order: next is the room's menu, then the next room.
-    await page.keyboard.press('Tab');
-    await expect(area(page, 'Garden').getByRole('button', { name: 'Garden options' })).toBeFocused();
-    await page.keyboard.press('Tab');
-    await expect(disclosure(page, 'Garden Lounge')).toBeFocused();
-    await garden.focus();
-    await page.keyboard.press('Space');
-    await expect(garden).toHaveAttribute('aria-expanded', 'true');
-  });
-
-  test('Collapse all and Expand all, once at the top of Rooms: an overview, one line a room', async ({ page }) => {
-    const names = await roomsWithItems(page);
-    const collapseAll = homeScreen(page).getByRole('button', { name: 'Collapse all', exact: true });
-    const expandAll = homeScreen(page).getByRole('button', { name: 'Expand all', exact: true });
-    // Above the first room, on the right, a 44px target; never in a room's own menu.
-    const button = (await collapseAll.boundingBox())!;
-    expect(button.y + button.height).toBeLessThanOrEqual((await area(page, 'Kitchen').boundingBox())!.y + 1);
-    expect(button.height).toBeGreaterThanOrEqual(44);
-    const menu = await openRoomMenu(page, 'Kitchen');
-    await expect(menu.getByRole('menuitem')).toHaveText(['Add Item', 'Share Room']);
-    await page.keyboard.press('Escape');
-
-    await collapseAll.click();
-    for (const name of names) await expect(disclosure(page, name)).toHaveAttribute('aria-expanded', 'false');
-    // Every room's rows (the calendar is a view of its own).
-    await expect(areas(page).getByRole('button', { name: /^Mark .* as done$/ })).toHaveCount(0);
-    // Each room one line: its name and how many are open, or what is late.
-    await expect(area(page, 'Garden').getByText('3 open', { exact: true })).toBeVisible();
-    await expect(area(page, 'Hallway').getByText('1 late', { exact: true })).toBeVisible();
-    await expect(area(page, 'Bedroom Small').getByText('All clear', { exact: true })).toBeVisible();
-    for (const name of ['Kitchen', 'Garden', 'Bedroom Small']) {
-      const card = area(page, name).locator(':scope > div');
-      expect((await card.boundingBox())!.height, name).toBeLessThanOrEqual(58);
+test.describe('Area cards', () => {
+  test('each card is one target, at least 44 by 44, named by its area first', async ({ page }) => {
+    await expect(areaCards(page)).toHaveCount(DEFAULT_AREAS.length);
+    for (const name of DEFAULT_AREAS) {
+      const card = areaCard(page, name);
+      await expect(card, name).toHaveCount(1);
+      const box = (await card.boundingBox())!;
+      expect(box.width, name).toBeGreaterThanOrEqual(44);
+      expect(box.height, name).toBeGreaterThanOrEqual(44);
     }
-
-    await expandAll.click();
-    for (const name of names) await expect(disclosure(page, name)).toHaveAttribute('aria-expanded', 'true');
-    await expect(ring(page, 'Heaters not working')).toBeVisible();
-
-    // With one room still open, it offers Collapse all.
-    await collapseAll.click();
-    await disclosure(page, 'Hallway').click();
-    await expect(collapseAll).toBeVisible();
-    await expect(ring(page, 'Heaters not working')).toBeVisible();
+    // Nothing else to tap in a card.
+    for (let i = 0; i < DEFAULT_AREAS.length; i++) await expect(areaCards(page).nth(i).getByRole('button')).toHaveCount(1);
   });
 
-  test('folded rooms are remembered on this device', async ({ page }) => {
-    await disclosure(page, 'Kitchen').click();
-    await disclosure(page, 'Garden').click();
-    const doc = await stored(page);
-    const hid = doc.areas[0].household_id;
-    const ids = ['Kitchen', 'Garden'].map((n) => doc.areas.find((a) => a.name === n)!.id);
-    const saved = await page.evaluate((key) => localStorage.getItem(key), `homeos.collapsed.${hid}`);
-    expect(JSON.parse(saved!).sort()).toEqual(ids.sort());
+  test('a tap opens the area; Close, a drag down and Escape close it, and focus is back on its card', async ({ page }) => {
+    const sheet = await openArea(page, 'Kitchen');
+    await expect(sheet).toBeFocused();
+    await closeArea(page);
+    await expect(areaCard(page, 'Kitchen')).toBeFocused();
 
+    // Down from its drawing, which is the sheet's handle.
+    await openArea(page, 'Garden');
+    await dragDown(page, area(page, 'Garden').locator('[data-sheet-handle]'), 220);
+    await expect(area(page, 'Garden')).toHaveCount(0);
+
+    // From the keyboard: Enter opens, Escape closes, focus back where it was.
+    await keyboardFocus(areaCard(page, 'Jacuzzi'));
+    await page.keyboard.press('Enter');
+    await settled(area(page, 'Jacuzzi').getByRole('button', { name: 'Close', exact: true }));
+    await page.keyboard.press('Escape');
+    await expect(area(page, 'Jacuzzi')).toHaveCount(0);
+    await expect(areaCard(page, 'Jacuzzi')).toBeFocused();
+  });
+
+  test('a card for each area follows the household: a new area gets a card, a deleted one loses it', async ({ page }) => {
+    await page.evaluate((key) => {
+      const doc = JSON.parse(localStorage.getItem(key)!);
+      const hallway = doc.areas.find((a: { name: string }) => a.name === 'Hallway');
+      doc.areas.push({ ...hallway, id: '00000000-0000-4000-8000-0000000000aa', name: 'Shed', position: 99 });
+      doc.areas = doc.areas.filter((a: { name: string }) => a.name !== 'Jacuzzi');
+      doc.items = doc.items.filter((i: { area_id: string }) => doc.areas.some((a: { id: string }) => a.id === i.area_id));
+      localStorage.setItem(key, JSON.stringify(doc));
+    }, DEMO_STORAGE_KEY);
     await reopen(page);
-    await expect(disclosure(page, 'Kitchen')).toHaveAttribute('aria-expanded', 'false');
-    await expect(disclosure(page, 'Garden')).toHaveAttribute('aria-expanded', 'false');
-    await expect(disclosure(page, 'Living Room')).toHaveAttribute('aria-expanded', 'true');
-    await expect(ring(page, 'Kitchen paper')).toBeHidden();
-
-    await disclosure(page, 'Kitchen').click();
-    await page.reload();
-    await expect(disclosure(page, 'Kitchen')).toHaveAttribute('aria-expanded', 'true');
-    await expect(disclosure(page, 'Garden')).toHaveAttribute('aria-expanded', 'false');
+    const names = [...DEFAULT_AREAS.filter((n) => n !== 'Jacuzzi'), 'Shed'];
+    await expect(areaCards(page)).toHaveCount(names.length);
+    await expect(areaCards(page).last().getByRole('button')).toHaveAccessibleName(/^Shed\b.*All clear/);
+    await expect(areaCard(page, 'Jacuzzi')).toHaveCount(0);
   });
+});
 
-  test('each room is one card: its drawing, its name, and its rows lined up under the name', async ({ page }) => {
-    const card = area(page, 'Living Room').locator(':scope > div');
+test.describe('An area’s sheet', () => {
+  test('its rows sit in one card under To do, lined up with the page; things looked after under Looking after', async ({ page }) => {
+    const sheet = await openArea(page, 'Garden');
+    const card = sheet.locator('[data-area-tasks] > div');
+    const sheetBox = (await sheet.boundingBox())!;
     const box = (await card.boundingBox())!;
-    expect(box.x).toBe(16);
-    expect(box.width).toBe(402 - 32);
+    expect(box.x).toBe(sheetBox.x + 16);
+    expect(box.width).toBe(sheetBox.width - 32);
     await expect(card).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-    const header = area(page, 'Living Room').getByRole('heading', { level: 2 });
-    await expect(header).toHaveCSS('font-size', '17px');
-    await expect(header).toHaveCSS('font-weight', '600');
-    // The drawing: a 32px rounded square in grey, in the card.
-    const icon = disclosure(page, 'Living Room').locator('span[aria-hidden="true"]').first();
-    const iconBox = (await icon.boundingBox())!;
-    expect(iconBox.width).toBe(32);
-    expect(iconBox.x).toBe(box.x + 12);
-    // The name starts where the rows' titles do (within a few points).
-    const name = (await disclosure(page, 'Living Room').locator(':scope > span').last().boundingBox())!;
-    const title = (await rowButton(page, 'Mirror lights not level').locator(':scope > span > span').first().boundingBox())!;
-    expect(Math.abs(name.x - title.x)).toBeLessThanOrEqual(4);
-    // The "..." has a 44px target, its glyph lined up with the rows' right edge.
-    const menu = (await area(page, 'Living Room').getByRole('button', { name: 'Living Room options' }).boundingBox())!;
-    expect(menu.width).toBe(44);
-    expect(menu.height).toBe(44);
-    expect(Math.round(box.x + box.width - (menu.x + menu.width))).toBe(4);
+    await expect(sheet.locator('[data-area-tasks]').getByRole('heading', { level: 2 })).toHaveText('To do');
+    await expect(sheet.locator('[data-area-looking]').getByRole('heading', { level: 2 })).toHaveText('Looking after');
+    // Its name: the sheet's title, 28px bold.
+    await expect(sheet.getByRole('heading', { level: 1 })).toHaveCSS('font-size', '28px');
+    await expect(sheet.getByRole('heading', { level: 1 })).toHaveCSS('font-weight', '700');
+    // Add Item and Share Room side by side, each a target of 44px or more.
+    for (const action of ['Add Item', 'Share Room'] as const) {
+      const b = (await areaAction(page, 'Garden', action).boundingBox())!;
+      expect(b.height, action).toBeGreaterThanOrEqual(44);
+    }
   });
 
-  test('a busy room shows three jobs, then "Show 2 more"', async ({ page }) => {
+  test('a busy area shows three jobs, then "Show 2 more"', async ({ page }) => {
     await page.evaluate((key) => {
       const doc = JSON.parse(localStorage.getItem(key)!);
       const kitchen = doc.areas.find((a: { name: string }) => a.name === 'Kitchen');
@@ -188,6 +136,8 @@ test.describe('Collapsible rooms', () => {
       localStorage.setItem(key, JSON.stringify(doc));
     }, DEMO_STORAGE_KEY);
     await reopen(page);
+    await expect(areaCard(page, 'Kitchen')).toHaveAccessibleName(/^Kitchen\b.*\b5\b/);
+    await openArea(page, 'Kitchen');
     const more = area(page, 'Kitchen').getByRole('button', { name: 'Show 2 more' });
     await expect(more).toBeVisible();
     expect(await titlesIn(page, 'Kitchen')).toEqual(['Kitchen paper', 'Olive oil', 'Kitchen job 1']);
@@ -197,123 +147,89 @@ test.describe('Collapsible rooms', () => {
     await area(page, 'Kitchen').getByRole('button', { name: 'Show fewer' }).click();
     expect(await titlesIn(page, 'Kitchen')).toHaveLength(3);
   });
-});
 
-test.describe('Room status', () => {
-  test('one quiet word: late or urgent in red, nothing while all is calm, All clear when empty', async ({ page }) => {
-    const status = (name: string) => area(page, name).locator('h2 + span');
-    await expect(status('Hallway')).toHaveText('1 late');
-    await expect(status('Front garden')).toHaveText('1 urgent');
-    await expect(status('Bedroom Small')).toHaveText('All clear');
-    for (const name of ['Kitchen', 'Living Room', 'Garden', 'Jacuzzi']) await expect(status(name), name).toHaveCount(0);
-    // Red and bold, with the room's drawing tinted red too.
-    await expect(status('Hallway')).toHaveCSS('color', 'rgb(215, 0, 21)');
-    await expect(status('Hallway')).toHaveCSS('font-weight', '600');
-    await expect(disclosure(page, 'Hallway').locator('[data-alert]')).toHaveCSS('background-color', 'rgba(255, 59, 48, 0.12)');
-    await expect(status('Bedroom Small')).toHaveCSS('color', 'rgb(110, 110, 115)');
-    // The word is part of what VoiceOver hears for the name.
-    await expect(disclosure(page, 'Hallway')).toHaveAccessibleDescription('1 late');
+  test('its state, in words and colour: red needs attention, amber coming up, green all good or all clear', async ({ page }) => {
+    const expectations: [string, string, string][] = [
+      ['Hallway', '1 needs attention', 'rgb(215, 0, 21)'],
+      ['Jacuzzi', '1 coming up', 'rgb(154, 91, 0)'],
+      ['Kitchen', 'All good', 'rgb(110, 110, 115)'],
+      ['Bedroom Small', 'All clear', 'rgb(110, 110, 115)'],
+    ];
+    for (const [name, words, colour] of expectations) {
+      await openArea(page, name);
+      await expect(areaStatus(page, name), name).toHaveText(words);
+      await expect(areaStatus(page, name), name).toHaveCSS('color', colour);
+      // Said with the name to assistive tech.
+      await expect(area(page, name).getByRole('heading', { level: 1 })).toHaveAccessibleDescription(new RegExp(`^${words} `));
+      await closeArea(page);
+    }
   });
 
   test('follows the items: completing and adding', async ({ page }) => {
+    await openArea(page, 'Bathroom Large');
     await ring(page, 'Shower draining slowly').click();
     await expect(ring(page, 'Shower draining slowly')).toHaveCount(0);
     // Its only item: All clear.
-    await expect(area(page, 'Bathroom Large').getByText('All clear', { exact: true })).toBeVisible();
+    await expect(areaStatus(page, 'Bathroom Large')).toHaveText('All clear');
+    await closeArea(page);
+    await expect(areaCard(page, 'Bathroom Large')).toHaveAccessibleName(/^Bathroom Large\b.*All clear/);
 
-    // Add an urgent item to the (folded) Hallway from its menu.
-    await disclosure(page, 'Hallway').click();
-    await roomMenu(page, 'Hallway', 'Add item to Hallway');
+    // Add an urgent item to the Hallway from its sheet.
+    await openArea(page, 'Hallway');
+    await areaAction(page, 'Hallway', 'Add Item').click();
     const sheet = itemSheet(page, 'New item');
     await settled(sheet.getByRole('button', { name: 'Close' }));
+    await expect(detailValue(sheet, 'Area')).toHaveText('Hallway');
     await sheet.getByLabel('Title', { exact: true }).fill('Fix the coat hook');
     await sheet.getByRole('radiogroup', { name: 'How urgent?' }).getByText('Urgent', { exact: true }).click();
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
-    await expect(area(page, 'Hallway').locator('h2 + span')).toHaveText('1 late, 1 urgent');
-    // Hallway opened so the new item can be seen.
-    await expect(disclosure(page, 'Hallway')).toHaveAttribute('aria-expanded', 'true');
-    await expect(ring(page, 'Fix the coat hook')).toBeVisible();
-  });
-});
-
-test.describe('Add to a room', () => {
-  test('Add Item in a room’s menu opens the new-item sheet with that room', async ({ page }) => {
-    await roomMenu(page, 'Garden', 'Add item to Garden');
-    const sheet = itemSheet(page, 'New item');
-    await settled(sheet.getByRole('button', { name: 'Close' }));
-    await expect(detailValue(sheet, 'Area')).toHaveText('Garden');
-    await sheet.getByLabel('Title', { exact: true }).fill('Fix the gate latch');
-    await sheet.getByRole('button', { name: 'Save' }).click();
-    await expect(sheet).toHaveCount(0);
-    await expect(ring(page, 'Fix the gate latch')).toBeVisible();
-    expect(await titlesIn(page, 'Garden')).toContain('Fix the gate latch');
-
-    // Another room, folded: still that room.
-    await disclosure(page, 'Jacuzzi').click();
-    await roomMenu(page, 'Jacuzzi', 'Add item to Jacuzzi');
-    const again = itemSheet(page, 'New item');
-    await settled(again.getByRole('button', { name: 'Close' }));
-    await expect(detailValue(again, 'Area')).toHaveText('Jacuzzi');
+    await expect(areaStatus(page, 'Hallway')).toHaveText('2 need attention');
+    // It can be seen where it went, lit up for a moment.
+    const row = area(page, 'Hallway').getByRole('listitem').filter({ hasText: 'Fix the coat hook' });
+    await expect(row).toBeVisible();
+    await expect(row).toHaveAttribute('data-lit');
+    await expect(row).not.toHaveAttribute('data-lit', { timeout: 5_000 });
+    await closeArea(page);
+    await expect(areaCard(page, 'Hallway')).toHaveAccessibleName(/^Hallway\b.*2 need attention/);
   });
 
-  test('saving into a folded room opens it; closing without saving leaves it folded', async ({ page }) => {
-    // Cancelled: still folded.
-    await disclosure(page, 'Garden Lounge').click();
-    await roomMenu(page, 'Garden Lounge', 'Add item to Garden Lounge');
-    let sheet = itemSheet(page, 'New item');
-    await settled(sheet.getByRole('button', { name: 'Close' }));
-    await sheet.getByRole('button', { name: 'Close' }).click();
-    await expect(sheet).toHaveCount(0);
-    await expect(disclosure(page, 'Garden Lounge')).toHaveAttribute('aria-expanded', 'false');
-
-    // Saved: opened, with the new item showing.
-    await roomMenu(page, 'Garden Lounge', 'Add item to Garden Lounge');
-    sheet = itemSheet(page, 'New item');
-    await settled(sheet.getByRole('button', { name: 'Close' }));
-    await sheet.getByLabel('Title', { exact: true }).fill('Oil the bench');
-    await sheet.getByRole('radiogroup', { name: 'How urgent?' }).getByText('Urgent', { exact: true }).click();
-    await sheet.getByRole('button', { name: 'Save' }).click();
-    await expect(sheet).toHaveCount(0);
-    await expect(disclosure(page, 'Garden Lounge')).toHaveAttribute('aria-expanded', 'true');
-    await expect(ring(page, 'Oil the bench')).toBeVisible();
-
-    // The round + too (it starts on the first room, Kitchen).
-    await disclosure(page, 'Kitchen').click();
-    await addButton(page).click();
-    sheet = itemSheet(page, 'New item');
-    await settled(sheet.getByRole('button', { name: 'Close' }));
-    await expect(detailValue(sheet, 'Area')).toHaveText('Kitchen');
-    await sheet.getByLabel('Title', { exact: true }).fill('Descale the kettle');
-    await sheet.getByRole('button', { name: 'Save' }).click();
-    await expect(sheet).toHaveCount(0);
-    await expect(disclosure(page, 'Kitchen')).toHaveAttribute('aria-expanded', 'true');
-    await expect(ring(page, 'Descale the kettle')).toBeVisible();
-    // Other folded rooms stay as they were.
-    await disclosure(page, 'Jacuzzi').click();
-    await expect(disclosure(page, 'Jacuzzi')).toHaveAttribute('aria-expanded', 'false');
-  });
-
-  test('moving an item into a folded room opens that room', async ({ page }) => {
-    await disclosure(page, 'Garden').click();
+  test('moving an item to another area: it leaves this one, and a toast says where it went', async ({ page }) => {
+    await openArea(page, 'Bedroom Large');
     await rowButton(page, 'Wardrobe door hinge').click();
     const sheet = itemSheet(page);
     await settled(sheet.getByRole('button', { name: 'Close' }));
     await sheet.getByLabel('Area', { exact: true }).selectOption({ label: 'Garden' });
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
-    await expect(disclosure(page, 'Garden')).toHaveAttribute('aria-expanded', 'true');
+    await expect(toast(page, 'Saved in Garden.')).toBeVisible();
+    await expect(ring(page, 'Wardrobe door hinge')).toHaveCount(0);
+    await closeArea(page);
+    await openArea(page, 'Garden');
     expect(await titlesIn(page, 'Garden')).toContain('Wardrobe door hinge');
   });
-});
 
-/** Focuses a control as the keyboard would (so it matches :focus-visible). */
-async function keyboardFocus(control: Locator): Promise<void> {
-  // A key press first, so focus is shown even after a tap (Home's view switch, say).
-  await control.page().keyboard.press('Shift');
-  await control.focus();
-  await expect.poll(() => control.evaluate((el) => el.matches(':focus-visible'))).toBe(true);
-}
+  test('saved from Home’s +: the card of the area it went into lights up', async ({ page }) => {
+    await addButton(page).click();
+    const sheet = itemSheet(page, 'New item');
+    await settled(sheet.getByRole('button', { name: 'Close' }));
+    await sheet.getByLabel('Title', { exact: true }).fill('Descale the kettle');
+    await sheet.getByLabel('Area', { exact: true }).selectOption({ label: 'Kitchen' });
+    await sheet.getByRole('button', { name: 'Save' }).click();
+    await expect(sheet).toHaveCount(0);
+    const cell = areaCards(page).first();
+    await expect(cell).toHaveAttribute('data-lit');
+    await expect(areaCard(page, 'Kitchen')).toHaveAccessibleName(/^Kitchen\b.*\b3\b/);
+    await expect(cell).not.toHaveAttribute('data-lit', { timeout: 5_000 });
+  });
+
+  test('the tab bar and the round + are behind it, out of reach', async ({ page }) => {
+    await openArea(page, 'Kitchen');
+    await expect(tabs(page).locator('xpath=ancestor::*[@inert]')).toHaveCount(1);
+    await expect(addButton(page).locator('xpath=ancestor::*[@inert]')).toHaveCount(1);
+    await expect(homeScreen(page).locator('xpath=ancestor-or-self::*[@inert]')).toHaveCount(1);
+  });
+});
 
 /** Presses a button from the keyboard (later focus() calls then count as keyboard focus). */
 async function pressKey(control: Locator): Promise<void> {
@@ -321,31 +237,26 @@ async function pressKey(control: Locator): Promise<void> {
   await control.press('Enter');
 }
 
-test.describe('Keyboard focus and folded rooms', () => {
-  test('completing from the keyboard skips rows in a folded room', async ({ page }) => {
-    await pressKey(disclosure(page, 'Bathroom Small'));
+test.describe('Keyboard focus in an area’s sheet', () => {
+  test('completing from the keyboard moves to the next row', async ({ page }) => {
+    await openArea(page, 'Jacuzzi');
+    await keyboardFocus(ring(page, 'Water test strips running low'));
+    await page.keyboard.press('Enter');
+    await expect(ring(page, 'Water test strips running low')).toHaveCount(0);
+    await expect(rowButton(page, 'Change the filter')).toBeFocused();
+  });
+
+  test('with no other row to go to, focus goes to To do', async ({ page }) => {
+    await pressKey(areaCard(page, 'Living Room'));
+    await settled(area(page, 'Living Room').getByRole('button', { name: 'Close', exact: true }));
     await keyboardFocus(ring(page, 'Mirror lights not level'));
     await page.keyboard.press('Enter');
     await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
-    // Not "Re-seal around the shower" (Bathroom Small is folded): the next row that can be seen.
-    await expect(rowButton(page, 'Shower draining slowly')).toBeFocused();
+    await expect(area(page, 'Living Room').getByRole('heading', { level: 2, name: 'To do' })).toBeFocused();
   });
 
-  test('with no other row to go to, focus goes to the room’s name', async ({ page }) => {
-    // Collapse all from the keyboard: it stays focused, now saying Expand all.
-    await pressKey(homeScreen(page).getByRole('button', { name: 'Collapse all', exact: true }));
-    await expect(homeScreen(page).getByRole('button', { name: 'Expand all', exact: true })).toBeFocused();
-    await pressKey(disclosure(page, 'Living Room'));
-    await keyboardFocus(ring(page, 'Mirror lights not level'));
-    await page.keyboard.press('Enter');
-    await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
-    // The room has nothing open now: its name is a heading, and focus is on it.
-    await expect(area(page, 'Living Room').getByRole('heading', { level: 2 })).toBeFocused();
-  });
-
-  test('after deleting from the keyboard, focus skips rows in folded rooms', async ({ page }) => {
-    await pressKey(disclosure(page, 'Hallway'));
-    await pressKey(disclosure(page, 'Front garden'));
+  test('after deleting from the keyboard, focus goes to the row beside it', async ({ page }) => {
+    await openArea(page, 'Jacuzzi');
     await keyboardFocus(rowButton(page, 'Change the filter'));
     await page.keyboard.press('Enter');
     const sheet = itemSheet(page);
@@ -356,46 +267,30 @@ test.describe('Keyboard focus and folded rooms', () => {
     await confirm.getByRole('button', { name: 'Delete Item' }).click();
     await expect(sheet).toHaveCount(0);
     await expect(ring(page, 'Change the filter')).toHaveCount(0);
-    // The row above it in the Jacuzzi, not the hidden ones below.
+    // The row above it in the Jacuzzi.
     await expect(rowButton(page, 'Water test strips running low')).toBeFocused();
   });
 });
 
-test.describe('Room headers at 375 wide', () => {
+test.describe('Long area names at 375 wide', () => {
   test.use({ viewport: { width: 375, height: 667 } });
 
-  test('the chevron stays on the line with the end of the name', async ({ page }) => {
-    // Bathroom Large with 10 urgent, 2 within the month and 11 not urgent.
+  test('a long name wraps whole in its sheet, and is one name to assistive tech', async ({ page }) => {
     await page.evaluate((key) => {
       const doc = JSON.parse(localStorage.getItem(key)!);
-      const target = doc.areas.find((a: { name: string }) => a.name === 'Bathroom Large');
-      const model = doc.items.find((i: { area_id: string }) => i.area_id === target.id);
-      const rags = [...Array(10).fill('red'), ...Array(2).fill('amber'), ...Array(11).fill('green')];
-      rags.forEach((rag, n) =>
-        doc.items.push({ ...model, id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`, title: `Extra ${n}`, rag }),
-      );
+      doc.areas.find((a: { name: string }) => a.name === 'Bathroom Large').name = 'Upstairs family bathroom with the big window';
       localStorage.setItem(key, JSON.stringify(doc));
     }, DEMO_STORAGE_KEY);
     await reopen(page);
-    await expect(area(page, 'Bathroom Large').locator('h2 + span')).toHaveText('10 urgent');
-    for (const name of ['Bathroom Large', 'Kitchen', 'Front garden']) {
-      const button = disclosure(page, name);
-      const { lastLine, icon } = await button.evaluate((el) => {
-        const svgs = el.querySelectorAll('svg');
-        const svg = svgs[svgs.length - 1];
-        const text = svg.previousSibling!;
-        const range = document.createRange();
-        range.selectNodeContents(text);
-        const rects = range.getClientRects();
-        const last = rects[rects.length - 1];
-        const box = svg.getBoundingClientRect();
-        return { lastLine: { top: last.top, bottom: last.bottom }, icon: { top: box.top, bottom: box.bottom } };
-      });
-      // The chevron sits inside the line box of the name's last letter.
-      expect(icon.top, name).toBeGreaterThanOrEqual(lastLine.top - 1);
-      expect(icon.bottom, name).toBeLessThanOrEqual(lastLine.bottom + 1);
-    }
-    // And the name is still read as one word.
-    await expect(area(page, 'Bathroom Large').getByRole('heading', { level: 2 })).toHaveAccessibleName('Bathroom Large');
+    const name = 'Upstairs family bathroom with the big window';
+    const names = DEFAULT_AREAS.map((n) => (n === 'Bathroom Large' ? name : n));
+    await expect(areaCard(page, name, names)).toHaveAccessibleName(new RegExp(`^${name}\\b`));
+    const sheet = await openArea(page, name, names);
+    const title = sheet.getByRole('heading', { level: 1 });
+    await expect(title).toHaveAccessibleName(name);
+    // Whole words on each line, inside the sheet.
+    const fits = await title.evaluate((el) => el.scrollWidth <= el.clientWidth + 0.5);
+    expect(fits).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
   });
 });

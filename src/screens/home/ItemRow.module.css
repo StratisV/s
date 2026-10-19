@@ -49,8 +49,8 @@
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
-  /* Keyboard focus scrolls rows clear of the floating + (the scroll area's padding keeps them below the tab switch). */
-  scroll-margin: 8px 0 calc(104px + var(--bottom-inset));
+  /* Keyboard focus scrolls rows clear of the floating + and the tab bar. */
+  scroll-margin: 8px 0 calc(var(--add-clear) + 8px);
 }
 
 .row:first-child .open {

@@ -92,10 +92,11 @@ test.describe('Chat', () => {
     const lastBox = (await messageRow(page, "I'll order a new pack today.").boundingBox())!;
     const composerBox = (await chatScreen(page).getByRole('form', { name: 'New message' }).boundingBox())!;
     expect(lastBox.y + lastBox.height).toBeLessThanOrEqual(composerBox.y);
-    // The composer is at the bottom (the tab switch is at the top, under the hero).
-    expect(composerBox.y + composerBox.height).toBeLessThanOrEqual(874);
-    expect(composerBox.y + composerBox.height).toBeGreaterThan(874 - 24);
-    expect((await tabs(page).boundingBox())!.y).toBeLessThan(composerBox.y);
+    // The composer floats just over the tab bar, at the foot of the screen.
+    const bar = (await tabs(page).boundingBox())!;
+    expect(bar.y + bar.height).toBe(874 - 22);
+    expect(composerBox.y + composerBox.height).toBeLessThanOrEqual(bar.y);
+    expect(composerBox.y + composerBox.height).toBeGreaterThan(bar.y - 16);
 
     // Others on the left in white, yours on the right in the tint: white on the deeper tint
     // fill, 4.7:1 in both appearances (the system blue was 4:1, 3.7:1 in dark).
@@ -458,11 +459,11 @@ test.describe('Chat', () => {
     });
     await field(page).focus();
     await expect(tabs(page)).toBeVisible();
-    // No keyboard yet (a hardware one): the composer stays at the bottom.
+    // No keyboard yet (a hardware one): the composer stays where it was, over the tab bar.
     await expect(async () => {
       const typing = (await form.boundingBox())!;
       expect(Math.abs(typing.y - resting.y)).toBeLessThan(2);
-      expect(typing.y + typing.height).toBeGreaterThan(874 - 20);
+      expect(typing.y + typing.height).toBeGreaterThan(874 - 22 - 62 - 20);
     }).toPass();
 
     // The keyboard comes up (336px): the composer sits on top of it, the newest message above.

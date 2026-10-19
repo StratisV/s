@@ -1,13 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactNode,
-} from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { copyText } from '../../lib/clipboard';
 import {
   buildRows,
@@ -30,8 +21,6 @@ import styles from './ChatScreen.module.css';
 
 interface ChatScreenProps {
   onOpenProfile(): void;
-  /** The tab switch, under the hero. */
-  tabs?: ReactNode;
   /** The composer has focus. */
   onTypingChange?(typing: boolean): void;
 }
@@ -77,9 +66,9 @@ interface MenuState {
 /**
  * The household group chat (docs/ARCHITECTURE.md "Chat"): large title, the
  * messages as a log (newest at the bottom, older ones load as you scroll up),
- * reactions, the long-press menu, and the composer above the tab bar.
+ * reactions, the long-press menu, and the composer floating over the tab bar.
  */
-export function ChatScreen({ onOpenProfile, tabs, onTypingChange }: ChatScreenProps) {
+export function ChatScreen({ onOpenProfile, onTypingChange }: ChatScreenProps) {
   const { data, me, showToast } = useHousehold();
   const chat = useChat();
   const { entries, status, hasMore, loadingOlder, loadOlder, markRead } = chat;
@@ -189,7 +178,7 @@ export function ChatScreen({ onOpenProfile, tabs, onTypingChange }: ChatScreenPr
       '--toast-bottom',
       typing && keyboard > 0
         ? `calc(${keyboard + 8}px + ${above})`
-        : `calc(max(10px, var(--bottom-inset)) + ${above})`,
+        : `calc(var(--tabbar-clear) + 10px + ${above})`,
     );
   }, [composerHeight, typing, keyboard, kbPending]);
   useEffect(
@@ -203,7 +192,7 @@ export function ChatScreen({ onOpenProfile, tabs, onTypingChange }: ChatScreenPr
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
-  /** Where the messages start in the scroll area (below the hero and the tab switch). */
+  /** Where the messages start in the scroll area (below the header). */
   const logTop = () => logRef.current?.offsetTop ?? 0;
   const atBottom = useRef(true);
   const [showNew, setShowNew] = useState(false);
@@ -389,7 +378,7 @@ export function ChatScreen({ onOpenProfile, tabs, onTypingChange }: ChatScreenPr
       style={style}
     >
       <div ref={scrollRef} className={styles.scroll} onScroll={onScroll}>
-        <ScreenHeader title="Chat" avatarEmoji={me.emoji} onAvatar={onOpenProfile} tabs={tabs} scrollRef={scrollRef} />
+        <ScreenHeader title="Chat" avatarEmoji={me.emoji} onAvatar={onOpenProfile} scrollRef={scrollRef} />
 
         {hasMore ? (
           <div className={styles.older} aria-hidden={!loadingOlder}>

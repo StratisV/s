@@ -120,7 +120,7 @@ export function GoogleGIcon({ size = 20, ...p }: IconProps) {
   );
 }
 
-/** A broom (housekeeping): a visit on Home's calendar, and its row under the calendar. */
+/** A broom (housekeeping): a visit on Needs attention's calendar, and its row under the calendar. */
 export function BroomIcon({ size = 16, ...p }: IconProps) {
   return (
     <svg {...base(size, p)}>

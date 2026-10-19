@@ -26,7 +26,7 @@ import { senderOf, stampLabel, timeOf } from './chat';
 import { formatDay, zonedParts } from './dates';
 import { fullDay, monthOf, type YearMonth } from './months';
 
-// The month grid's helpers live in ./months (Home's calendar shares them); Housekeeping
+// The month grid's helpers live in ./months (Needs attention's calendar shares them); Housekeeping
 // keeps exporting them under the names it has always had.
 export { WEEKDAYS, monthGrid, monthOf, monthTitle, shiftMonth, type YearMonth } from './months';
 

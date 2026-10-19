@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { longDay } from '../../lib/logic/dates';
 import { daySelectedAnnouncement, housekeepingSubtitle, isRecorded, monthOf, visitOn } from '../../lib/logic/housekeeping';
 import type { ISODate } from '../../lib/types';
@@ -13,8 +13,6 @@ import { VisitEditor } from './VisitEditor';
 import styles from './Housekeeping.module.css';
 
 interface HousekeepingScreenProps {
-  /** The tab switch, under the hero. */
-  tabs?: ReactNode;
   onOpenProfile(): void;
   /**
    * Opens the task list sheet (App mounts it beside the stage, like the Item sheet), from
@@ -22,7 +20,7 @@ interface HousekeepingScreenProps {
    */
   onEditTasks(opener: HTMLElement): void;
   /**
-   * A day to show, from Home's calendar (a visit there): chosen in the calendar as if tapped
+   * A day to show, from Needs attention's calendar (a visit there): chosen in the calendar as if tapped
    * here, brought into view and focused (today: the Today section). Then `onDayShown`.
    */
   showDay?: ISODate | null;
@@ -54,7 +52,7 @@ const reducedMotion = () => {
  * comments, price, and Delete Visit once something is recorded), or another day's visit.
  * Everything saves itself; a polite live region says what was saved.
  */
-export function HousekeepingScreen({ tabs, onOpenProfile, onEditTasks, showDay, onDayShown }: HousekeepingScreenProps) {
+export function HousekeepingScreen({ onOpenProfile, onEditTasks, showDay, onDayShown }: HousekeepingScreenProps) {
   const { data, me, today, deleteHousekeepingVisit } = useHousehold();
   const { visits } = data.housekeeping;
   const todayHeadingId = useId();
@@ -86,7 +84,7 @@ export function HousekeepingScreen({ tabs, onOpenProfile, onEditTasks, showDay, 
     setReveal((n) => n + 1);
   };
 
-  // A day from Home's calendar: choose it (in its week and month), then once it shows, bring
+  // A day from Needs attention's calendar: choose it (in its week and month), then once it shows, bring
   // its heading to the top and put focus on it, so VoiceOver carries on from there.
   const [shownDay, setShownDay] = useState<ISODate | null>(null);
   const onDayShownRef = useRef(onDayShown);
@@ -126,7 +124,6 @@ export function HousekeepingScreen({ tabs, onOpenProfile, onEditTasks, showDay, 
       eyebrow={<time dateTime={today}>{longDay(today)}</time>}
       avatarEmoji={me.emoji}
       onAvatar={onOpenProfile}
-      tabs={tabs}
       withAdd={false}
     >
       <Calendar chosen={chosen} onChange={update} onReset={reset} onSelect={select} today={today} visits={visits} />

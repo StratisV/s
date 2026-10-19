@@ -1,10 +1,11 @@
 import { expect, request as requestFor, test } from '@playwright/test';
 import {
-  area,
+  closeArea,
   DEMO_DOC_KEY,
   expectNoReload,
   homeHeading,
   homeScreen,
+  inArea,
   openDevice,
   PHONE_DOC,
   resetServer,
@@ -43,21 +44,24 @@ test('once the month’s saving is used up, Home says so and a save says why it 
   await expect(line).toHaveCount(0);
 
   // Two more: done, and Undo.
-  await ring(area(page, 'Garden'), 'Install leaf blower').click();
+  await ring(await inArea(page, 'Garden'), 'Install leaf blower').click();
   await toast(page, 'Marked as done').getByRole('button', { name: 'Undo' }).click();
   await expect(rowFor(page, 'Install leaf blower', 'Garden')).toBeVisible();
 
-  // That was the month's last: the next poll says saving is paused.
+  // That was the month's last: the next poll says saving is paused, on Home.
+  await closeArea(page);
   await expect(line).toBeVisible({ timeout: SYNC_MS });
 
   // A change now is not saved: it comes back, and the toast says why.
-  await ring(area(page, 'Garden'), 'Install leaf blower').click();
+  await ring(await inArea(page, 'Garden'), 'Install leaf blower').click();
   await expect(toast(page, 'Couldn’t save. Saving is paused until next month.')).toBeVisible();
   await expect(rowFor(page, 'Install leaf blower', 'Garden')).toBeVisible();
   // Everything can still be read.
   await page.reload();
   await expect(homeHeading(page)).toBeVisible();
+  await inArea(page, 'Garden');
   await expect(rowFor(page, 'Install leaf blower', 'Garden')).toBeVisible();
+  await closeArea(page);
   await expect(line).toBeVisible({ timeout: SYNC_MS });
   // The browser logs the refused save (503).
   phone.errors.splice(0, phone.errors.length, ...phone.errors.filter((e) => !/status of 503\b/.test(e)));

@@ -4,19 +4,20 @@ import {
   IPHONE_SAFARI_UA,
   openHousehold as openHouseholdOf,
   openPersonPage,
-  area,
-  areaHeadings,
-  areas,
+  attentionScreen,
   chooseWho,
+  closeArea,
   codeField,
   codeFor,
   codeSheet,
   DEMO_DOC_KEY,
   escapeRe,
+  expectAreas,
   expectNoReload,
   goToTab,
   homeHeading,
   homeScreen,
+  inArea,
   loadHome,
   meta,
   mine,
@@ -55,7 +56,7 @@ const areaName = (id: string) => doc.areas.find((a) => a.id === id)!.name;
 const person = (id: string | null) => (id ? doc.members.find((p) => p.id === id)! : null);
 const CONDITION = { red: 'Needs work', amber: 'Okay', green: 'Good' } as const;
 
-/** The phone's open items, as Home shows them. */
+/** The phone's open items, as their areas' sheets show them. */
 const OPEN_ITEMS = doc.items
   .filter((i) => i.status === 'open')
   .map((i) => ({
@@ -71,27 +72,36 @@ const OPEN_ITEMS = doc.items
   }));
 const SHEAS = OPEN_ITEMS.filter((it) => it.who === 'Shea');
 
-/** Every area in order, every open item with its kind, urgency or condition, person, date and note. */
+/**
+ * Every area in order on Home; in each area's sheet, every open item with its kind, urgency or
+ * condition, person, date and note, and nothing else; and all of them on Needs attention.
+ */
 async function expectPhoneHome(page: Page): Promise<void> {
-  await expect(areaHeadings(page)).toHaveText(doc.areas.map((a) => a.name));
-  await showAllRows(page);
-  for (const it of OPEN_ITEMS) {
-    const row = rowFor(page, it.title, it.area);
-    const label = `${it.area}: ${it.title}`;
-    const word = it.state ? `to maintain, ${CONDITION[it.rag]}` : null;
-    await expect(row, label).toHaveAccessibleName(
-      new RegExp(`^${escapeRe(it.title)} ?, ${word ?? '(Urgent|Within the month|Not urgent)'}, (.*, )?${it.who}(, .*)?\\.$`),
-    );
-    if (it.note) await expect(row, label).toHaveAccessibleName(/, has a note\.$/);
-    else await expect(row, label).not.toHaveAccessibleName(/has a note/);
-    if (it.chip) await expect(whoOn(area(page, it.area), it.title), label).toHaveText(it.chip);
-    else await expect(whoOn(area(page, it.area), it.title), label).toHaveCount(0);
-    await expect(meta(area(page, it.area), it.title), label).toHaveText(
-      it.state ? new RegExp(`^${CONDITION[it.rag]}·?Updated `) : taskMeta(it.rag, it.due!),
-    );
-    await expect(ring(area(page, it.area), it.title)).toHaveCount(it.state ? 0 : 1);
+  await expectAreas(page, doc.areas.map((a) => a.name));
+  for (const { name } of doc.areas) {
+    const sheet = await inArea(page, name, { all: true });
+    const open = OPEN_ITEMS.filter((it) => it.area === name);
+    for (const it of open) {
+      const row = rowFor(page, it.title, it.area);
+      const label = `${it.area}: ${it.title}`;
+      const word = it.state ? `to maintain, ${CONDITION[it.rag]}` : null;
+      await expect(row, label).toHaveAccessibleName(
+        new RegExp(`^${escapeRe(it.title)} ?, ${word ?? '(Urgent|Within the month|Not urgent)'}, (.*, )?${it.who}(, .*)?\\.$`),
+      );
+      if (it.note) await expect(row, label).toHaveAccessibleName(/, has a note\.$/);
+      else await expect(row, label).not.toHaveAccessibleName(/has a note/);
+      if (it.chip) await expect(whoOn(sheet, it.title), label).toHaveText(it.chip);
+      else await expect(whoOn(sheet, it.title), label).toHaveCount(0);
+      await expect(meta(sheet, it.title), label).toHaveText(
+        it.state ? new RegExp(`^${CONDITION[it.rag]}·?Updated `) : taskMeta(it.rag, it.due!),
+      );
+      await expect(ring(sheet, it.title)).toHaveCount(it.state ? 0 : 1);
+    }
+    await expect(sheet.locator('[data-item-open]'), name).toHaveCount(open.length);
   }
-  await expect(areas(page).locator('[data-item-open]')).toHaveCount(OPEN_ITEMS.length);
+  await closeArea(page);
+  await expect(await showAllRows(page)).toHaveCount(OPEN_ITEMS.length);
+  await goToTab(page, 'Home');
 }
 
 /** Types into the code field a letter at a time, as a phone keyboard would. */
@@ -151,7 +161,10 @@ test('Stratis brings the home on his phone online with the setup link, invites S
     `Shea, ${SHEAS.length} items, not joined yet`,
     'Unassigned, 3 items',
   ]);
-  await expect(areas(a).getByText('Order water test strips')).toHaveCount(0);
+  // Done on the phone: in no list.
+  await expect(await showAllRows(a)).toHaveCount(OPEN_ITEMS.length);
+  await expect(attentionScreen(a).getByText('Order water test strips')).toHaveCount(0);
+  await expect((await inArea(a, 'Jacuzzi', { all: true })).getByText('Order water test strips')).toHaveCount(0);
   await goToTab(a, 'Stats');
   await statsScreen(a).getByRole('radio', { name: 'Lifetime' }).click();
   await expect(statsScreen(a).getByRole('img', { name: /tasks? done/ })).toHaveAccessibleName('3 tasks done in total: Stratis 1, Shea 2.');
@@ -186,11 +199,16 @@ test('Stratis brings the home on his phone online with the setup link, invites S
   await expect(homeHeading(b)).toBeVisible();
   await expect(b.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🦔');
   await expectPerson(b, `Shea (you), ${SHEAS.length} items`);
+  await goToTab(b, 'Attention');
   await mine(b).click();
   await expect(mine(b)).toHaveAttribute('aria-pressed', 'true');
-  await showAllRows(b);
-  await expect(areas(b).locator('[data-item-open]')).toHaveCount(SHEAS.length);
-  for (const it of SHEAS) await expect(rowFor(b, it.title, it.area)).toBeVisible();
+  const hers = await showAllRows(b);
+  await expect(hers).toHaveCount(SHEAS.length);
+  // Each in its area (two of hers are both called Tidiness).
+  for (const it of SHEAS) {
+    const inItsArea = new RegExp(`^${escapeRe(it.title)} ?, .*, ${escapeRe(it.area)}, `);
+    await expect(attentionScreen(b).getByRole('button', { name: inItsArea }), `${it.area}: ${it.title}`).toBeVisible();
+  }
   await chooseWho(b, /^Everyone,/);
   await expectPhoneHome(b);
 
@@ -232,7 +250,7 @@ test('the setup code can be typed (a Home Screen app keeps its own storage); a w
   await go.click();
   await page.getByRole('region', { name: 'Shea hasn’t joined yet' }).getByRole('button', { name: 'Continue' }).click();
   await expect(homeHeading(page)).toBeVisible();
-  await expect(areaHeadings(page)).toHaveText(doc.areas.map((a) => a.name));
+  await expectAreas(page, doc.areas.map((a) => a.name));
   await expectNoReload(phone);
   await phone.context.close();
 });
@@ -256,7 +274,7 @@ test('the whole setup code goes in when pasted, from the keyboard or as its link
   await step.getByRole('button', { name: 'Bring It Online' }).click();
   await page.getByRole('region', { name: 'Shea hasn’t joined yet' }).getByRole('button', { name: 'Continue' }).click();
   await expect(homeHeading(page)).toBeVisible();
-  await expect(areaHeadings(page)).toHaveText(doc.areas.map((a) => a.name));
+  await expectAreas(page, doc.areas.map((a) => a.name));
   await expectNoReload(phone);
   await phone.context.close();
 });
@@ -281,7 +299,8 @@ test('the setup code pasted in “Have a code?” before the home is online brin
   await step.getByRole('button', { name: 'Bring It Online' }).click();
   await page.getByRole('region', { name: 'Shea hasn’t joined yet' }).getByRole('button', { name: 'Continue' }).click();
   await expect(homeHeading(page)).toBeVisible();
-  await expect(areas(page).locator('[data-item-open]')).toHaveCount(21);
+  await expect(await showAllRows(page)).toHaveCount(21);
+  await inArea(page, 'Hallway');
   await expect(rowFor(page, 'Heaters not working', 'Hallway')).toBeVisible();
   await expectNoReload(phone);
   await phone.context.close();
@@ -514,7 +533,7 @@ test('a setup link opened on a phone without the home can bring the saved copy o
   const waiting = a.getByRole('region', { name: 'Shea hasn’t joined yet' });
   await waiting.getByRole('button', { name: 'Continue' }).click();
   await expect(homeHeading(a)).toBeVisible();
-  await expect(areaHeadings(a)).toHaveText([
+  await expectAreas(a, [
     'Kitchen',
     'Living Room',
     'Bathroom Small',
@@ -527,10 +546,12 @@ test('a setup link opened on a phone without the home can bring the saved copy o
     'Hallway',
     'Front garden',
   ]);
-  await expect(areas(a).locator('[data-item-open]')).toHaveCount(21);
+  await expect(await showAllRows(a)).toHaveCount(21);
+  await inArea(a, 'Kitchen');
   await expect(rowFor(a, 'Rubbish fill level', 'Kitchen')).toBeVisible();
+  const jacuzzi = await inArea(a, 'Jacuzzi');
   await expect(rowFor(a, 'Check Chemicals', 'Jacuzzi')).toHaveAccessibleName(/, has a note\.$/);
-  const sheet = await openItem(a, area(a, 'Jacuzzi'), 'Check Chemicals');
+  const sheet = await openItem(a, jacuzzi, 'Check Chemicals');
   await expect(sheet.getByLabel('Note', { exact: true })).toHaveValue('Order a new pack.');
   await sheet.getByRole('button', { name: 'Close' }).click();
   await expect(sheet).toHaveCount(0);

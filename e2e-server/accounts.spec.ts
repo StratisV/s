@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { areaHeadings, DEMO_DOC_KEY, expectNoReload, homeHeading, openDevice, PHONE_DOC, resetServer, SETUP_CODE, welcome } from './helpers';
+import { DEMO_DOC_KEY, expectAreas, expectNoReload, homeHeading, openDevice, PHONE_DOC, resetServer, SETUP_CODE, welcome } from './helpers';
 
 // Create Account and Sign In (server mode): no codes, no Google.
 
@@ -29,7 +29,7 @@ test('people create an account, see the same home, and sign in again on another 
   const hello = shea.page.getByRole('region', { name: 'Welcome home, Shea' });
   await hello.getByRole('button', { name: 'Continue' }).click();
   await expect(homeHeading(shea.page)).toBeVisible();
-  await expect(areaHeadings(shea.page)).toHaveText(PHONE_DOC.areas.map((a) => a.name));
+  await expectAreas(shea.page, PHONE_DOC.areas.map((a) => a.name));
 
   // Another phone: Sign In with the same email and password.
   const laptop = await openDevice(browser, baseURL!);
@@ -42,7 +42,7 @@ test('people create an account, see the same home, and sign in again on another 
   await again.getByLabel('Password').fill('hedgehog1');
   await again.getByRole('button', { name: 'Sign In' }).click();
   await expect(homeHeading(laptop.page)).toBeVisible();
-  await expect(areaHeadings(laptop.page)).toHaveText(PHONE_DOC.areas.map((a) => a.name));
+  await expectAreas(laptop.page, PHONE_DOC.areas.map((a) => a.name));
 
   // Still signed in after a reload.
   await laptop.page.reload();
@@ -56,7 +56,7 @@ test('people create an account, see the same home, and sign in again on another 
   await m.getByLabel('Password').fill('cleaning1');
   await m.getByRole('button', { name: 'Create Account' }).click();
   await maria.page.getByRole('region', { name: 'Welcome home, Maria' }).getByRole('button', { name: 'Continue' }).click();
-  await expect(areaHeadings(maria.page)).toHaveText(PHONE_DOC.areas.map((a) => a.name));
+  await expectAreas(maria.page, PHONE_DOC.areas.map((a) => a.name));
 
   await expectNoReload(stratis);
   await expectNoReload(shea);

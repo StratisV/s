@@ -1,14 +1,16 @@
 import {
-  area,
-  areaHeadings,
+  areaCard,
+  closeArea,
   closeProfile,
   confirmation,
   DEFAULT_AREAS,
   expect,
+  expectAreas,
   goToTab,
   homeScreen,
   keepOnlyAreas,
   meta,
+  openArea,
   openItem,
   openProfile,
   openSeeded,
@@ -73,10 +75,16 @@ test.describe('Profile', () => {
     await closeProfile(page);
 
     await expect(page.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🐙');
+    await openArea(page, 'Kitchen');
     await expect(who(page, 'Kitchen paper')).toHaveText('🐙Stratis');
+    await closeArea(page);
+    await openArea(page, 'Garden');
     await expect(who(page, 'Garden room wall panel')).toHaveText('🐙Stratis');
+    await closeArea(page);
     // Other people keep theirs.
+    await openArea(page, 'Hallway');
     await expect(who(page, 'Heaters not working')).toHaveText('🦆Shea');
+    await closeArea(page);
 
     await goToTab(page, 'Stats');
     await expect(statsScreen(page).getByRole('list', { name: 'Done per person' }).getByRole('listitem').first()).toHaveText(
@@ -91,7 +99,9 @@ test.describe('Profile', () => {
     await name.press('Enter');
     await expect(name).not.toBeFocused();
     await closeProfile(page);
+    await openArea(page, 'Kitchen');
     await expect(who(page, 'Kitchen paper')).toHaveText('🦔Stratos');
+    await closeArea(page);
 
     // A blank name is not saved.
     const again = await openProfile(page);
@@ -100,13 +110,19 @@ test.describe('Profile', () => {
     await field.press('Enter');
     await expect(field).toHaveValue('Stratos');
     await closeProfile(page);
+    await openArea(page, 'Kitchen');
     await expect(who(page, 'Kitchen paper')).toHaveText('🦔Stratos');
+    // The card says who is looking after it by the new name.
+    await closeArea(page);
+    await expect(areaCard(page, 'Kitchen')).toHaveAccessibleName(/^Kitchen\b.*Stratos/);
 
     // The item sheet's assignee list follows too.
+    await openArea(page, 'Kitchen');
     const sheet = await openItem(page, 'Kitchen paper');
     await expect(sheet.getByLabel('Assigned to', { exact: true }).getByRole('option').first()).toHaveText('🦔 Stratos');
     await sheet.getByRole('button', { name: 'Close' }).click();
     await expect(sheet).toHaveCount(0);
+    await closeArea(page);
 
     await goToTab(page, 'Stats');
     await expect(statsScreen(page).getByRole('img', { name: /Stratos 4, Shea 2, Ela 1\.$/ })).toBeVisible();
@@ -266,18 +282,21 @@ test.describe('Household editor', () => {
     const expected = DEFAULT_AREAS.filter((n) => n !== 'Bedroom Small' && n !== 'Hallway')
       .map((n) => (n === 'Front garden' ? 'Front yard' : n))
       .concat('Garage');
-    await expect(areaHeadings(page)).toHaveText(expected);
-    await expect(area(page, 'Garage').getByText('All clear', { exact: true })).toBeVisible();
-    await expect(ring(page, 'Trim the hedges')).toBeVisible(); // kept its items through the rename
-    await expect(ring(page, 'Heaters not working')).toHaveCount(0);
+    await expectAreas(page, expected);
+    await expect(areaCard(page, 'Garage', expected)).toHaveAccessibleName(/^Garage\b.*All clear/);
+    // Kept its items through the rename.
+    await openArea(page, 'Front yard', expected);
+    await expect(ring(page, 'Trim the hedges')).toBeVisible();
+    await closeArea(page);
+    await expect(areaCard(page, 'Hallway', expected)).toHaveCount(0);
 
     await reopen(page);
-    await expect(areaHeadings(page)).toHaveText(expected);
+    await expectAreas(page, expected);
   });
 
   test('the last area cannot be deleted', async ({ page }) => {
     await keepOnlyAreas(page, ['Kitchen', 'Garden']);
-    await expect(areaHeadings(page)).toHaveText(['Kitchen', 'Garden']);
+    await expectAreas(page, ['Kitchen', 'Garden']);
     const dialog = await openHouseholdEditor(page);
     const caption = 'Items live in an area, so keep at least one.';
     await expect(dialog.getByText(caption)).toHaveCount(0);
@@ -303,7 +322,7 @@ test.describe('Household editor', () => {
 
     await dialog.getByRole('button', { name: 'Profile', exact: true }).click();
     await closeProfile(page);
-    await expect(areaHeadings(page)).toHaveText(['Kitchen', 'Garage']);
+    await expectAreas(page, ['Kitchen', 'Garage']);
     await expect(homeScreen(page).getByText('No areas yet')).toHaveCount(0);
   });
 
@@ -327,9 +346,9 @@ test.describe('Household editor', () => {
 
     await dialog.getByRole('button', { name: 'Profile' }).click();
     await closeProfile(page);
-    await expect(areaHeadings(page)).toHaveText(order);
+    await expectAreas(page, order);
     await reopen(page);
-    await expect(areaHeadings(page)).toHaveText(order);
+    await expectAreas(page, order);
   });
 
   test('reorders areas by dragging the grip', async ({ page }) => {
@@ -347,7 +366,7 @@ test.describe('Household editor', () => {
     for (const [i, n] of order.entries()) await expect(areaNames(dialog).nth(i)).toHaveValue(n);
     await dialog.getByRole('button', { name: 'Profile' }).click();
     await closeProfile(page);
-    await expect(areaHeadings(page)).toHaveText(order);
+    await expectAreas(page, order);
   });
 });
 
@@ -392,11 +411,16 @@ test.describe('People', () => {
     await dialog.getByRole('button', { name: 'Profile', exact: true }).click();
     await closeProfile(page);
 
-    // Home: Shea's items show the new name and emoji; your own avatar is unchanged.
-    await expect(who(page, 'Heaters not working')).toHaveText('🐧Shay');
-    await expect(who(page, 'Shower draining slowly')).toHaveText('🐧Shay');
-    await expect(meta(page, 'Heaters not working')).toHaveText('Urgent2 days late');
+    // Shea's items show the new name and emoji; your own avatar is unchanged.
     await expect(page.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🦔');
+    await openArea(page, 'Hallway');
+    await expect(who(page, 'Heaters not working')).toHaveText('🐧Shay');
+    await expect(meta(page, 'Heaters not working')).toHaveText('Urgent2 days late');
+    await expect(page.getByRole('dialog', { name: 'Hallway' }).locator('[data-area-people]')).toHaveText('Shay is on it');
+    await closeArea(page);
+    await openArea(page, 'Bathroom Large');
+    await expect(who(page, 'Shower draining slowly')).toHaveText('🐧Shay');
+    await closeArea(page);
 
     await goToTab(page, 'Stats');
     const legend = statsScreen(page).getByRole('list', { name: 'Done per person' }).getByRole('listitem');
@@ -406,6 +430,7 @@ test.describe('People', () => {
     // Stored, not just on screen (the app reopens on Stats, the tab last open).
     await reopen(page);
     await goToTab(page, 'Home');
+    await openArea(page, 'Hallway');
     await expect(who(page, 'Heaters not working')).toHaveText('🐧Shay');
   });
 });
@@ -416,8 +441,10 @@ test.describe('Sign out', () => {
     let dialog = await openProfile(page);
     await dialog.getByRole('radiogroup', { name: 'Your emoji' }).getByRole('radio', { name: '🐳' }).click();
     await closeProfile(page);
+    await openArea(page, 'Living Room');
     await ring(page, 'Mirror lights not level').click();
     await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
+    await closeArea(page);
 
     dialog = await openProfile(page);
     await dialog.getByRole('button', { name: 'Sign Out' }).click();
@@ -438,9 +465,12 @@ test.describe('Sign out', () => {
     await page.getByRole('button', { name: 'Continue with Google' }).click();
     await expect(homeScreen(page).getByRole('heading', { name: 'Home', level: 1 })).toBeVisible();
     await expect(homeScreen(page).getByText('21 Alderbrook Road', { exact: true })).toBeVisible();
-    await expect(areaHeadings(page)).toHaveText(DEFAULT_AREAS);
+    await expectAreas(page, DEFAULT_AREAS);
     await expect(page.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🐳');
+    await openArea(page, 'Living Room');
     await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
+    await closeArea(page);
+    await openArea(page, 'Hallway');
     await expect(ring(page, 'Heaters not working')).toBeVisible();
   });
 });

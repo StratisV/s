@@ -1,15 +1,21 @@
 import {
-  area,
+  areaCard,
+  areaStatus,
+  attentionScreen,
   confirmation,
   DEMO_STORAGE_KEY,
   detailValue,
   expect,
+  goToTab,
   homeScreen,
   itemSheet,
   meta,
+  openArea,
+  openAttention,
   openItem,
   openNewItem,
   openSeeded,
+  showItem,
   reopen,
   ring,
   rowButton,
@@ -113,8 +119,8 @@ test.describe('Item sheet: edit', () => {
       /^Level the mirror lights ?, Urgent, In 2 weeks, Ela, repeats weekly, has a note\.$/,
     );
     await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
-    // Urgent: the room says so, in red.
-    await expect(area(page, 'Living Room').locator('h2 + span')).toHaveText('1 urgent');
+    // Urgent: the area says so, in red.
+    await expect(areaStatus(page, 'Living Room')).toHaveText('1 needs attention');
 
     // Reopening shows what was saved.
     await rowButton(page, title).click();
@@ -130,7 +136,9 @@ test.describe('Item sheet: edit', () => {
     const sheet = await openItem(page, 'Mirror lights not level');
     await sheet.getByLabel('Area', { exact: true }).selectOption({ label: 'Hallway' });
     await sheet.getByRole('button', { name: 'Save' }).click();
-    await expect(area(page, 'Living Room').getByText('All clear', { exact: true })).toBeVisible();
+    await expect(areaStatus(page, 'Living Room')).toHaveText('All clear');
+    await expect(toast(page, 'Saved in Hallway.')).toBeVisible();
+    await showItem(page, 'Mirror lights not level');
     expect(await titlesIn(page, 'Hallway')).toEqual(['Heaters not working', 'Mirror lights not level']);
   });
 
@@ -180,7 +188,7 @@ test.describe('Item sheet: edit', () => {
     await (await confirmation(page, 'Delete this item?')).getByRole('button', { name: 'Delete Item' }).click();
     await expect(sheet).toHaveCount(0);
     await expect(ring(page, 'Wardrobe door hinge')).toHaveCount(0);
-    await expect(area(page, 'Bedroom Large').getByText('All clear', { exact: true })).toBeVisible();
+    await expect(areaStatus(page, 'Bedroom Large')).toHaveText('All clear');
   });
 
   test('Mark as Done completes the item and closes the sheet', async ({ page }) => {
@@ -251,6 +259,7 @@ test.describe('Item sheet: new', () => {
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
 
+    await showItem(page, 'Fix the gate latch');
     await expect(meta(page, 'Fix the gate latch')).toHaveText('Within the month·In 7 days');
     await expect(meta(page, 'Fix the gate latch').locator('[data-rag="amber"]')).toHaveCSS('color', 'rgb(154, 91, 0)');
     // Nobody has it: the row leaves who out (VoiceOver hears "Unassigned").
@@ -273,7 +282,11 @@ test.describe('Item sheet: new', () => {
     await sheet.getByLabel('Area', { exact: true }).selectOption({ label: 'Bedroom Small' });
     await sheet.getByLabel('Assigned to', { exact: true }).selectOption({ label: '🦆 Shea' });
     await sheet.getByRole('button', { name: 'Save' }).click();
-    await expect(area(page, 'Bedroom Small').getByText('All clear', { exact: true })).toHaveCount(0);
+    await expect(sheet).toHaveCount(0);
+    await expect(areaCard(page, 'Bedroom Small')).not.toHaveAccessibleName(/All clear/);
+    await expect(areaCard(page, 'Bedroom Small')).toHaveAccessibleName(/^Bedroom Small\b.*1 coming up.*Shea/);
+    await showItem(page, 'Fit blackout blinds');
+    await expect(areaStatus(page, 'Bedroom Small')).toHaveText('1 coming up');
     // No date until someone gives it one: its urgency alone, never "late".
     await expect(meta(page, 'Fit blackout blinds')).toHaveText('Within the month');
     await expect(who(page, 'Fit blackout blinds')).toHaveText('🦆Shea');
@@ -315,12 +328,14 @@ test.describe('Item sheet: keyboard', () => {
     await page.keyboard.type('Before the leaves fall.');
     await page.keyboard.press('Control+Enter');
     await expect(sheet).toHaveCount(0);
+    await showItem(page, 'Clean the gutters');
     await expect(rowButton(page, 'Clean the gutters')).toHaveAccessibleName(/has a note\.$/);
     await rowButton(page, 'Clean the gutters').click();
     await expect(itemSheet(page).getByLabel('Note', { exact: true })).toHaveValue('Before the leaves fall.');
   });
 
   test('closing the sheet with Escape puts keyboard focus back where it was', async ({ page }) => {
+    await showItem(page, 'Olive oil');
     const open = rowButton(page, 'Olive oil');
     await keyboardFocus(open);
     await page.keyboard.press('Enter');
@@ -329,6 +344,10 @@ test.describe('Item sheet: keyboard', () => {
     await page.keyboard.press('Escape');
     await expect(sheet).toHaveCount(0);
     await expect(open).toBeFocused();
+    // A second Escape closes the area's sheet: back on its card.
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: 'Kitchen' })).toHaveCount(0);
+    await expect(areaCard(page, 'Kitchen')).toBeFocused();
 
     // The same for the + button.
     const add = addButton(page);
@@ -342,7 +361,10 @@ test.describe('Item sheet: keyboard', () => {
   });
 
   test('after Mark as Done, keyboard focus moves to the next row', async ({ page }) => {
-    await keyboardFocus(rowButton(page, 'Heaters not working'));
+    // On Needs attention's list: the heaters, then the gutters.
+    await openAttention(page);
+    const listRow = (title: string) => attentionScreen(page).getByRole('button', { name: new RegExp(`^${title} ?, `) });
+    await keyboardFocus(listRow('Heaters not working'));
     await page.keyboard.press('Enter');
     const sheet = itemSheet(page);
     await expect(sheet).toBeFocused();
@@ -350,12 +372,23 @@ test.describe('Item sheet: keyboard', () => {
     await done.focus();
     await page.keyboard.press('Enter');
     await expect(sheet).toHaveCount(0);
-    await expect(ring(page, 'Heaters not working')).toHaveCount(0);
-    // The first row of the next room, Front garden (its most urgent).
-    await expect(rowButton(page, 'Clear the gutters')).toBeFocused();
+    await expect(listRow('Heaters not working')).toHaveCount(0);
+    await expect(listRow('Clear the gutters')).toBeFocused();
+
+    // In an area's sheet with no row left: its To do heading.
+    await goToTab(page, 'Home');
+    await openArea(page, 'Bedroom Large');
+    await keyboardFocus(rowButton(page, 'Wardrobe door hinge'));
+    await page.keyboard.press('Enter');
+    await expect(sheet).toBeFocused();
+    await sheet.getByRole('button', { name: 'Mark as Done' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(sheet).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'Bedroom Large' }).getByRole('heading', { level: 2, name: 'To do' })).toBeFocused();
   });
 
   test('the delete confirmation starts on Cancel, gives focus back, and ignores a held Enter', async ({ page }) => {
+    await showItem(page, 'Wardrobe door hinge');
     await keyboardFocus(rowButton(page, 'Wardrobe door hinge'));
     await page.keyboard.press('Enter');
     const sheet = itemSheet(page);
@@ -395,6 +428,7 @@ test.describe('Item sheet: keyboard', () => {
     await expect(note).toHaveValue('y'.repeat(4000));
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
+    await showItem(page, 'x'.repeat(200));
     await expect(ring(page, 'x'.repeat(200))).toBeVisible();
   });
 

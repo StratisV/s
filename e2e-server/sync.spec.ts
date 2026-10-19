@@ -1,19 +1,20 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
-  area,
-  areaHeadings,
+  areaCard,
   chatScreen,
   closeHousehold,
   closeProfile,
   codeFor,
   confirmation,
   dayLabel,
+  expectAreas,
   expectNoReload,
   expectPerson,
   goToTab,
   homeHeading,
   homeScreen,
   housekeepingScreen,
+  inArea,
   itemSheet,
   loadHome,
   londonDate,
@@ -61,7 +62,8 @@ test('items: create, edit, What good looks like, kind, done, undo and delete sho
   const a = stratis.page;
   const b = shea.page;
 
-  // Stratis adds a To do for Shea.
+  // Stratis adds a To do for Shea; the Kitchen's sheet is open on her phone.
+  await inArea(b, 'Kitchen');
   await quiet(shea);
   await a.getByRole('button', { name: 'New item', exact: true }).click();
   let sheet = itemSheet(a, 'New item');
@@ -79,12 +81,14 @@ test('items: create, edit, What good looks like, kind, done, undo and delete sho
   await expect(sheet).toHaveCount(0);
   const kettle = rowFor(b, 'Descale the kettle', 'Kitchen');
   await expect(kettle).toHaveAccessibleName(/^Descale the kettle ?, Urgent, In 5 days, Shea, has a note\.$/, { timeout: SYNC_MS });
-  await expect(meta(area(b, 'Kitchen'), 'Descale the kettle')).toHaveText(taskMeta('red', due));
-  await expect(who(area(b, 'Kitchen'), 'Descale the kettle')).toHaveText('🦔Shea');
+  const kitchen = await inArea(b, 'Kitchen');
+  await expect(meta(kitchen, 'Descale the kettle')).toHaveText(taskMeta('red', due));
+  await expect(who(kitchen, 'Descale the kettle')).toHaveText('🦔Shea');
 
   // Shea edits a To do: title, note, status, due date and who.
+  const livingRoom = await inArea(a, 'Living Room');
   await quiet(stratis);
-  sheet = await openItem(b, area(b, 'Living Room'), 'Remove AC');
+  sheet = await openItem(b, await inArea(b, 'Living Room'), 'Remove AC');
   const later = londonDate(13);
   await sheet.getByLabel('Title', { exact: true }).fill('Remove the AC unit');
   await sheet.getByLabel('Note', { exact: true }).fill('Bracket bolts are 13 mm.');
@@ -95,18 +99,19 @@ test('items: create, edit, What good looks like, kind, done, undo and delete sho
   await expect(sheet).toHaveCount(0);
   const ac = rowFor(a, 'Remove the AC unit', 'Living Room');
   await expect(ac).toHaveAccessibleName(/^Remove the AC unit ?, Urgent, In 13 days, Stratis, has a note\.$/, { timeout: SYNC_MS });
-  await expect(meta(area(a, 'Living Room'), 'Remove the AC unit')).toHaveText(taskMeta('red', later));
-  await expect(who(area(a, 'Living Room'), 'Remove the AC unit')).toHaveText('🦆Stratis');
-  sheet = await openItem(a, area(a, 'Living Room'), 'Remove the AC unit');
+  await expect(meta(livingRoom, 'Remove the AC unit')).toHaveText(taskMeta('red', later));
+  await expect(who(livingRoom, 'Remove the AC unit')).toHaveText('🦆Stratis');
+  sheet = await openItem(a, livingRoom, 'Remove the AC unit');
   await expect(sheet.getByLabel('Note', { exact: true })).toHaveValue('Bracket bolts are 13 mm.');
   await sheet.getByRole('button', { name: 'Close' }).click();
   await expect(sheet).toHaveCount(0);
   await expect(rowFor(a, 'Remove AC', 'Living Room')).toHaveCount(0);
 
   // Stratis writes what good looks like for a To maintain, and calls it Okay.
+  await inArea(b, 'Garden');
   await quiet(shea);
   const good = 'Watered twice a week.\nNo yellow leaves.\nPots drained after rain.';
-  sheet = await openItem(a, area(a, 'Garden'), 'Plants healthy');
+  sheet = await openItem(a, await inArea(a, 'Garden'), 'Plants healthy');
   await sheet.getByRole('textbox', { name: 'What good looks like', exact: true }).fill(good);
   await sheet.getByRole('radiogroup', { name: 'Condition' }).getByText('Okay', { exact: true }).click();
   await sheet.getByRole('button', { name: 'Save' }).click();
@@ -114,14 +119,15 @@ test('items: create, edit, What good looks like, kind, done, undo and delete sho
   await expect(rowFor(b, 'Plants healthy', 'Garden')).toHaveAccessibleName(/^Plants healthy ?, to maintain, Okay,/, {
     timeout: SYNC_MS,
   });
-  sheet = await openItem(b, area(b, 'Garden'), 'Plants healthy');
+  sheet = await openItem(b, await inArea(b, 'Garden'), 'Plants healthy');
   await expect(sheet.getByRole('textbox', { name: 'What good looks like', exact: true })).toHaveValue(good);
   await sheet.getByRole('button', { name: 'Close' }).click();
   await expect(sheet).toHaveCount(0);
 
   // Shea turns a To do into a To maintain.
+  await inArea(a, 'Living Room');
   await quiet(stratis);
-  sheet = await openItem(b, area(b, 'Living Room'), 'Fix the cracks on the wall');
+  sheet = await openItem(b, await inArea(b, 'Living Room'), 'Fix the cracks on the wall');
   await sheet.getByRole('radiogroup', { name: 'Type' }).getByRole('radio', { name: 'To maintain' }).click();
   await sheet.getByRole('button', { name: 'Save' }).click();
   await expect(sheet).toHaveCount(0);
@@ -130,26 +136,29 @@ test('items: create, edit, What good looks like, kind, done, undo and delete sho
     /^Fix the cracks on the wall ?, to maintain, Needs work,/,
     { timeout: SYNC_MS },
   );
-  await expect(ring(area(a, 'Living Room'), 'Fix the cracks on the wall')).toHaveCount(0);
+  await expect(ring(await inArea(a, 'Living Room'), 'Fix the cracks on the wall')).toHaveCount(0);
 
   // Stratis marks one of his done: gone on Shea's phone; Undo brings it back there too.
+  await inArea(b, 'Garden');
   await quiet(shea);
-  await ring(area(a, 'Garden'), 'Install leaf blower').click();
+  await ring(await inArea(a, 'Garden'), 'Install leaf blower').click();
   const undo = toast(a, 'Marked as done').getByRole('button', { name: 'Undo' });
   await undo.focus(); // holds the toast while we look at the other phone
   await expect(rowFor(b, 'Install leaf blower', 'Garden')).toHaveCount(0, { timeout: SYNC_MS });
   await quiet(shea);
   await undo.click();
   await expect(rowFor(b, 'Install leaf blower', 'Garden')).toBeVisible({ timeout: SYNC_MS });
-  await expect(meta(area(b, 'Garden'), 'Install leaf blower')).toHaveText(taskMeta('amber', '2026-10-16'));
-  await expect(who(area(b, 'Garden'), 'Install leaf blower')).toHaveText('🦆Stratis');
+  const garden = await inArea(b, 'Garden');
+  await expect(meta(garden, 'Install leaf blower')).toHaveText(taskMeta('amber', '2026-10-16'));
+  await expect(who(garden, 'Install leaf blower')).toHaveText('🦆Stratis');
 
   // Shea does a monthly one: Stratis sees its next date, and her count in Stats.
+  const jacuzzi = await inArea(a, 'Jacuzzi');
   await quiet(stratis);
-  await ring(area(b, 'Jacuzzi'), 'Change the filter').click();
+  await ring(await inArea(b, 'Jacuzzi'), 'Change the filter').click();
   await expect(toast(b, /^Done\. Next one/)).toBeVisible();
   // Monthly: next on Sat 21 Nov.
-  await expect(meta(area(a, 'Jacuzzi'), 'Change the filter')).toHaveText(taskMeta('green', '2026-11-21'), {
+  await expect(meta(jacuzzi, 'Change the filter')).toHaveText(taskMeta('green', '2026-11-21'), {
     timeout: SYNC_MS,
   });
   await goToTab(a, 'Stats');
@@ -158,8 +167,9 @@ test('items: create, edit, What good looks like, kind, done, undo and delete sho
   await goToTab(a, 'Home');
 
   // Shea deletes one.
+  await inArea(a, 'Bathroom Small');
   await quiet(stratis);
-  sheet = await openItem(b, area(b, 'Bathroom Small'), 'Hand towels solution');
+  sheet = await openItem(b, await inArea(b, 'Bathroom Small'), 'Hand towels solution');
   await sheet.getByRole('button', { name: 'Delete' }).click();
   await (await confirmation(b, 'Delete this item?')).getByRole('button', { name: 'Delete Item' }).click();
   await expect(sheet).toHaveCount(0);
@@ -188,7 +198,9 @@ test('areas and the household: add, rename, reorder, delete, name and address sh
   await a.keyboard.press('Enter');
   await expect(dialog.getByRole('button', { name: 'Delete Shed', exact: true })).toBeVisible();
   await closeHousehold(a, dialog);
-  await expect(area(b, 'Shed').getByText('All clear', { exact: true })).toBeVisible({ timeout: SYNC_MS });
+  // A card on Shea's Home, with nothing in it yet.
+  await expect(areaCard(b, 'Shed')).toHaveAccessibleName(/^Shed\b.*All clear/, { timeout: SYNC_MS });
+  await expect((await inArea(b, 'Shed')).locator('[data-area-status]')).toHaveText('All clear');
 
   // Shea renames it.
   await quiet(stratis);
@@ -198,7 +210,7 @@ test('areas and the household: add, rename, reorder, delete, name and address sh
   await shed.press('Enter');
   await expect(dialog.getByRole('button', { name: 'Delete Garden Shed', exact: true })).toBeVisible();
   const order = ['Kitchen', 'Living Room', 'Bathroom Small', 'Garden', 'Garden Lounge', 'Jacuzzi', 'Garden Shed'];
-  await expect(areaHeadings(a)).toHaveText(order, { timeout: SYNC_MS });
+  await expectAreas(a, order, SYNC_MS);
 
   // Shea moves the Jacuzzi up one.
   await quiet(stratis);
@@ -206,14 +218,14 @@ test('areas and the household: add, rename, reorder, delete, name and address sh
   await b.keyboard.press('ArrowUp');
   const reordered = ['Kitchen', 'Living Room', 'Bathroom Small', 'Garden', 'Jacuzzi', 'Garden Lounge', 'Garden Shed'];
   for (const [i, n] of reordered.entries()) await expect(dialog.getByRole('textbox', { name: 'Area name' }).nth(i)).toHaveValue(n);
-  await expect(areaHeadings(a)).toHaveText(reordered, { timeout: SYNC_MS });
+  await expectAreas(a, reordered, SYNC_MS);
 
   // Shea deletes it.
   await quiet(stratis);
   await dialog.getByRole('button', { name: 'Delete Garden Shed', exact: true }).click();
   await (await confirmation(b, 'Delete Garden Shed?')).getByRole('button', { name: 'Delete Area' }).click();
   await expect(dialog.getByRole('button', { name: 'Delete Garden Shed', exact: true })).toHaveCount(0);
-  await expect(areaHeadings(a)).toHaveText(reordered.slice(0, -1), { timeout: SYNC_MS });
+  await expectAreas(a, reordered.slice(0, -1), SYNC_MS);
 
   // Shea renames the household and changes the address.
   await quiet(stratis);
@@ -246,11 +258,12 @@ test('people: an emoji, a name, someone added (then invited) and someone removed
   const b = shea.page;
 
   // Shea picks another emoji: Stratis sees it on her items.
+  const jacuzzi = await inArea(a, 'Jacuzzi');
   await quiet(stratis);
   let profile = await openProfile(b);
   await profile.getByRole('radiogroup', { name: 'Your emoji' }).getByRole('radio', { name: '🐧' }).click();
   await closeProfile(b);
-  await expect(who(area(a, 'Jacuzzi'), 'Check Chemicals')).toHaveText('🐧Shea', {
+  await expect(who(jacuzzi, 'Check Chemicals')).toHaveText('🐧Shea', {
     timeout: SYNC_MS,
   });
 
@@ -602,19 +615,20 @@ test('three phones: two people writing at the same moment never lose a change', 
   const c = tablet.page;
 
   // Both edit different fields of one item and save at once: the note, and how urgent it is.
-  const sa = await openItem(a, area(a, 'Jacuzzi'), 'Check Chemicals');
-  const sb = await openItem(b, area(b, 'Jacuzzi'), 'Check Chemicals');
+  const sa = await openItem(a, await inArea(a, 'Jacuzzi'), 'Check Chemicals');
+  const sb = await openItem(b, await inArea(b, 'Jacuzzi'), 'Check Chemicals');
   await sa.getByLabel('Note', { exact: true }).fill('Chlorine tablets are in the shed.');
   await sb.getByRole('radiogroup', { name: 'How urgent?' }).getByText('Urgent', { exact: true }).click();
   await Promise.all([sa.getByRole('button', { name: 'Save' }).click(), sb.getByRole('button', { name: 'Save' }).click()]);
   await expect(sa).toHaveCount(0);
   await expect(sb).toHaveCount(0);
   for (const page of [a, b, c]) {
+    await inArea(page, 'Jacuzzi');
     const row = rowFor(page, 'Check Chemicals', 'Jacuzzi');
     await expect(row).toHaveAccessibleName(/^Check Chemicals ?, Urgent, .*, has a note\.$/, { timeout: SYNC_MS });
   }
   for (const page of [a, b, c]) {
-    const sheet = await openItem(page, area(page, 'Jacuzzi'), 'Check Chemicals');
+    const sheet = await openItem(page, await inArea(page, 'Jacuzzi'), 'Check Chemicals');
     await expect(sheet.getByLabel('Note', { exact: true })).toHaveValue('Chlorine tablets are in the shed.');
     await expect(sheet.getByRole('radio', { name: 'Urgent', exact: true })).toBeChecked();
     await sheet.getByRole('button', { name: 'Close' }).click();
@@ -622,12 +636,12 @@ test('three phones: two people writing at the same moment never lose a change', 
   }
 
   // Both tick a different To do at the same moment.
-  await Promise.all([
-    ring(area(a, 'Garden'), 'Install leaf blower').click(),
-    ring(area(b, 'Living Room'), 'Remove AC').click(),
-  ]);
+  const [gardenA, livingB] = [await inArea(a, 'Garden'), await inArea(b, 'Living Room')];
+  await Promise.all([ring(gardenA, 'Install leaf blower').click(), ring(livingB, 'Remove AC').click()]);
   for (const page of [a, b, c]) {
+    await inArea(page, 'Garden');
     await expect(rowFor(page, 'Install leaf blower', 'Garden')).toHaveCount(0, { timeout: SYNC_MS });
+    await inArea(page, 'Living Room');
     await expect(rowFor(page, 'Remove AC', 'Living Room')).toHaveCount(0, { timeout: SYNC_MS });
   }
 
@@ -682,6 +696,8 @@ test('three phones: two people writing at the same moment never lose a change', 
 test('a phone that was offline catches up as soon as it is back online; a hidden one waits until it is seen', async () => {
   const a = stratis.page;
   const b = shea.page;
+  // The Living Room's sheet is open on Shea's phone.
+  await inArea(b, 'Living Room');
   await quiet(stratis);
   await quiet(shea);
 
@@ -694,6 +710,7 @@ test('a phone that was offline catches up as soon as it is back online; a hidden
   await sheet.getByLabel('Area', { exact: true }).selectOption({ label: 'Living Room' });
   await sheet.getByRole('button', { name: 'Save' }).click();
   await expect(sheet).toHaveCount(0);
+  await inArea(a, 'Living Room');
   await expect(rowFor(a, 'Bleed the radiators', 'Living Room')).toBeVisible();
   await b.waitForTimeout(2_000);
   await expect(rowFor(b, 'Bleed the radiators', 'Living Room')).toHaveCount(0);
@@ -704,7 +721,7 @@ test('a phone that was offline catches up as soon as it is back online; a hidden
 
   // And it hears the next change by polling again.
   await quiet(shea);
-  await openItem(a, area(a, 'Living Room'), 'Bleed the radiators').then(async (s) => {
+  await openItem(a, await inArea(a, 'Living Room'), 'Bleed the radiators').then(async (s) => {
     await s.getByRole('radiogroup', { name: 'How urgent?' }).getByText('Not urgent', { exact: true }).click();
     await s.getByRole('button', { name: 'Save' }).click();
     await expect(s).toHaveCount(0);
@@ -714,6 +731,9 @@ test('a phone that was offline catches up as soon as it is back online; a hidden
   });
 
   // A phone in someone's pocket (the page hidden) asks nothing; seen again, it catches up at once.
+  await inArea(b, 'Garden');
+  const gardenA = await inArea(a, 'Garden');
+  await quiet(shea);
   const versionCalls: string[] = [];
   b.on('request', (req) => {
     if (req.url().includes('op=version')) versionCalls.push(req.url());
@@ -724,7 +744,7 @@ test('a phone that was offline catches up as soon as it is back online; a hidden
   });
   await b.waitForTimeout(500);
   versionCalls.length = 0;
-  await ring(area(a, 'Garden'), 'Install leaf blower').click();
+  await ring(gardenA, 'Install leaf blower').click();
   await b.waitForTimeout(4_000);
   expect(versionCalls, 'no polls while hidden').toEqual([]);
   await expect(rowFor(b, 'Install leaf blower', 'Garden')).toBeVisible();

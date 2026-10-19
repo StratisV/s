@@ -36,3 +36,33 @@
     transition-duration: 1ms;
   }
 }
+
+/*
+ * Under another sheet (the Item sheet over an area's): pushed back a step, its top peeking
+ * out above the new sheet, and dimmed, as iOS stacks sheets.
+ */
+.panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--sheet-duration) var(--sheet-ease);
+}
+
+.panel[data-shown][data-behind] {
+  transform: translateY(-10px) scale(0.93);
+  transform-origin: 50% 0;
+}
+
+.panel[data-behind]::after {
+  opacity: 0.18;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel::after {
+    transition-duration: 1ms;
+  }
+}

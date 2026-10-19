@@ -6,8 +6,8 @@ import { heroLook } from './hero-art/look';
 import { Birds, Clouds, SkyBase, SkyLights, Stars, Wash } from './hero-art/Sky';
 import s from './Hero.module.css';
 
-/** The current time, refreshed every minute and whenever the app comes back into view. */
-function useMinuteClock(fixed: Date | undefined): Date {
+/** The current time, refreshed every minute and whenever the app comes back into view (or `fixed`). */
+export function useMinuteClock(fixed: Date | undefined): Date {
   const [now, setNow] = useState(() => new Date());
   const live = fixed === undefined;
   useEffect(() => {

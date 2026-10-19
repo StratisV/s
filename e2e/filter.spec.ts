@@ -1,23 +1,31 @@
 import {
   addButton,
-  area,
-  areaHeadings,
+  attentionScreen,
   chooseWho,
   DEMO_STORAGE_KEY,
   expect,
-  homeScreen,
   itemSheet,
   mine,
   openSeeded,
   peopleButton,
   reopen,
-  rowButton,
   settled,
-  showView,
   summary,
   test,
   type Page,
 } from './fixtures';
+
+/** A row on Needs attention, by its title. */
+function listRow(page: Page, title: string) {
+  return attentionScreen(page).getByRole('button', { name: new RegExp(`^${title} ?, `) });
+}
+
+/** How many rows Needs attention shows (Later opened). */
+async function rowCount(page: Page): Promise<number> {
+  const more = attentionScreen(page).getByRole('button', { name: /^Show \d+ more$/ });
+  if (await more.count()) await more.click();
+  return attentionScreen(page).locator('[data-item-open]').count();
+}
 
 test.use({ timezoneId: 'Europe/London' });
 
@@ -29,9 +37,9 @@ async function peopleMenu(page: Page) {
   return menu;
 }
 
-test.describe('Filter Home by person', () => {
+test.describe('Filter Needs attention by person', () => {
   test('the people menu: Everyone, you, the others and Unassigned, each with how many are open', async ({ page }) => {
-    await openSeeded(page);
+    await openSeeded(page, 'List');
     await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Everyone');
     const menu = await peopleMenu(page);
     const radios = menu.getByRole('menuitemradio');
@@ -54,36 +62,37 @@ test.describe('Filter Home by person', () => {
     await expect(peopleButton(page)).toBeFocused();
   });
 
-  test("one person's items only, in the rooms where they have some; remembered after a reload", async ({ page }) => {
-    await openSeeded(page);
-    const all = await areaHeadings(page).count();
+  test("one person's items only; remembered after a reload", async ({ page }) => {
+    await openSeeded(page, 'List');
+    const all = await rowCount(page);
     await chooseWho(page, /^Shea,/);
     await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Shea');
     // The pill shows who, on a tint wash.
     await expect(peopleButton(page)).toHaveAttribute('data-filtered', 'true');
-    await expect(rowButton(page, 'Change the filter')).toBeVisible();
-    await expect(rowButton(page, 'Olive oil')).toHaveCount(0);
-    expect(await areaHeadings(page).count()).toBeLessThan(all);
+    await expect(listRow(page, 'Change the filter')).toBeVisible();
+    await expect(listRow(page, 'Olive oil')).toHaveCount(0);
+    expect(await rowCount(page)).toBeLessThan(all);
     // Every row shown is Shea's (VoiceOver hears whose; the rows don't need to say it).
-    const names = await homeScreen(page)
+    const names = await attentionScreen(page)
       .locator('[data-item-open]')
       .evaluateAll((els) => els.map((el) => el.textContent ?? ''));
     expect(names.length).toBeGreaterThan(0);
     for (const name of names) expect(name).toContain(', Shea');
-    await expect(homeScreen(page).locator('[data-who]')).toHaveCount(0);
+    await expect(attentionScreen(page).locator('[data-who]')).toHaveCount(0);
     await expect(summary(page)).toHaveText(/^For Shea, /);
 
+    // The phone reopens on Needs attention, as it was left.
     await reopen(page);
     await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Shea');
-    await expect(rowButton(page, 'Olive oil')).toHaveCount(0);
+    await expect(listRow(page, 'Olive oil')).toHaveCount(0);
 
     await chooseWho(page, /^Everyone,/);
-    await expect(rowButton(page, 'Olive oil')).toBeVisible();
-    expect(await areaHeadings(page).count()).toBe(all);
+    expect(await rowCount(page)).toBe(all);
+    await expect(listRow(page, 'Olive oil')).toBeVisible();
   });
 
-  test('a job added for someone else shows everyone’s for now, and Mine stays the choice Home opens on', async ({ page }) => {
-    await openSeeded(page, 'Up next');
+  test('a job added for someone else shows everyone’s for now, and Mine stays the choice it opens on', async ({ page }) => {
+    await openSeeded(page, 'List');
     await mine(page).click();
     await expect(summary(page)).toHaveText(/^For you, /);
     await addButton(page).click();
@@ -95,15 +104,15 @@ test.describe('Filter Home by person', () => {
     await expect(sheet).toHaveCount(0);
     // Everyone's for this visit, so the new job can be seen where it went.
     await expect(mine(page)).toHaveAttribute('aria-pressed', 'false');
-    await expect(homeScreen(page).getByRole('button', { name: /^Return the ladder ?, / })).toBeVisible();
-    // Opened again, Home is as the person left it: Mine.
+    await expect(attentionScreen(page).getByRole('button', { name: /^Return the ladder ?, / })).toBeVisible();
+    // Opened again, Needs attention is as the person left it: Mine.
     await reopen(page);
     await expect(mine(page)).toHaveAttribute('aria-pressed', 'true');
     await expect(summary(page)).toHaveText(/^For you, /);
   });
 
   test('Mine is one tap, and a second tap shows everyone’s again', async ({ page }) => {
-    await openSeeded(page, 'Up next');
+    await openSeeded(page, 'List');
     await expect(mine(page)).toHaveAttribute('aria-pressed', 'false');
     await mine(page).click();
     await expect(mine(page)).toHaveAttribute('aria-pressed', 'true');
@@ -111,7 +120,7 @@ test.describe('Filter Home by person', () => {
     // Mine shows it: the pill stays quiet.
     await expect(peopleButton(page)).not.toHaveAttribute('data-filtered');
     await expect(summary(page)).toHaveText(/^For you, /);
-    const names = await homeScreen(page)
+    const names = await attentionScreen(page)
       .locator('[data-item-open]')
       .evaluateAll((els) => els.map((el) => el.textContent ?? ''));
     for (const name of names) expect(name).toContain(', Stratis');
@@ -124,10 +133,10 @@ test.describe('Filter Home by person', () => {
   });
 
   test('Unassigned: only the items nobody has', async ({ page }) => {
-    await openSeeded(page);
+    await openSeeded(page, 'List');
     await chooseWho(page, /^Unassigned,/);
     await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Unassigned');
-    const names = await homeScreen(page)
+    const names = await attentionScreen(page)
       .locator('[data-item-open]')
       .evaluateAll((els) => els.map((el) => el.textContent ?? ''));
     expect(names.length).toBeGreaterThan(0);
@@ -136,7 +145,7 @@ test.describe('Filter Home by person', () => {
   });
 
   test('someone with nothing open sees that said plainly', async ({ page }) => {
-    await openSeeded(page);
+    await openSeeded(page, 'List');
     // Ela hands everything back: her items become unassigned.
     await page.evaluate((key) => {
       const doc = JSON.parse(localStorage.getItem(key)!);
@@ -146,11 +155,10 @@ test.describe('Filter Home by person', () => {
     }, DEMO_STORAGE_KEY);
     await reopen(page);
     await chooseWho(page, /^Ela, 0 items/);
-    await expect(homeScreen(page).getByText('Nothing for Ela right now.', { exact: true })).toBeVisible();
-    await expect(area(page, 'Kitchen')).toHaveCount(0);
+    await expect(attentionScreen(page).getByRole('status').filter({ hasText: 'Nothing for Ela right now.' })).toBeVisible();
+    await expect(attentionScreen(page).locator('section[data-group]')).toHaveCount(0);
     await expect(summary(page)).toHaveText('All clear for Ela. Nothing to do right now.');
-    await showView(page, 'Up next');
-    await expect(homeScreen(page).getByRole('status').filter({ hasText: 'Nothing for Ela' })).toHaveText('Nothing hereNothing for Ela right now.');
+    await expect(attentionScreen(page).getByRole('status').filter({ hasText: 'Nothing for Ela' })).toHaveText('Nothing hereNothing for Ela right now.');
   });
 });
 
@@ -159,11 +167,11 @@ for (const width of [320, 360]) {
     test.use({ viewport: { width, height: 700 } });
 
     test('keeps its word, every view’s name stays whole, and each control takes taps 44px wide and tall', async ({ page }) => {
-      await openSeeded(page, 'Up next');
+      await openSeeded(page, 'List');
       // "Mine" in words (the emoji alone looked like the profile button on the hero).
       await expect(mine(page).getByText('Mine', { exact: true })).toBeVisible();
-      for (const name of ['Up next', 'Rooms', 'Calendar']) {
-        const label = homeScreen(page).getByRole('radio', { name, exact: true }).locator('span');
+      for (const name of ['List', 'Calendar']) {
+        const label = attentionScreen(page).getByRole('radio', { name, exact: true }).locator('span');
         expect(await label.evaluate((el) => el.scrollWidth <= el.clientWidth + 0.5), name).toBe(true);
       }
       // 21px either side of each control's centre, and 21px above and below, is still that control.

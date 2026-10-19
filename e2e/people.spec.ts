@@ -1,4 +1,7 @@
 import {
+  areas,
+  attentionScreen,
+  closeArea,
   closeProfile,
   confirmation,
   DEMO_STORAGE_KEY,
@@ -7,15 +10,17 @@ import {
   homeScreen,
   meta,
   NOW,
+  openArea,
   openItem,
   openProfile,
   openSeeded,
   peopleButton,
   reopen,
-  ring,
   rowButton,
   settled,
+  showItem,
   statsScreen,
+  tabButton,
   test,
   type Locator,
   type Page,
@@ -31,8 +36,9 @@ test.beforeEach(async ({ page }) => {
   await openSeeded(page);
 });
 
-/** Opens Profile, then Household inside it. */
+/** Opens Profile, then Household inside it (an area's sheet closed first: Profile is behind it). */
 async function openPeople(page: Page): Promise<Locator> {
+  if (await areas(page).count()) await closeArea(page);
   const dialog = await openProfile(page);
   await dialog.getByRole('button', { name: /^Household/ }).click();
   await expect(dialog.getByRole('heading', { name: 'Household', level: 1 })).toBeVisible();
@@ -90,8 +96,10 @@ async function assign(page: Page, title: string, option: string): Promise<void> 
   await expect(sheet).toHaveCount(0);
 }
 
-/** Opens Home's people menu ("Show tasks for"); resolves to the menu. */
+/** Opens Needs attention's people menu ("Show tasks for"); resolves to the menu. */
 async function peopleMenu(page: Page): Promise<Locator> {
+  if (await areas(page).count()) await closeArea(page);
+  if ((await tabButton(page, 'Attention').getAttribute('aria-current')) !== 'page') await goToTab(page, 'Attention');
   await peopleButton(page).click();
   const menu = page.getByRole('menu', { name: 'Show tasks for' });
   await expect(menu).toBeVisible();
@@ -193,14 +201,18 @@ test.describe('People before they join', () => {
     await expect(robin).toHaveText(/Robin.*Not joined yet.*1 open$/);
     await robin.click();
     await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Robin');
-    await expect(rowButton(page, 'Kitchen paper')).toBeVisible();
-    await expect(homeScreen(page).locator('[data-item-open]')).toHaveCount(1);
+    await expect(attentionScreen(page).getByRole('button', { name: /^Kitchen paper ?, / })).toBeVisible();
+    await expect(attentionScreen(page).locator('[data-item-open]')).toHaveCount(1);
     // One person's items: the rows leave who out.
-    await expect(homeScreen(page).locator('[data-who]')).toHaveCount(0);
+    await expect(attentionScreen(page).locator('[data-who]')).toHaveCount(0);
 
     // Done for Robin: credited to Robin. Monthly, so next on Sat 5 Dec.
-    await ring(page, 'Kitchen paper').click();
+    await attentionScreen(page).getByRole('button', { name: 'Mark Kitchen paper as done', exact: true }).click();
+    await expect(attentionScreen(page).locator('[data-item-open]').filter({ hasText: 'In 8 weeks' })).toHaveCount(1);
+    await goToTab(page, 'Home');
+    await openArea(page, 'Kitchen');
     await expect(meta(page, 'Kitchen paper')).toHaveText('Not urgent·In 8 weeks');
+    await closeArea(page);
     await goToTab(page, 'Stats');
     await expect(
       statsScreen(page).getByRole('list', { name: 'Done per person' }).getByRole('listitem').last(),
@@ -243,6 +255,7 @@ test.describe('People before they join', () => {
     await expect(people(dialog).getByRole('button', { name: 'Add Person' })).toBeFocused();
     await closePeople(page, dialog);
 
+    await showItem(page, 'Kitchen paper');
     await expect(who(page, 'Kitchen paper')).toHaveCount(0);
     await expect(rowButton(page, 'Kitchen paper')).toHaveAccessibleName(/, Unassigned, /);
     const menu = await peopleMenu(page);
@@ -278,6 +291,7 @@ test.describe('Joining as someone who was added', () => {
     // In the home as Stratis, with his items and the new emoji.
     await expect(homeScreen(page).getByRole('heading', { name: 'Home', level: 1 })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🐳');
+    await showItem(page, 'Kitchen paper');
     await expect(who(page, 'Kitchen paper')).toHaveText('🐳Stratis');
   });
 });
