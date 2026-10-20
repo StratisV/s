@@ -143,26 +143,34 @@ describe('HomeScreen', () => {
     expect(onOpenArea).toHaveBeenCalledWith(garden.id);
   });
 
-  it('gives each card its state, how many To dos are open and who is looking after it', async () => {
+  it('gives each card how many urgent and non-urgent tasks it has, and who is looking after it', async () => {
     const { home } = await setup();
     const members = home().data!.members;
     const name = (id: string) => members.find((m) => m.id === id)!.name;
     const props = cardProps();
     const summary = (area: string) => {
       const p = props.get(area)!;
-      return [p.status, p.statusText, p.openCount, p.people.map((m) => name(m.id))];
+      return [p.urgent, p.nonUrgent, p.people.map((m) => name(m.id))];
     };
-    // Late (and urgent): needs attention.
-    expect(summary('Hallway')).toEqual(['attention', '1 needs attention', 1, ['Shea']]);
-    // Urgent, due in 6 days.
-    expect(summary('Front garden')).toEqual(['attention', '1 needs attention', 3, ['Stratis']]);
-    // Within the month: coming up. Nobody on it yet.
-    expect(summary('Living Room')).toEqual(['soon', '1 coming up', 1, []]);
-    // The wall panel within the month; most items first (Ela has two, Stratis one).
-    expect(summary('Garden')).toEqual(['soon', '1 coming up', 2, ['Ela', 'Stratis']]);
-    expect(summary('Kitchen')).toEqual(['good', 'All good', 2, ['Stratis']]);
+    // Urgent (and late).
+    expect(summary('Hallway')).toEqual([1, 0, ['Shea']]);
+    // The urgent gutters, and two that are not urgent.
+    expect(summary('Front garden')).toEqual([1, 2, ['Stratis']]);
+    // Within the month counts as non-urgent. Nobody on it yet.
+    expect(summary('Living Room')).toEqual([0, 1, []]);
+    // The wall panel and the firepit to give away; the firepit looked after (Good) is not a task.
+    // Most items first (Ela has two, Stratis one).
+    expect(summary('Garden')).toEqual([0, 2, ['Ela', 'Stratis']]);
+    expect(summary('Kitchen')).toEqual([0, 2, ['Stratis']]);
     // Nothing open at all.
-    expect(summary('Bedroom Small')).toEqual(['good', 'All clear', 0, []]);
+    expect(summary('Bedroom Small')).toEqual([0, 0, []]);
+    // On screen: red over orange, or green.
+    const lines = (area: string) =>
+      Array.from(card(home().data!.areas.find((a) => a.name === area)!.id).querySelectorAll<HTMLElement>('[data-tone]')).map(
+        (el) => `${el.dataset.tone}: ${el.textContent!.replace(/, $/, '')}`,
+      );
+    expect(lines('Front garden')).toEqual(['urgent: 1 urgent task', 'non-urgent: 2 non-urgent tasks']);
+    expect(lines('Bedroom Small')).toEqual(['good: All good']);
     // Each person as the card shows them: their name and emoji.
     expect(props.get('Kitchen')!.people[0]).toEqual({
       id: members.find((m) => m.name === 'Stratis')!.id,
@@ -177,7 +185,8 @@ describe('HomeScreen', () => {
     await act(async () => {
       await home().completeItem(heaters.id);
     });
-    await waitFor(() => expect(cardProps().get('Hallway')).toMatchObject({ status: 'good', statusText: 'All clear', openCount: 0 }));
+    await waitFor(() => expect(cardProps().get('Hallway')).toMatchObject({ urgent: 0, nonUrgent: 0 }));
+    expect(card(heaters.area_id).getAttribute('aria-label')).toMatch(/^Hallway, All good, /);
     expect(document.querySelector('[data-home-summary]')!.textContent).toMatch(/^1 thing needs attention/);
   });
 
@@ -234,12 +243,12 @@ describe('HomeScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open Profile' }));
     expect(onOpenProfile).toHaveBeenCalledTimes(1);
 
-    // Adding one back replaces the card with the area: nothing in it yet, so all clear.
+    // Adding one back replaces the card with the area: nothing in it yet, so all good.
     await act(async () => {
       await home().createArea('Kitchen');
     });
     await waitFor(() => expect(screen.getByRole('list', { name: 'Areas' })).toBeTruthy());
     expect(screen.queryByText('No areas yet')).toBeNull();
-    expect(cardProps().get('Kitchen')).toMatchObject({ status: 'good', statusText: 'All clear', openCount: 0 });
+    expect(cardProps().get('Kitchen')).toMatchObject({ urgent: 0, nonUrgent: 0, people: [] });
   });
 });

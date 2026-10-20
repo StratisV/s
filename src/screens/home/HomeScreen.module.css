@@ -2,7 +2,7 @@
  * Home (HomeScreen.tsx) and Needs attention (NeedsAttentionScreen.tsx, UpNextView.tsx). One
  * page gutter: cards sit 16px in, text 20px in. One accent (the tint) for what can be tapped;
  * colour otherwise only where it means something (Urgent, Within the month, a late date, a
- * condition).
+ * condition, an area's status).
  */
 
 /* ── The summary sentence ──────────────────────────────── */
@@ -23,6 +23,16 @@
   text-wrap: pretty;
 }
 
+/* Focused (tabIndex -1) when the last card is ticked off from the keyboard. */
+.summary:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.summary:focus-visible {
+  outline-offset: -2px;
+  border-radius: 14px;
+}
+
 .summaryLead {
   color: var(--label);
 }
@@ -40,11 +50,6 @@
 
 .summaryButton:active {
   opacity: 0.55;
-}
-
-.summaryButton:focus-visible {
-  outline-offset: -2px;
-  border-radius: 14px;
 }
 
 .summaryChevron {
@@ -68,7 +73,7 @@
   color: var(--label-secondary);
 }
 
-/* ── View switch and whose items ───────────────────────── */
+/* ── Whose items (Mine, the people menu) ───────────────── */
 
 .controls {
   display: flex;
@@ -77,121 +82,15 @@
   padding: 16px 16px 0;
 }
 
-/* List or Calendar: 32px, 14px words, quieter than the title and the sentence above it. */
-.views {
-  position: relative;
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 32px;
-  padding: 2px;
-  border-radius: 16px;
-  background: var(--fill-tertiary);
-  display: grid;
-  grid-template-columns: repeat(var(--count), minmax(0, 1fr));
-  user-select: none;
-  -webkit-user-select: none;
-}
+/* ── The list (Needs attention): a card for each item ──── */
 
-.viewThumb {
-  position: absolute;
-  top: 2px;
-  bottom: 2px;
-  left: 2px;
-  width: calc((100% - 4px) / var(--count));
-  border-radius: 14px;
-  background: var(--thumb);
-  box-shadow: var(--shadow-segment);
-  transform: translateX(calc(100% * var(--index)));
-  transition: transform 0.34s var(--sheet-ease);
-}
-
-.viewOption {
-  position: relative;
-  min-width: 0;
-  height: 28px;
-  border-radius: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 4px;
-  font-size: 14px;
-  line-height: 18px;
-  letter-spacing: -0.15px;
-  font-weight: 500;
-  color: var(--label);
-}
-
-/* A 44px tall tap target (nothing on the button clips it: the label is cut short inside). */
-.viewOption::before {
-  content: '';
-  position: absolute;
-  inset: -8px 0;
-}
-
-.viewLabel {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.viewOption[aria-checked='true'] {
-  font-weight: 600;
-}
-
-.viewOption:not([aria-checked='true']):active {
-  opacity: 0.6;
-}
-
-.viewOption:focus-visible {
-  outline-offset: -2px;
-}
-
-/* ── Groups (the list on Needs attention) ──────────────── */
-
-.view {
-  padding-bottom: 8px;
-}
-
-.group {
-  padding-top: 26px;
-}
-
-.groupTitle {
-  composes: sectionTitle from '../../ui/type.module.css';
-  margin: 0;
-  padding: 0 20px 10px;
-}
-
-/* Focused (tabIndex -1) when the last row of a group is completed from the keyboard. */
-.groupTitle:focus:not(:focus-visible) {
-  outline: none;
-}
-
-.groupNote {
-  margin: -6px 0 12px;
-  padding: 0 20px;
-  font-size: 15px;
-  line-height: 20px;
-  letter-spacing: -0.2px;
-  color: var(--label-secondary);
-}
-
-/* Every list card: a group's rows, and the one-line messages ("All clear"). */
-.card {
-  margin: 0 16px;
-  background: var(--card);
-  border-radius: var(--r-card);
-  overflow: hidden;
-}
-
-.list {
+.items {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 16px 16px 0;
 }
 
-/* Later, folded: "Show 10 more", lined up with the titles above it. */
+/* "Show 6 more" under a folded list (an area's To dos), lined up with the titles above it. */
 .more {
   position: relative;
   width: 100%;
@@ -239,128 +138,16 @@
   transform: rotate(180deg);
 }
 
-/* ── Looking after (the list): tiles ───────────────────── */
-
-.tiles {
-  list-style: none;
-  margin: 0;
-  padding: 0 16px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.tileCell {
-  display: flex;
-  min-width: 0;
-}
-
-.tile {
-  flex: 1;
-  min-width: 0;
-  min-height: 108px;
-  padding: 14px 14px 14px 16px;
-  border-radius: 22px;
-  background: var(--card);
-  box-shadow: var(--shadow-card);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  text-align: left;
-  -webkit-tap-highlight-color: transparent;
-  transition: transform 0.15s ease;
-  scroll-margin: 8px 0 calc(var(--add-clear) + 8px);
-}
-
-.tile:active {
-  transform: scale(0.97);
-}
-
-.tile:focus-visible {
-  outline: 2px solid var(--tint);
-  outline-offset: 2px;
-}
-
-.tileTop {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 22px;
-}
-
-.tileRoom {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  line-height: 18px;
-  letter-spacing: -0.05px;
-  font-weight: 500;
-  color: var(--label-secondary);
-}
-
-/* Who it is for (ItemRow's Who), given at most half the tile's width. */
-.tileWho {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 50%;
-  display: flex;
-}
-
-.tileTitle {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  font-size: 17px;
-  line-height: 22px;
-  letter-spacing: -0.4px;
-  font-weight: 600;
-  color: var(--label);
-}
-
-.tileState {
-  margin-top: auto;
-  padding-top: 6px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  line-height: 18px;
-  font-weight: 600;
-  color: var(--label-secondary);
-}
-
-/* Okay, in the amber words the rows use for it. */
-.tileState[data-rag='amber'] {
-  color: var(--rag-amber-text);
-}
-
-/* Just saved (NeedsAttentionScreen.tsx revealItem): a tint ring that fades. */
-.tileCell[data-lit] .tile {
-  animation: tileLit 2.4s ease-out;
-}
-
-@keyframes tileLit {
-  0%,
-  45% {
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--tint) 50%, transparent);
-  }
-  100% {
-    box-shadow: var(--shadow-card);
-  }
-}
-
-/* ── Nothing open (each on a .card) ────────────────────── */
+/* ── Nothing to show: one card ─────────────────────────── */
 
 .clear {
-  margin-top: 26px;
+  margin: 16px 16px 0;
   padding: 22px 20px;
   display: flex;
   align-items: center;
   gap: 14px;
+  background: var(--card);
+  border-radius: var(--r-card);
 }
 
 .clearIcon {
@@ -427,6 +214,13 @@
 
 /* ── No areas left: one card with a way to add one ─────── */
 
+.card {
+  margin: 0 16px;
+  background: var(--card);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
 .noAreas {
   margin-top: 24px;
 }
@@ -486,23 +280,8 @@
   border-radius: 14px;
 }
 
-/* Narrow phones: the view switch keeps its words by giving up a little padding and size. */
-@media (max-width: 389px) {
-  .controls {
-    gap: 6px;
-  }
-
-  .viewOption {
-    padding: 0 2px;
-    font-size: 13px;
-    letter-spacing: -0.08px;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .viewThumb,
   .moreChevron,
-  .tile,
   .summaryButton {
     transition: none;
   }
@@ -511,10 +290,5 @@
   .cell[data-lit] {
     animation: none;
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--tint) 55%, transparent);
-  }
-
-  .tileCell[data-lit] .tile {
-    animation: none;
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--tint) 50%, transparent);
   }
 }

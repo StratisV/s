@@ -48,14 +48,14 @@ describe('needsAttention', () => {
     expect(needsAttention(item('urgent, no date', 'red', null), TODAY)).toBe(true);
     expect(needsAttention(item('amber today', 'amber', TODAY), TODAY)).toBe(false);
     expect(needsAttention(state('good', 'green'), TODAY)).toBe(false);
-    // Okay is fine for now: it waits under Looking after.
+    // Okay is fine for now: it waits at the foot of the list.
     expect(needsAttention(state('okay', 'amber'), TODAY)).toBe(false);
     expect(needsAttention(state('needs work', 'red'), TODAY)).toBe(true);
   });
 });
 
 describe('upNext', () => {
-  it('groups by when: Needs attention, Today, Next 7 days, Later; things looked after apart', () => {
+  it('lists everything in one order: what needs attention, today, the next 7 days, later, no date, then Okay', () => {
     const view = upNext(
       [
         item('Kitchen paper', 'green', '2026-11-10'),
@@ -67,6 +67,7 @@ describe('upNext', () => {
         item('Day 7', 'green', '2026-10-20'),
         item('Day 8', 'green', '2026-10-21'),
         item('No date', 'amber', null),
+        item('No date, not urgent', 'green', null),
         state('Firepit', 'green'),
         state('Shower seal', 'amber'),
         state('Grout', 'red'),
@@ -74,22 +75,66 @@ describe('upNext', () => {
       ],
       TODAY,
     );
-    expect(view.groups.map((g) => [g.id, titles(g.items)])).toEqual([
-      ['attention', ['Heaters', 'Gutters', 'Grout']],
-      ['today', ['Dehumidifier']],
-      // The date first ("In 2 days" before "In 4 days"), then urgency.
-      ['week', ['Plants', 'Strips', 'Day 7']],
-      // Urgency first, then the date.
-      ['later', ['No date', 'Day 8', 'Kitchen paper']],
+    expect(titles(view.items)).toEqual([
+      // Late, then urgent, then what needs work.
+      'Heaters',
+      'Gutters',
+      'Grout',
+      // Due today.
+      'Dehumidifier',
+      // The next 7 days by date ("In 2 days" before "In 4 days").
+      'Plants',
+      'Strips',
+      'Day 7',
+      // Later: urgency first, then the date.
+      'Day 8',
+      'Kitchen paper',
+      // No date: urgency first.
+      'No date',
+      'No date, not urgent',
+      // Okay. Good (the firepit) is left out, and so is anything done.
+      'Shower seal',
     ]);
-    // Okay first (keep an eye on it), then Good.
-    expect(titles(view.looking)).toEqual(['Shower seal', 'Firepit']);
-    expect(view.counts).toEqual({ attention: 3, today: 1, rest: 6 });
+    expect(view.counts).toEqual({ attention: 3, today: 1, rest: 7 });
   });
 
-  it('leaves empty groups out', () => {
-    expect(upNext([item('Plants', 'green', '2026-10-15')], TODAY).groups.map((g) => g.id)).toEqual(['week']);
-    expect(upNext([], TODAY).groups).toEqual([]);
+  it('puts the most late first, then the other urgent ones by date, then what needs work', () => {
+    const view = upNext(
+      [
+        state('Boiler', 'red'),
+        item('Urgent, no date', 'red', null),
+        item('Urgent tomorrow', 'red', '2026-10-14'),
+        item('1 day late, urgent', 'red', '2026-10-12'),
+        item('5 days late', 'green', '2026-10-08'),
+        state('Aerial', 'red'),
+        item('Urgent today', 'red', TODAY),
+        item('1 day late', 'amber', '2026-10-12'),
+      ],
+      TODAY,
+    );
+    expect(titles(view.items)).toEqual([
+      '5 days late',
+      // Equally late: the most urgent first.
+      '1 day late, urgent',
+      '1 day late',
+      'Urgent today',
+      'Urgent tomorrow',
+      'Urgent, no date',
+      'Aerial',
+      'Boiler',
+    ]);
+    expect(view.counts).toEqual({ attention: 8, today: 0, rest: 0 });
+  });
+
+  it('puts the most urgent first among what is due today, and the oldest first when all else ties', () => {
+    const view = upNext([item('Green', 'green', TODAY), item('Amber', 'amber', TODAY), item('Green too', 'green', TODAY)], TODAY);
+    expect(titles(view.items)).toEqual(['Amber', 'Green', 'Green too']);
+    expect(view.counts).toEqual({ attention: 0, today: 3, rest: 0 });
+  });
+
+  it('is empty with nothing open, or only things in good shape', () => {
+    expect(upNext([], TODAY)).toEqual({ items: [], counts: { attention: 0, today: 0, rest: 0 } });
+    expect(upNext([state('Firepit', 'green')], TODAY).items).toEqual([]);
   });
 
   it('puts late before urgent, then urgency, then date, and To maintain last (as Rooms sorts too)', () => {
@@ -112,7 +157,7 @@ describe('upNext', () => {
     expect(titles(room)).toEqual(['Late green', 'Amber soon', 'Boiler', 'Seal']);
   });
 
-  it('can sort the date first instead, then urgency (Today and Next 7 days)', () => {
+  it('can sort the date first instead, then urgency (the next 7 days)', () => {
     const sorted = [
       state('Seal', 'red'),
       item('Green in 2', 'green', '2026-10-15'),
@@ -173,11 +218,17 @@ describe('homeSummary', () => {
       lead: 'Nothing urgent today.',
       rest: 'Next up: Water the plants, in 2 days.',
     });
+    expect(summary([item('Find a plumber', 'amber', null)])).toEqual({
+      lead: 'Nothing urgent today.',
+      rest: 'Next up: Find a plumber.',
+    });
     expect(summary([state('Firepit', 'green')])).toEqual({ lead: 'All clear.', rest: 'Nothing to do right now.' });
+    // Something looked after that is Okay is listed, but is nothing to do.
+    expect(summary([state('Shower seal', 'amber')])).toEqual({ lead: 'All clear.', rest: 'Nothing to do right now.' });
   });
 
-  it('names the soonest thing next, even when Later lists a more urgent one first', () => {
-    // Both in Later, which sorts amber before green; the green one comes round first.
+  it('names the soonest thing next, even when the list puts a more urgent one first', () => {
+    // Both later than a week: the list puts amber before green; the green one comes round first.
     expect(summary([item('Paint the shed', 'amber', '2026-12-12'), item('Oil the hinges', 'green', '2026-10-22')])).toEqual({
       lead: 'Nothing urgent today.',
       rest: 'Next up: Oil the hinges, in 9 days.',

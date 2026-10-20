@@ -1,0 +1,80 @@
+/*
+ * An area's status lines (StatusLines.tsx), on its card on Home and in its sheet: a dot and
+ * words for each, urgent in red, non-urgent in orange, All good in green. The words keep 4.5:1
+ * or better on the card and on the page in both appearances; a long line wraps under its
+ * words, the dot level with the first line.
+ */
+.lines {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.08px;
+  font-weight: 600;
+  --dot-size: 8px;
+  --dot-top: 5px;
+}
+
+.lines[data-size='sheet'] {
+  gap: 2px;
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: -0.2px;
+  --dot-top: 6px;
+}
+
+.line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  color: var(--tone-text);
+}
+
+.lines[data-size='sheet'] .line {
+  gap: 7px;
+}
+
+.dot {
+  flex: none;
+  width: var(--dot-size);
+  height: var(--dot-size);
+  margin-top: var(--dot-top);
+  border-radius: 50%;
+  background: var(--tone-dot);
+}
+
+.text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Red: #d70015, 5.4:1 on the card and 4.8:1 on the page (#ff6961 in dark, 6:1 and 7.5:1). */
+.line[data-tone='urgent'] {
+  --tone-text: var(--rag-red-text);
+  --tone-dot: var(--rag-red);
+}
+
+/*
+ * Orange, a hue well apart from the red and from the amber of "Within the month": #b04c00,
+ * 5.4:1 on the card and 4.9:1 on the page; #ff9a3c in dark, 8:1 and 9.9:1. The dot is the
+ * system orange.
+ */
+.line[data-tone='non-urgent'] {
+  --tone-text: #b04c00;
+  --tone-dot: var(--rag-amber);
+}
+
+/* Green: #1f7a36, 5.4:1 on the card and 4.8:1 on the page (#4ade80 in dark). */
+.line[data-tone='good'] {
+  --tone-text: var(--rag-green-text);
+  --tone-dot: var(--rag-green);
+}
+
+@media (prefers-color-scheme: dark) {
+  .line[data-tone='non-urgent'] {
+    --tone-text: #ff9a3c;
+  }
+}

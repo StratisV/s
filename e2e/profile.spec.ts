@@ -283,7 +283,7 @@ test.describe('Household editor', () => {
       .map((n) => (n === 'Front garden' ? 'Front yard' : n))
       .concat('Garage');
     await expectAreas(page, expected);
-    await expect(areaCard(page, 'Garage', expected)).toHaveAccessibleName(/^Garage\b.*All clear/);
+    await expect(areaCard(page, 'Garage', expected)).toHaveAccessibleName(/^Garage\b.*All good/);
     // Kept its items through the rename.
     await openArea(page, 'Front yard', expected);
     await expect(ring(page, 'Trim the hedges')).toBeVisible();

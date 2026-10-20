@@ -96,8 +96,8 @@
   background: var(--on);
 }
 
-/* In the ring's place on a row: three rising bars, like a level, centred on the title's line. */
-.gauge[data-variant='row'] {
+/* In the ring's place: three rising bars, like a level, centred on the title's line. */
+.gauge {
   width: 24px;
   height: 24px;
   margin-top: 10px;
@@ -107,32 +107,20 @@
   padding-bottom: 4px;
 }
 
-.gauge[data-variant='row'] .bar {
+.gauge .bar {
   width: 4.5px;
 }
 
-.gauge[data-variant='row'] .bar:nth-child(1) {
+.gauge .bar:nth-child(1) {
   height: 7px;
 }
 
-.gauge[data-variant='row'] .bar:nth-child(2) {
+.gauge .bar:nth-child(2) {
   height: 11px;
 }
 
-.gauge[data-variant='row'] .bar:nth-child(3) {
+.gauge .bar:nth-child(3) {
   height: 15px;
-}
-
-/* On a tile: a flat bar of three segments. */
-.gauge[data-variant='tile'] {
-  gap: 3px;
-  align-items: center;
-}
-
-.gauge[data-variant='tile'] .bar {
-  width: 16px;
-  height: 5px;
-  border-radius: 3px;
 }
 
 @media (prefers-reduced-motion: reduce) {

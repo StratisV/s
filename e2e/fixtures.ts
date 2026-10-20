@@ -382,3 +382,51 @@ export async function closeProfile(page: Page): Promise<void> {
 export function detailValue(sheet: Locator, label: string): Locator {
   return sheet.getByLabel(label, { exact: true }).locator('xpath=..').locator('span[aria-hidden="true"]');
 }
+
+// ── Needs attention as one list of cards, and the areas' status lines ──────
+// (Needs attention lost its List / Calendar switch: openAttention(), showView(), views(),
+// group() and calendar() above are left from it; use these instead.)
+
+/** The Needs attention tab: its one list. */
+export async function openNeedsAttention(page: Page): Promise<void> {
+  await goToTab(page, 'Attention');
+  await expect(attentionScreen(page).getByRole('heading', { name: 'Needs attention', level: 1 })).toBeVisible();
+}
+
+/** Signed in as Stratis in the prototype household (openSeeded()), on Needs attention. */
+export async function openSeededAttention(page: Page): Promise<void> {
+  await openSeeded(page);
+  await openNeedsAttention(page);
+}
+
+/** Needs attention's list: a card for each item, or one card that says there is nothing. */
+export function attentionList(page: Page): Locator {
+  return attentionScreen(page).locator('[data-attention-list]');
+}
+
+/** The cards on Needs attention, top to bottom. */
+export function attentionCards(page: Page): Locator {
+  return attentionList(page).locator('li[data-item-id]');
+}
+
+/** The part of a card on Needs attention that opens its item, by the item's title. */
+export function attentionCard(page: Page, title: string): Locator {
+  return attentionList(page).getByRole('button', { name: new RegExp(`^${escapeRe(title)} ?, `) });
+}
+
+/** The titles of Needs attention's cards, top to bottom. */
+export function attentionTitles(page: Page): Promise<string[]> {
+  return attentionList(page)
+    .locator('[data-item-open]')
+    .evaluateAll((els) => els.map((el) => (el.textContent ?? '').split(',')[0].trim()));
+}
+
+/** An area's status lines in its sheet ("1 urgent task", "2 non-urgent tasks", "All good"). */
+export function areaStatusLines(page: Page, name: string): Locator {
+  return area(page, name).locator('[data-area-status] [data-tone]');
+}
+
+/** An area's status lines on its card on Home. */
+export function cardStatusLines(page: Page, name: string, all?: readonly string[]): Locator {
+  return areaCard(page, name, all).locator('[data-tone]');
+}

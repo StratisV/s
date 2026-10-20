@@ -43,7 +43,7 @@ const member = (id: string, name: string, emoji: string): Member => ({
 
 const MEMBERS = [member('m1', 'Shea', '🦆'), member('m2', 'Ela', '🦊')];
 
-function setup(overrides: Partial<Item> = {}, extra: { room?: string; hideWhen?: boolean; showWho?: boolean } = {}) {
+function setup(overrides: Partial<Item> = {}, extra: { showWho?: boolean } = {}) {
   const onOpen = vi.fn();
   const onComplete = vi.fn(() => Promise.resolve());
   const props = {
@@ -89,28 +89,16 @@ describe('ItemRow', () => {
     }
   });
 
-  it('shows when it is due relative to today, a late date in red, and its room where the list mixes rooms', () => {
-    const { meta } = setup({}, { room: 'Hallway' });
-    // After the Urgent pill the date follows straight on; a dot goes before the room.
-    expect(meta.textContent).toBe('Urgent2 days late·Hallway');
+  it('shows when it is due relative to today, a late date in red', () => {
+    const { meta } = setup();
+    // After the Urgent pill the date follows straight on.
+    expect(meta.textContent).toBe('Urgent2 days late');
     expect(screen.getByText('2 days late').hasAttribute('data-late')).toBe(true);
     cleanup();
     // Quiet words (Within the month, Not urgent) are followed by a dot.
     const soon = setup({ rag: 'amber', due_date: '2026-10-12' });
     expect(soon.meta.textContent).toBe('Within the month·In 4 days');
-  });
-
-  it('puts the room after the words in a part of its own, its dot with it, so a short line moves it down whole', () => {
-    const { meta } = setup({}, { room: 'Hallway' });
-    const part = meta.querySelector('[data-room]')!.parentElement!;
-    expect(part.parentElement).toBe(meta);
-    expect(part.firstElementChild!.textContent).toBe('·');
-    expect(meta.firstElementChild!.textContent).toBe('Urgent2 days late');
-    cleanup();
-    // The same straight after a pill with nothing between.
-    const state = setup({ kind: 'state', rag: 'red', due_date: null }, { room: 'Garden' });
-    expect(state.meta.textContent).toBe('Needs work·Garden');
-    expect(state.meta.querySelector('[data-room]')!.parentElement!.parentElement).toBe(state.meta);
+    expect(soon.meta.querySelector('[data-late]')).toBeNull();
   });
 
   it('gives a To do’s words a dot in its colour, and leaves it out for To maintain (its gauge shows the condition)', () => {
@@ -123,19 +111,9 @@ describe('ItemRow', () => {
     expect(badge.children).toHaveLength(0);
   });
 
-  it('leaves out the date where the list says it, but never a late one', () => {
-    const today = setup({ rag: 'green', due_date: TODAY }, { hideWhen: true, room: 'Garden' });
-    expect(today.meta.textContent).toBe('Not urgent·Garden');
-    cleanup();
-    const late = setup({}, { hideWhen: true });
-    expect(late.meta.textContent).toContain('2 days late');
-  });
-
   it('reads one sentence to assistive tech, and keeps the ring name', () => {
-    const { row, ring } = setup({ repeat: 'monthly' }, { room: 'Hallway' });
-    expect(row.querySelector('.visually-hidden')!.textContent).toBe(
-      ', Urgent, 2 days late, Hallway, Shea, repeats monthly, has a note.',
-    );
+    const { row, ring } = setup({ repeat: 'monthly' });
+    expect(row.querySelector('.visually-hidden')!.textContent).toBe(', Urgent, 2 days late, Shea, repeats monthly, has a note.');
     expect(ring!.getAttribute('aria-label')).toBe('Mark Heaters not working as done');
     cleanup();
     const nobody = setup({ assignee_id: null, note: '  ', due_date: null, rag: 'green' });
@@ -143,10 +121,10 @@ describe('ItemRow', () => {
   });
 
   it('shows who it is for, their emoji and first name, unless one person’s items are shown', () => {
-    const { row } = setup({}, { room: 'Hallway' });
+    const { row } = setup();
     expect(row.querySelector('[data-who]')!.textContent).toBe('🦆Shea');
     cleanup();
-    const filtered = setup({}, { room: 'Hallway', showWho: false });
+    const filtered = setup({}, { showWho: false });
     expect(filtered.row.querySelector('[data-who]')).toBeNull();
     // VoiceOver still hears who it is for.
     expect(filtered.row.querySelector('.visually-hidden')!.textContent).toContain('Shea');
@@ -273,12 +251,6 @@ describe('ItemRow', () => {
       const { row, meta } = setup(firepit);
       expect(meta.textContent).toBe('Good·Updated 2 days ago');
       expect(row.querySelector('.visually-hidden')!.textContent).toBe(', to maintain, Good, Ela, updated 2 days ago, has a note.');
-    });
-
-    it('says its room instead of when it was updated where the list mixes rooms', () => {
-      const { row, meta } = setup(firepit, { room: 'Garden' });
-      expect(meta.textContent).toBe('Good·Garden');
-      expect(row.querySelector('.visually-hidden')!.textContent).toBe(', to maintain, Good, Garden, Ela, has a note.');
     });
 
     it('opens on a tap or from the keyboard, and never completes', async () => {

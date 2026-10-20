@@ -1,17 +1,15 @@
+import { statusLines, statusWords } from '../../lib/logic/areaStatus';
 import { Avatar } from '../../ui/Avatar';
 import { AreaArt } from '../../ui/area-art/AreaArt';
+import { StatusLines } from './StatusLines';
 import s from './AreaCard.module.css';
-
-/** 'attention': something urgent or late, or that needs work; 'soon': within the month or Okay; 'good': nothing pressing. */
-export type AreaStatus = 'attention' | 'soon' | 'good';
 
 export interface AreaCardProps {
   area: { id: string; name: string };
-  status: AreaStatus;
-  /** The status in words, worked out by the caller ("2 need attention", "1 coming up", "All good"). */
-  statusText: string;
-  /** Open To dos. */
-  openCount: number;
+  /** Open To dos marked Urgent, and things looked after that need work (areaOverview()). */
+  urgent: number;
+  /** The other open To dos: Within the month and Not urgent, late or not. */
+  nonUrgent: number;
   /** Who is looking after its open items, most items first. */
   people: { id: string; name: string; emoji: string }[];
   onOpen(): void;
@@ -19,11 +17,6 @@ export interface AreaCardProps {
 
 /** How many faces show in the stack. */
 const FACES = 3;
-
-/** "3 to do", or "Nothing to do". */
-export function countWords(openCount: number): string {
-  return openCount > 0 ? `${openCount} to do` : 'Nothing to do';
-}
 
 /** The names under the faces: "Shea", "Shea and Ela", "Shea, Ela +2", or "No one yet". */
 export function peopleWords(names: readonly string[]): string {
@@ -39,22 +32,23 @@ function allNames(names: readonly string[]): string {
 }
 
 /**
- * One area on Home: its picture, then its name, how it is in words (red, amber or green),
- * how many To dos are open, and who is looking after it. The whole card is one button
- * (it opens the area), named for all of that: "Kitchen, 2 need attention, 3 to do, Shea
- * and Ela looking after it". It fills its grid cell, so cards in a row line up.
+ * One area on Home: its picture, then its name, how it is ("2 urgent tasks" in red, "1
+ * non-urgent task" in orange, or "All good" in green; StatusLines), and who is looking after
+ * it. The whole card is one button (it opens the area), named for all of that: "Kitchen, 2
+ * urgent tasks, 1 non-urgent task, Shea and Ela looking after it". It fills its grid cell, so
+ * cards in a row line up.
  */
-export function AreaCard({ area, status, statusText, openCount, people, onOpen }: AreaCardProps) {
+export function AreaCard({ area, urgent, nonUrgent, people, onOpen }: AreaCardProps) {
   const names = people.map((person) => person.name);
-  const count = countWords(openCount);
   const who = names.length ? `${allNames(names)} looking after it` : 'no one looking after it yet';
+  const tone = urgent ? 'urgent' : nonUrgent ? 'non-urgent' : 'good';
   return (
     <button
       type="button"
       className={s.card}
-      data-status={status}
+      data-status={tone}
       data-area-card={area.id}
-      aria-label={`${area.name}, ${statusText}, ${count}, ${who}`}
+      aria-label={`${area.name}, ${statusWords({ urgent, nonUrgent })}, ${who}`}
       onClick={() => onOpen()}
     >
       <span className={s.frame}>
@@ -62,12 +56,8 @@ export function AreaCard({ area, status, statusText, openCount, people, onOpen }
       </span>
       <span className={s.body}>
         <span className={s.name}>{area.name}</span>
-        <span className={s.status}>
-          <span className={s.dot} aria-hidden="true" />
-          <span className={s.statusText}>{statusText}</span>
-        </span>
-        <span className={s.count} data-empty={openCount === 0 || undefined}>
-          {count}
+        <span className={s.status} data-card-status="">
+          <StatusLines lines={statusLines({ urgent, nonUrgent })} />
         </span>
         <span className={s.people} data-empty={people.length === 0 || undefined}>
           {people.length ? (

@@ -56,11 +56,11 @@ describe('Home in server mode', () => {
     expect(line.previousElementSibling).toBe(document.querySelector('[data-home-summary]'));
     expect(line.nextElementSibling).toBe(screen.getByRole('list', { name: 'Areas' }));
     cleanup();
-    // On Needs attention too: under its sentence, above the view switch and whose items.
+    // On Needs attention too: under its sentence, above whose items.
     showAttention(makeHome({ backend: server(), readOnly: true }));
     const again = screen.getByText(READ_ONLY_LINE);
     expect(again.previousElementSibling).toBe(document.querySelector('[data-attention-summary]'));
-    expect(again.nextElementSibling!.contains(screen.getByRole('radiogroup', { name: 'View' }))).toBe(true);
+    expect(again.nextElementSibling!.contains(screen.getByRole('button', { name: 'Mine' }))).toBe(true);
   });
 
   it('says it with no areas too, and not at all while saving works', () => {

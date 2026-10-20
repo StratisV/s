@@ -1,12 +1,13 @@
 import {
   addButton,
+  attentionCards,
   attentionScreen,
   chooseWho,
   DEMO_STORAGE_KEY,
   expect,
   itemSheet,
   mine,
-  openSeeded,
+  openSeededAttention,
   peopleButton,
   reopen,
   settled,
@@ -20,11 +21,9 @@ function listRow(page: Page, title: string) {
   return attentionScreen(page).getByRole('button', { name: new RegExp(`^${title} ?, `) });
 }
 
-/** How many rows Needs attention shows (Later opened). */
-async function rowCount(page: Page): Promise<number> {
-  const more = attentionScreen(page).getByRole('button', { name: /^Show \d+ more$/ });
-  if (await more.count()) await more.click();
-  return attentionScreen(page).locator('[data-item-open]').count();
+/** How many cards Needs attention shows. */
+function rowCount(page: Page): Promise<number> {
+  return attentionCards(page).count();
 }
 
 test.use({ timezoneId: 'Europe/London' });
@@ -39,7 +38,7 @@ async function peopleMenu(page: Page) {
 
 test.describe('Filter Needs attention by person', () => {
   test('the people menu: Everyone, you, the others and Unassigned, each with how many are open', async ({ page }) => {
-    await openSeeded(page, 'List');
+    await openSeededAttention(page);
     await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Everyone');
     const menu = await peopleMenu(page);
     const radios = menu.getByRole('menuitemradio');
@@ -63,7 +62,7 @@ test.describe('Filter Needs attention by person', () => {
   });
 
   test("one person's items only; remembered after a reload", async ({ page }) => {
-    await openSeeded(page, 'List');
+    await openSeededAttention(page);
     const all = await rowCount(page);
     await chooseWho(page, /^Shea,/);
     await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Shea');
@@ -92,7 +91,7 @@ test.describe('Filter Needs attention by person', () => {
   });
 
   test('a job added for someone else shows everyone’s for now, and Mine stays the choice it opens on', async ({ page }) => {
-    await openSeeded(page, 'List');
+    await openSeededAttention(page);
     await mine(page).click();
     await expect(summary(page)).toHaveText(/^For you, /);
     await addButton(page).click();
@@ -112,7 +111,7 @@ test.describe('Filter Needs attention by person', () => {
   });
 
   test('Mine is one tap, and a second tap shows everyone’s again', async ({ page }) => {
-    await openSeeded(page, 'List');
+    await openSeededAttention(page);
     await expect(mine(page)).toHaveAttribute('aria-pressed', 'false');
     await mine(page).click();
     await expect(mine(page)).toHaveAttribute('aria-pressed', 'true');
@@ -133,7 +132,7 @@ test.describe('Filter Needs attention by person', () => {
   });
 
   test('Unassigned: only the items nobody has', async ({ page }) => {
-    await openSeeded(page, 'List');
+    await openSeededAttention(page);
     await chooseWho(page, /^Unassigned,/);
     await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Unassigned');
     const names = await attentionScreen(page)
@@ -145,7 +144,7 @@ test.describe('Filter Needs attention by person', () => {
   });
 
   test('someone with nothing open sees that said plainly', async ({ page }) => {
-    await openSeeded(page, 'List');
+    await openSeededAttention(page);
     // Ela hands everything back: her items become unassigned.
     await page.evaluate((key) => {
       const doc = JSON.parse(localStorage.getItem(key)!);
@@ -156,7 +155,7 @@ test.describe('Filter Needs attention by person', () => {
     await reopen(page);
     await chooseWho(page, /^Ela, 0 items/);
     await expect(attentionScreen(page).getByRole('status').filter({ hasText: 'Nothing for Ela right now.' })).toBeVisible();
-    await expect(attentionScreen(page).locator('section[data-group]')).toHaveCount(0);
+    await expect(attentionCards(page)).toHaveCount(0);
     await expect(summary(page)).toHaveText('All clear for Ela. Nothing to do right now.');
     await expect(attentionScreen(page).getByRole('status').filter({ hasText: 'Nothing for Ela' })).toHaveText('Nothing hereNothing for Ela right now.');
   });
@@ -166,14 +165,10 @@ for (const width of [320, 360]) {
   test.describe(`Mine at ${width}px`, () => {
     test.use({ viewport: { width, height: 700 } });
 
-    test('keeps its word, every view’s name stays whole, and each control takes taps 44px wide and tall', async ({ page }) => {
-      await openSeeded(page, 'List');
+    test('keeps its word, and each control takes taps 44px wide and tall', async ({ page }) => {
+      await openSeededAttention(page);
       // "Mine" in words (the emoji alone looked like the profile button on the hero).
       await expect(mine(page).getByText('Mine', { exact: true })).toBeVisible();
-      for (const name of ['List', 'Calendar']) {
-        const label = attentionScreen(page).getByRole('radio', { name, exact: true }).locator('span');
-        expect(await label.evaluate((el) => el.scrollWidth <= el.clientWidth + 0.5), name).toBe(true);
-      }
       // 21px either side of each control's centre, and 21px above and below, is still that control.
       for (const control of [mine(page), peopleButton(page)]) {
         const box = (await control.boundingBox())!;

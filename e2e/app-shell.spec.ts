@@ -11,7 +11,7 @@ import {
   itemSheet,
   NOW,
   openArea,
-  openAttention,
+  openNeedsAttention,
   openFresh,
   openItem,
   openNewItem,
@@ -143,9 +143,8 @@ test.describe('App shell', () => {
     const card = (await areaCards(page).last().boundingBox())!;
     const add = (await addButton(page).boundingBox())!;
     expect(card.y + card.height).toBeLessThanOrEqual(add.y);
-    // Needs attention's list too: its last row (Later opened).
-    await openAttention(page);
-    await attentionScreen(page).getByRole('button', { name: /^Show \d+ more$/ }).click();
+    // Needs attention's list too: its last card.
+    await openNeedsAttention(page);
     await toBottom(attentionScreen(page));
     const last = (await attentionScreen(page).locator('[data-item-open]').last().boundingBox())!;
     expect(last.y + last.height).toBeLessThanOrEqual((await addButton(page).boundingBox())!.y);
@@ -317,7 +316,7 @@ for (const width of [320, 375]) {
       await page.keyboard.press('Escape');
       await expect(itemSheet(page)).toHaveCount(0);
       await closeArea(page);
-      await openAttention(page);
+      await openNeedsAttention(page);
       await noSideways('Needs attention');
       await goToTab(page, 'Stats');
       await noSideways('Stats');

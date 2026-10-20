@@ -199,8 +199,8 @@ test('areas and the household: add, rename, reorder, delete, name and address sh
   await expect(dialog.getByRole('button', { name: 'Delete Shed', exact: true })).toBeVisible();
   await closeHousehold(a, dialog);
   // A card on Shea's Home, with nothing in it yet.
-  await expect(areaCard(b, 'Shed')).toHaveAccessibleName(/^Shed\b.*All clear/, { timeout: SYNC_MS });
-  await expect((await inArea(b, 'Shed')).locator('[data-area-status]')).toHaveText('All clear');
+  await expect(areaCard(b, 'Shed')).toHaveAccessibleName(/^Shed\b.*All good/, { timeout: SYNC_MS });
+  await expect((await inArea(b, 'Shed')).locator('[data-area-status]')).toHaveText('All good');
 
   // Shea renames it.
   await quiet(stratis);

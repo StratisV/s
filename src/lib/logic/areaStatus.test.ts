@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Item, Member, Rag } from '../types';
-import { areaOverview, peopleText } from './areaStatus';
-
-const TODAY = '2026-10-13';
+import { areaOverview, peopleText, statusLines, statusWords } from './areaStatus';
 
 let n = 0;
 function item(rag: Rag, due: string | null, over: Partial<Item> = {}): Item {
@@ -53,47 +51,24 @@ const ELA = member('m3', 'Ela');
 const MEMBERS = [STRATIS, SHEA, ELA];
 
 describe('areaOverview', () => {
-  it('needs attention for anything urgent, late, or looked after that needs work', () => {
-    expect(areaOverview([item('red', '2026-10-20')], MEMBERS, TODAY)).toMatchObject({
-      status: 'attention',
-      statusText: '1 needs attention',
-    });
-    // Late, even when not urgent; and a thing that needs work.
-    const late = item('green', '2026-10-01');
-    const work = state('red');
-    expect(areaOverview([late, work, item('amber', '2026-10-20')], MEMBERS, TODAY)).toMatchObject({
-      status: 'attention',
-      statusText: '2 need attention',
-      openCount: 2,
-    });
+  it('counts urgent To dos and things that need work as urgent, whatever their date', () => {
+    const view = areaOverview([item('red', '2026-12-20'), item('red', null), state('red'), item('red', '2026-10-01')], MEMBERS);
+    expect(view).toMatchObject({ urgent: 4, nonUrgent: 0 });
   });
 
-  it('is coming up for a To do within the month, or to keep an eye on for something Okay', () => {
-    expect(areaOverview([item('amber', '2026-10-30'), item('green', null)], MEMBERS, TODAY)).toMatchObject({
-      status: 'soon',
-      statusText: '1 coming up',
-      openCount: 2,
-    });
-    expect(areaOverview([state('amber'), item('green', null)], MEMBERS, TODAY)).toMatchObject({
-      status: 'soon',
-      statusText: '1 to keep an eye on',
-      openCount: 1,
-    });
-    // The To dos are what the words count when both are there.
-    expect(areaOverview([state('amber'), item('amber', null), item('amber', null)], MEMBERS, TODAY).statusText).toBe(
-      '2 coming up',
+  it('counts every other open To do as non-urgent, late or not', () => {
+    // Within the month and Not urgent; one of them days late.
+    const view = areaOverview([item('amber', '2026-10-30'), item('green', '2026-10-01'), item('green', null)], MEMBERS);
+    expect(view).toMatchObject({ urgent: 0, nonUrgent: 3 });
+  });
+
+  it('leaves out things looked after that are Good or Okay, and anything done', () => {
+    const view = areaOverview(
+      [state('green'), state('amber'), item('red', '2026-10-01', { status: 'done' }), item('green', null, { status: 'done' })],
+      MEMBERS,
     );
-  });
-
-  it('is all good with nothing pressing, and all clear with nothing open', () => {
-    expect(areaOverview([item('green', '2026-10-20'), state('green')], MEMBERS, TODAY)).toMatchObject({
-      status: 'good',
-      statusText: 'All good',
-      openCount: 1,
-    });
-    expect(areaOverview([], MEMBERS, TODAY)).toEqual({ status: 'good', statusText: 'All clear', openCount: 0, people: [] });
-    // Done items are not open.
-    expect(areaOverview([item('red', '2026-10-01', { status: 'done' })], MEMBERS, TODAY).status).toBe('good');
+    expect(view).toEqual({ urgent: 0, nonUrgent: 0, people: [] });
+    expect(areaOverview([], MEMBERS)).toEqual({ urgent: 0, nonUrgent: 0, people: [] });
   });
 
   it('lists who is looking after it, most items first, then in the household’s order', () => {
@@ -105,9 +80,30 @@ describe('areaOverview', () => {
       item('green', null, { assignee_id: SHEA.id }),
       item('green', null),
     ];
-    expect(areaOverview(items, MEMBERS, TODAY).people.map((m) => m.name)).toEqual(['Shea', 'Ela', 'Stratis']);
+    expect(areaOverview(items, MEMBERS).people.map((m) => m.name)).toEqual(['Shea', 'Ela', 'Stratis']);
     // Someone who has left is left out.
-    expect(areaOverview([item('green', null, { assignee_id: 'gone' })], MEMBERS, TODAY).people).toEqual([]);
+    expect(areaOverview([item('green', null, { assignee_id: 'gone' })], MEMBERS).people).toEqual([]);
+  });
+});
+
+describe('statusLines', () => {
+  it('says how many urgent tasks in red and non-urgent ones in orange, red first', () => {
+    expect(statusLines({ urgent: 1, nonUrgent: 0 })).toEqual([{ tone: 'urgent', text: '1 urgent task' }]);
+    expect(statusLines({ urgent: 0, nonUrgent: 3 })).toEqual([{ tone: 'non-urgent', text: '3 non-urgent tasks' }]);
+    expect(statusLines({ urgent: 2, nonUrgent: 1 })).toEqual([
+      { tone: 'urgent', text: '2 urgent tasks' },
+      { tone: 'non-urgent', text: '1 non-urgent task' },
+    ]);
+  });
+
+  it('says All good in green when there are neither', () => {
+    expect(statusLines({ urgent: 0, nonUrgent: 0 })).toEqual([{ tone: 'good', text: 'All good' }]);
+  });
+
+  it('reads them as one phrase', () => {
+    expect(statusWords({ urgent: 2, nonUrgent: 1 })).toBe('2 urgent tasks, 1 non-urgent task');
+    expect(statusWords({ urgent: 0, nonUrgent: 12 })).toBe('12 non-urgent tasks');
+    expect(statusWords({ urgent: 0, nonUrgent: 0 })).toBe('All good');
   });
 });
 

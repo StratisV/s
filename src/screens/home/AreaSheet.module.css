@@ -107,41 +107,9 @@
   outline: none;
 }
 
+/* How it is (StatusLines): the card's words and colours, a step larger. */
 .status {
   margin: 6px 0 0;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 15px;
-  line-height: 20px;
-  font-weight: 600;
-  letter-spacing: -0.2px;
-  /* In the card's colours: green, amber or red words (4.5:1 or better on the sheet). */
-  color: var(--rag-green-text);
-}
-
-.statusDot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--rag-green);
-}
-
-.status[data-status='attention'] {
-  color: var(--rag-red-text);
-}
-
-.status[data-status='attention'] .statusDot {
-  background: var(--rag-red);
-}
-
-.status[data-status='soon'] {
-  color: var(--rag-amber-text);
-}
-
-.status[data-status='soon'] .statusDot {
-  background: var(--rag-amber);
 }
 
 .people {

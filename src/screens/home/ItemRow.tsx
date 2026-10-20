@@ -9,7 +9,6 @@ import { EmojiText } from '../../ui/EmojiText';
 import { RepeatIcon } from '../../ui/icons';
 import { rowFallback, rowsBeside } from './rowFocus';
 import { RevealContext } from './reveal';
-import { RoomIcon } from './RoomIcon';
 import { ConditionGauge, StatusRing } from './StatusRing';
 import styles from './ItemRow.module.css';
 
@@ -40,129 +39,15 @@ const reducedMotion = () => {
 };
 
 /**
- * An item's colour in words, at three volumes: "Urgent" is a red pill (the strongest thing on
- * a row), "Within the month" a dot and amber words, "Not urgent" a dot and grey words. For To
- * maintain, its condition the same way: "Needs work" a pill, "Okay" amber words, "Good" grey
- * (no dot: the row's gauge shows it). Decorative: the row says it to assistive tech.
+ * Ticking an item off from its ring, for a row in an area's sheet and a card on Needs
+ * attention: the ring fills, confetti flies and the title is struck through for a moment
+ * (`completing`), then one that `leaves` its list folds away (`leaving`; not with Reduce
+ * Motion), then `onComplete` runs, once however fast the taps (`busy`). Keyboard focus moves
+ * to the nearest row left in the same list, else to its fallback (rowFallback()). `openRef`
+ * is the button that opens the item.
  */
-export function RagBadge({ kind, rag, dot = true }: { kind: Item['kind']; rag: Rag; dot?: boolean }) {
-  return (
-    <span className={styles.badge} data-rag={rag} aria-hidden="true">
-      {dot ? <span className={styles.badgeDot} /> : null}
-      {ragWord(kind, rag)}
-    </span>
-  );
-}
-
-/** Who an item is for, at the end of a row's first line or on a tile: their emoji and first name. Decorative. */
-export function Who({ member }: { member: Member }) {
-  return (
-    <span className={styles.who} aria-hidden="true" data-who="">
-      <span className={styles.whoEmoji}>
-        <EmojiText text={member.emoji} />
-      </span>
-      <span className={styles.whoName}>{firstName(member.name)}</span>
-    </span>
-  );
-}
-
-interface RowMetaProps {
-  kind: Item['kind'];
-  rag: Rag;
-  /** The label's dot; a To maintain row leaves it out (its gauge shows the condition). */
-  dot?: boolean;
-  /** What follows the label on its line, in order: when it is due, when it was updated... */
-  parts?: ReactNode[];
-  /** Its room, where a list mixes rooms. */
-  room?: string;
-}
-
-/**
- * The quiet line under a row's title: its urgency (or condition) in words, then `parts`, then
- * its room. After a pill the next words follow straight on; after quiet words, and before the
- * room, a dot separates them. The room is always whole: on this line while it fits, else at
- * the start of the next (cut short only when its name is wider than the whole line).
- * Decorative: the row says all of it to assistive tech.
- */
-export function RowMeta({ kind, rag, dot = true, parts = [], room }: RowMetaProps) {
-  // A pill (Urgent, Needs work) separates itself; quiet words need a dot after them.
-  const pill = rag === 'red';
-  return (
-    <span className={styles.meta} data-meta="" aria-hidden="true">
-      <span className={styles.metaLead}>
-        <RagBadge kind={kind} rag={rag} dot={dot} />
-        {parts.filter(Boolean).map((part, i) => (
-          <Fragment key={i}>
-            {i || !pill ? <span className={styles.sep}>·</span> : null}
-            {part}
-          </Fragment>
-        ))}
-      </span>
-      {room ? (
-        <span className={styles.roomPart}>
-          <span className={styles.roomSep}>·</span>
-          <span className={styles.room} data-room="">
-            <RoomIcon name={room} size={13} className={styles.roomIcon} />
-            <span className={styles.roomName}>{room}</span>
-          </span>
-        </span>
-      ) : null}
-    </span>
-  );
-}
-
-interface ItemRowProps {
-  item: Item;
-  members: Member[];
-  /** Today in the household's time zone. */
-  today: ISODate;
-  /** The household's, for a To maintain item's "Updated" day. */
-  timeZone: string;
-  /** Its room, where a list mixes rooms (Up next, a day under the calendar). */
-  room?: string;
-  /** Leaves out when it is due, where the list already says it (Today, a day under the calendar). Late stays. */
-  hideWhen?: boolean;
-  /**
-   * Shows who it is for (their emoji and first name) at the end of the title's line. Off
-   * while the person filter shows one person's items: they would all say the same.
-   */
-  showWho?: boolean;
-  onOpen(itemId: string): void;
-  onComplete(itemId: string): Promise<void> | void;
-  /**
-   * The row leaves its list once completed, even when the item repeats: in Up next and under
-   * the calendar a repeating item moves on to a later date. (In an area's sheet a one-off leaves
-   * and a repeating item stays.)
-   */
-  leavesOnComplete?: boolean;
-}
-
-/**
- * A Home row: a neutral ring (a To do: tap it to mark the item done) or a condition gauge (a
- * To maintain item, never done); the title (two lines at most); then one quiet line: the
- * urgency (or condition) in words, when it is due ("In 4 days", "2 days late" in red) with a
- * repeat glyph, and its room where the list mixes rooms. Who it is for (their emoji and first
- * name) sits at the end of the title's line. Anywhere but the ring opens the item. Assistive
- * tech hears one sentence: "Heaters not working, Urgent, 2 days late, Hallway, Shea, has a
- * note." Just saved (RevealContext), it lights up for a moment.
- *
- * Ticking it off: the ring fills, the check springs in and the title is struck through for a
- * moment, then a row that leaves its list folds away (none of the motion with Reduce Motion).
- */
-export function ItemRow({
-  item,
-  members,
-  today,
-  timeZone,
-  room,
-  hideWhen = false,
-  showWho = true,
-  onOpen,
-  onComplete,
-  leavesOnComplete = false,
-}: ItemRowProps) {
+export function useCompletion(itemId: string, leaves: boolean, onComplete: (itemId: string) => Promise<void> | void) {
   const fire = useConfetti();
-  const lit = useContext(RevealContext) === item.id;
   const [completing, setCompleting] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const busy = useRef(false);
@@ -179,8 +64,6 @@ export function ItemRow({
     };
   }, []);
 
-  const leaves = leavesOnComplete || item.repeat === 'none';
-
   const complete = (event: MouseEvent<HTMLButtonElement>) => {
     if (busy.current) return;
     busy.current = true;
@@ -194,7 +77,7 @@ export function ItemRow({
 
     const finish = () => {
       // A row that leaves its list: move keyboard focus to the nearest remaining row in the same
-      // list, else to its section's heading (a group's, or To do in an area's sheet).
+      // list, else to its fallback (To do in an area's sheet, the sentence on Needs attention).
       const own = openRef.current;
       if (leaves && keyboard && document.activeElement === ring && own) {
         const rows = rowsBeside(own);
@@ -202,7 +85,7 @@ export function ItemRow({
         const next = rows[i + 1] ?? rows[i - 1] ?? rowFallback(own.closest('section'));
         next?.focus();
       }
-      const pending = completeRef.current(item.id);
+      const pending = completeRef.current(itemId);
       if (mounted.current) {
         setCompleting(false);
         setLeaving(false);
@@ -229,27 +112,139 @@ export function ItemRow({
     }, COMPLETE_FEEDBACK_MS);
   };
 
+  return { completing, leaving, busy, openRef, complete };
+}
+
+/**
+ * An item's colour in words, at three volumes: "Urgent" is a red pill (the strongest thing on
+ * a row), "Within the month" a dot and amber words, "Not urgent" a dot and grey words. For To
+ * maintain, its condition the same way: "Needs work" a pill, "Okay" amber words, "Good" grey
+ * (no dot: the row's gauge shows it). Decorative: the row says it to assistive tech.
+ */
+export function RagBadge({ kind, rag, dot = true }: { kind: Item['kind']; rag: Rag; dot?: boolean }) {
+  return (
+    <span className={styles.badge} data-rag={rag} aria-hidden="true">
+      {dot ? <span className={styles.badgeDot} /> : null}
+      {ragWord(kind, rag)}
+    </span>
+  );
+}
+
+/** Who an item is for, at the end of a row's first line or on a card: their emoji and first name. Decorative. */
+export function Who({ member }: { member: Member }) {
+  return (
+    <span className={styles.who} aria-hidden="true" data-who="">
+      <span className={styles.whoEmoji}>
+        <EmojiText text={member.emoji} />
+      </span>
+      <span className={styles.whoName}>{firstName(member.name)}</span>
+    </span>
+  );
+}
+
+interface RowMetaProps {
+  kind: Item['kind'];
+  rag: Rag;
+  /** The label's dot; a To maintain item leaves it out (its gauge shows the condition). */
+  dot?: boolean;
+  /** What follows the label on its line, in order: when it is due, when it was updated... */
+  parts?: ReactNode[];
+}
+
+/**
+ * The quiet line under a title: its urgency (or condition) in words, then `parts`. After a
+ * pill the next words follow straight on; after quiet words a dot separates them. Decorative:
+ * the row says all of it to assistive tech.
+ */
+export function RowMeta({ kind, rag, dot = true, parts = [] }: RowMetaProps) {
+  // A pill (Urgent, Needs work) separates itself; quiet words need a dot after them.
+  const pill = rag === 'red';
+  return (
+    <span className={styles.meta} data-meta="" aria-hidden="true">
+      <RagBadge kind={kind} rag={rag} dot={dot} />
+      {parts.filter(Boolean).map((part, i) => (
+        <Fragment key={i}>
+          {i || !pill ? <span className={styles.sep}>·</span> : null}
+          {part}
+        </Fragment>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * What a row or card says about an item: who it is for, when it is due (`when`, null for a
+ * To maintain item), how often it repeats, when it was last updated (a To maintain item, where
+ * its room isn't shown), and the one sentence assistive tech hears for all of it (`spoken`,
+ * after the title): "Urgent, 2 days late, Hallway, Shea, repeats monthly, has a note".
+ */
+export function itemWords(
+  item: Item,
+  { members, today, timeZone, room }: { members: Member[]; today: ISODate; timeZone: string; room?: string },
+) {
   const maintained = isState(item);
   const member = members.find((m) => m.id === item.assignee_id) ?? null;
   const when = maintained ? null : relativeDue(item.due_date, today);
-  const showWhen = when && (!hideWhen || when.late);
-  // Where the list mixes rooms, the room says more than when it was last updated.
+  // Where its room is shown, the room says more than when it was last updated.
   const updated = maintained && !room ? relativeUpdatedAt(item.updated_at, today, timeZone) : null;
-  const note = item.note.trim();
-  const repeat = !maintained && item.repeat !== 'none' ? REPEAT_OPTIONS.find((o) => o.value === item.repeat)?.label : null;
-
-  // One sentence for assistive tech; the visible line is hidden from it.
+  const repeat = !maintained && item.repeat !== 'none' ? (REPEAT_OPTIONS.find((o) => o.value === item.repeat)?.label ?? null) : null;
   const spoken = [
     maintained ? `to maintain, ${ragWord(item.kind, item.rag)}` : ragWord(item.kind, item.rag),
-    showWhen ? when.text : null,
+    when ? when.text : null,
     room ?? null,
     member ? member.name : 'Unassigned',
     repeat ? `repeats ${repeat.toLowerCase()}` : null,
     updated ? updated.toLowerCase() : null,
-    note ? 'has a note' : null,
+    item.note.trim() ? 'has a note' : null,
   ]
     .filter(Boolean)
     .join(', ');
+  return { maintained, member, when, updated, repeat, spoken };
+}
+
+/** When it is due ("In 4 days", "2 days late" in red), with the repeat glyph for a repeating job. */
+export function WhenWords({ when, repeat }: { when: { text: string; late: boolean }; repeat: boolean }) {
+  return (
+    <span className={styles.when} data-late={when.late || undefined}>
+      {when.text}
+      {repeat ? <RepeatIcon className={styles.glyph} size={11} /> : null}
+    </span>
+  );
+}
+
+interface ItemRowProps {
+  item: Item;
+  members: Member[];
+  /** Today in the household's time zone. */
+  today: ISODate;
+  /** The household's, for a To maintain item's "Updated" day. */
+  timeZone: string;
+  /**
+   * Shows who it is for (their emoji and first name) at the end of the title's line. Off
+   * where every row would say the same.
+   */
+  showWho?: boolean;
+  onOpen(itemId: string): void;
+  onComplete(itemId: string): Promise<void> | void;
+}
+
+/**
+ * A row in an area's sheet: a neutral ring (a To do: tap it to mark the item done) or a
+ * condition gauge (a To maintain item, never done); the title (two lines at most); then one
+ * quiet line: the urgency (or condition) in words, when it is due ("In 4 days", "2 days late"
+ * in red) with a repeat glyph, or when a To maintain item was last updated. Who it is for
+ * (their emoji and first name) sits at the end of the title's line. Anywhere but the ring
+ * opens the item. Assistive tech hears one sentence: "Heaters not working, Urgent, 2 days
+ * late, Shea, has a note." Just saved (RevealContext), it lights up for a moment.
+ *
+ * Ticking it off (useCompletion()): the ring fills, the check springs in and the title is
+ * struck through for a moment, then a one-off folds away (a repeating item stays, with its
+ * next date).
+ */
+export function ItemRow({ item, members, today, timeZone, showWho = true, onOpen, onComplete }: ItemRowProps) {
+  const lit = useContext(RevealContext) === item.id;
+  const { completing, leaving, busy, openRef, complete } = useCompletion(item.id, item.repeat === 'none', onComplete);
+  const { maintained, member, when, updated, repeat, spoken } = itemWords(item, { members, today, timeZone });
 
   return (
     <li
@@ -284,14 +279,8 @@ export function ItemRow({
               kind={item.kind}
               rag={item.rag}
               dot={!maintained}
-              room={room}
               parts={[
-                showWhen ? (
-                  <span key="when" className={styles.when} data-late={when.late || undefined}>
-                    {when.text}
-                    {repeat ? <RepeatIcon className={styles.glyph} size={11} /> : null}
-                  </span>
-                ) : null,
+                when ? <WhenWords key="when" when={when} repeat={!!repeat} /> : null,
                 updated ? (
                   <span key="updated" className={styles.part}>
                     {updated}

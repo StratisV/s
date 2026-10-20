@@ -30,14 +30,14 @@ export function filterName(value: Filter, members: Member[], meId: string): stri
 }
 
 /**
- * Whose tasks Home shows, in two quiet controls beside the view switch:
+ * Whose tasks Needs attention shows, in two quiet controls under its sentence:
  *
- * - **Mine**, one tap: a toggle with your emoji. On, Home shows only your items; tap it again
- *   for everyone's. (The most common choice, so it never sits in a menu.)
+ * - **Mine**, one tap: a toggle with your emoji and the word. On, the list shows only your
+ *   items; tap it again for everyone's. (The most common choice, so it never sits in a menu.)
  * - **The people menu**, a small pill: Everyone, you, each person and Unassigned, each with
- *   how many open items they have and, for someone who has not joined yet, a note saying so
- *   (Apple Reminders' and Linear's scopes, in place of a row of chips). While it narrows Home
- *   to someone else (or the unassigned), it shows their emoji on a tint wash.
+ *   how many items the list has for them and, for someone who has not joined yet, a note saying so
+ *   (Apple Reminders' and Linear's scopes, in place of a row of chips). While it narrows the
+ *   list to someone else (or the unassigned), it shows their emoji on a tint wash.
  */
 export function PersonFilter({ members, meId, value, counts, onChange }: PersonFilterProps) {
   const me = members.find((m) => m.id === meId) ?? null;

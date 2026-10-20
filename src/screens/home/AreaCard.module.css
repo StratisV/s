@@ -1,6 +1,6 @@
 /*
  * An area's card on Home (AreaCard.tsx): its picture inset in the card with concentric
- * corners, then its name, its status in words, its open To dos and who is looking after it.
+ * corners, then its name, its status in words (one or two lines) and who is looking after it.
  * It fills its grid cell (the caller lays out two columns), and the people sit at the
  * bottom so cards in a row line up.
  */
@@ -95,57 +95,11 @@
   color: var(--label);
 }
 
-/* How it is: a dot and words, in the status colours (4.5:1 or better on the card). */
+/* How it is (StatusLines): "2 urgent tasks" in red, "1 non-urgent task" in orange, or "All good". */
 .status {
   margin-top: 3px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  display: block;
   min-width: 0;
-  font-size: 13px;
-  line-height: 18px;
-  letter-spacing: -0.08px;
-  font-weight: 600;
-  color: var(--rag-green-text);
-}
-
-.dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--rag-green);
-}
-
-.statusText {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.card[data-status='attention'] .status {
-  color: var(--rag-red-text);
-}
-
-.card[data-status='attention'] .dot {
-  background: var(--rag-red);
-}
-
-.card[data-status='soon'] .status {
-  color: var(--rag-amber-text);
-}
-
-.card[data-status='soon'] .dot {
-  background: var(--rag-amber);
-}
-
-.count {
-  font-size: 13px;
-  line-height: 18px;
-  letter-spacing: -0.08px;
-  color: var(--label-secondary);
-  font-variant-numeric: tabular-nums;
 }
 
 /* Who is looking after it: their faces stacked, then their names. */

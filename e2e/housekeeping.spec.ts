@@ -1,6 +1,5 @@
 import {
   addButton,
-  attentionScreen,
   confirmation,
   expect,
   goToTab,
@@ -280,10 +279,8 @@ test.describe('Housekeeping tab', () => {
     for (const button of buttons) await expect(button).toHaveCSS('color', 'rgb(0, 88, 185)');
     await page.emulateMedia({ colorScheme: 'dark' });
     for (const button of buttons) await expect(button).toHaveCSS('color', 'rgb(90, 169, 255)');
-    // Section headings weigh the same as Needs attention's.
+    // Section headings weigh the same as every tab's (ui/type.module.css).
     await expect(screen.getByRole('heading', { name: 'Today', level: 2 })).toHaveCSS('font-weight', '600');
-    await goToTab(page, 'Attention');
-    await expect(attentionScreen(page).getByRole('heading', { name: 'Needs attention', level: 2 })).toHaveCSS('font-weight', '600');
   });
 
   test('the message saves itself, and Clear can be undone', async ({ page }) => {

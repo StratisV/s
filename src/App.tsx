@@ -54,7 +54,7 @@ interface FocusReturn {
   target: HTMLElement;
   /** Fallbacks if the target's row is gone (completed or deleted): the rows after it, then before it. */
   nearby: HTMLElement[];
-  /** The target's section, whose heading is the last fallback (the chosen day under the calendar). */
+  /** The target's section, whose heading (or Needs attention's sentence) is the last fallback. */
   section: HTMLElement | null;
 }
 
@@ -65,7 +65,7 @@ interface FocusReturn {
 function takeFocusReturn(root: HTMLElement | null): FocusReturn | null {
   const el = document.activeElement;
   if (!root || !(el instanceof HTMLElement) || !root.contains(el) || !isFocusVisible(el)) return null;
-  // The rows in its own list: a group's or a sheet's, or the chosen day's under the calendar.
+  // The rows in its own list: a sheet's, or Needs attention's cards.
   const rows = rowsBeside(el, root);
   const i = rows.indexOf(el);
   const nearby = i < 0 ? [] : [...rows.slice(i + 1), ...rows.slice(0, i).reverse()];
@@ -178,7 +178,8 @@ function MainShell() {
   const [reveal, setReveal] = useState<{ id: string; in: RevealIn } | null>(null);
   const clearReveal = useCallback(() => setReveal(null), []);
   const revealFor = (where: RevealIn) => (reveal?.in === where ? reveal.id : null);
-  // A day Needs attention's calendar sends to Housekeeping (its visit), for Housekeeping to show.
+  // A day for Housekeeping to show (its showDay). Nothing sends one since Needs attention's
+  // calendar, which linked a visit to its day, was taken out.
   const [housekeepingDay, setHousekeepingDay] = useState<ISODate | null>(null);
   const clearHousekeepingDay = useCallback(() => setHousekeepingDay(null), []);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -292,14 +293,6 @@ function MainShell() {
     setReveal(null);
     if (next !== 'housekeeping') setHousekeepingDay(null);
   }, []);
-  const openHousekeepingDay = useCallback(
-    (date: ISODate) => {
-      switchTab('housekeeping');
-      setHousekeepingDay(date);
-    },
-    [switchTab],
-  );
-
   // Opened from a shared link: the item's sheet (?item=), or the area's on Home (?area=).
   useSharedLink({
     openItem: (itemId) => openSheet({ kind: 'edit', itemId }),
@@ -335,7 +328,6 @@ function MainShell() {
             onOpenProfile={openProfile}
             revealItem={revealFor('attention')}
             onRevealed={clearReveal}
-            onOpenHousekeeping={openHousekeepingDay}
           />
         ) : tab === 'chat' ? (
           <ChatScreen onOpenProfile={openProfile} />

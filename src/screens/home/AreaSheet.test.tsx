@@ -115,7 +115,7 @@ afterEach(() => {
 });
 
 describe('AreaSheet', () => {
-  it('names the area over its drawing, says its state and who is looking after it', async () => {
+  it('names the area over its drawing, says how many tasks it has and who is looking after it', async () => {
     await setup('Garden');
     const dialog = sheet();
     expect(dialog.getAttribute('aria-modal')).toBe('true');
@@ -123,12 +123,15 @@ describe('AreaSheet', () => {
     expect(title.textContent).toBe('Garden');
     // The drawing is decorative.
     expect(dialog.querySelector('[data-area-art]')!.getAttribute('aria-hidden')).toBe('true');
-    expect(dialog.querySelector('[data-area-status]')!.textContent).toBe('1 coming up');
-    expect(dialog.querySelector('[data-area-status]')!.getAttribute('data-status')).toBe('soon');
+    // The wall panel (Within the month) and the firepit to give away (Not urgent), in orange.
+    expect(dialog.querySelector('[data-area-status]')!.textContent).toBe('2 non-urgent tasks');
+    expect(Array.from(dialog.querySelectorAll<HTMLElement>('[data-area-status] [data-tone]')).map((el) => el.dataset.tone)).toEqual([
+      'non-urgent',
+    ]);
     expect(dialog.querySelector('[data-area-people]')!.textContent).toBe('Ela and Stratis are on it');
     // The heading carries both lines for assistive tech.
     const described = title.getAttribute('aria-describedby')!.split(' ').map((id) => document.getElementById(id)!.textContent);
-    expect(described).toEqual(['1 coming up', 'Ela and Stratis are on it']);
+    expect(described).toEqual(['2 non-urgent tasks', 'Ela and Stratis are on it']);
   });
 
   it('lists its To dos most urgent first, then what it looks after, and says each row to assistive tech', async () => {
@@ -146,14 +149,27 @@ describe('AreaSheet', () => {
     // jsdom's name computation may put a space before the comma; the room is the sheet's own, so unsaid.
     const heaters = screen.getByRole('button', { name: /^Heaters not working ?, Urgent, 2 days late, Shea, has a note\.$/ });
     expect(within(heaters).getByText('Urgent')).toBeTruthy();
-    expect(sheet().querySelector('[data-area-status]')!.textContent).toBe('1 needs attention');
+    expect(sheet().querySelector('[data-area-status]')!.textContent).toBe('1 urgent task');
     expect(sheet().querySelector('[data-area-people]')!.textContent).toBe('Shea is on it');
     expect(sheet().querySelector('[data-area-looking]')).toBeNull();
   });
 
+  it('says the urgent tasks in red over the non-urgent ones in orange, read as one phrase', async () => {
+    await setup('Front garden');
+    const status = sheet().querySelector<HTMLElement>('[data-area-status]')!;
+    expect(Array.from(status.querySelectorAll<HTMLElement>('[data-tone]')).map((el) => [el.dataset.tone, el.textContent])).toEqual([
+      ['urgent', '1 urgent task, '],
+      ['non-urgent', '2 non-urgent tasks'],
+    ]);
+    const title = within(sheet()).getByRole('heading', { level: 1 });
+    expect(document.getElementById(title.getAttribute('aria-describedby')!.split(' ')[0])!.textContent).toBe(
+      '1 urgent task, 2 non-urgent tasks',
+    );
+  });
+
   it('an area with nothing open says so, and nobody is on it', async () => {
     await setup('Bedroom Small');
-    expect(sheet().querySelector('[data-area-status]')!.textContent).toBe('All clear');
+    expect(sheet().querySelector('[data-area-status]')!.textContent).toBe('All good');
     expect(sheet().querySelector('[data-area-people]')!.textContent).toBe('No one is on it yet');
     expect(within(sheet()).getByText('Nothing to do here.')).toBeTruthy();
     expect(todos()).toEqual([]);
@@ -195,7 +211,7 @@ describe('AreaSheet', () => {
   it('follows the items: ticking off the late job calms the area', async () => {
     const { home } = await setup('Hallway');
     fireEvent.click(screen.getByRole('button', { name: 'Mark Heaters not working as done' }));
-    await waitFor(() => expect(sheet().querySelector('[data-area-status]')!.textContent).toBe('All clear'), { timeout: 3000 });
+    await waitFor(() => expect(sheet().querySelector('[data-area-status]')!.textContent).toBe('All good'), { timeout: 3000 });
     expect(home().data!.items.some((it) => it.title === 'Heaters not working')).toBe(false);
     expect(home().toast?.message).toBe('Marked as done');
     expect(within(sheet()).getByText('Nothing to do here.')).toBeTruthy();

@@ -2,16 +2,15 @@ import {
   addButton,
   area,
   areaAction,
-  attentionScreen,
+  attentionCards,
   closeArea,
   detailValue,
   expect,
   itemSheet,
   openArea,
-  openAttention,
+  openNeedsAttention,
   openSeeded,
   settled,
-  showView,
   test,
   titlesIn,
   toast,
@@ -124,8 +123,8 @@ test.describe('After saving, the item can be seen where it went', () => {
     await expect(row).not.toHaveAttribute('data-lit', { timeout: 5_000 });
   });
 
-  test('Needs attention: a job for later, deep in Later, opens it and comes into view', async ({ page }) => {
-    await openAttention(page);
+  test('Needs attention: a job for later, low in the list, comes into view and lights up', async ({ page }) => {
+    await openNeedsAttention(page);
     await addButton(page).click();
     const sheet = itemSheet(page, 'New item');
     await settled(sheet.getByRole('button', { name: 'Close' }));
@@ -134,34 +133,27 @@ test.describe('After saving, the item can be seen where it went', () => {
     await sheet.getByLabel('Due', { exact: true }).fill('2026-12-01');
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
-    const later = attentionScreen(page).locator('section[data-group="later"]');
-    const row = later.getByRole('listitem').filter({ hasText: 'Service the boiler' });
-    await expect(row).toBeVisible();
-    await clearOfAdd(page, row);
-    await expect(later.getByRole('button', { name: 'Show fewer' })).toBeVisible();
+    const card = attentionCards(page).filter({ hasText: 'Service the boiler' });
+    await expect(card).toBeVisible();
+    await expect(card).toHaveAttribute('data-lit');
+    await clearOfAdd(page, card);
+    await expect(card).not.toHaveAttribute('data-lit', { timeout: 5_000 });
   });
 
-  test('Calendar: one it can’t show (no date, or looked after) says where it went', async ({ page }) => {
-    await openAttention(page);
-    await showView(page, 'Calendar');
+  test('Needs attention: one it doesn’t list (a thing looked after in good shape) says where it went', async ({ page }) => {
+    await openNeedsAttention(page);
+    const before = await attentionCards(page).count();
     await addButton(page).click();
     const sheet = itemSheet(page, 'New item');
     await settled(sheet.getByRole('button', { name: 'Close' }));
-    await sheet.getByLabel('Title', { exact: true }).fill('Find a plumber');
-    await sheet.getByRole('radiogroup', { name: 'How urgent?' }).getByText('Urgent', { exact: true }).click();
-    await sheet.getByLabel('Area', { exact: true }).selectOption({ label: 'Kitchen' });
-    await sheet.getByRole('button', { name: 'Save' }).click();
-    await expect(sheet).toHaveCount(0);
-    await expect(toast(page, 'Saved in Kitchen. It has no date, so it isn’t on the calendar.')).toBeVisible();
-
-    await addButton(page).click();
-    await settled(sheet.getByRole('button', { name: 'Close' }));
     await sheet.getByLabel('Title', { exact: true }).fill('Grout');
     await sheet.getByRole('radio', { name: 'To maintain' }).click();
+    await sheet.getByRole('radiogroup', { name: 'Condition' }).getByText('Good', { exact: true }).click();
     await sheet.getByLabel('Area', { exact: true }).selectOption({ label: 'Bathroom Large' });
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
-    await expect(toast(page, 'Saved in Bathroom Large. Things looked after aren’t on the calendar.')).toBeVisible();
+    await expect(toast(page, 'Saved in Bathroom Large.')).toBeVisible();
+    await expect(attentionCards(page)).toHaveCount(before);
   });
 });
 
@@ -171,7 +163,7 @@ test.describe('A shared area link', () => {
       const doc = JSON.parse(localStorage.getItem('homeos.demo.v1')!);
       return doc.areas.find((a: { name: string }) => a.name === 'Garden').id as string;
     });
-    await openAttention(page);
+    await openNeedsAttention(page);
     await page.goto(`/?area=${garden}`);
     const sheet = area(page, 'Garden');
     await settled(sheet.getByRole('button', { name: 'Close', exact: true }));

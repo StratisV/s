@@ -3,14 +3,19 @@ import {
   areaCard,
   areaCards,
   areaStatus,
+  areaStatusLines,
+  attentionCard,
+  attentionCards,
+  attentionList,
   attentionScreen,
+  attentionTitles,
+  cardStatusLines,
   closeArea,
   DEFAULT_AREAS,
   DEMO_STORAGE_KEY,
   detailValue,
   expect,
   expectAreas,
-  group,
   homeScreen,
   homeSummary,
   keepOnlyAreas,
@@ -18,12 +23,14 @@ import {
   mine,
   NOW,
   openArea,
-  openAttention,
   openFresh,
   openItem,
+  openNeedsAttention,
   openNewItem,
   openSeeded,
+  openSeededAttention,
   profile,
+  reopen,
   ring,
   row,
   rowButton,
@@ -33,7 +40,6 @@ import {
   test,
   titlesIn,
   toast,
-  views,
   who,
   type Locator,
   type Page,
@@ -78,11 +84,31 @@ test.describe('Home', () => {
     expect(Math.round(second.x - (first.x + first.width))).toBe(12);
     expect(third.x).toBe(16);
     expect(third.y).toBeGreaterThan(first.y + first.height);
-    // Each card says its area's state, how many To dos are open and who is on them.
-    await expect(areaCard(page, 'Hallway')).toHaveAccessibleName(/^Hallway\b.*1 needs attention/);
-    await expect(areaCard(page, 'Living Room')).toHaveAccessibleName(/^Living Room\b.*1 coming up/);
-    await expect(areaCard(page, 'Garden')).toHaveAccessibleName(/^Garden\b.*1 coming up.*\b2\b.*Ela.*Stratis/);
-    await expect(areaCard(page, 'Bedroom Small')).toHaveAccessibleName(/^Bedroom Small\b.*All clear/);
+    // Each card says how many urgent and non-urgent tasks its area has, and who is on them.
+    await expect(areaCard(page, 'Hallway')).toHaveAccessibleName('Hallway, 1 urgent task, Shea looking after it');
+    await expect(areaCard(page, 'Front garden')).toHaveAccessibleName(
+      'Front garden, 1 urgent task, 2 non-urgent tasks, Stratis looking after it',
+    );
+    await expect(areaCard(page, 'Living Room')).toHaveAccessibleName('Living Room, 1 non-urgent task, no one looking after it yet');
+    await expect(areaCard(page, 'Garden')).toHaveAccessibleName('Garden, 2 non-urgent tasks, Ela and Stratis looking after it');
+    await expect(areaCard(page, 'Bedroom Small')).toHaveAccessibleName('Bedroom Small, All good, no one looking after it yet');
+  });
+
+  test('a card says urgent tasks in red over non-urgent ones in orange, or All good in green, 4.5:1 or better', async ({ page }) => {
+    const lines = cardStatusLines(page, 'Front garden');
+    await expect(lines).toHaveText(['1 urgent task,', '2 non-urgent tasks']);
+    await expect(lines.nth(0)).toHaveCSS('color', 'rgb(215, 0, 21)');
+    await expect(lines.nth(1)).toHaveCSS('color', 'rgb(176, 76, 0)');
+    // Red first, each a line of its own.
+    const red = (await lines.nth(0).boundingBox())!;
+    const orange = (await lines.nth(1).boundingBox())!;
+    expect(orange.y).toBeGreaterThanOrEqual(red.y + red.height);
+    await expect(cardStatusLines(page, 'Hallway')).toHaveText(['1 urgent task']);
+    await expect(cardStatusLines(page, 'Kitchen')).toHaveText(['2 non-urgent tasks']);
+    await expect(cardStatusLines(page, 'Bedroom Small')).toHaveText(['All good']);
+    await expect(cardStatusLines(page, 'Bedroom Small')).toHaveCSS('color', 'rgb(31, 122, 54)');
+    // No count of To dos of its own any more: the lines say it.
+    await expect(areaCard(page, 'Kitchen')).not.toContainText('to do');
   });
 
   test('every card has its own drawing of its area, hidden from assistive tech', async ({ page }) => {
@@ -115,7 +141,7 @@ test.describe('Home', () => {
   test('a card opens its area in a sheet: its drawing, its name, its state and who is on it', async ({ page }) => {
     const sheet = await openArea(page, 'Garden');
     await expect(sheet.getByRole('heading', { level: 1 })).toHaveText('Garden');
-    await expect(areaStatus(page, 'Garden')).toHaveText('1 coming up');
+    await expect(areaStatus(page, 'Garden')).toHaveText('2 non-urgent tasks');
     await expect(sheet.locator('[data-area-people]')).toHaveText('Ela and Stratis are on it');
     // The drawing is a wide banner across the sheet's top, under its rounded corners.
     const art = (await sheet.locator('[data-area-art]').boundingBox())!;
@@ -243,10 +269,10 @@ test.describe('Home', () => {
 
   test('tapping a ring completes the item, with Undo', async ({ page }) => {
     await openArea(page, 'Living Room');
-    await expect(areaStatus(page, 'Living Room')).toHaveText('1 coming up');
+    await expect(areaStatus(page, 'Living Room')).toHaveText('1 non-urgent task');
     await ring(page, 'Mirror lights not level').click();
     await expect(ring(page, 'Mirror lights not level')).toHaveCount(0);
-    await expect(areaStatus(page, 'Living Room')).toHaveText('All clear');
+    await expect(areaStatus(page, 'Living Room')).toHaveText('All good');
     await expect(area(page, 'Living Room').getByText('Nothing to do here.')).toBeVisible();
     const done = toast(page, 'Marked as done');
     await expect(done).toBeVisible();
@@ -254,7 +280,7 @@ test.describe('Home', () => {
     await done.getByRole('button', { name: 'Undo' }).click();
     await expect(ring(page, 'Mirror lights not level')).toBeVisible();
     await expect(meta(page, 'Mirror lights not level')).toHaveText('Within the month·In 12 days');
-    await expect(areaStatus(page, 'Living Room')).toHaveText('1 coming up');
+    await expect(areaStatus(page, 'Living Room')).toHaveText('1 non-urgent task');
     await expect(done).toHaveCount(0);
   });
 
@@ -316,11 +342,10 @@ test.describe('Home', () => {
         (key) => JSON.parse(localStorage.getItem(key)!).items.filter((i: { status: string }) => i.status === 'done').length,
         DEMO_STORAGE_KEY,
       );
-    // On Needs attention's list, where every room's rows are (Later opened).
+    // On Needs attention's list, where every room's cards are.
     const ringIn = (title: string) => attentionScreen(page).getByRole('button', { name: `Mark ${title} as done`, exact: true });
     for (let round = 0; round < 3; round++) {
-      await openSeeded(page, 'List');
-      await group(page, 'later').getByRole('button', { name: /^Show \d+ more$/ }).click();
+      await openSeededAttention(page);
       for (const [i, [a, b]] of pairs.entries()) {
         await page.evaluate(async ([a, b]) => {
           const ringFor = (title: string) =>
@@ -353,14 +378,15 @@ test.describe('Home', () => {
     await expect(ring(page, 'Water test strips running low')).toHaveCount(0);
   });
 
-  test('completing a late item removes it, and its area says All clear, on its card too', async ({ page }) => {
+  test('completing a late item removes it, and its area says All good, on its card too', async ({ page }) => {
     await openArea(page, 'Hallway');
-    await expect(areaStatus(page, 'Hallway')).toHaveText('1 needs attention');
+    await expect(areaStatus(page, 'Hallway')).toHaveText('1 urgent task');
     await ring(page, 'Heaters not working').click();
     await expect(ring(page, 'Heaters not working')).toHaveCount(0);
-    await expect(areaStatus(page, 'Hallway')).toHaveText('All clear');
+    await expect(areaStatus(page, 'Hallway')).toHaveText('All good');
+    await expect(areaStatusLines(page, 'Hallway')).toHaveCSS('color', 'rgb(31, 122, 54)');
     await closeArea(page);
-    await expect(areaCard(page, 'Hallway')).toHaveAccessibleName(/^Hallway\b.*All clear/);
+    await expect(areaCard(page, 'Hallway')).toHaveAccessibleName(/^Hallway\b.*All good/);
     await expect(homeSummary(page)).toHaveText(/^1 thing needs attention/);
     await expect(tabButton(page, 'Attention')).toHaveAccessibleName('Attention, 1 item');
   });
@@ -435,55 +461,125 @@ test.describe('Home', () => {
 
 test.describe('Needs attention', () => {
   test.beforeEach(async ({ page }) => {
-    await openAttention(page);
+    await openNeedsAttention(page);
   });
 
-  test('the second tab: one sentence, then what needs attention, today, the next 7 days and later', async ({ page }) => {
+  test('the second tab: one sentence, whose items, then one list in priority order, no headings', async ({ page }) => {
     await expect(tabs(page).getByRole('button').nth(1)).toHaveAttribute('aria-current', 'page');
     await expect(attentionScreen(page).getByRole('heading', { level: 1 })).toHaveText('Needs attention');
-    await expect(views(page).getByRole('radio', { name: 'List' })).toHaveAttribute('aria-checked', 'true');
     await expect(summary(page)).toHaveText('2 things need attention and 1 is due today. Everything else can wait.');
-    const titles = (id: 'attention' | 'today' | 'week' | 'later') =>
-      group(page, id)
-        .locator('[data-item-open]')
-        .evaluateAll((els) => els.map((el) => el.textContent!.split(',')[0].trim()));
-    await expect(group(page, 'attention').getByRole('heading', { level: 2 })).toHaveText('Needs attention');
-    expect(await titles('attention')).toEqual(['Heaters not working', 'Clear the gutters']);
-    expect(await titles('today')).toEqual(['Empty the dehumidifier']);
-    // In date order: in 2 days, in 4, in 6 (most urgent first on one day), in 7.
-    expect(await titles('week')).toEqual([
+    await expect(mine(page)).toBeVisible();
+    // List only: no view switch, no calendar, no headings, nothing folded.
+    await expect(attentionScreen(page).getByRole('radiogroup')).toHaveCount(0);
+    await expect(attentionScreen(page).locator('[data-calendar]')).toHaveCount(0);
+    await expect(attentionScreen(page).getByRole('heading', { level: 2 })).toHaveCount(0);
+    await expect(attentionScreen(page).getByRole('button', { name: /^Show \d+ more$/ })).toHaveCount(0);
+    expect(await attentionTitles(page)).toEqual([
+      // Late (most late first), then urgent.
+      'Heaters not working',
+      'Clear the gutters',
+      // Due today.
+      'Empty the dehumidifier',
+      // The next 7 days in date order: in 2 days, in 4, in 6 (most urgent first on one day), in 7.
       'Water the plants',
       'Water test strips running low',
       'Shower draining slowly',
       'Cover the garden furniture',
       'Put the bins out',
       'Give away the old firepit',
+      // Later: urgency first, then the date.
+      'Mirror lights not level',
+      'Re-seal around the shower',
+      'Garden room wall panel',
+      'Change the filter',
+      'Wardrobe door hinge',
+      'Clean cushions before winter',
+      'Trim the hedges',
+      'Kitchen paper',
+      'Olive oil',
     ]);
-    // Later: three, then the rest behind "Show 6 more".
-    expect(await titles('later')).toHaveLength(3);
-    const more = group(page, 'later').getByRole('button', { name: 'Show 6 more' });
-    await expect(more).toHaveAttribute('aria-expanded', 'false');
-    await more.click();
-    expect(await titles('later')).toHaveLength(9);
-    // Each row says its room, as the list mixes rooms.
-    await expect(group(page, 'attention').locator('[data-room]').first()).toHaveText('Hallway');
-    // The firepit is looked after and in good shape: at the foot, out of the way.
-    await expect(group(page, 'looking').getByRole('button', { name: /^Firepit ?, to maintain, Good, Garden, Ela/ })).toBeVisible();
+    // The firepit is looked after and Good: in the Garden's sheet, not here.
+    await expect(attentionCard(page, 'Firepit')).toHaveCount(0);
+  });
+
+  test('each card: its area’s picture, the title, the urgency and when, the area and who, and the ring at the end', async ({ page }) => {
+    const card = attentionCards(page).first();
+    const button = attentionCard(page, 'Heaters not working');
+    await expect(button).toHaveAccessibleName(/^Heaters not working ?, Urgent, 2 days late, Hallway, Shea, has a note\.$/);
+    await expect(button.locator('[data-meta]')).toHaveText('Urgent2 days late');
+    await expect(button.locator('[data-late]')).toHaveCSS('color', 'rgb(215, 0, 21)');
+    await expect(button.locator('[data-where]')).toHaveText('Hallway·🦆Shea');
+    // The Hallway's own picture, inset 8px in the card with concentric corners.
+    const art = button.locator('[data-area-art]');
+    await expect(art).toHaveAttribute('data-area-art', /^hallway:/);
+    await expect(art).toHaveAttribute('aria-hidden', 'true');
+    const box = (await card.boundingBox())!;
+    const picture = (await art.boundingBox())!;
+    expect(Math.round(picture.x - box.x)).toBe(8);
+    expect([Math.round(picture.width), Math.round(picture.height)]).toEqual([68, 68]);
+    // Every card has its area's picture.
+    const count = await attentionCards(page).count();
+    await expect(attentionList(page).locator('[data-area-art]')).toHaveCount(count);
+    // The ring, at the end of the card, takes taps in a 44px circle; the rest of the card opens the item.
+    const ring = card.getByRole('button', { name: 'Mark Heaters not working as done' });
+    const r = (await ring.boundingBox())!;
+    expect(r.x + r.width).toBeGreaterThan(box.x + box.width - 44);
+    const hits = await page.evaluate(
+      ([cx, cy]) =>
+        [
+          [cx - 21, cy],
+          [cx + 21, cy],
+          [cx, cy - 21],
+          [cx, cy + 21],
+        ].map(([x, y]) => document.elementFromPoint(x, y)?.closest('button')?.getAttribute('aria-label') ?? null),
+      [r.x + r.width / 2, r.y + r.height / 2],
+    );
+    expect(hits).toEqual(Array(4).fill('Mark Heaters not working as done'));
+    // A card is at least 44px tall, and its corners open the item too.
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    await page.mouse.click(box.x + box.width - 8, box.y + 8);
+    await expect(page.getByRole('dialog', { name: 'Edit item' })).toBeVisible();
   });
 
   test('the late and urgent jobs are on the first screen', async ({ page }) => {
     await expect(summary(page)).toBeInViewport();
     for (const title of ['Heaters not working', 'Clear the gutters']) {
-      await expect(group(page, 'attention').getByRole('button', { name: `Mark ${title} as done` })).toBeInViewport({ ratio: 1 });
+      await expect(attentionScreen(page).getByRole('button', { name: `Mark ${title} as done` })).toBeInViewport({ ratio: 1 });
     }
   });
 
-  test('a ticked row leaves the list and the sentence follows', async ({ page }) => {
-    await group(page, 'today').getByRole('button', { name: 'Mark Empty the dehumidifier as done' }).click();
-    await expect(group(page, 'today')).toHaveCount(0);
+  test('a ticked card leaves the list and the sentence follows; a repeating one comes back further down', async ({ page }) => {
+    await attentionScreen(page).getByRole('button', { name: 'Mark Empty the dehumidifier as done' }).click();
     await expect(summary(page)).toHaveText('2 things need attention. Everything else can wait.');
-    // Weekly: it comes round again in a week.
-    await expect(group(page, 'week').locator('[data-item-open]').filter({ hasText: 'Empty the dehumidifier' })).toHaveCount(1);
+    // Weekly: it comes round again in a week, after the jobs due before then.
+    await expect(attentionCard(page, 'Empty the dehumidifier').locator('[data-meta]')).toHaveText('Not urgent·In 7 days');
+    const titles = await attentionTitles(page);
+    expect(titles.indexOf('Empty the dehumidifier')).toBeGreaterThan(titles.indexOf('Put the bins out'));
+    // A one-off is gone for good.
+    await attentionScreen(page).getByRole('button', { name: 'Mark Heaters not working as done' }).click();
+    await expect(attentionCard(page, 'Heaters not working')).toHaveCount(0);
+    await expect(summary(page)).toHaveText('1 thing needs attention. Everything else can wait.');
+  });
+
+  test('things looked after: Needs work with what needs attention, Okay at the end', async ({ page }) => {
+    await page.evaluate((key) => {
+      const doc = JSON.parse(localStorage.getItem(key)!);
+      const firepit = doc.items.find((i: { title: string }) => i.title === 'Firepit');
+      doc.items.push({ ...firepit, id: '00000000-0000-4000-8000-0000000000b1', title: 'Grout', rag: 'red' });
+      firepit.rag = 'amber';
+      localStorage.setItem(key, JSON.stringify(doc));
+    }, DEMO_STORAGE_KEY);
+    await reopen(page);
+    await openNeedsAttention(page);
+    await expect(attentionCards(page).first()).toBeVisible();
+    const titles = await attentionTitles(page);
+    expect(titles.slice(0, 3)).toEqual(['Heaters not working', 'Clear the gutters', 'Grout']);
+    expect(titles.at(-1)).toBe('Firepit');
+    // A gauge where a To do has its ring.
+    const firepit = attentionCards(page).last();
+    await expect(firepit.locator('[data-variant="row"]')).toHaveAttribute('data-rag', 'amber');
+    await expect(firepit.getByRole('button', { name: /^Mark / })).toHaveCount(0);
+    await expect(attentionCard(page, 'Firepit').locator('[data-meta]')).toHaveText('Okay');
   });
 
   test('Mine shows only your items in one tap, and the sentence says whose they are', async ({ page }) => {
@@ -495,20 +591,22 @@ test.describe('Needs attention', () => {
     await expect(summary(page)).toHaveText('2 things need attention and 1 is due today. Everything else can wait.');
   });
 
-  test('the view switch takes taps 44px tall, not just on its 28px pill', async ({ page }) => {
-    for (const name of ['Calendar', 'List'] as const) {
-      const radio = views(page).getByRole('radio', { name, exact: true });
-      const box = (await radio.boundingBox())!;
-      // 3px above and below the pill still count.
-      for (const y of [box.y - 3, box.y + box.height + 3]) {
-        await page.mouse.click(box.x + box.width / 2, y);
-        await expect(radio).toHaveAttribute('aria-checked', 'true');
-      }
-    }
-  });
-
-  test('Looking after says how the things looked after are', async ({ page }) => {
-    await expect(group(page, 'looking').getByText('All in good shape.', { exact: true })).toBeVisible();
+  test('completing the last card from the keyboard puts focus on the sentence, which then says so', async ({ page }) => {
+    await page.evaluate((key) => {
+      const doc = JSON.parse(localStorage.getItem(key)!);
+      doc.items = doc.items.filter((i: { title: string; kind: string }) => i.title === 'Heaters not working' || i.kind === 'state');
+      localStorage.setItem(key, JSON.stringify(doc));
+    }, DEMO_STORAGE_KEY);
+    await reopen(page);
+    await openNeedsAttention(page);
+    const ring = attentionScreen(page).getByRole('button', { name: 'Mark Heaters not working as done' });
+    await page.keyboard.press('Shift');
+    await ring.focus();
+    await page.keyboard.press('Enter');
+    await expect(attentionCards(page)).toHaveCount(0);
+    await expect(summary(page)).toBeFocused();
+    await expect(summary(page)).toHaveText('All clear. Nothing to do right now.');
+    await expect(attentionList(page)).toHaveText('All clearNothing needs doing. Add something with the + button.');
   });
 });
 
@@ -516,15 +614,26 @@ for (const width of [375, 402, 430]) {
   test.describe(`Needs attention at ${width}px`, () => {
     test.use({ viewport: { width, height: 874 } });
 
-    test('a room’s name is never cut short: it takes the next line whole when it does not fit', async ({ page }) => {
-      await openAttention(page);
-      await group(page, 'later').getByRole('button', { name: /^Show \d+ more$/ }).click();
-      const names = attentionScreen(page).locator('[data-room] > span:last-child');
-      expect(await names.count()).toBeGreaterThan(15);
-      const cut = await names.evaluateAll((els) =>
-        els.filter((el) => el.scrollWidth > el.clientWidth + 0.5).map((el) => el.textContent),
-      );
+    test('the cards fit: no sideways scroll, the picture and the ring whole, area names never cut short', async ({ page }) => {
+      await openNeedsAttention(page);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      const cards = attentionCards(page);
+      const n = await cards.count();
+      expect(n).toBeGreaterThan(15);
+      for (let i = 0; i < n; i++) {
+        const box = (await cards.nth(i).boundingBox())!;
+        expect(box.x).toBe(16);
+        expect(Math.round(box.width)).toBe(width - 32);
+      }
+      const cut = await attentionList(page)
+        .locator('[data-room]')
+        .evaluateAll((els) => els.filter((el) => el.scrollWidth > el.clientWidth + 0.5).map((el) => el.textContent));
       expect(cut).toEqual([]);
+      // Titles wrap to two lines at most.
+      const tall = await attentionList(page)
+        .locator('[data-item-open] > span:nth-child(2) > span:first-child')
+        .evaluateAll((els) => els.filter((el) => el.getBoundingClientRect().height > 44.5).length);
+      expect(tall).toBe(0);
     });
   });
 }
@@ -680,7 +789,7 @@ test.describe('Hero', () => {
     });
     await expect(strip).toHaveCSS('opacity', '0');
     // The other tabs' slim band of sky is under the status bar at the top too.
-    await openAttention(page);
+    await openNeedsAttention(page);
     await expect(attentionScreen(page).locator('[data-sky-band]')).toBeVisible();
     await expect(strip).toHaveCSS('opacity', '0');
     await attentionScreen(page).evaluate((el) => {
@@ -714,5 +823,18 @@ test.describe('Long text', () => {
     await expect(title).toHaveCSS('-webkit-line-clamp', '2');
     // The row: two title lines and the quiet line.
     expect((await button.boundingBox())!.height).toBeLessThan(96);
+  });
+});
+
+test.describe('Room on the first screen', () => {
+  test('at 402 by 874 the first two cards are on the first screen of Home', async ({ page }) => {
+    await expect(areaCards(page).first()).toBeInViewport();
+    await expect(areaCards(page).nth(1)).toBeInViewport();
+  });
+
+  test('at 320 by 700 the first area’s card shows on the first screen of Home', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 700 });
+    await openSeeded(page);
+    await expect(areaCards(page).first()).toBeInViewport();
   });
 });

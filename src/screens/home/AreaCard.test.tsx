@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AreaCard, countWords, peopleWords, type AreaCardProps } from './AreaCard';
+import { AreaCard, peopleWords, type AreaCardProps } from './AreaCard';
 
 afterEach(cleanup);
 
@@ -12,9 +12,8 @@ function card(over: Partial<AreaCardProps> = {}) {
   const onOpen = vi.fn();
   const props: AreaCardProps = {
     area: { id: 'a-kitchen', name: 'Kitchen' },
-    status: 'attention',
-    statusText: '2 need attention',
-    openCount: 3,
+    urgent: 2,
+    nonUrgent: 1,
     people: [SHEA, ELA],
     onOpen,
     ...over,
@@ -23,39 +22,58 @@ function card(over: Partial<AreaCardProps> = {}) {
   return { ...view, onOpen, button: screen.getByRole('button') };
 }
 
+/** The status lines on a card: [tone, words]. */
+const lines = (button: HTMLElement) =>
+  Array.from(button.querySelectorAll<HTMLElement>('[data-tone]')).map((el) => [el.dataset.tone, el.textContent]);
+
 describe('AreaCard', () => {
-  it('is one button named for the area, its status, its To dos and who looks after it', () => {
+  it('is one button named for the area, how it is and who looks after it', () => {
     const { button, container } = card();
     expect(container.querySelectorAll('button')).toHaveLength(1);
-    expect(button.getAttribute('aria-label')).toBe('Kitchen, 2 need attention, 3 to do, Shea and Ela looking after it');
+    expect(button.getAttribute('aria-label')).toBe('Kitchen, 2 urgent tasks, 1 non-urgent task, Shea and Ela looking after it');
     expect(screen.getByRole('button', { name: /^Kitchen,/ })).toBe(button);
     expect(button.getAttribute('type')).toBe('button');
   });
 
-  it('shows the name, the status in words, the count and the people', () => {
+  it('shows the name, the urgent tasks in red over the non-urgent ones in orange, and the people', () => {
     const { button } = card();
     expect(button.textContent).toContain('Kitchen');
-    expect(button.textContent).toContain('2 need attention');
-    expect(button.textContent).toContain('3 to do');
+    // The visually hidden comma reads the two lines as one phrase.
+    expect(lines(button)).toEqual([
+      ['urgent', '2 urgent tasks, '],
+      ['non-urgent', '1 non-urgent task'],
+    ]);
+    expect(button.querySelector('[data-card-status]')!.textContent).toBe('2 urgent tasks, 1 non-urgent task');
     expect(button.textContent).toContain('Shea and Ela');
+    // No count of To dos of its own: the lines say it.
+    expect(button.textContent).not.toMatch(/to do/);
     // Their faces, the household's own drawn hedgehog among them.
     expect(button.querySelectorAll('[data-drawn="hedgehog"]')).toHaveLength(1);
     expect(button.textContent).toContain('🦊');
-    expect(button.dataset.status).toBe('attention');
+    expect(button.dataset.status).toBe('urgent');
   });
 
-  it('says when there is nothing to do and no one looking after it', () => {
-    const { button } = card({ status: 'good', statusText: 'All good', openCount: 0, people: [] });
-    expect(button.textContent).toContain('All good');
-    expect(button.textContent).toContain('Nothing to do');
+  it('shows one line when only one applies, in the singular or the plural', () => {
+    const urgent = card({ urgent: 1, nonUrgent: 0 });
+    expect(lines(urgent.button)).toEqual([['urgent', '1 urgent task']]);
+    cleanup();
+    const later = card({ urgent: 0, nonUrgent: 3 });
+    expect(lines(later.button)).toEqual([['non-urgent', '3 non-urgent tasks']]);
+    expect(later.button.dataset.status).toBe('non-urgent');
+    expect(later.button.getAttribute('aria-label')).toBe('Kitchen, 3 non-urgent tasks, Shea and Ela looking after it');
+  });
+
+  it('says All good, and that no one is looking after it, when there is nothing to do', () => {
+    const { button } = card({ urgent: 0, nonUrgent: 0, people: [] });
+    expect(lines(button)).toEqual([['good', 'All good']]);
     expect(button.textContent).toContain('No one yet');
-    expect(button.getAttribute('aria-label')).toBe('Kitchen, All good, Nothing to do, no one looking after it yet');
+    expect(button.getAttribute('aria-label')).toBe('Kitchen, All good, no one looking after it yet');
     expect(button.dataset.status).toBe('good');
   });
 
   it('names everyone for screen readers, and shortens the names it shows', () => {
-    const { button } = card({ status: 'soon', statusText: '1 coming up', openCount: 1, people: [STRATIS, SHEA, ELA] });
-    expect(button.getAttribute('aria-label')).toBe('Kitchen, 1 coming up, 1 to do, Stratis, Shea and Ela looking after it');
+    const { button } = card({ urgent: 0, nonUrgent: 1, people: [STRATIS, SHEA, ELA] });
+    expect(button.getAttribute('aria-label')).toBe('Kitchen, 1 non-urgent task, Stratis, Shea and Ela looking after it');
     expect(button.textContent).toContain('Stratis, Shea +1');
   });
 
@@ -74,12 +92,6 @@ describe('AreaCard', () => {
 });
 
 describe('words', () => {
-  it('counts the To dos', () => {
-    expect(countWords(0)).toBe('Nothing to do');
-    expect(countWords(1)).toBe('1 to do');
-    expect(countWords(12)).toBe('12 to do');
-  });
-
   it('lists who is looking after it', () => {
     expect(peopleWords([])).toBe('No one yet');
     expect(peopleWords(['Shea'])).toBe('Shea');
