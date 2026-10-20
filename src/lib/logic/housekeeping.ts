@@ -1,15 +1,17 @@
 // Housekeeping: pure logic for the Housekeeping tab (docs/ARCHITECTURE.md "Housekeeping").
 // Calendar months (Monday first), month totals, prices in GBP (en-GB), finding a day's
 // visit, the task list's order and sections, the checklist a day shows (section by
-// section), bylines, and the optimistic edits HomeProvider makes before a write lands.
+// section, then area by area), bylines, and the optimistic edits HomeProvider makes before a
+// write lands.
 // Dates are ISODate days in the household's time zone; nothing here reads the clock
 // (callers pass `today`, `now` and the zone).
 //
 // Each function's doc comment is its spec; the unit tests it lists ("Tests:") are in
 // src/lib/logic/housekeeping.test.ts.
 
-import { HOUSEKEEPING_PRICE_MAX_PENCE } from '../constants';
+import { HOUSEKEEPING_PRICE_MAX_PENCE, TEXT_LIMITS } from '../constants';
 import type {
+  Area,
   HousekeepingData,
   HousekeepingNote,
   HousekeepingSection,
@@ -558,6 +560,164 @@ export function sectionDoneWords(done: number, total: number): string {
  */
 export function sectionHeadingLabel(title: string, done: number, total: number): string {
   return `${title}, ${sectionDoneWords(done, total)}`;
+}
+
+// ── The checklist area by area (docs/ARCHITECTURE.md "Housekeeping", "Areas") ──
+// An area's housekeeping tasks are the tasks in the section named after it. The name is the
+// only link (no column ties a section to an area), compared as nameKey() reads it, so a
+// section made by hand in the task list joins its area too, and an earlier visit finds its
+// areas by the section names it kept.
+
+/** What the card of the tasks in no section is called: first on the checklist. */
+export const WHOLE_HOME = 'Whole home';
+
+/** The Whole home card's picture, the same in every household (AreaArt's seed): sage, the cat on the sofa. */
+export const WHOLE_HOME_SEED = 'whole-home-1';
+
+/**
+ * The name of the section an area's tasks go in: the area's name trimmed, runs of spaces as
+ * one, and no longer than a section's name may be (TEXT_LIMITS.housekeepingSection, counted
+ * in characters, as the database counts them), trimmed again.
+ * Tests: a plain name; spaces; a name longer than 40 characters, emoji counted as one.
+ */
+export function sectionNameFor(name: string): string {
+  const clean = name.trim().replace(/\s+/g, ' ');
+  return Array.from(clean).slice(0, TEXT_LIMITS.housekeepingSection).join('').trim();
+}
+
+/**
+ * How an area's name and a section's name are compared: sectionNameFor() in lower case. So
+ * "Living Room", "  living   room " and "LIVING ROOM" are one name, and an area with a name
+ * longer than a section's can be matches the section of its first 40 characters.
+ * Tests: case and spaces; a long area name matches its section.
+ */
+export function nameKey(name: string): string {
+  return sectionNameFor(name).toLowerCase();
+}
+
+/**
+ * The sections on the list filed under `name` (nameKey()), in the list's order: one as a rule
+ * (none until a task is added to the area), more only if several were given its name.
+ * Tests: matched whatever the case and spaces; in the list's order; none.
+ */
+export function sectionsNamed(sections: HousekeepingSection[], name: string): HousekeepingSection[] {
+  const key = nameKey(name);
+  return [...sections].sort(bySectionPosition).filter((s) => nameKey(s.title) === key);
+}
+
+/** One card of the day's checklist: one area's tasks, the tasks in no section, or a section no area is called. */
+export interface AreaChecklist {
+  /** Stable React key: `home`, `area:<area id>`, or `section:<nameKey()>`. */
+  key: string;
+  /** `home`: the tasks in no section (Whole home); `area`: an area's; `section`: a section no area is called. */
+  kind: 'home' | 'area' | 'section';
+  /** The card's name: Whole home, the area's name, or the section's name as the day has it. */
+  title: string;
+  /** Picks the picture's colours (AreaArt's seed): the area's id, as its card on Home has it. */
+  seed: string;
+  /**
+   * The section on the list that a task added on this card goes in: the first one filed under
+   * the card's name; null for Whole home (no section), and while an area has none yet.
+   */
+  sectionId: string | null;
+  /** The card's rows for the day, in the order the day has them. */
+  rows: ChecklistRow[];
+  /** How many of its rows are ticked. */
+  done: number;
+}
+
+/**
+ * The checklist for `date` as cards, top to bottom: **Whole home** for the tasks in no section
+ * (only when there are any), then every area in the household's order (by position) with
+ * the rows of the sections named after it (none: no rows), then each section that no area is
+ * called, in the order the day has them, its picture picked by its name. The rows are
+ * checklistSections()': with a visit, as the visit has them, sections matched by the names
+ * they had that day; without one, the task list. Sections whose names match (nameKey()) are
+ * one card, their rows in order; two areas of one name would both show them.
+ * Tests: the starter list with no sections is Whole home, then each area with none; a
+ * section per area, matched whatever the case and spaces, and Add Task's section; a section no
+ * area is called comes last; no tasks in no section, no Whole home; an earlier visit is
+ * matched by the names it kept (a renamed or deleted section); two sections of one name are
+ * one card; areas in the household's order; no areas.
+ */
+export function areaChecklists(
+  housekeeping: HousekeepingData,
+  areas: readonly Pick<Area, 'id' | 'name' | 'position'>[],
+  date: ISODate,
+): AreaChecklist[] {
+  const live = [...housekeeping.sections].sort(bySectionPosition);
+  const sectionFor = (key: string) => live.find((s) => nameKey(s.title) === key)?.id ?? null;
+  let home: ChecklistSection | undefined;
+  const named = new Map<string, { title: string; rows: ChecklistRow[]; done: number }>();
+  for (const group of checklistSections(housekeeping, date)) {
+    if (group.title === null) {
+      home = group;
+      continue;
+    }
+    const key = nameKey(group.title);
+    const same = named.get(key);
+    if (same) {
+      same.rows = [...same.rows, ...group.rows];
+      same.done += group.done;
+    } else {
+      named.set(key, { title: group.title, rows: group.rows, done: group.done });
+    }
+  }
+
+  const cards: AreaChecklist[] = [];
+  if (home?.rows.length) {
+    cards.push({ key: 'home', kind: 'home', title: WHOLE_HOME, seed: WHOLE_HOME_SEED, sectionId: null, rows: home.rows, done: home.done });
+  }
+  const areaKeys = new Set<string>();
+  for (const area of [...areas].sort((a, b) => a.position - b.position)) {
+    const key = nameKey(area.name);
+    areaKeys.add(key);
+    const own = named.get(key);
+    cards.push({
+      key: `area:${area.id}`,
+      kind: 'area',
+      title: area.name,
+      seed: area.id,
+      sectionId: sectionFor(key),
+      rows: own?.rows ?? [],
+      done: own?.done ?? 0,
+    });
+  }
+  for (const [key, group] of named) {
+    if (areaKeys.has(key)) continue;
+    cards.push({
+      key: `section:${key}`,
+      kind: 'section',
+      title: group.title,
+      seed: `section:${key}`,
+      sectionId: sectionFor(key),
+      rows: group.rows,
+      done: group.done,
+    });
+  }
+  return cards;
+}
+
+/**
+ * A card's progress for the day, as it shows under its name: `'2 of 5 done'`, `'All done'`
+ * once every task is ticked, `'No tasks yet'` with none (`'No tasks'` on a day before today,
+ * whose visit keeps the tasks it had).
+ * Tests: some done; none done; all done (one task too); no tasks, today and before.
+ */
+export function areaProgress(done: number, total: number, past = false): string {
+  if (total === 0) return past ? 'No tasks' : 'No tasks yet';
+  return done === total ? 'All done' : `${done} of ${total} done`;
+}
+
+/**
+ * What a card's header is called, as VoiceOver reads it: sectionHeadingLabel() (`'Kitchen, 2
+ * of 5 done'`, `'Kitchen, all 5 done'`, `'Bins, done'` for one task), or `'Garden, no tasks
+ * yet'` with none (`'Garden, no tasks'` on a day before today).
+ * Tests: some done; all done; one task; none, today and before.
+ */
+export function areaHeadingLabel(title: string, done: number, total: number, past = false): string {
+  if (total === 0) return `${title}, ${areaProgress(0, 0, past).toLowerCase()}`;
+  return sectionHeadingLabel(title, done, total);
 }
 
 /**

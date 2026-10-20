@@ -1,8 +1,8 @@
 /*
- * The day's tasks (docs/ARCHITECTURE.md "Housekeeping", UI): white cards of round iOS
- * checkboxes, the tasks in no section first, then each section's card under one quiet line of
- * text (its name, and its progress on the right), as iOS groups a list. The only round things
- * are the checkboxes.
+ * The day's tasks (docs/ARCHITECTURE.md "Housekeeping", UI): a stack of area cards, one a
+ * row, full width. Each header is the area's picture as a rounded landscape thumbnail (inset
+ * with concentric corners), its name and the day's progress, and a chevron; a tap opens the
+ * card in place to its round iOS checkboxes, then Add Task.
  */
 
 .checklist {
@@ -12,55 +12,185 @@
   border: 0;
 }
 
-.card {
+.stack {
   margin: 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.card {
+  position: relative;
   background: var(--card);
   border-radius: var(--r-card);
   overflow: hidden;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 6px 20px rgba(24, 32, 56, 0.06);
 }
 
-/* A section: its line, then its card. The line stands in the gap between cards. */
-.card + .section,
-.section + .section {
-  margin-top: 22px;
+/* ── The header: one button ── */
+
+.heading {
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
 }
 
-/* ── A section's line: name, then "2 of 5" (or "All done") on the right ── */
-
-/* Lined up with the checkboxes below it. */
-.head {
+.header {
+  position: relative;
+  width: 100%;
+  min-height: 44px;
   display: flex;
-  align-items: baseline;
-  gap: 12px;
-  padding: 0 34px 7px;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 18px 8px 8px;
+  text-align: left;
+  color: var(--label);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: background-color 0.2s ease;
+  /* Keyboard focus brings it clear of the status bar and of the tab bar. */
+  scroll-margin: calc(var(--top-inset) + 72px) 0 calc(var(--tabbar-clear) + 16px);
+}
+
+.header:active {
+  background: var(--fill-tertiary);
+}
+
+.header:focus-visible {
+  outline: 2px solid var(--tint);
+  outline-offset: -2px;
+  border-radius: var(--r-card);
+}
+
+.card[data-open] .header:focus-visible {
+  border-radius: var(--r-card) var(--r-card) 6px 6px;
+}
+
+/* The picture: landscape, its corners concentric with the card's, a hairline so pale walls keep an edge. */
+.thumb {
+  position: relative;
+  flex: none;
+  width: 88px;
+  height: 66px;
+  border-radius: calc(var(--r-card) - 8px);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.art {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+}
+
+.thumb::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+  pointer-events: none;
+}
+
+.label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .name {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin: 0;
-  font-size: 15px;
-  line-height: 20px;
-  font-weight: 600;
-  letter-spacing: -0.2px;
-  color: var(--label-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
   overflow-wrap: anywhere;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  font-weight: 600;
+  color: var(--label);
 }
 
-.count {
-  flex: none;
+/* "2 of 5 done"; "All done" in green with a tick; "No tasks yet" in grey. */
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-size: 15px;
   line-height: 20px;
   letter-spacing: -0.2px;
-  color: var(--label-secondary);
+  font-weight: 500;
+  color: var(--label-tertiary);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  transition: color 0.2s ease;
 }
 
-.section[data-all-done] .count {
+.card[data-state='done'] .progress {
   font-weight: 600;
   color: var(--rag-green-text);
+}
+
+.card[data-state='empty'] .progress {
+  font-weight: 400;
+  color: var(--label-secondary);
+}
+
+.tick {
+  flex: none;
+}
+
+.chevron {
+  flex: none;
+  color: var(--ring-idle);
+  transition: transform 0.36s var(--sheet-ease);
+}
+
+.card[data-open] .chevron {
+  transform: rotate(180deg);
+}
+
+/* ── Opening in place: the row grows from nothing to its height ── */
+
+.panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  visibility: hidden;
+  transition:
+    grid-template-rows 0.36s var(--sheet-ease),
+    visibility 0s linear 0.36s;
+}
+
+.card[data-open] .panel {
+  grid-template-rows: 1fr;
+  visibility: visible;
+  transition:
+    grid-template-rows 0.36s var(--sheet-ease),
+    visibility 0s;
+}
+
+.inner {
+  min-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.card[data-open] .inner {
+  opacity: 1;
+  transition: opacity 0.3s ease 0.06s;
+}
+
+/* A hairline under the header, inset like the rows'. */
+.inner::before {
+  content: '';
+  display: block;
+  height: 0.5px;
+  margin: 0 18px;
+  background: var(--separator);
 }
 
 /* ── Rows ── */
@@ -84,8 +214,9 @@
   scroll-margin: calc(var(--top-inset) + 72px) 0 calc(var(--tabbar-clear) + 16px);
 }
 
-/* Hairline between rows, inset to the text. */
-.item + .item .row::before {
+/* Hairline between rows (and above Add Task), inset to the text. */
+.item + .item .row::before,
+.list + .add::before {
   content: '';
   position: absolute;
   top: 0;
@@ -181,14 +312,155 @@
   overflow-wrap: anywhere;
 }
 
+/* A task being added: its name, quieter, and a small spinner where its circle will be. */
+.saving {
+  cursor: default;
+}
+
+.saving:active {
+  background: none;
+}
+
+.saving .title {
+  color: var(--label-secondary);
+}
+
+.spinner {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+}
+
+.spinner::before {
+  content: '';
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--fill-secondary);
+  border-top-color: var(--ring-idle);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes breathe {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* A day before today whose visit had nothing here. */
+.empty {
+  margin: 0;
+  padding: 15px 18px;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label-secondary);
+}
+
+/* ── Add Task, and the new task's field it becomes ── */
+
+.add {
+  position: relative;
+  width: 100%;
+  min-height: 52px;
+  padding: 11px 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-align: left;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--tint-text);
+  -webkit-tap-highlight-color: transparent;
+  scroll-margin: calc(var(--top-inset) + 72px) 0 calc(var(--tabbar-clear) + 16px);
+}
+
+button.add:active {
+  background: var(--avatar-bg);
+}
+
+button.add:focus-visible {
+  outline: 2px solid var(--tint);
+  outline-offset: -2px;
+  border-radius: 6px 6px var(--r-card) var(--r-card);
+}
+
+.plus {
+  flex: none;
+  color: var(--tint);
+}
+
+.addLabel {
+  min-width: 0;
+}
+
+.draft {
+  flex: 1;
+  min-width: 0;
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  resize: none;
+  overflow: hidden;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.4px;
+  color: var(--label);
+  caret-color: var(--tint);
+  scroll-margin: calc(var(--top-inset) + 72px) 0 calc(var(--tabbar-clear) + 16px);
+}
+
+.draft::placeholder {
+  color: var(--label-quaternary);
+  opacity: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+  .card {
+    box-shadow: none;
+  }
+
+  .thumb::after {
+    box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .header,
+  .chevron,
+  .panel,
+  .card[data-open] .panel,
+  .inner,
+  .card[data-open] .inner,
   .circle,
-  .circle svg,
-  .count {
+  .circle svg {
     transition: none;
   }
 
   .row:active .circle {
     transform: none;
+  }
+
+  .spinner::before {
+    border-top-color: var(--fill-secondary);
+    background: var(--fill-secondary);
+    animation: breathe 1.6s ease-in-out infinite;
   }
 }

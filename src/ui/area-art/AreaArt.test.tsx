@@ -81,7 +81,7 @@ describe('AreaArt', () => {
 describe('Scene', () => {
   const KINDS: SceneKind[] = [
     'kitchen', 'living', 'bathroom', 'bedroom', 'hallway', 'garden', 'frontGarden', 'gardenRoom', 'hotTub',
-    'utility', 'office', 'dining', 'garage', 'stairs', 'loft', 'balcony', 'nursery', 'room',
+    'utility', 'office', 'dining', 'garage', 'stairs', 'loft', 'balcony', 'nursery', 'home', 'room',
   ];
 
   it('draws every scene, both compositions, by day and in the evening, each its own', () => {

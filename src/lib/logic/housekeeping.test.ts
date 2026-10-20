@@ -4,6 +4,9 @@ import type { HousekeepingData, HousekeepingSection, HousekeepingTask, Housekeep
 import {
   applyTick,
   applyVisitPatch,
+  areaChecklists,
+  areaHeadingLabel,
+  areaProgress,
   calendarDayLabel,
   canHaveVisit,
   checklistFor,
@@ -24,12 +27,15 @@ import {
   monthSummary,
   monthTitle,
   monthTotals,
+  nameKey,
   newVisit,
   noteByline,
   parsePrice,
   priceInputValue,
   relayVisit,
   sectionDoneWords,
+  sectionNameFor,
+  sectionsNamed,
   sectionHeadingLabel,
   sectionProgress,
   shiftMonth,
@@ -40,6 +46,8 @@ import {
   visitDays,
   visitOn,
   WEEKDAYS,
+  WHOLE_HOME,
+  WHOLE_HOME_SEED,
   withSectionAdded,
   withSectionDeleted,
   withSectionMoved,
@@ -1265,5 +1273,142 @@ describe('sections and the list’s order', () => {
     // Nothing to change: today's visit is the same object.
     const settled = withListSettled(before, TODAY);
     expect(visitOn(settled.visits, TODAY)).toBe(visitOn(before.visits, TODAY));
+  });
+});
+
+// ── The checklist area by area ──
+
+describe('the checklist area by area', () => {
+  /** Areas as the household has them (by position; the array order is not what decides). */
+  const AREAS = [
+    { id: 'a-kitchen', name: 'Kitchen', position: 0 },
+    { id: 'a-living', name: 'Living Room', position: 1 },
+    { id: 'a-garden', name: 'Garden', position: 2 },
+  ];
+  const shuffledAreas = [AREAS[2], AREAS[0], AREAS[1]];
+  /** Each card as [title, kind, its rows (✓ when ticked), how many done]. */
+  const cards = (hk: HousekeepingData, date = TODAY, areas = shuffledAreas) =>
+    areaChecklists(hk, areas, date).map((c) => [c.title, c.kind, c.rows.map((r) => (r.done ? `✓${r.title}` : r.title)), c.done]);
+  const LOOSE = ['Change the bed sheets', 'Hoover and mop the floors', 'Dust the surfaces', 'Ironing'];
+
+  it('sectionNameFor and nameKey: trimmed, runs of spaces as one, case ignored, 40 characters at most', () => {
+    expect(sectionNameFor('Kitchen')).toBe('Kitchen');
+    expect(sectionNameFor('  Living \t  Room ')).toBe('Living Room');
+    expect(nameKey('  LIVING   room')).toBe(nameKey('Living Room'));
+    expect(nameKey('Living Room')).toBe('living room');
+    const long = 'The big bedroom at the top of the stairs, by the bathroom';
+    expect(sectionNameFor(long)).toBe('The big bedroom at the top of the stairs');
+    expect(sectionNameFor(long)).toHaveLength(40);
+    expect(nameKey(long)).toBe(nameKey(sectionNameFor(long)));
+    // Emoji count as one character each, as the database counts them, and are never cut in two.
+    const emoji = `${'🛁'.repeat(39)} Bathroom`;
+    expect(Array.from(sectionNameFor(emoji))).toHaveLength(39);
+  });
+
+  it('sectionsNamed: the sections filed under a name, whatever the case and spaces, in the list’s order', () => {
+    const other = section('s-k2', ' kitchen ', 0);
+    const list = [GARDEN, { ...KITCHEN, position: 3 }, other, BATH];
+    expect(sectionsNamed(list, 'KITCHEN').map((s) => s.id)).toEqual(['s-k2', KITCHEN.id]);
+    expect(sectionsNamed(list, 'Hallway')).toEqual([]);
+  });
+
+  it('the starter list with no sections: Whole home first, then each area in order with no tasks', () => {
+    const list = areaChecklists(data(), shuffledAreas, TODAY);
+    expect(list.map((c) => [c.key, c.kind, c.title, c.seed, c.sectionId, c.rows.length])).toEqual([
+      ['home', 'home', WHOLE_HOME, WHOLE_HOME_SEED, null, 7],
+      ['area:a-kitchen', 'area', 'Kitchen', 'a-kitchen', null, 0],
+      ['area:a-living', 'area', 'Living Room', 'a-living', null, 0],
+      ['area:a-garden', 'area', 'Garden', 'a-garden', null, 0],
+    ]);
+    expect(WHOLE_HOME).toBe('Whole home');
+    // No areas at all: Whole home alone; no tasks either: nothing.
+    expect(cards(data(), TODAY, []).map((c) => c[0])).toEqual([WHOLE_HOME]);
+    expect(areaChecklists(data({ tasks: [] }), [], TODAY)).toEqual([]);
+  });
+
+  it('an area’s card has the tasks of the section named after it, whatever the case and spaces; a section no area is called comes last', () => {
+    // Kitchen: Clean the kitchen, Empty the bins; Bathrooms (no area of that name): Clean the bathrooms.
+    const hk = sectioned({ sections: [{ ...KITCHEN, title: '  kitchen ' }, BATH] });
+    expect(cards(hk)).toEqual([
+      [WHOLE_HOME, 'home', LOOSE, 0],
+      ['Kitchen', 'area', ['Clean the kitchen', 'Empty the bins'], 0],
+      ['Living Room', 'area', [], 0],
+      ['Garden', 'area', [], 0],
+      ['Bathrooms', 'section', ['Clean the bathrooms'], 0],
+    ]);
+    const list = areaChecklists(hk, AREAS, TODAY);
+    // A task added on a card goes in the section that is there; an area without one has none yet.
+    expect(list.map((c) => c.sectionId)).toEqual([null, KITCHEN.id, null, null, BATH.id]);
+    expect(list[4]).toMatchObject({ key: 'section:bathrooms', seed: 'section:bathrooms' });
+  });
+
+  it('no tasks in no section: no Whole home', () => {
+    const hk = sectioned();
+    const all = {
+      ...hk,
+      tasks: hk.tasks.map((t) => (t.section_id === null ? { ...t, section_id: KITCHEN.id, position: 10 + t.position } : t)),
+    };
+    expect(cards(all).map((c) => c[0])).toEqual(['Kitchen', 'Living Room', 'Garden', 'Bathrooms']);
+  });
+
+  it('today’s visit: its ticks counted on each card', () => {
+    const hk = sectioned({ today: true });
+    const today = visitOn(hk.visits, TODAY)!;
+    const tick = (r: HousekeepingVisitTask) => (r.task_id === 't3' || r.task_id === 't0' ? { ...r, done: true } : r);
+    const ticks = { ...hk, visits: [{ ...today, tasks: today.tasks.map(tick) }] };
+    expect(cards(ticks)).toEqual([
+      [WHOLE_HOME, 'home', ['✓Change the bed sheets', ...LOOSE.slice(1)], 1],
+      ['Kitchen', 'area', ['✓Clean the kitchen', 'Empty the bins'], 1],
+      ['Living Room', 'area', [], 0],
+      ['Garden', 'area', [], 0],
+      ['Bathrooms', 'section', ['Clean the bathrooms'], 0],
+    ]);
+  });
+
+  it('an earlier visit is matched by the section names it kept, whatever the list is now', () => {
+    // Last week the kitchen's rows were under "Kitchen"; since then it was renamed "Cooking"
+    // and the bathrooms deleted: the visit keeps both names.
+    const hk = sectioned({ lastWeek: true });
+    const now = { ...hk, sections: [{ ...KITCHEN, title: 'Cooking' }] };
+    const lastWeek = visitOn(now.visits, '2026-10-01')!;
+    const kept = {
+      ...now,
+      visits: [{ ...lastWeek, tasks: lastWeek.tasks.map((r) => (r.section_id === BATH.id ? { ...r, section_id: null } : r)) }],
+    };
+    expect(cards(kept, '2026-10-01')).toEqual([
+      [WHOLE_HOME, 'home', LOOSE, 0],
+      ['Kitchen', 'area', ['Clean the kitchen', 'Empty the bins'], 0],
+      ['Living Room', 'area', [], 0],
+      ['Garden', 'area', [], 0],
+      ['Bathrooms', 'section', ['Clean the bathrooms'], 0],
+    ]);
+    // Today has the list as it is now: the kitchen's tasks are under Cooking, which no area is called.
+    expect(cards(now).map((c) => c[0])).toEqual([WHOLE_HOME, 'Kitchen', 'Living Room', 'Garden', 'Cooking']);
+  });
+
+  it('two sections of one name are one card, their rows in order', () => {
+    const second = section('s-k2', 'KITCHEN', 2);
+    const hk = withTaskMoved(sectioned({ sections: [KITCHEN, BATH, second] }), 't2', second.id, 0, TODAY);
+    expect(cards(hk)).toEqual([
+      [WHOLE_HOME, 'home', LOOSE, 0],
+      ['Kitchen', 'area', ['Clean the kitchen', 'Empty the bins', 'Clean the bathrooms'], 0],
+      ['Living Room', 'area', [], 0],
+      ['Garden', 'area', [], 0],
+    ]);
+    expect(areaChecklists(hk, AREAS, TODAY)[1].sectionId).toBe(KITCHEN.id);
+  });
+
+  it('areaProgress and areaHeadingLabel: in words, with no tasks today and before', () => {
+    expect(areaProgress(2, 5)).toBe('2 of 5 done');
+    expect(areaProgress(0, 7)).toBe('0 of 7 done');
+    expect(areaProgress(5, 5)).toBe('All done');
+    expect(areaProgress(1, 1)).toBe('All done');
+    expect(areaProgress(0, 0)).toBe('No tasks yet');
+    expect(areaProgress(0, 0, true)).toBe('No tasks');
+    expect(areaHeadingLabel('Kitchen', 2, 5)).toBe('Kitchen, 2 of 5 done');
+    expect(areaHeadingLabel('Kitchen', 5, 5)).toBe('Kitchen, all 5 done');
+    expect(areaHeadingLabel('Bins', 1, 1)).toBe('Bins, done');
+    expect(areaHeadingLabel('Garden', 0, 0)).toBe('Garden, no tasks yet');
+    expect(areaHeadingLabel('Garden', 0, 0, true)).toBe('Garden, no tasks');
   });
 });

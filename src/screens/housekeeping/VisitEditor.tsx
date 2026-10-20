@@ -1,13 +1,17 @@
-import { useId } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { TEXT_LIMITS } from '../../lib/constants';
 import {
-  checklistSections,
+  areaChecklists,
+  areaHeadingLabel,
   doneByline,
   isRecorded,
   matchesTarget,
-  sectionHeadingLabel,
+  nameKey,
+  sectionNameFor,
+  sectionsNamed,
   visitByline,
   visitOn,
+  type AreaChecklist,
   type ChecklistRow,
 } from '../../lib/logic/housekeeping';
 import type { HousekeepingVisitTask, ISODate } from '../../lib/types';
@@ -43,20 +47,30 @@ export const NOT_STARTED_NO_TASKS = "Not started yet. Comments or a price start 
 export const NOTHING_RECORDED = 'Nothing recorded yet.';
 
 /**
- * One day's visit, editable (everyone edits everything): the checklist, comments, the price
- * for the day, and who recorded it. A day with no visit yet shows the task list unticked;
- * the first tick (or comments, or a price) records the visit. Comments and the price say
- * "✓ Saved" for a moment when saved, and keep what was typed with "Not saved. Try again"
- * when a save fails. Its "Comments" heading is an h3, under the day's h2 (Today, or the date).
+ * One day's visit, editable (everyone edits everything): the checklist (area by area),
+ * comments, the price for the day, and who recorded it. A day with no visit yet shows the
+ * task list unticked; the first tick (or comments, or a price) records the visit. Today, each
+ * card ends with Add Task: a task added to an area goes in the section named after it, made
+ * first when there is none. Comments and the price say "✓ Saved" for a moment when saved, and
+ * keep what was typed with "Not saved. Try again" when a save fails. Its "Comments" heading is
+ * an h3, under the day's h2 (Today, or the date).
  */
 export function VisitEditor({ date, legend, dayName, announce, onEditTasks }: VisitEditorProps) {
-  const { data, today, setHousekeepingTaskDone, saveHousekeepingVisit } = useHousehold();
+  const {
+    data,
+    today,
+    setHousekeepingTaskDone,
+    saveHousekeepingVisit,
+    createHousekeepingSection,
+    createHousekeepingTask,
+  } = useHousehold();
   const housekeeping = data.housekeeping;
   const { members } = data;
   const timeZone = data.household.timezone;
   const visit = visitOn(housekeeping.visits, date);
-  const sections = checklistSections(housekeeping, date);
-  const rows = sections.flatMap((section) => section.rows);
+  const cards = areaChecklists(housekeeping, data.areas, date);
+  const rows = cards.flatMap((card) => card.rows);
+  const past = date !== today;
   const now = new Date();
   const commentsId = useId();
   const [priceSaved, flashPriceSaved] = useSavedFlash();
@@ -66,15 +80,49 @@ export function VisitEditor({ date, legend, dayName, announce, onEditTasks }: Vi
   );
 
   const tick = (row: ChecklistRow, done: boolean) => {
-    // The last one of a section ticked: the section is all done, and is read out as such.
-    const section = sections.find((s) => s.rows.some((r) => r.key === row.key));
-    const finishes = done && !!section?.title && section.done === section.rows.length - 1;
+    // The last one of a card ticked: the card is all done, and is read out as such.
+    const card = cards.find((c) => c.rows.some((r) => r.key === row.key));
+    const finishes = done && !!card && card.done === card.rows.length - 1;
     const said = `${row.title} ${done ? 'done' : 'not done'}`;
     void setHousekeepingTaskDone(date, row.target, done)
-      .then(() =>
-        announce(finishes ? `${said}. ${sectionHeadingLabel(section.title!, section.rows.length, section.rows.length)}` : said),
-      )
+      .then(() => {
+        const all = card?.rows.length ?? 0;
+        announce(finishes && card ? `${said}. ${areaHeadingLabel(card.title, all, all, past)}` : said);
+      })
       .catch(() => {});
+  };
+
+  // ── Adding a task to a card (today) ─────────────────────
+  // An area's tasks are the section named after it (sectionsNamed()): the first task added to
+  // an area makes that section, once, however fast the next ones follow.
+  const sections = useRef(housekeeping.sections);
+  sections.current = housekeeping.sections;
+  const making = useRef(new Map<string, Promise<string>>());
+  useEffect(() => {
+    // Shown on the list now: the next task goes straight in.
+    for (const key of making.current.keys()) {
+      if (housekeeping.sections.some((s) => nameKey(s.title) === key)) making.current.delete(key);
+    }
+  });
+
+  const sectionFor = (card: AreaChecklist): Promise<string | null> => {
+    if (card.kind === 'home') return Promise.resolve(null);
+    const live = sectionsNamed(sections.current, card.title)[0];
+    if (live) return Promise.resolve(live.id);
+    const key = nameKey(card.title);
+    let pending = making.current.get(key);
+    if (!pending) {
+      pending = createHousekeepingSection(sectionNameFor(card.title)).then((s) => s.id);
+      making.current.set(key, pending);
+      pending.catch(() => making.current.delete(key));
+    }
+    return pending;
+  };
+
+  const addTask = async (card: AreaChecklist, title: string) => {
+    const sectionId = await sectionFor(card);
+    await createHousekeepingTask(title, sectionId);
+    announce(`${title} added to ${card.title}`);
   };
 
   const bylineOf = (row: ChecklistRow): string | null => {
@@ -110,8 +158,16 @@ export function VisitEditor({ date, legend, dayName, announce, onEditTasks }: Vi
 
   return (
     <div>
-      {rows.length ? (
-        <Checklist legend={legend} sections={sections} bylineOf={bylineOf} onTick={tick} />
+      {cards.length ? (
+        <Checklist
+          legend={legend}
+          cards={cards}
+          past={past}
+          householdId={data.household.id}
+          bylineOf={bylineOf}
+          onTick={tick}
+          onAdd={past ? undefined : addTask}
+        />
       ) : date === today ? (
         <div className={styles.card}>
           <p className={styles.emptyText}>No tasks yet.</p>

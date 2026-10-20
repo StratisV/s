@@ -39,6 +39,9 @@ describe('sceneKind', () => {
     ['loft', ['Loft', 'Attic', 'Eaves']],
     ['balcony', ['Balcony', 'Terrace', 'Roof terrace', 'Patio', 'Deck', 'Veranda']],
     ['nursery', ['Nursery', 'Kids room', "Kids' room", "Children's room", 'Playroom', 'Games room']],
+    // Housekeeping's card for the tasks in no section, and a section for the whole place; a room of it keeps its own.
+    ['home', ['Whole home', 'Whole house', 'The flat', 'Apartment', 'Everywhere', 'General', 'All rooms']],
+    ['office', ['Home office']],
     ['room', ['Gym', 'Wine cellar', 'Music room', 'Upstairs', '', '   ']],
   ];
   it.each(CASES)('%s', (kind, names) => {

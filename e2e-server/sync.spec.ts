@@ -402,7 +402,7 @@ function longDay(isoDate: string): string {
   return `${weekday} ${rest}`;
 }
 
-/** The task titles of a checklist, top to bottom, and which are ticked. */
+/** The task titles of a checklist (its open cards), top to bottom, and which are ticked. */
 async function checklist(group: Locator): Promise<{ title: string; done: boolean }[]> {
   return group.getByRole('checkbox').evaluateAll((boxes) =>
     boxes.map((box) => ({
@@ -411,6 +411,28 @@ async function checklist(group: Locator): Promise<{ title: string; done: boolean
     })),
   );
 }
+
+/** A card's header on the checklist: one button, named first by its card ("Kitchen, 2 of 5 done"). */
+const cardHeader = (scope: Locator, name: string) =>
+  scope.getByRole('button', { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}, `) });
+/** Opens a card (a tap on its header, unless it is open) and gives its tasks: a group named after it. */
+async function openCard(scope: Locator, name: string): Promise<Locator> {
+  const header = cardHeader(scope, name);
+  if ((await header.getAttribute('aria-expanded')) !== 'true') await header.click();
+  await expect(header).toHaveAttribute('aria-expanded', 'true');
+  return scope.getByRole('group', { name, exact: true });
+}
+/** The cards' headers as heard, top to bottom: "Whole home, 0 of 7 done", "Kitchen, no tasks yet". */
+const cardNames = (scope: Locator) =>
+  scope.locator('[data-card] h3 button').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')));
+/** The home's areas (the phone's: e2e-server/helpers.ts PHONE_DOC), in order. */
+const AREAS = ['Kitchen', 'Living Room', 'Bathroom Small', 'Garden', 'Garden Lounge', 'Jacuzzi'];
+/** The cards as heard today: Whole home (when given), each area ("no tasks yet" unless given), then `rest`. */
+const cards = (home: string | null, areas: Record<string, string> = {}, rest: string[] = []) => [
+  ...(home ? [`Whole home, ${home}`] : []),
+  ...AREAS.map((name) => `${name}, ${areas[name] ?? 'no tasks yet'}`),
+  ...rest,
+];
 
 test('housekeeping: the message, ticks, comments, price, the task list and visits show on the other phone', async () => {
   const a = stratis.page;
@@ -421,6 +443,9 @@ test('housekeeping: the message, ticks, comments, price, the task list and visit
   const sb = housekeepingScreen(b);
   await expect(today(sa).getByRole('group', { name: 'Tasks today' })).toBeVisible();
   await expect(today(sb).getByRole('group', { name: 'Tasks today' })).toBeVisible();
+  // The starter list is Whole home's (in no section): open on both phones.
+  await openCard(today(sa), 'Whole home');
+  await openCard(today(sb), 'Whole home');
   await quiet(stratis);
   await quiet(shea);
 
@@ -506,7 +531,7 @@ test('housekeeping: the message, ticks, comments, price, the task list and visit
   await expectNoReload(shea);
 });
 
-test('housekeeping sections: added, filled, renamed, reordered and deleted on one phone show on the other', async () => {
+test('housekeeping sections: added, filled, renamed, reordered and deleted on one phone show on the other, area by area', async () => {
   const a = stratis.page;
   const b = shea.page;
   await goToTab(a, 'Housekeeping');
@@ -517,9 +542,7 @@ test('housekeeping sections: added, filled, renamed, reordered and deleted on on
   const tasksB = today(sb).getByRole('group', { name: 'Tasks today' });
   await expect(tasksA).toBeVisible();
   await expect(tasksB).toBeVisible();
-  /** Today's section headings as heard: "Kitchen, 1 of 2 done". */
-  const headings = (tasks: Locator) =>
-    tasks.getByRole('heading', { level: 3 }).evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')));
+  expect(await cardNames(tasksB)).toEqual(cards('0 of 7 done'));
   const openList = async (page: Page, screen: Locator) => {
     await today(screen).getByRole('button', { name: 'Edit task list' }).click();
     const list = page.getByRole('dialog', { name: 'Task list' });
@@ -555,7 +578,11 @@ test('housekeeping sections: added, filled, renamed, reordered and deleted on on
     for (const task of tasks) await moveTo(a, list, task, name);
   }
   await closeList(list);
-  await expect.poll(() => headings(tasksB), { timeout: SYNC_MS }).toEqual(['Kitchen, 0 of 2 done', 'Bathrooms, 0 of 1 done']);
+  // Kitchen is an area's name: its tasks are on that area's card. Bathrooms, no area's, comes last.
+  await expect
+    .poll(() => cardNames(tasksB), { timeout: SYNC_MS })
+    .toEqual(cards('0 of 4 done', { Kitchen: '0 of 2 done' }, ['Bathrooms, 0 of 1 done']));
+  for (const name of ['Whole home', 'Kitchen', 'Bathrooms']) await openCard(tasksB, name);
   expect((await checklist(tasksB)).map((t) => t.title)).toEqual([
     'Change the bed sheets',
     'Hoover and mop the floors',
@@ -569,9 +596,12 @@ test('housekeeping sections: added, filled, renamed, reordered and deleted on on
   // Shea ticks in the kitchen: Stratis sees its progress.
   await quiet(stratis);
   await tasksB.getByRole('checkbox', { name: 'Clean the kitchen' }).click();
-  await expect.poll(() => headings(tasksA), { timeout: SYNC_MS }).toEqual(['Kitchen, 1 of 2 done', 'Bathrooms, 0 of 1 done']);
+  await expect
+    .poll(() => cardNames(tasksA), { timeout: SYNC_MS })
+    .toEqual(cards('0 of 4 done', { Kitchen: '1 of 2 done' }, ['Bathrooms, 0 of 1 done']));
 
-  // Shea renames the kitchen and moves the bathrooms first.
+  // Shea renames the kitchen's section and moves the bathrooms first: no area has its name
+  // now, so its tasks have a card of their own, after Bathrooms.
   await quiet(stratis);
   list = await openList(b, sb);
   await sectionMenu(b, list, 'Kitchen', 'Rename');
@@ -582,16 +612,16 @@ test('housekeeping sections: added, filled, renamed, reordered and deleted on on
   await sectionMenu(b, list, 'Bathrooms', 'Move Up');
   await closeList(list);
   await expect
-    .poll(() => headings(tasksA), { timeout: SYNC_MS })
-    .toEqual(['Bathrooms, 0 of 1 done', 'Kitchen and utility, 1 of 2 done']);
+    .poll(() => cardNames(tasksA), { timeout: SYNC_MS })
+    .toEqual(cards('0 of 4 done', {}, ['Bathrooms, 0 of 1 done', 'Kitchen and utility, 1 of 2 done']));
 
-  // Stratis deletes the kitchen: its tasks go to the top on both phones, the tick kept.
+  // Stratis deletes it: its tasks go to Whole home on both phones, the tick kept.
   await quiet(shea);
   list = await openList(a, sa);
   await sectionMenu(a, list, 'Kitchen and utility', 'Delete Section');
   await (await confirmation(a, 'Delete Kitchen and utility?')).getByRole('button', { name: 'Delete Section' }).click();
   await closeList(list);
-  await expect.poll(() => headings(tasksB), { timeout: SYNC_MS }).toEqual(['Bathrooms, 0 of 1 done']);
+  await expect.poll(() => cardNames(tasksB), { timeout: SYNC_MS }).toEqual(cards('1 of 6 done', {}, ['Bathrooms, 0 of 1 done']));
   expect(await checklist(tasksB)).toEqual([
     { title: 'Change the bed sheets', done: false },
     { title: 'Hoover and mop the floors', done: false },
@@ -601,6 +631,39 @@ test('housekeeping sections: added, filled, renamed, reordered and deleted on on
     { title: 'Empty the bins', done: false },
     { title: 'Clean the bathrooms', done: false },
   ]);
+
+  // Stratis adds a task on the Living Room's card: the section named after it is made, and
+  // Shea's card has the task.
+  await quiet(shea);
+  const living = await openCard(tasksA, 'Living Room');
+  await living.getByRole('button', { name: 'Add Task to Living Room' }).click();
+  await expect(living.getByRole('textbox', { name: 'Task name' })).toBeFocused();
+  await a.keyboard.type('Plump the cushions');
+  await a.keyboard.press('Enter');
+  await expect(living.getByRole('checkbox', { name: 'Plump the cushions' })).toBeVisible();
+  await a.keyboard.press('Escape');
+  await expect
+    .poll(() => cardNames(tasksB), { timeout: SYNC_MS })
+    .toEqual(cards('1 of 6 done', { 'Living Room': '0 of 1 done' }, ['Bathrooms, 0 of 1 done']));
+
+  // Shea renames the area: its section follows, so the card keeps its task on both phones.
+  await quiet(stratis);
+  const household = await openHousehold(b);
+  const areaName = household
+    .getByRole('listitem')
+    .filter({ has: b.getByRole('button', { name: 'Delete Living Room', exact: true }) })
+    .getByRole('textbox', { name: 'Area name' });
+  await areaName.fill('Sitting room');
+  await areaName.press('Enter');
+  await expect(household.getByRole('button', { name: 'Delete Sitting room', exact: true })).toBeVisible();
+  await closeHousehold(b, household);
+  const renamed = cards('1 of 6 done', { 'Living Room': '0 of 1 done' }, ['Bathrooms, 0 of 1 done']).map((n) =>
+    n.replace(/^Living Room, /, 'Sitting room, '),
+  );
+  await expect.poll(() => cardNames(tasksA), { timeout: SYNC_MS }).toEqual(renamed);
+  await expect.poll(() => cardNames(tasksB), { timeout: SYNC_MS }).toEqual(renamed);
+  const stored = await loadHome(stratis.context);
+  expect(stored.housekeeping.sections.map((s) => s.title)).toEqual(['Bathrooms', 'Sitting room']);
 
   await expectNoReload(stratis);
   await expectNoReload(shea);
@@ -652,6 +715,9 @@ test('three phones: two people writing at the same moment never lose a change', 
   const ha = housekeepingScreen(a);
   const hc = housekeepingScreen(c);
   await expect(today(ha).getByRole('group', { name: 'Tasks today' })).toBeVisible();
+  // The starter list is Whole home's (in no section): open where it is ticked and watched.
+  await openCard(today(ha), 'Whole home');
+  await openCard(today(hc), 'Whole home');
   await chatScreen(b).getByRole('textbox', { name: 'Message' }).fill('Leaving the key under the mat.');
   await Promise.all([
     chatScreen(b).getByRole('textbox', { name: 'Message' }).press('Enter'),
@@ -660,6 +726,7 @@ test('three phones: two people writing at the same moment never lose a change', 
   await expect(today(hc).getByRole('checkbox', { name: 'Empty the bins' })).toBeChecked({ timeout: SYNC_MS });
   await goToTab(b, 'Housekeeping');
   const hb = housekeepingScreen(b);
+  await openCard(today(hb), 'Whole home');
   await expect(today(hb).getByRole('checkbox', { name: 'Empty the bins' })).toBeChecked();
   await Promise.all([
     today(ha).getByRole('checkbox', { name: 'Ironing' }).click(),

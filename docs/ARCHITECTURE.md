@@ -2056,8 +2056,13 @@ it (the defaults are in `:where()`).
   (striped lawn, flowers, a robin on the fence post), a front garden (a pastel house front,
   path, gate and bins, sometimes the hedgehog), a garden room (outdoor sofa under fairy
   lights), a hot tub (bubbles and steam), and a utility room, study, dining room, garage,
-  stairs, loft, balcony (London's skyline with the Shard) and nursery; anything else gets a
-  cosy room with one of three sets of furniture.
+  stairs, loft, balcony (London's skyline with the Shard) and nursery; the whole home
+  (`home.tsx`: a doll's house with its front off, a bedroom and a bathroom upstairs, the
+  kitchen and the living room below, the chimney smoking, its rooms lamplit at night) for
+  "Whole home", "Whole house", "Flat", "Everywhere" and the like, after every other rule so a
+  room of it keeps its own ("Home office" is a study); Housekeeping's Whole home card has it,
+  with the seed `WHOLE_HOME_SEED` (sage, the cat on the sofa). Anything else gets a cosy room
+  with one of three sets of furniture.
 - **A second composition** for every kind (`isAlt()`), picked by words like "small", "guest",
   "downstairs" or a trailing even number ("Bedroom 2"); "large", "master", "upstairs" and the
   like keep the first. So Bathroom Small has a shower and Bathroom Large the bath, Bedroom
@@ -2072,7 +2077,7 @@ it (the defaults are in `:where()`).
   bobbing; small and slow (transform and opacity only), paused while off screen (an
   `IntersectionObserver` sets `data-paused`) and none of it with Reduce Motion.
 - **Loading**: `pick.ts` is small and in the main bundle; the drawings (`Scene.tsx`,
-  `kit.tsx`, `indoor.tsx`, `outdoor.tsx`) load as one chunk the first time a picture shows
+  `kit.tsx`, `indoor.tsx`, `outdoor.tsx`, `home.tsx`) load as one chunk the first time a picture shows
   (`React.lazy`), over a gradient of the scene's own wall and floor (or sky and ground,
   `backdrop()`), and fade in only that first time. In tests the SVG arrives a tick later
   (`findBy`/`waitFor`); the card's words are there at once.
@@ -2320,6 +2325,19 @@ payments.
   already there, in their order, on today's visit too; the app asks first. An empty section is
   not shown on a checklist. A household from before sections has none: every task and row in
   none.
+- **Areas** (by name only: no column, no backend or data model change): an area's
+  housekeeping tasks are the tasks in the section whose name matches the area's (`nameKey()`:
+  trimmed, case ignored, runs of spaces as one; an area name longer than a section's 40
+  characters matches the section of its first 40). The day's checklist is a card per area:
+  **Whole home** first for the tasks in no section (only when there are any), then every area
+  in the household's order (one with no section says "No tasks yet"), then each section that
+  no area is called, in the order the day has them (`areaChecklists()`). Sections whose names
+  match are one card. A visit on an earlier day is matched to the areas by the section names
+  it kept. Add Task on a card (today) adds the task to that card's section, making the section
+  first, named after the area (`sectionNameFor()`), when there is none; on Whole home it adds
+  to no section. Renaming an area renames the sections filed under its old name too
+  (`HomeProvider.renameArea`), so the area keeps its tasks; a section renamed in the task list
+  to a name no area has takes its tasks to a card of their own.
 - **Visits**: at most one per household and day (the household's time zone), today or earlier,
   never in the future. A visit is created by the first write for its day: ticking or unticking
   a task, saving comments or the price, or "Add a visit". When it is created it copies:
@@ -2615,7 +2633,10 @@ title)`, `deleteHousekeepingSection(id)`, `moveHousekeepingSection(id, index)`,
 `saveHousekeepingVisit(date, patch)`, `addHousekeepingVisit(date)`,
 `deleteHousekeepingVisit(id)`. All go through `mutate()` with a revert that takes back only
 what the action touched, like the other edits (a failed write shows "Couldn't save." and
-rejects). The optimistic copies come from `src/lib/logic/housekeeping.ts`:
+rejects). `renameArea(id, name)` renames the area's housekeeping sections with it
+(`sectionsNamed()` under its old name, each to `sectionNameFor(name)`): shown at once with the
+area's new name, each section's write sent once the area's is stored, and taken back with it
+if that fails. The optimistic copies come from `src/lib/logic/housekeeping.ts`:
 
 - a write for a day with no visit shows a pending visit at once (`newVisit()`, id
   `pending:<date>`, rows `pending:<taskId>`); further writes for that day apply to it locally
@@ -2660,7 +2681,11 @@ sections the visit had: a section still on the list by its id; a deleted one by 
 each run of its rows apart, so two of one name stay two and in their place),
 `checklistFor` (the same as one list), `matchesTarget`, `sectionProgress` ("2 of 5", then
 "All done", or "Done" for a section of one task), `sectionDoneWords`, `sectionHeadingLabel`
-("Kitchen, 2 of 5 done", "Kitchen, all 5 done", "Bins, done"). Bylines: `visitByline`,
+("Kitchen, 2 of 5 done", "Kitchen, all 5 done", "Bins, done"). Areas: `WHOLE_HOME`,
+`WHOLE_HOME_SEED`, `sectionNameFor` (an area's section name), `nameKey` (how the names are
+compared), `sectionsNamed`, `areaChecklists` (the day's cards: Whole home, the areas, other
+sections), `areaProgress` ("2 of 5 done", "All done", "No tasks yet", "No tasks" before
+today), `areaHeadingLabel` ("Kitchen, 2 of 5 done", "Garden, no tasks yet"). Bylines: `visitByline`,
 `noteByline`, `doneByline`. The tab's dot: `hasNewNote`.
 Optimistic edits: `snapshotNote`, `newVisit`, `applyTick`, `applyVisitPatch`,
 `withTaskAdded`, `withTaskRenamed`, `withTaskDeleted`, `withTaskMoved` (one task into a
@@ -2680,7 +2705,7 @@ Files under `src/screens/housekeeping/` (each with a `.module.css` where it has 
 | `DeleteVisit.tsx` | the Delete Visit card and its confirmation (today's, and the selected day's) |
 | `SaveStatus.tsx` | "✓ Saved" for a moment, and "Not saved. Try again" after a failed save |
 | `useNewNote.ts` | the Housekeeping tab's dot (a new message from someone else) |
-| `Checklist.tsx` | the tasks as checkboxes, a card per section |
+| `Checklist.tsx` | the day's tasks as a stack of area cards that open in place to their checkboxes, with Add Task |
 | `SectionIcon.tsx` | a section's drawing: Home's room drawing for a room's name, else a list |
 | `PriceField.tsx` | the £ field: parse, format, error |
 | `Calendar.tsx` | the visits under the title: `ui/DatePicker.tsx` (Needs attention's date picker, on the card `ui/MonthCalendar.tsx`) with today's line, the month's summary, a dot for each visit (`data-visit`) and `lastDay` today; the view kept under `homeos.calendar.housekeeping` |
@@ -2755,26 +2780,41 @@ pops in when you come back from a tab without it.
 4. **Today**, while today is chosen in the calendar (`h2`, `tabIndex={-1}`, with **Edit** on
    the right: 15px tint text, `aria-label="Edit task list"`, opens `TaskListSheet`), then
    `VisitEditor` for `today`:
-   - the checklist (`Checklist`, groups from `checklistSections()`): the tasks in no section
-     first, in a card with no heading, then each section's card under one quiet line of text,
-     as iOS groups a list, 22px between cards, in the sections' order (an empty section is
-     left out). The line, lined up with the checkboxes, has the section's name (15/20/600
-     secondary, wrapping, an `h3` named with its progress, "Kitchen, 2 of 5 done") and on the
-     right "2 of 5" (15/20 secondary, tabular). With every task ticked the words read **All
-     done** (600, `--rag-green-text`), or **Done** for a section of one task. A header costs
-     one line, less than what it heads, and the only round things on the checklist are the
-     checkboxes (a progress ring there read as one more checkbox that did nothing, and part
-     way as a spinner). Each row a `label` with a
-     native checkbox drawn as a 24px iOS circle (empty: 1.5px #C7C7CC ring; ticked: filled
-     `--tint` with a white check), the title at 17/22, and when ticked a second line at 13/18
+   - the checklist (`Checklist`, cards from `areaChecklists()`, see "Areas" above): a stack of
+     area cards, one a row, full width (16px gutters, 10px apart, white, radius 24, the soft
+     shadow of Home's cards in light mode): **Whole home** (the tasks in no section, its
+     picture a doll's house of every room), then every area in the household's order, then
+     any section no area is called. Each card's header is one button (in an `h3`, named
+     "Kitchen, 2 of 5 done"; `aria-expanded`, `aria-controls` its rows): the area's picture
+     (`AreaArt`, the same as its card on Home) as a rounded landscape thumbnail, 88 by 66, on
+     the left, inset 8px with concentric corners; the name (17/22/600, two lines at most);
+     under it the day's progress (15/20): "2 of 5 done" (500, `--label-tertiary`), **All
+     done** with a tick once every task is ticked (600, `--rag-green-text`), "No tasks yet" in
+     grey (`--label-secondary`; "No tasks" on a day before today); and a chevron
+     (`--ring-idle`) that turns over when open. A tap opens the card in place: its rows grow
+     from nothing (`grid-template-rows` 0fr to 1fr, 0.36s on the sheet curve, the rows fading
+     in; at once with Reduce Motion), and a card opened low on the screen scrolls up as it
+     opens until what it opens is above the tab bar, without taking its header under the top
+     of the screen. A tap on the header again closes it; its rows are `inert` while shut.
+     Several can be open; which are open is remembered while the app runs (per household,
+     whichever day is shown). Inside, under a hairline: the rows, each a `label` with a native
+     checkbox drawn as a 24px iOS circle (empty: 1.5px #C7C7CC ring; ticked: filled `--tint`
+     with a white check), the title at 17/22, and when ticked a second line at 13/18
      secondary, `doneByline()` ("🦊 Ela · 10:42"); rows at least 52px tall, hairlines inset to
      the text. The whole row toggles; the change is saved at once
-     (`setHousekeepingTaskDone(date, row.target, checked)`). With no tasks: "No tasks yet." and
-     a tint **Add tasks** button that opens the sheet. Of the three header treatments tried
-     (the header in the card with a drawing and a ring; the header above the card, iOS grouped
-     style; the header in the card with a slim bar), the second was kept: the first grew the
-     checklist by three quarters for a list split by room, put a header heavier than its one
-     task on most sections, and said "done" three times once that task was ticked.
+     (`setHousekeepingTaskDone(date, row.target, checked)`). Today, each card ends with **Add
+     Task** (a tint plus in the checkbox column, named "Add Task to Kitchen"): it turns, inside
+     the tap, into the new task's field ("Task name", placeholder "New task", focused so iOS
+     raises the keyboard). Enter adds the task and empties the field for the next one, the
+     keyboard staying up; Enter with nothing typed closes it and focus goes back to Add Task;
+     leaving the field adds what is there; Escape drops it. The task goes in the card's
+     section (an area without one gets it first, named after the area; Whole home's go in no
+     section), and its row shows the name, quieter, with a small spinner, until it is stored;
+     one saved by leaving the field shows where the field was, Add Task coming back once it is
+     stored, so nothing moves under a finger. A failed save puts the name back in the field.
+     A day before today has no Add Task, and a card with nothing that day says "No tasks on
+     this visit." With no areas and no tasks: "No tasks yet." and a tint **Add tasks** button
+     that opens the sheet.
    - **Comments** (section header) and a card that is an auto-growing textarea, placeholder
      "Anything to mention, e.g. we're out of bin bags", `maxLength` 4000; saved 1s after the
      last keystroke and on blur when the trimmed text changed.
@@ -2801,7 +2841,7 @@ pops in when you come back from a tab without it.
    this heading: see "Needs attention: the calendar"):
    - a heading (`h2`, 20/25/600, `tabIndex={-1}`): `longDay()` ("Thursday 1 October");
    - without a visit: "No visit recorded." and a tint **Add a visit** button
-     (`addHousekeepingVisit(date)`; focus then moves to the first checkbox);
+     (`addHousekeepingVisit(date)`; focus then moves to the first card's header);
    - with a visit: a card **Message that day** (13/18 secondary label above 17/22
      text, read-only; "No message that day." when empty), then `VisitEditor` for that date
      (editable, same as today; its fields are named with the day, "Comments, Thursday 1
@@ -2891,10 +2931,12 @@ draft and follows the stored value again once saved or blurred.
 
 - The checklist is a `fieldset` with a visually hidden `legend` ("Tasks today", or "Tasks on
   Thursday 1 October") and real checkboxes named by their titles; the "who ticked it" line is
-  their description (`aria-describedby`). Each section (its line and card) is a group labelled
-  by its `h3`, whose name carries the progress ("Kitchen, 2 of 5 done", "Kitchen, all 5 done",
-  "Bins, done" for one task); the visible "2 of 5" is hidden from assistive tech. Ticking a
-  section's last task is said as "<title> done. Kitchen, all 5 done".
+  their description (`aria-describedby`). Each card's header is a button in an `h3` (so the
+  cards are headings to jump between), named with its progress ("Kitchen, 2 of 5 done",
+  "Kitchen, all 5 done", "Bins, done" for one task, "Garden, no tasks yet"), with
+  `aria-expanded` and `aria-controls`; its rows are a group named after the card, `inert` and
+  `aria-hidden` while it is shut. Ticking a card's last task is said as "<title> done.
+  Kitchen, all 5 done"; adding one as "<title> added to Kitchen".
 - The calendar is a `table` with `role="grid"`, named by the week ("Week of Monday 5
   October") or labelled by the month title (the titles are `aria-live="polite"`, so changing
   week or month is announced); column headers are `th scope="col"` with the full weekday as
@@ -2916,7 +2958,8 @@ draft and follows the stored value again once saved or blurred.
 
 **Demo seed.** With the e2e clock (Thu 8 Oct 2026, 10:00 London) the seeded household has the
 message "Guests arrive Friday, please do the spare room first." (Shea, yesterday 19:20), the
-starter list, no visit today, and visits on Thu 1 Oct, 24 Sep, 17 Sep, 10 Sep and 3 Sep: the
+starter list (in no section: the Whole home card's, every area's card "No tasks yet"), no
+visit today, and visits on Thu 1 Oct, 24 Sep, 17 Sep, 10 Sep and 3 Sep: the
 subtitle reads "Last visit Thu 1 Oct", October "1 visit · £60.00", September "4 visits ·
 £240.00", and Thu 1 Oct has the message "Please leave the ironing for next week.", 6 of 7 done
 (not Ironing) and "Ironing left for next week as asked. We're out of bin bags."
@@ -2932,13 +2975,22 @@ subtitle reads "Last visit Thu 1 Oct", October "1 visit · £60.00", September "
   then the stored one; a failed write takes back only its change; a future date is refused;
   deleting a pending visit (straight after Add a visit, after a failed reload, after a failed
   write); Undo after Clear (shown at once, after the Clear in flight, a failure taken back).
+- `src/state/HomeProvider.areaSections.test.tsx`: renaming an area renames the section named
+  after it (whatever its case and spaces; at once, written after the area), not others; when
+  the area's write fails both are taken back; a long name gives the section its first 40
+  characters, still matched.
 - `src/screens/housekeeping/HousekeepingScreen.test.tsx`: the date over the title, the
   sections and copy, saving comments and the price ("Saved", and a failed save keeping what was
   typed), the price error, the date picker (this week with today chosen and its line, Previous
   week and Today, Show month with each month's total kept apart from Needs attention's, labels, the
   keyboard), choosing a day (it shows in place of today's, scroll and announcement), a day from
-  Needs attention's calendar, Add a visit, Delete Visit (today's too), visits with nothing recorded, Clear
-  and Undo, the checklist's sections ("Done" for a section of one task), and the task list
+  Needs attention's calendar, Add a visit (focus on the first card), Delete Visit (today's too),
+  visits with nothing recorded, Clear and Undo, the area cards (Whole home, each area, then
+  other sections; opened and closed in place, several at once; progress in words, all done
+  said; an area with no tasks; an earlier visit matched by the names it kept; Add Task making
+  the area's section once, Enter keeping the field, a name saved by leaving the field shown
+  where it was, a failed save given back; a card opened low on the screen brought up, at once
+  with Reduce Motion), and the task list
   sheet: Add Task and Add Section typed straight into the field they become (nothing made
   blank or on Escape, the name kept on leaving the field, shown while saving, given back after
   a failed save), one move per task or section, Move to Section keeping your place, Rename
@@ -2972,14 +3024,24 @@ subtitle reads "Last visit Thu 1 Oct", October "1 visit · £60.00", September "
   Housekeeping dot and reopening on the last tab; focus back on Edit after the task list.
   Sections: added by typing the name, filled by Move to Section (keeping your place: focus on
   the next task's "…", no scrolling) and by dragging onto a section's Add Task, a task added
-  straight into one, No Section headed, reordered by menu, renamed, today's checklist in
-  sections with each heading's progress, all done shown and said, kept after a reload; a
-  section dragged by its header and moved with the arrow keys, a task's grip crossing into the
-  section before; deleting a section asks first and keeps its tasks at the top, ticks and all;
-  an earlier visit keeps its sections by their names; no sideways scroll and 44px targets at
-  375 and 430px.
+  straight into one, No Section headed, reordered by menu, renamed, today's cards (a section
+  named after an area on its card, the others last) with each header's progress, all done
+  shown in green and said, kept after a reload; a section dragged by its header and moved with
+  the arrow keys, a task's grip crossing into the section before; deleting a section asks first
+  and keeps its tasks (on Whole home), ticks and all; an earlier visit keeps its sections by
+  their names, on their areas' cards; the long name of a section's card wraps in full, no
+  sideways scroll and 44px targets at 375 and 430px.
+  Area cards: one a row, full width, each with its area's picture as a rounded landscape
+  thumbnail (Whole home the doll's house), 44px headers, no sideways scroll, at 375 and 402px;
+  opened and closed in place, several at once, from the keyboard too, kept open across tabs,
+  smooth and at once with Reduce Motion; Add Task on an area makes its section (seen in the
+  task list), Enter keeping the field for the next; ticked to All done in green, said; the
+  area renamed in Profile keeps its tasks, after a reload too; a day gone by has "No tasks"
+  areas and no Add Task.
   Server mode (`e2e-server/sync.spec.ts`): sections added, filled, ticked, renamed, reordered
-  and deleted on one phone show on the other.
+  and deleted on one phone show on the other, area by area; a task added on an area's card
+  (its section made) shows on the other phone's card, and the area renamed on that phone keeps
+  it on both.
   Existing e2e tests keep passing.
 
 ## Edge Function `scheduler` (runs every 15 minutes via pg_cron + pg_net)
