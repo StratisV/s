@@ -8,6 +8,7 @@ dist-ssr
 !.env.example
 coverage
 test-results
+test-results-*/
 playwright-report
 .tmp
 .DS_Store
