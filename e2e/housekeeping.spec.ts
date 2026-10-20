@@ -119,8 +119,9 @@ test.describe('Housekeeping tab', () => {
         };
       });
       expect(fit.scroll).toBeLessThanOrEqual(fit.inner);
-      expect(fit.nav.x).toBeGreaterThanOrEqual(6);
-      expect(fit.nav.x + fit.nav.width).toBeLessThanOrEqual(width - 6 + 0.5);
+      // Docked on the bottom edge, full width.
+      expect(fit.nav.x).toBe(0);
+      expect(fit.nav.x + fit.nav.width).toBeLessThanOrEqual(width + 0.5);
       expect(fit.last).toBeLessThanOrEqual(fit.nav.x + fit.nav.width);
       expect(new Set(fit.tops).size).toBe(1);
       // Every tab a target of 44 by 44 or more.
