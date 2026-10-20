@@ -5,12 +5,11 @@ import { DemoBackend, type StorageLike } from '../../lib/backend/demo';
 import { addDays } from '../../lib/logic/dates';
 import { HomeProvider, useHome, type HomeContextValue } from '../../state/HomeProvider';
 import { ConfettiProvider } from '../../ui/Confetti';
-import { ATTENTION_VIEW_KEY, NeedsAttentionScreen, notOnCalendar, type AttentionView } from './NeedsAttentionScreen';
+import { NeedsAttentionScreen, notListed } from './NeedsAttentionScreen';
 import { personFilterKey } from './personFilter';
 import { revealRow } from './reveal';
-import { lookingAfterNote } from './UpNextView';
 
-// jsdom lays nothing out: record where the list scrolls a row just saved to instead
+// jsdom lays nothing out: record where the list scrolls a card just saved to instead
 // (reveal.test.tsx measures it).
 vi.mock('./reveal', async (importOriginal) => ({ ...(await importOriginal<typeof import('./reveal')>()), revealRow: vi.fn() }));
 
@@ -51,10 +50,8 @@ function Ready({ onRevealed, expose }: ReadyProps) {
   );
 }
 
-/** Renders Needs attention for the seeded household (on `view`); pass its storage back to reopen the same one. */
-async function setup(storage?: StorageLike, view: AttentionView = 'list') {
-  if (view === 'list') localStorage.removeItem(ATTENTION_VIEW_KEY);
-  else localStorage.setItem(ATTENTION_VIEW_KEY, view);
+/** Renders Needs attention for the seeded household; pass its storage back to reopen the same one. */
+async function setup(storage?: StorageLike) {
   const reopen = !!storage;
   storage ??= new MemoryStorage();
   const backend = new DemoBackend({ storage, search: reopen ? '' : '?demo-seed=1', latency: 0 });
@@ -89,146 +86,109 @@ const who = () => screen.getByRole('button', { name: /^Show tasks for: / }).getA
 
 const summary = () => document.querySelector('[data-attention-summary]')!.textContent;
 
+/** The list's cards, top to bottom, by title. */
+const titles = () =>
+  Array.from(document.querySelectorAll('[data-attention-list] [data-item-open]')).map((b) => b.textContent!.split(',')[0].trim());
+
+const NEW_ITEM = {
+  kind: 'task' as const,
+  note: '',
+  good: '',
+  rag: 'green' as const,
+  due_date: null,
+  assignee_id: null,
+  repeat: 'none' as const,
+  notify: 'none' as const,
+};
+
 afterEach(() => {
   cleanup();
   localStorage.clear();
 });
 
 describe('Needs attention', () => {
-  it('leads with one sentence on what needs doing, then the view switch and whose items', async () => {
+  it('leads with one sentence on what needs doing, then whose items: no other views', async () => {
     await setup();
     expect(summary()).toBe('2 things need attention and 1 is due today. Everything else can wait.');
-    const views = screen.getByRole('radiogroup', { name: 'View' });
-    expect(within(views).getAllByRole('radio').map((r) => [r.textContent, r.getAttribute('aria-checked')])).toEqual([
-      ['List', 'true'],
-      ['Calendar', 'false'],
-    ]);
     expect(screen.getByRole('button', { name: 'Mine' }).getAttribute('aria-pressed')).toBe('false');
     expect(who()).toBe('Everyone');
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+    expect(document.querySelector('[data-calendar]')).toBeNull();
   });
 
-  it('the list: what needs attention first, then today, the next 7 days and later, across every room', async () => {
+  it('lists every area’s items in one list in priority order, with no headings and nothing folded', async () => {
     await setup();
-    const groups = Array.from(document.querySelectorAll<HTMLElement>('section[data-group]'));
-    expect(groups.map((g) => g.dataset.group)).toEqual(['attention', 'today', 'week', 'later', 'looking']);
-    expect(groups.map((g) => g.querySelector('h2')!.textContent)).toEqual([
-      'Needs attention',
-      'Today',
-      'Next 7 days',
-      'Later',
-      'Looking after',
-    ]);
-    const titles = (g: HTMLElement) =>
-      Array.from(g.querySelectorAll('[data-item-open]')).map((b) => b.textContent!.split(',')[0].trim());
-    // The late and urgent jobs are the first rows, each with its room.
-    expect(titles(groups[0])).toEqual(['Heaters not working', 'Clear the gutters']);
-    expect(groups[0].querySelector('[data-room]')!.textContent).toBe('Hallway');
-    expect(titles(groups[1])).toEqual(['Empty the dehumidifier']);
-    // Next 7 days reads in date order: "In 2 days" before "In 4 days".
-    expect(titles(groups[2])).toEqual([
+    expect(titles()).toEqual([
+      // Late, then urgent.
+      'Heaters not working',
+      'Clear the gutters',
+      // Due today.
+      'Empty the dehumidifier',
+      // The next 7 days, by date ("In 2 days" before "In 4 days"), the most urgent first on a day.
       'Water the plants',
       'Water test strips running low',
       'Shower draining slowly',
       'Cover the garden furniture',
       'Put the bins out',
       'Give away the old firepit',
+      // Later: urgency, then date.
+      'Mirror lights not level',
+      'Re-seal around the shower',
+      'Garden room wall panel',
+      'Change the filter',
+      'Wardrobe door hinge',
+      'Clean cushions before winter',
+      'Trim the hedges',
+      'Kitchen paper',
+      'Olive oil',
     ]);
-    // Later shows three, then "Show 6 more".
-    expect(titles(groups[3])).toHaveLength(3);
-    const more = within(groups[3]).getByRole('button', { name: 'Show 6 more' });
-    expect(more.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(more);
-    expect(titles(groups[3])).toHaveLength(9);
-    expect(within(groups[3]).getByRole('button', { name: 'Show fewer' }).getAttribute('aria-expanded')).toBe('true');
-    // The firepit is looked after and in good shape: a row of its own at the foot.
-    expect(within(groups[4]).getByRole('button', { name: /^Firepit ?, to maintain, Good, Garden, Ela/ })).toBeTruthy();
-    expect(groups[4].querySelector('p')!.textContent).toBe('All in good shape.');
+    // The firepit, looked after and Good, is in its area's sheet only.
+    expect(screen.queryByRole('button', { name: /^Firepit/ })).toBeNull();
+    expect(document.querySelectorAll('h2, h3')).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /^Show \d+ more$/ })).toBeNull();
   });
 
-  it('says each row’s urgency, when, its room and who to assistive tech', async () => {
+  it('each card has its area’s picture, and says its urgency, when, its area and who to assistive tech', async () => {
     await setup();
     // jsdom's name computation may put a space before the comma.
     const heaters = screen.getByRole('button', { name: /^Heaters not working ?, Urgent, 2 days late, Hallway, Shea, has a note\.$/ });
     expect(heaters.hasAttribute('data-item-open')).toBe(true);
-    // On screen: the urgency in words, not only as a colour.
+    // On screen: the urgency in words, not only as a colour, and the area by name.
     expect(within(heaters).getByText('Urgent')).toBeTruthy();
+    expect(heaters.querySelector('[data-room]')!.textContent).toBe('Hallway');
+    // The Hallway's own picture, on every card.
+    expect(heaters.querySelector('[data-area-art]')!.getAttribute('data-area-art')).toMatch(/^hallway:/);
+    expect(document.querySelectorAll('[data-attention-list] [data-area-art]')).toHaveLength(titles().length);
     // The ring keeps its name.
     expect(screen.getByRole('button', { name: 'Mark Heaters not working as done' })).toBeTruthy();
   });
 
-  it('Looking after never says all is well while something looked after needs work', async () => {
+  it('puts things that need work with what needs attention, and those that are Okay at the end', async () => {
     const { home } = await setup();
     const bathroom = home().data!.areas.find((a) => a.name === 'Bathroom Large')!;
     await act(async () => {
-      await home().createItem({
-        area_id: bathroom.id,
-        kind: 'state',
-        title: 'Grout',
-        note: '',
-        good: '',
-        rag: 'red',
-        due_date: null,
-        assignee_id: null,
-        repeat: 'none',
-        notify: 'none',
-      });
+      await home().createItem({ ...NEW_ITEM, area_id: bathroom.id, kind: 'state', title: 'Grout', rag: 'red' });
+      await home().createItem({ ...NEW_ITEM, area_id: bathroom.id, kind: 'state', title: 'Bath seal', rag: 'amber' });
     });
-    const group = (id: string) => document.querySelector<HTMLElement>(`section[data-group="${id}"]`)!;
-    // It comes with the next load.
-    await waitFor(() => expect(within(group('attention')).getByRole('button', { name: /^Grout ?, to maintain, Needs work/ })).toBeTruthy());
-    expect(group('looking').querySelector('p')!.textContent).toBe('1 needs work, under Needs attention.');
-    expect(lookingAfterNote(0, false)).toBe('All in good shape.');
-    expect(lookingAfterNote(0, true)).toBe('Keep an eye on anything marked Okay.');
-    expect(lookingAfterNote(2, true)).toBe('2 need work, under Needs attention. Keep an eye on anything marked Okay.');
+    // They come with the next load.
+    await waitFor(() => expect(titles()).toContain('Bath seal'));
+    expect(titles().slice(0, 3)).toEqual(['Heaters not working', 'Clear the gutters', 'Grout']);
+    expect(titles().at(-1)).toBe('Bath seal');
+    expect(screen.getByRole('button', { name: /^Grout ?, to maintain, Needs work, Bathroom Large, Unassigned\.$/ })).toBeTruthy();
+    expect(summary()).toBe('3 things need attention and 1 is due today. Everything else can wait.');
   });
 
-  it('says where an item saved from the Calendar view went when the calendar can’t show it', () => {
-    const task = { kind: 'task', due_date: null } as Parameters<typeof notOnCalendar>[0];
-    expect(notOnCalendar(task, 'Hallway')).toBe('Saved in Hallway. It has no date, so it isn’t on the calendar.');
-    expect(notOnCalendar({ ...task, kind: 'state' }, 'Garden')).toBe('Saved in Garden. Things looked after aren’t on the calendar.');
-    expect(notOnCalendar(task, '')).toBe('Saved. It has no date, so it isn’t on the calendar.');
-  });
-
-  it('remembers the view on this device, and moves between views with the arrow keys', async () => {
-    await setup();
-    const views = screen.getByRole('radiogroup', { name: 'View' });
-    const radio = (name: string) => within(views).getByRole('radio', { name });
-    fireEvent.click(radio('Calendar'));
-    expect(localStorage.getItem(ATTENTION_VIEW_KEY)).toBe('calendar');
-    expect(document.querySelector('[data-view="calendar"]')).toBeTruthy();
-    radio('Calendar').focus();
-    fireEvent.keyDown(views, { key: 'ArrowRight' });
-    expect(radio('List').getAttribute('aria-checked')).toBe('true');
-    expect(document.activeElement).toBe(radio('List'));
-    // The list is the default: nothing stored.
-    expect(localStorage.getItem(ATTENTION_VIEW_KEY)).toBeNull();
-    fireEvent.keyDown(views, { key: 'End' });
-    expect(radio('Calendar').getAttribute('aria-checked')).toBe('true');
-    fireEvent.keyDown(views, { key: 'Home' });
-    expect(radio('List').getAttribute('aria-checked')).toBe('true');
-    // Only the chosen one is in the tab order.
-    expect(within(views).getAllByRole('radio').map((r) => r.tabIndex)).toEqual([0, -1]);
-  });
-
-  it('copes with storage that is broken or unreadable', async () => {
-    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-      throw new Error('SecurityError');
+  it('a ticked card leaves the list and the sentence follows', async () => {
+    const { home } = await setup();
+    const heaters = home().data!.items.find((it) => it.title === 'Heaters not working')!;
+    await act(async () => {
+      await home().completeItem(heaters.id);
     });
-    try {
-      await setup();
-      expect(within(screen.getByRole('radiogroup', { name: 'View' })).getByRole('radio', { name: 'List' }).getAttribute('aria-checked')).toBe('true');
-      const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-        throw new Error('QuotaExceededError');
-      });
-      fireEvent.click(screen.getByRole('radio', { name: 'Calendar' }));
-      expect(screen.getByRole('radio', { name: 'Calendar' }).getAttribute('aria-checked')).toBe('true');
-      setItem.mockRestore();
-    } finally {
-      getItem.mockRestore();
-    }
+    await waitFor(() => expect(titles()).not.toContain('Heaters not working'));
+    expect(summary()).toBe('1 thing needs attention and 1 is due today. Everything else can wait.');
   });
 
-  it('Mine is one tap: only your items, and the sentence says so; rows drop who they are for', async () => {
+  it('Mine is one tap: only your items, and the sentence says so; cards drop who they are for', async () => {
     const { home } = await setup();
     const me = home().data!.members.find((m) => m.id === home().me!.id)!;
     expect(document.querySelectorAll('[data-who]').length).toBeGreaterThan(0);
@@ -236,14 +196,23 @@ describe('Needs attention', () => {
     expect(screen.getByRole('button', { name: 'Mine' }).getAttribute('aria-pressed')).toBe('true');
     expect(who()).toBe(`${me.name} (you)`);
     expect(summary()).toMatch(/^For you, /);
-    const rows = Array.from(document.querySelectorAll('[data-item-open]'));
-    expect(rows.length).toBeGreaterThan(0);
-    for (const row of rows) expect(row.textContent).toContain(`, ${me.name}`);
-    // Every row is yours: no need to say whose.
+    const cards = Array.from(document.querySelectorAll('[data-item-open]'));
+    expect(cards.length).toBeGreaterThan(0);
+    for (const card of cards) expect(card.textContent).toContain(`, ${me.name}`);
+    // Every card is yours: no need to say whose.
     expect(document.querySelectorAll('[data-who]')).toHaveLength(0);
     fireEvent.click(screen.getByRole('button', { name: 'Mine' }));
     expect(who()).toBe('Everyone');
     expect(summary()).toMatch(/^2 things need attention/);
+  });
+
+  it('the people menu counts what the list shows for each person (not things in good shape)', async () => {
+    await setup();
+    fireEvent.click(screen.getByRole('button', { name: /^Show tasks for: / }));
+    const menu = screen.getByRole('menu', { name: 'Show tasks for' });
+    // 18 cards; Ela's firepit, looked after and Good, is not one of them.
+    expect(within(menu).getByRole('menuitemradio', { name: 'Everyone, 18 items' })).toBeTruthy();
+    expect(within(menu).getByRole('menuitemradio', { name: /^Ela, 3 items/ })).toBeTruthy();
   });
 
   it('says plainly when the person chosen has nothing open', async () => {
@@ -254,35 +223,26 @@ describe('Needs attention', () => {
     chooseWho(/^Unassigned,/);
     await waitFor(() => expect(screen.getByText('Nothing unassigned right now.')).toBeTruthy());
     expect(summary()).toBe('Nothing unassigned to do. Everything open has someone on it.');
+    expect(document.querySelector('[data-attention-list]')!.getAttribute('role')).toBe('status');
   });
 });
 
 describe('Needs attention after a save', () => {
-  const NEW_TASK = {
-    kind: 'task' as const,
-    note: '',
-    good: '',
-    rag: 'green' as const,
-    assignee_id: null,
-    repeat: 'none' as const,
-    notify: 'none' as const,
-  };
-
   afterEach(() => {
     vi.useRealTimers();
     vi.mocked(revealRow).mockClear();
   });
 
-  /** The rows brought into view (revealRow(), measured in reveal.test.tsx). */
+  /** The cards brought into view (revealRow(), measured in reveal.test.tsx). */
   function recordScrolls() {
     vi.mocked(revealRow).mockClear();
     return vi.mocked(revealRow).mock.calls;
   }
 
-  /** The row of an item, by its id. */
-  const rowOf = (id: string) => document.querySelector<HTMLElement>(`[data-item-id="${id}"]`);
+  /** The card of an item, by its id. */
+  const cardOf = (id: string) => document.querySelector<HTMLElement>(`[data-attention-list] [data-item-id="${id}"]`);
 
-  it('a new item deep in Later opens it; one for someone the filter hides shows everyone’s again', async () => {
+  it('a new item for someone the filter hides: everyone’s show again, and its card lights up and comes into view', async () => {
     const { home, revealItem, storage, onRevealed } = await setup();
     const scrolled = recordScrolls();
     const data = home().data!;
@@ -293,7 +253,7 @@ describe('Needs attention after a save', () => {
     let created!: { id: string };
     await act(async () => {
       created = await home().createItem({
-        ...NEW_TASK,
+        ...NEW_ITEM,
         area_id: kitchen.id,
         title: 'Service the boiler',
         due_date: addDays(home().today, 50),
@@ -305,15 +265,12 @@ describe('Needs attention after a save', () => {
     await act(async () => {});
     expect(onRevealed).toHaveBeenCalledTimes(1);
     expect(who()).toBe('Everyone');
-    const later = document.querySelector<HTMLElement>('section[data-group="later"]')!;
-    expect(within(later).getByRole('button', { name: 'Show fewer' })).toBeTruthy();
-    expect(later.contains(rowOf(created.id))).toBe(true);
-    expect(rowOf(created.id)!.hasAttribute('data-lit')).toBe(true);
+    expect(cardOf(created.id)!.hasAttribute('data-lit')).toBe(true);
     act(() => vi.advanceTimersByTime(100));
-    // The whole row, clear of the round + and the tab bar, smoothly.
-    expect(scrolled).toEqual([[rowOf(created.id)!, true]]);
+    // The whole card, clear of the round + and the tab bar, smoothly.
+    expect(scrolled).toEqual([[cardOf(created.id)!, true]]);
     act(() => vi.advanceTimersByTime(3000));
-    expect(rowOf(created.id)!.hasAttribute('data-lit')).toBe(false);
+    expect(cardOf(created.id)!.hasAttribute('data-lit')).toBe(false);
     vi.useRealTimers();
     // Everyone's for this visit only: Mine stays the choice this phone opens on.
     const me = home().me!.id;
@@ -324,73 +281,21 @@ describe('Needs attention after a save', () => {
     expect(screen.getByRole('button', { name: 'Mine' }).getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('Calendar: a saved item the calendar can’t show (no date, or looked after) says where it went', async () => {
-    const { home, revealItem } = await setup(undefined, 'calendar');
-    recordScrolls();
+  it('one the list doesn’t show (a thing looked after in good shape): a toast says where it went', async () => {
+    const { home, revealItem, onRevealed } = await setup();
+    const scrolled = recordScrolls();
     const kitchen = home().data!.areas.find((a) => a.name === 'Kitchen')!;
-    const save = async (over: Record<string, unknown>) => {
-      let created!: { id: string };
-      await act(async () => {
-        created = await home().createItem({ ...NEW_TASK, area_id: kitchen.id, title: 'Find a plumber', due_date: null, ...over });
-      });
-      act(() => home().dismissToast());
-      act(() => revealItem()(created.id));
-      await act(async () => {});
-      return home().toast?.message ?? null;
-    };
-    expect(await save({ rag: 'red' })).toBe('Saved in Kitchen. It has no date, so it isn’t on the calendar.');
-    expect(await save({ kind: 'state', title: 'Grout', notify: 'none' })).toBe('Saved in Kitchen. Things looked after aren’t on the calendar.');
-    // One with a date: the calendar goes to its day instead, and nothing needs saying.
-    expect(await save({ due_date: '2026-10-20' })).toBeNull();
-  });
-});
-
-describe('the calendar on Needs attention', () => {
-  const calendar = () => document.querySelector<HTMLElement>('[data-calendar]')!;
-  const dayButton = (date: string) => calendar().querySelector<HTMLButtonElement>(`[data-date="${date}"]`);
-
-  it('marks only the items the person filter shows; housekeeping visits stay', async () => {
-    const { home } = await setup(undefined, 'calendar');
-    const data = home().data!;
-    const today = home().today;
-    const busy = data.items.find((i) => i.title === 'Put the bins out')!.due_date!;
-    const lastVisit = data.housekeeping.visits.map((v) => v.visit_date).sort().at(-1)!;
-    fireEvent.click(within(calendar()).getByRole('button', { name: 'Show month' }));
-    // The month of the busy day (six days on: it may be next month).
-    if (busy.slice(0, 7) !== today.slice(0, 7)) fireEvent.click(within(calendar()).getByRole('button', { name: 'Next month' }));
-    expect(dayButton(busy)!.getAttribute('aria-label')).toMatch(/, 4 due/);
-
-    chooseWho(/^Shea,/);
-    // Shea's two: the shower and the garden furniture.
-    expect(dayButton(busy)!.getAttribute('aria-label')).toMatch(/, 2 due/);
-    fireEvent.click(dayButton(busy)!);
-    const panel = calendar().querySelector<HTMLElement>('[data-calendar-day]')!;
-    expect(within(panel).getAllByRole('button', { name: /^Mark / }).map((b) => b.getAttribute('aria-label'))).toEqual([
-      'Mark Shower draining slowly as done',
-      'Mark Cover the garden furniture as done',
-    ]);
+    let created!: { id: string };
+    await act(async () => {
+      created = await home().createItem({ ...NEW_ITEM, area_id: kitchen.id, kind: 'state', title: 'Oven', rag: 'green' });
+    });
+    act(() => home().dismissToast());
+    act(() => revealItem()(created.id));
     await act(async () => {});
-    fireEvent.click(screen.getByRole('button', { name: 'Mine' }));
-    expect(dayButton(busy)!.getAttribute('aria-label')).toMatch(/, 1 due/);
-
-    // The last visit is still marked, whoever is shown.
-    while (!dayButton(lastVisit)) fireEvent.click(within(calendar()).getByRole('button', { name: 'Previous month' }));
-    expect(dayButton(lastVisit)!.getAttribute('aria-label')).toMatch(/, housekeeping visit$/);
-    chooseWho(/^Unassigned,/);
-    expect(dayButton(lastVisit)!.getAttribute('aria-label')).toMatch(/, housekeeping visit$/);
-  });
-
-  it('completes an item from the chosen day', async () => {
-    const { home } = await setup(undefined, 'calendar');
-    const today = home().today;
-    const panel = () => calendar().querySelector<HTMLElement>('[data-calendar-day]')!;
-    // Its own view: "This week" over the strip, and today's list open at once.
-    expect(screen.getByRole('region', { name: 'This week' })).toBe(calendar());
-    expect(panel().getAttribute('data-calendar-day')).toBe(today);
-    fireEvent.click(within(panel()).getByRole('button', { name: 'Mark Empty the dehumidifier as done' }));
-    // A weekly job: due again in a week, so today has nothing left.
-    await waitFor(() => expect(within(panel()).getByText('Nothing due today.')).toBeTruthy());
-    const dehumidifier = home().data!.items.find((i) => i.title === 'Empty the dehumidifier')!;
-    expect(dehumidifier.due_date).not.toBe(today);
+    expect(home().toast?.message).toBe('Saved in Kitchen.');
+    expect(onRevealed).toHaveBeenCalledTimes(1);
+    expect(cardOf(created.id)).toBeNull();
+    expect(scrolled).toEqual([]);
+    expect(notListed('')).toBe('Saved.');
   });
 });

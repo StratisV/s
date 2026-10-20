@@ -7,12 +7,11 @@ import {
   DEMO_STORAGE_KEY,
   expect,
   expectAreas,
-  group,
   homeScreen,
   homeSummary,
   meta,
   openArea,
-  openAttention,
+  openNeedsAttention,
   openFresh,
   openProfile,
   openSeeded,
@@ -24,11 +23,9 @@ import {
   who,
 } from './fixtures';
 
-/** How many To dos the house has open: the rings on Needs attention's list (Later opened). */
+/** How many To dos the house has open: the rings on Needs attention's list. */
 async function openTodos(page: Page): Promise<number> {
-  await openAttention(page);
-  const more = group(page, 'later').getByRole('button', { name: /^Show \d+ more$/ });
-  if (await more.count()) await more.click();
+  await openNeedsAttention(page);
   return attentionScreen(page).getByRole('button', { name: /^Mark .* as done$/ }).count();
 }
 
@@ -111,7 +108,7 @@ test.describe('Sign-in and setup', () => {
     await expect(home.getByText('21 Alderbrook Road', { exact: true })).toBeVisible();
     await expect(homeSummary(page)).toHaveText(/^1 thing needs attention/);
     await expectAreas(page, DEFAULT_AREAS);
-    await expect(areaCard(page, 'Bedroom Small')).toHaveAccessibleName(/^Bedroom Small\b.*All clear/);
+    await expect(areaCard(page, 'Bedroom Small')).toHaveAccessibleName(/^Bedroom Small\b.*All good/);
     await openArea(page, 'Hallway');
     await expect(ring(page, 'Heaters not working')).toBeVisible();
     await closeArea(page);
@@ -146,15 +143,15 @@ test.describe('Sign-in and setup', () => {
     await page.getByRole('button', { name: 'Continue' }).click();
 
     const home = homeScreen(page);
-    // Nothing open anywhere: Home says so plainly, and every card is all clear.
+    // Nothing open anywhere: Home says so plainly, and every card is all good.
     await expect(homeSummary(page)).toHaveText('All clear. Nothing to do right now.');
     await expectAreas(page, DEFAULT_AREAS);
-    for (const name of DEFAULT_AREAS) await expect(areaCard(page, name), name).toHaveAccessibleName(/\bAll clear\b/);
+    for (const name of DEFAULT_AREAS) await expect(areaCard(page, name), name).toHaveAccessibleName(/\bAll good\b/);
     // No address entered: no subtitle under the title.
     await expect(home.getByText('21 Alderbrook Road')).toHaveCount(0);
     // Needs attention says so too.
     expect(await openTodos(page)).toBe(0);
-    await expect(attentionScreen(page).getByRole('status').filter({ hasText: 'Nothing open in the house' })).toBeVisible();
+    await expect(attentionScreen(page).getByRole('status').filter({ hasText: 'Nothing needs doing.' })).toBeVisible();
   });
 
   test('editing the areas during setup decides the areas and which items are seeded', async ({ page }) => {
@@ -176,7 +173,7 @@ test.describe('Sign-in and setup', () => {
 
     const expected = DEFAULT_AREAS.filter((n) => n !== 'Jacuzzi' && n !== 'Hallway').concat('Garage');
     await expectAreas(page, expected);
-    await expect(areaCard(page, 'Garage', expected)).toHaveAccessibleName(/^Garage\b.*All clear/);
+    await expect(areaCard(page, 'Garage', expected)).toHaveAccessibleName(/^Garage\b.*All good/);
     expect(await openTodos(page)).toBe(10);
     await expect(attentionScreen(page).getByRole('button', { name: 'Mark Heaters not working as done' })).toHaveCount(0);
   });

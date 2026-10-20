@@ -2,8 +2,6 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { DemoBackend, type StorageLike } from './lib/backend/demo';
-import { todayIn } from './lib/logic/dates';
-import { ATTENTION_VIEW_KEY } from './screens/home/NeedsAttentionScreen';
 import { HomeProvider } from './state/HomeProvider';
 import { ConfettiProvider } from './ui/Confetti';
 
@@ -390,62 +388,6 @@ describe('tab bar', () => {
     fireEvent.click(within(tabBar()).getByRole('button', { name: /^Chat/ }));
     await screen.findByRole('heading', { name: 'Chat', level: 1 });
     expect(document.documentElement.hasAttribute('data-add')).toBe(false);
-  });
-});
-
-describe('a housekeeping visit on Needs attention’s calendar', () => {
-  it('opens that day in Housekeeping, chosen, with focus on its heading', async () => {
-    localStorage.setItem(ATTENTION_VIEW_KEY, 'calendar');
-    await setup(undefined, 'attention');
-    const calendar = document.querySelector<HTMLElement>('[data-calendar]')!;
-    fireEvent.click(within(calendar).getByRole('button', { name: 'Show month' }));
-    // The latest visit: this month, or the one before early in a month.
-    const visits = () => Array.from(calendar.querySelectorAll<HTMLButtonElement>('[role="grid"] [data-visit]'));
-    if (!visits().length) fireEvent.click(within(calendar).getByRole('button', { name: 'Previous month' }));
-    const visitDay = visits()[visits().length - 1];
-    const date = visitDay.getAttribute('data-date')!;
-    const name = visitDay.getAttribute('aria-label')!.split(',')[0];
-    fireEvent.click(visitDay);
-    fireEvent.click(within(calendar).getByRole('button', { name: /^Housekeeping visit, \d of 7 done/ }));
-
-    await screen.findByRole('heading', { name: 'Housekeeping', level: 1 });
-    expect(within(tabBar()).getByRole('button', { name: 'Housekeeping' }).getAttribute('aria-current')).toBe('page');
-    // In place of the Today section, under the calendar's week strip, with the day chosen there.
-    const heading = await screen.findByRole('heading', { level: 2, name });
-    await waitFor(() => expect(document.activeElement).toBe(heading));
-    const grid = within(screen.getByRole('region', { name: 'Housekeeping' })).getByRole('grid');
-    const chosen = grid.querySelector<HTMLElement>(`[data-date="${date}"]`)!;
-    expect(chosen.getAttribute('aria-label')).toMatch(/, selected$/);
-    expect(within(heading.closest('section')!).getByText('Message that day')).toBeTruthy();
-    expect(screen.queryByRole('region', { name: 'Today' })).toBeNull();
-  });
-});
-
-describe('today’s housekeeping visit on Needs attention’s calendar', () => {
-  it('opens the Today section of Housekeeping', async () => {
-    // jsdom has no scrolling.
-    const scrollIntoView = vi.fn();
-    Object.defineProperty(Element.prototype, 'scrollIntoView', { value: scrollIntoView, configurable: true, writable: true });
-    localStorage.setItem(ATTENTION_VIEW_KEY, 'calendar');
-    await setup(async (backend) => {
-      const hid = (await backend.getMyHouseholdId())!;
-      const data = await backend.load(hid);
-      const today = todayIn(data.household.timezone);
-      await backend.setHousekeepingTaskDone(hid, today, { taskId: data.housekeeping.tasks[0].id }, true);
-    }, 'attention');
-    const calendar = document.querySelector<HTMLElement>('[data-calendar]')!;
-    // Today is chosen at first and its list is open: the visit is in it.
-    expect(within(calendar).getByRole('button', { name: /, today, .*selected$/ })).toBeTruthy();
-    fireEvent.click(within(calendar).getByRole('button', { name: 'Housekeeping visit, 1 of 7 done. Show in Housekeeping' }));
-    await screen.findByRole('heading', { name: 'Housekeeping', level: 1 });
-    const heading = screen.getByRole('heading', { level: 2, name: 'Today' });
-    await waitFor(() => expect(document.activeElement).toBe(heading));
-    expect(scrollIntoView.mock.contexts).toContain(heading);
-    const housekeeping = screen.getByRole('region', { name: 'Housekeeping' });
-    expect(within(housekeeping).getByRole('grid').querySelector('[data-today]')!.getAttribute('aria-label')).toMatch(
-      /, today, visit, 1 of 7 done, selected$/,
-    );
-    expect(within(heading.closest('section')!).getByRole('group', { name: 'Tasks today' })).toBeTruthy();
   });
 });
 

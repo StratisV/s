@@ -1,35 +1,20 @@
-// Needs attention's list ("Up next"): every open item in the house, grouped by when it needs doing rather
-// than where it is, so what needs someone now is always at the top of the screen. Pure:
-// callers pass today (the household's day) and the items already narrowed to whoever the
-// person filter shows.
+// Needs attention's list: every open item in the house that wants something from someone, in
+// one list in priority order rather than by where it is, so what needs someone now is always
+// at the top of the screen. Pure: callers pass today (the household's day) and the items
+// already narrowed to whoever the person filter shows.
 
 import { RAG_ORDER } from '../constants';
 import type { ISODate, Item, Rag } from '../types';
 import { addDays, daysBetween, formatDay } from './dates';
 import { isState } from './items';
 
-/** The groups of Needs attention's list, top to bottom. */
-export type UpNextGroupId = 'attention' | 'today' | 'week' | 'later';
-
-export const UP_NEXT_TITLE: Record<UpNextGroupId, string> = {
-  attention: 'Needs attention',
-  today: 'Today',
-  week: 'Next 7 days',
-  later: 'Later',
-};
-
-export interface UpNextGroup {
-  id: UpNextGroupId;
-  title: string;
-  items: Item[];
-}
-
 export interface UpNext {
-  /** Only the groups with something in them, in order. */
-  groups: UpNextGroup[];
-  /** To maintain items that are Good or Okay, for "Looking after" at the foot (Okay first). */
-  looking: Item[];
-  /** How many need attention, are due today, and everything else open (not counting `looking`). */
+  /** Every item the list shows, in priority order (upNext()). */
+  items: Item[];
+  /**
+   * How many need attention (needsAttention()), are due today, and the other open To dos
+   * (things looked after that are Okay are not counted).
+   */
   counts: { attention: number; today: number; rest: number };
 }
 
@@ -58,10 +43,13 @@ function byAge(a: Item, b: Item): number {
   return a.title.localeCompare(b.title);
 }
 
+/** By name, then the oldest: things looked after, which have no date. */
+const byTitle = (a: Item, b: Item) => a.title.localeCompare(b.title) || byAge(a, b);
+
 /**
  * Urgency first (red, amber, green), then the earliest date (none last), then the oldest.
- * Late items come before everything else and To maintain items last. Needs attention and
- * Later sort this way, and an area's sheet its To dos, so the most urgent row is always at the top.
+ * Late items come before everything else and To maintain items last. An area's sheet sorts
+ * its To dos this way (roomOrder()), so the most urgent row is always at the top.
  */
 export function compareByUrgency(today: ISODate) {
   return (a: Item, b: Item): number => {
@@ -81,14 +69,14 @@ export function compareByUrgency(today: ISODate) {
 export function roomOrder(items: Item[], today: ISODate): Item[] {
   const open = items.filter((it) => it.status === 'open');
   const tasks = open.filter((it) => !isState(it)).sort(compareByUrgency(today));
-  const states = open.filter(isState).sort((a, b) => a.title.localeCompare(b.title) || byAge(a, b));
+  const states = open.filter(isState).sort(byTitle);
   return [...tasks, ...states];
 }
 
 /**
- * The earliest date first, then urgency, then the oldest: Today and Next 7 days, so the days
- * read in order ("In 2 days" never sits under "In 6 days") and, on one day, the most urgent
- * comes first.
+ * The earliest date first, then urgency, then the oldest: the next 7 days, so the days read in
+ * order ("In 2 days" never sits under "In 6 days") and, on one day, the most urgent comes
+ * first.
  */
 export function compareByDate(today: ISODate) {
   return (a: Item, b: Item): number => {
@@ -102,38 +90,64 @@ export function compareByDate(today: ISODate) {
 }
 
 /**
- * The open items as Up next shows them: Needs attention (late or urgent To dos, and To
- * maintain items that need work), Today, Next 7 days, Later (later than that, or no date).
- * Needs attention and Later are sorted urgency first, then date; Today and Next 7 days date
- * first, then urgency. To maintain items that are Good or Okay go to `looking`, Okay first.
- * Empty groups are left out.
+ * What needs attention, in order: late To dos, the most late first (then the most urgent);
+ * then the other Urgent To dos, the soonest first (none last); then things looked after that
+ * need work, by name.
+ */
+function compareAttention(today: ISODate) {
+  const step = (item: Item) => (isState(item) ? 2 : isLate(item, today) ? 0 : 1);
+  return (a: Item, b: Item): number => {
+    const s = step(a);
+    if (s !== step(b)) return s - step(b);
+    if (s === 2) return byTitle(a, b);
+    return byDate(a, b) || rank(a.rag) - rank(b.rag) || byAge(a, b);
+  };
+}
+
+/** The steps of the list, top to bottom (upNext()). */
+type Step = 'attention' | 'today' | 'week' | 'later' | 'undated' | 'okay';
+
+/**
+ * The open items as Needs attention lists them, one list in priority order:
+ *
+ * 1. what needs attention (needsAttention(), in compareAttention()'s order): late To dos, the
+ *    most late first; Urgent To dos; things looked after that need work;
+ * 2. due today, the most urgent first;
+ * 3. the next 7 days (tomorrow to a week today), by date (compareByDate());
+ * 4. later than that, by urgency, then date (compareByUrgency());
+ * 5. no date, by urgency;
+ * 6. things looked after that are Okay, by name.
+ *
+ * Things looked after that are Good are left out (their area's sheet has them), and so is
+ * anything done.
  */
 export function upNext(items: Item[], today: ISODate): UpNext {
-  const buckets: Record<UpNextGroupId, Item[]> = { attention: [], today: [], week: [], later: [] };
-  const looking: Item[] = [];
+  const steps: Record<Step, Item[]> = { attention: [], today: [], week: [], later: [], undated: [], okay: [] };
   const weekEnd = addDays(today, 7);
   for (const item of items) {
     if (item.status !== 'open') continue;
-    if (needsAttention(item, today)) buckets.attention.push(item);
-    else if (isState(item)) looking.push(item);
-    else if (item.due_date === today) buckets.today.push(item);
-    else if (item.due_date !== null && item.due_date <= weekEnd) buckets.week.push(item);
-    else buckets.later.push(item);
+    if (needsAttention(item, today)) steps.attention.push(item);
+    else if (isState(item)) {
+      if (item.rag === 'amber') steps.okay.push(item);
+    } else if (item.due_date === today) steps.today.push(item);
+    else if (item.due_date === null) steps.undated.push(item);
+    else if (item.due_date <= weekEnd) steps.week.push(item);
+    else steps.later.push(item);
   }
   const urgency = compareByUrgency(today);
-  const date = compareByDate(today);
-  const ids: UpNextGroupId[] = ['attention', 'today', 'week', 'later'];
-  const groups = ids
-    .map((id) => ({ id, title: UP_NEXT_TITLE[id], items: buckets[id].sort(id === 'today' || id === 'week' ? date : urgency) }))
-    .filter((g) => g.items.length > 0);
-  looking.sort((a, b) => rank(a.rag) - rank(b.rag) || a.title.localeCompare(b.title));
+  steps.attention.sort(compareAttention(today));
+  steps.today.sort(urgency);
+  steps.week.sort(compareByDate(today));
+  steps.later.sort(urgency);
+  steps.undated.sort(urgency);
+  steps.okay.sort(byTitle);
+  const order: Step[] = ['attention', 'today', 'week', 'later', 'undated', 'okay'];
   return {
-    groups,
-    looking,
+    items: order.flatMap((step) => steps[step]),
     counts: {
-      attention: buckets.attention.length,
-      today: buckets.today.length,
-      rest: buckets.week.length + buckets.later.length,
+      attention: steps.attention.length,
+      today: steps.today.length,
+      rest: steps.week.length + steps.later.length + steps.undated.length,
     },
   };
 }
@@ -222,11 +236,9 @@ export function homeSummary(view: UpNext, today: ISODate, scope?: SummaryScope):
       rest: 'Nothing urgent or late.',
     };
   }
-  // The soonest of what is left (Later lists urgency first, so its first row may be months away).
-  const next = view.groups
-    .filter((g) => g.id === 'week' || g.id === 'later')
-    .flatMap((g) => g.items)
-    .sort(compareByDate(today))[0];
+  // Nothing needs attention or is due today: the soonest of the other To dos (the list puts
+  // later ones urgency first, so the first of them may be months away).
+  const next = view.items.filter((it) => !isState(it)).sort(compareByDate(today))[0];
   if (next) {
     const when = relativeDue(next.due_date, today);
     return {

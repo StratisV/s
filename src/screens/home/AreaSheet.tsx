@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { areaOverview, peopleText } from '../../lib/logic/areaStatus';
+import { areaOverview, peopleText, statusLines } from '../../lib/logic/areaStatus';
 import { isState } from '../../lib/logic/items';
 import { areaShareMessage } from '../../lib/logic/share';
 import { roomOrder } from '../../lib/logic/upNext';
@@ -14,6 +14,7 @@ import { useShare } from '../share/useShare';
 import { ItemRow } from './ItemRow';
 import { RevealContext, revealRow } from './reveal';
 import { ShowMore, useFold } from './ShowMore';
+import { StatusLines } from './StatusLines';
 import styles from './AreaSheet.module.css';
 
 /** An area shows this many To dos, then "Show 2 more" (when two or more are left). */
@@ -47,7 +48,8 @@ interface AreaSheetProps {
 
 /**
  * An area, opened from its card on Home (or a shared `?area=` link) in a page sheet: its
- * illustration across the top, its name, its state in a few words and who is looking after it,
+ * illustration across the top, its name, how many urgent and non-urgent tasks it has (or All
+ * good), in the card's words and colours, and who is looking after it,
  * Add Item and Share Room, then its To dos, most urgent first (three, then "Show 2 more"),
  * and the things it looks after, as rows: a ring to tick a To do off (with Undo), a gauge and
  * a condition word for a thing looked after. A row opens the item, in the Item sheet over this
@@ -93,7 +95,7 @@ function AreaBody({ area, onClose, onOpenItem, onAddItem, revealItem, onRevealed
   const share = useShare();
   const timeZone = data.household.timezone;
   const items = useMemo(() => data.items.filter((it) => it.area_id === area.id && it.status === 'open'), [data.items, area.id]);
-  const overview = areaOverview(items, data.members, today);
+  const overview = areaOverview(items, data.members);
   // Late and urgent first (and in the same order as Share Room lists them).
   const ordered = roomOrder(items, today);
   const tasks = ordered.filter((it) => !isState(it));
@@ -154,9 +156,8 @@ function AreaBody({ area, onClose, onOpenItem, onAddItem, revealItem, onRevealed
           <h1 id={titleId} className={styles.title} tabIndex={-1} aria-describedby={`${statusId} ${peopleId}`}>
             {area.name}
           </h1>
-          <p id={statusId} className={styles.status} data-status={overview.status} data-area-status="">
-            <span className={styles.statusDot} aria-hidden="true" />
-            {overview.statusText}
+          <p id={statusId} className={styles.status} data-area-status="">
+            <StatusLines lines={statusLines(overview)} size="sheet" />
           </p>
           <p className={styles.people}>
             {overview.people.length ? (

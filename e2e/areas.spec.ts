@@ -5,6 +5,7 @@ import {
   areaCard,
   areaCards,
   areaStatus,
+  areaStatusLines,
   closeArea,
   confirmation,
   DEFAULT_AREAS,
@@ -99,7 +100,7 @@ test.describe('Area cards', () => {
     await reopen(page);
     const names = [...DEFAULT_AREAS.filter((n) => n !== 'Jacuzzi'), 'Shed'];
     await expect(areaCards(page)).toHaveCount(names.length);
-    await expect(areaCards(page).last().getByRole('button')).toHaveAccessibleName(/^Shed\b.*All clear/);
+    await expect(areaCards(page).last().getByRole('button')).toHaveAccessibleName(/^Shed\b.*All good/);
     await expect(areaCard(page, 'Jacuzzi')).toHaveCount(0);
   });
 });
@@ -148,31 +149,50 @@ test.describe('An area’s sheet', () => {
     expect(await titlesIn(page, 'Kitchen')).toHaveLength(3);
   });
 
-  test('its state, in words and colour: red needs attention, amber coming up, green all good or all clear', async ({ page }) => {
-    const expectations: [string, string, string][] = [
-      ['Hallway', '1 needs attention', 'rgb(215, 0, 21)'],
-      ['Jacuzzi', '1 coming up', 'rgb(154, 91, 0)'],
-      ['Kitchen', 'All good', 'rgb(31, 122, 54)'],
-      ['Bedroom Small', 'All clear', 'rgb(31, 122, 54)'],
+  test('its state, in words and colour: urgent tasks in red over non-urgent ones in orange, or All good in green', async ({ page }) => {
+    const expectations: [string, [string, string][]][] = [
+      ['Hallway', [['1 urgent task', 'rgb(215, 0, 21)']]],
+      [
+        'Front garden',
+        [
+          ['1 urgent task,', 'rgb(215, 0, 21)'],
+          ['2 non-urgent tasks', 'rgb(176, 76, 0)'],
+        ],
+      ],
+      ['Jacuzzi', [['2 non-urgent tasks', 'rgb(176, 76, 0)']]],
+      ['Bedroom Small', [['All good', 'rgb(31, 122, 54)']]],
     ];
-    for (const [name, words, colour] of expectations) {
+    for (const [name, lines] of expectations) {
       await openArea(page, name);
-      await expect(areaStatus(page, name), name).toHaveText(words);
-      await expect(areaStatus(page, name), name).toHaveCSS('color', colour);
-      // Said with the name to assistive tech.
-      await expect(area(page, name).getByRole('heading', { level: 1 })).toHaveAccessibleDescription(new RegExp(`^${words} `));
+      const shown = areaStatusLines(page, name);
+      await expect(shown, name).toHaveText(lines.map(([words]) => words));
+      for (const [i, [, colour]] of lines.entries()) await expect(shown.nth(i), name).toHaveCSS('color', colour);
+      // Said with the name to assistive tech, as one phrase (Chromium puts a space before the
+      // visually hidden comma).
+      const phrase = lines.map(([words]) => words.replace(/,$/, '')).join(' ?, ');
+      await expect(area(page, name).getByRole('heading', { level: 1 })).toHaveAccessibleDescription(new RegExp(`^${phrase} `));
       await closeArea(page);
     }
+  });
+
+  test('its status words keep 4.5:1 in dark mode too', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await openArea(page, 'Front garden');
+    const shown = areaStatusLines(page, 'Front garden');
+    await expect(shown.nth(0)).toHaveCSS('color', 'rgb(255, 105, 97)');
+    await expect(shown.nth(1)).toHaveCSS('color', 'rgb(255, 154, 60)');
+    await closeArea(page);
+    await expect(areaCard(page, 'Bedroom Small').locator('[data-tone]')).toHaveCSS('color', 'rgb(74, 222, 128)');
   });
 
   test('follows the items: completing and adding', async ({ page }) => {
     await openArea(page, 'Bathroom Large');
     await ring(page, 'Shower draining slowly').click();
     await expect(ring(page, 'Shower draining slowly')).toHaveCount(0);
-    // Its only item: All clear.
-    await expect(areaStatus(page, 'Bathroom Large')).toHaveText('All clear');
+    // Its only item: All good.
+    await expect(areaStatus(page, 'Bathroom Large')).toHaveText('All good');
     await closeArea(page);
-    await expect(areaCard(page, 'Bathroom Large')).toHaveAccessibleName(/^Bathroom Large\b.*All clear/);
+    await expect(areaCard(page, 'Bathroom Large')).toHaveAccessibleName(/^Bathroom Large\b.*All good/);
 
     // Add an urgent item to the Hallway from its sheet.
     await openArea(page, 'Hallway');
@@ -184,14 +204,14 @@ test.describe('An area’s sheet', () => {
     await sheet.getByRole('radiogroup', { name: 'How urgent?' }).getByText('Urgent', { exact: true }).click();
     await sheet.getByRole('button', { name: 'Save' }).click();
     await expect(sheet).toHaveCount(0);
-    await expect(areaStatus(page, 'Hallway')).toHaveText('2 need attention');
+    await expect(areaStatus(page, 'Hallway')).toHaveText('2 urgent tasks');
     // It can be seen where it went, lit up for a moment.
     const row = area(page, 'Hallway').getByRole('listitem').filter({ hasText: 'Fix the coat hook' });
     await expect(row).toBeVisible();
     await expect(row).toHaveAttribute('data-lit');
     await expect(row).not.toHaveAttribute('data-lit', { timeout: 5_000 });
     await closeArea(page);
-    await expect(areaCard(page, 'Hallway')).toHaveAccessibleName(/^Hallway\b.*2 need attention/);
+    await expect(areaCard(page, 'Hallway')).toHaveAccessibleName(/^Hallway\b.*2 urgent tasks/);
   });
 
   test('moving an item to another area: it leaves this one, and a toast says where it went', async ({ page }) => {

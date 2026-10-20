@@ -193,8 +193,8 @@ test.describe('To maintain', () => {
     await expect(created).toBeVisible();
     await expect(stateMeta(page, 'Jacuzzi water')).toHaveText('Needs workUpdated today');
     expect(await filled(gauge(page, 'Jacuzzi water'))).toEqual({ colour: RED, bars: 1 });
-    // It needs work: the area says so, in red.
-    await expect(areaStatus(page, 'Jacuzzi')).toHaveText('1 needs attention');
+    // It needs work: the area says so, in red, over its two To dos in orange.
+    await expect(areaStatus(page, 'Jacuzzi')).toHaveText('1 urgent task, 2 non-urgent tasks');
     await expect(ring(page, 'Jacuzzi water')).toHaveCount(0);
     expect(await rowTitlesIn(page, 'Jacuzzi')).toEqual(['Water test strips running low', 'Change the filter', 'Jacuzzi water']);
 
@@ -242,8 +242,8 @@ test.describe('To maintain', () => {
     // Its colour carries over as its condition: amber is Okay, two bars.
     expect(await filled(gauge(page, 'Mirror lights not level'))).toEqual({ colour: AMBER, bars: 2 });
     await expect(stateMeta(page, 'Mirror lights not level')).toHaveText('Okay·Updated today');
-    // Okay: something to keep an eye on.
-    await expect(areaStatus(page, 'Living Room')).toHaveText('1 to keep an eye on');
+    // Okay is neither urgent nor a task: the area is all good.
+    await expect(areaStatus(page, 'Living Room')).toHaveText('All good');
   });
 
   test('switching kinds back and forth without saving changes nothing', async ({ page }) => {

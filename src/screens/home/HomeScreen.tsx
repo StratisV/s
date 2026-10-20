@@ -31,8 +31,8 @@ const CARD_FLASH_MS = 2400;
  * Home (docs/ARCHITECTURE.md "Home"): the hero, then one plain sentence on what needs doing
  * across the house ("2 things need attention and 1 is due today. Everything else can wait.";
  * a tap opens Needs attention), then a card for each area in the household's order, two to a
- * row: its illustration, its name, its state in a few words, how many To dos are open and who
- * is looking after them. A card opens its area in a sheet.
+ * row: its illustration, its name, how many urgent tasks (red) and non-urgent ones (orange) it
+ * has, or All good (green), and who is looking after them. A card opens its area in a sheet.
  */
 export function HomeScreen({ onOpenProfile, onOpenArea, onOpenAttention, revealItem, onRevealed }: HomeScreenProps) {
   const { data, me, today, readOnly } = useHousehold();
@@ -40,8 +40,8 @@ export function HomeScreen({ onOpenProfile, onOpenArea, onOpenAttention, revealI
   // The whole house, whoever is looking: Needs attention is where it narrows to one person.
   const summary = useMemo(() => homeSummary(upNext(data.items, today), today), [data.items, today]);
   const cards = useMemo(
-    () => sections.map(({ area, items }) => ({ area, ...areaOverview(items, data.members, today) })),
-    [sections, data.members, today],
+    () => sections.map(({ area, items }) => ({ area, ...areaOverview(items, data.members) })),
+    [sections, data.members],
   );
 
   // An item was just saved from Home: once it has loaded, its area's card comes into view and
@@ -83,13 +83,12 @@ export function HomeScreen({ onOpenProfile, onOpenArea, onOpenAttention, revealI
           </button>
           {readOnly ? <ReadOnlyLine /> : null}
           <ul className={styles.grid} role="list" aria-label="Areas" data-area-grid="">
-            {cards.map(({ area, status, statusText, openCount, people }) => (
+            {cards.map(({ area, urgent, nonUrgent, people }) => (
               <li key={area.id} className={styles.cell} data-area-id={area.id} data-lit={lit === area.id || undefined}>
                 <AreaCard
                   area={{ id: area.id, name: area.name }}
-                  status={status}
-                  statusText={statusText}
-                  openCount={openCount}
+                  urgent={urgent}
+                  nonUrgent={nonUrgent}
                   people={people.map((m) => ({ id: m.id, name: m.name, emoji: m.emoji }))}
                   onOpen={() => onOpenArea(area.id)}
                 />

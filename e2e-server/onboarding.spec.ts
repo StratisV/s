@@ -34,7 +34,7 @@ import {
   ring,
   rowFor,
   SETUP_CODE,
-  showAllRows,
+  showAllCards,
   shownCode,
   statsScreen,
   SYNC_MS,
@@ -71,10 +71,20 @@ const OPEN_ITEMS = doc.items
     note: i.note,
   }));
 const SHEAS = OPEN_ITEMS.filter((it) => it.who === 'Shea');
+/** What Needs attention lists: every open item but the things looked after that are Good. */
+const LISTED = OPEN_ITEMS.filter((it) => !(it.state && it.rag === 'green'));
+/** How many of them are someone's ("Stratis", "Shea", "Unassigned"), as the people menu counts them. */
+const listedFor = (who: string) => LISTED.filter((it) => it.who === who).length;
+/**
+ * What Needs attention lists of the saved copy (src/lib/logic/savedHome.json: 11 areas, 21 open
+ * items): its 8 To dos, not its 13 things looked after that are Good.
+ */
+const SAVED_LISTED = 8;
 
 /**
  * Every area in order on Home; in each area's sheet, every open item with its kind, urgency or
- * condition, person, date and note, and nothing else; and all of them on Needs attention.
+ * condition, person, date and note, and nothing else; and on Needs attention, all of them but
+ * the things looked after that are Good.
  */
 async function expectPhoneHome(page: Page): Promise<void> {
   await expectAreas(page, doc.areas.map((a) => a.name));
@@ -100,7 +110,7 @@ async function expectPhoneHome(page: Page): Promise<void> {
     await expect(sheet.locator('[data-item-open]'), name).toHaveCount(open.length);
   }
   await closeArea(page);
-  await expect(await showAllRows(page)).toHaveCount(OPEN_ITEMS.length);
+  await expect(await showAllCards(page)).toHaveCount(LISTED.length);
   await goToTab(page, 'Home');
 }
 
@@ -155,14 +165,15 @@ test('Stratis brings the home on his phone online with the setup link, invites S
   // No notifications step in server mode: straight to Home, with everything from the phone.
   await expect(homeHeading(a)).toBeVisible();
   await expectPhoneHome(a);
+  // Each with how many Needs attention lists for them (things in good shape aren't).
   expect(await peopleInMenu(a)).toEqual([
-    'Everyone, 19 items',
-    'Stratis (you), 11 items',
-    `Shea, ${SHEAS.length} items, not joined yet`,
-    'Unassigned, 3 items',
+    `Everyone, ${LISTED.length} items`,
+    `Stratis (you), ${listedFor('Stratis')} items`,
+    `Shea, ${listedFor('Shea')} items, not joined yet`,
+    `Unassigned, ${listedFor('Unassigned')} items`,
   ]);
   // Done on the phone: in no list.
-  await expect(await showAllRows(a)).toHaveCount(OPEN_ITEMS.length);
+  await expect(await showAllCards(a)).toHaveCount(LISTED.length);
   await expect(attentionScreen(a).getByText('Order water test strips')).toHaveCount(0);
   await expect((await inArea(a, 'Jacuzzi', { all: true })).getByText('Order water test strips')).toHaveCount(0);
   await goToTab(a, 'Stats');
@@ -194,18 +205,19 @@ test('Stratis brings the home on his phone online with the setup link, invites S
   await expect(hello.getByRole('heading', { name: 'Welcome home, Shea', level: 1 })).toBeVisible();
   await expect(hello.getByRole('radiogroup', { name: 'Your emoji' }).getByRole('radio', { name: '🦔' })).toBeChecked();
   // Stratis's phone hears that she joined, without a reload.
-  await expectPerson(a, `Shea, ${SHEAS.length} items`, SYNC_MS);
+  await expectPerson(a, `Shea, ${listedFor('Shea')} items`, SYNC_MS);
   await hello.getByRole('button', { name: 'Continue' }).click();
   await expect(homeHeading(b)).toBeVisible();
   await expect(b.getByRole('button', { name: 'Profile', exact: true })).toHaveText('🦔');
-  await expectPerson(b, `Shea (you), ${SHEAS.length} items`);
+  await expectPerson(b, `Shea (you), ${listedFor('Shea')} items`);
   await goToTab(b, 'Attention');
   await mine(b).click();
   await expect(mine(b)).toHaveAttribute('aria-pressed', 'true');
-  const hers = await showAllRows(b);
-  await expect(hers).toHaveCount(SHEAS.length);
-  // Each in its area (two of hers are both called Tidiness).
-  for (const it of SHEAS) {
+  const hers = await showAllCards(b);
+  const listed = SHEAS.filter((it) => LISTED.includes(it));
+  await expect(hers).toHaveCount(listed.length);
+  // Each in its area.
+  for (const it of listed) {
     const inItsArea = new RegExp(`^${escapeRe(it.title)} ?, .*, ${escapeRe(it.area)}, `);
     await expect(attentionScreen(b).getByRole('button', { name: inItsArea }), `${it.area}: ${it.title}`).toBeVisible();
   }
@@ -299,7 +311,7 @@ test('the setup code pasted in “Have a code?” before the home is online brin
   await step.getByRole('button', { name: 'Bring It Online' }).click();
   await page.getByRole('region', { name: 'Shea hasn’t joined yet' }).getByRole('button', { name: 'Continue' }).click();
   await expect(homeHeading(page)).toBeVisible();
-  await expect(await showAllRows(page)).toHaveCount(21);
+  await expect(await showAllCards(page)).toHaveCount(SAVED_LISTED);
   await inArea(page, 'Hallway');
   await expect(rowFor(page, 'Heaters not working', 'Hallway')).toBeVisible();
   await expectNoReload(phone);
@@ -326,8 +338,8 @@ test('a code also works as a link, and a link whose code does not work says so',
   await expect(hello.getByRole('heading', { name: 'Welcome home, Shea', level: 1 })).toBeVisible();
   expect(new URL(shea.page.url()).search).toBe('');
   await hello.getByRole('button', { name: 'Continue' }).click();
-  await expectPerson(shea.page, `Shea (you), ${SHEAS.length} items`);
-  await expectPerson(stratis.page, `Shea, ${SHEAS.length} items`, SYNC_MS);
+  await expectPerson(shea.page, `Shea (you), ${listedFor('Shea')} items`);
+  await expectPerson(stratis.page, `Shea, ${listedFor('Shea')} items`, SYNC_MS);
   await expectNoReload(stratis);
   await expectNoReload(shea);
   await stratis.context.close();
@@ -546,7 +558,7 @@ test('a setup link opened on a phone without the home can bring the saved copy o
     'Hallway',
     'Front garden',
   ]);
-  await expect(await showAllRows(a)).toHaveCount(21);
+  await expect(await showAllCards(a)).toHaveCount(SAVED_LISTED);
   await inArea(a, 'Kitchen');
   await expect(rowFor(a, 'Rubbish fill level', 'Kitchen')).toBeVisible();
   const jacuzzi = await inArea(a, 'Jacuzzi');

@@ -16,18 +16,15 @@ import {
   homeScreen,
   itemSheet,
   openArea,
-  openAttention,
+  openNeedsAttention,
   openItem,
   openProfile,
   openSeeded,
   peopleButton,
-  reopen,
   settled,
-  showView,
   tabButton,
   test,
   toast,
-  views,
   type Page,
 } from './fixtures';
 
@@ -321,9 +318,9 @@ test.describe('Sharing an area', () => {
     await openSeeded(page);
     await reshapeAreas(page, { 'Bedroom Small': 'Downstairs bathroom' });
     const names = DEFAULT_AREAS.map((n) => (n === 'Bedroom Small' ? 'Downstairs bathroom' : n));
-    await expect(areaCard(page, 'Downstairs bathroom', names)).toHaveAccessibleName(/^Downstairs bathroom\b.*All clear/);
+    await expect(areaCard(page, 'Downstairs bathroom', names)).toHaveAccessibleName(/^Downstairs bathroom\b.*All good/);
     const sheet = await openArea(page, 'Downstairs bathroom', names);
-    await expect(sheet.locator('[data-area-status]')).toHaveText('All clear');
+    await expect(sheet.locator('[data-area-status]')).toHaveText('All good');
     await expect(sheet.getByText('Nothing to do here.', { exact: true })).toBeVisible();
     await expect(sheet.getByRole('button', { name: /^Mark / })).toHaveCount(0);
     await areaAction(page, 'Downstairs bathroom', 'Share Room').click();
@@ -338,9 +335,9 @@ test.describe('Sharing an area', () => {
       await reshapeAreas(page, { Kitchen: 'Children’s Bedroom', 'Living Room': 'Utility Room Upstairs' }, true);
       const names = DEFAULT_AREAS.map((n) => (n === 'Kitchen' ? 'Children’s Bedroom' : n === 'Living Room' ? 'Utility Room Upstairs' : n));
       for (const name of ['Children’s Bedroom', 'Utility Room Upstairs']) {
-        await expect(areaCard(page, name, names), name).toHaveAccessibleName(new RegExp(`^${name}\\b.*needs attention`));
+        await expect(areaCard(page, name, names), name).toHaveAccessibleName(new RegExp(`^${name}\\b.*1 urgent task, \\d+ non-urgent tasks`));
         await openArea(page, name, names);
-        await expect(area(page, name).locator('[data-area-status]'), name).toHaveText('1 needs attention');
+        await expect(area(page, name).locator('[data-area-status]'), name).toHaveText(/^1 urgent task, \d+ non-urgent tasks$/);
         const { lines, brokenWord } = await nameLines(page, name);
         expect(brokenWord, name).toBe(false);
         expect(lines, name).toBeLessThanOrEqual(2);
@@ -409,7 +406,7 @@ test.describe('Opening a shared link', () => {
     await openSeeded(page);
     const hallway = (await ids(page)).area('Hallway');
     // Hallway's only item is Shea's.
-    await openAttention(page);
+    await openNeedsAttention(page);
     await chooseWho(page, /^Unassigned,/);
     await page.goto(`/?area=${hallway}`);
     await settled(area(page, 'Hallway').getByRole('button', { name: 'Close', exact: true }));
@@ -420,20 +417,16 @@ test.describe('Opening a shared link', () => {
     await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Unassigned');
   });
 
-  test('?area= from another tab: Home with the sheet over it; Needs attention keeps the view picked', async ({ page }) => {
-    await openSeeded(page, 'Calendar');
+  test('?area= from another tab: Home with the sheet over it; Needs attention is as it was', async ({ page }) => {
+    await openSeeded(page);
+    await openNeedsAttention(page);
     const garden = (await ids(page)).area('Garden');
     await page.goto(`/?area=${garden}`);
     await settled(area(page, 'Garden').getByRole('button', { name: 'Close', exact: true }));
     await expect(tabButton(page, 'Home')).toHaveAttribute('aria-current', 'page');
     await closeArea(page);
     await goToTab(page, 'Attention');
-    await expect(views(page).getByRole('radio', { name: 'Calendar' })).toHaveAttribute('aria-checked', 'true');
-    // A view picked on the switch is remembered, as ever.
-    await showView(page, 'List');
-    await reopen(page);
-    await expect(views(page).getByRole('radio', { name: 'List' })).toHaveAttribute('aria-checked', 'true');
-    await expect(attentionScreen(page).locator('section[data-group]').first()).toBeVisible();
+    await expect(attentionScreen(page).locator('[data-attention-list] li').first()).toBeVisible();
   });
 
   test('a link to an item this home does not have only says so', async ({ page }) => {

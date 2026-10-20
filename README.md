@@ -24,54 +24,38 @@ means under it ("Needs doing now", "Fine for now, keep an eye on it").
   Then the areas of the house, two to a row, one card each with its own drawing of the room (a
   pot steaming in the kitchen, the green duck in the bath, a robin on the garden fence; each
   in its own colours, so no two look alike, and by lamplight in dark mode), its name, how it
-  is ("1 needs attention" in red, "1 coming up" in amber, "All good" in green), how many jobs
-  are unfinished there and who is looking after it. A card opens that area as a sheet: its
-  picture, its name, how it is and who is on it, **Add Item** and **Share Room**, then its
-  jobs, most urgent first (three, then "Show 2 more"), and the things it looks after.
-- **Needs attention**: the same sentence, then the items two ways, **List** and **Calendar**
-  (the phone remembers which), and whose items they are: **Mine** in one tap, or anyone from
-  the people menu (Everyone, you, each person or Unassigned, with how many are open; the phone
-  remembers the choice). With someone chosen the sentence says so ("For Shea, 1 thing needs
-  attention.").
-  - **List** (the default): every area's items in one list, by when: **Needs attention**
-    (anything late or urgent, and anything looked after that needs work), **Today**, **Next 7
-    days** (in date order), then **Later** (three rows, then "Show 6 more"). Things looked
-    after that are Good or Okay close the page as small tiles under **Looking after** ("All in
-    good shape.", or "1 needs work, under Needs attention." while one does).
-  - **Calendar**: see below.
+  is ("2 urgent tasks" in red: jobs marked Urgent and things that need work; "3 non-urgent
+  tasks" in orange: the other jobs, late or not; both when both apply, red first; or "All
+  good" in green), and who is looking after it. A card opens that area as a sheet: its
+  picture, its name, how it is (the same words) and who is on it, **Add Item** and **Share
+  Room**, then its jobs, most urgent first (three, then "Show 2 more"), and the things it
+  looks after.
+- **Needs attention**: the same sentence, whose items show (**Mine** in one tap, or anyone
+  from the people menu: Everyone, you, each person or Unassigned, with how many each has; the
+  phone remembers the choice; with someone chosen the sentence says so: "For Shea, 1 thing
+  needs attention."), then every area's items in one list in priority order, with no headings:
+  anything late (the most late first), urgent or needing work; then what is due today; the
+  next 7 days, in date order; later ones, the most urgent first; ones with no date; and last
+  the things looked after that are Okay. Things looked after that are Good stay in their
+  area's sheet.
 
-  Each item is one row: a plain grey ring (tap it to tick the job off: the title is struck
-  through for a moment, then it folds away, with Undo there at once for 8 seconds, and "Done.
-  Next one in 8 weeks" for a job that repeats), its title (two lines at most), who it is for (their emoji and first
-  name), and one quiet line with its urgency in words, when it is due ("Tomorrow", "In 4
-  days", "2 days late" in red), and its area where the list mixes areas, always whole.
-  **Urgent** is a red pill, the loudest thing on a row; **Within the month** is amber words;
-  **Not urgent** grey words. A thing looked after has a small gauge instead of a ring (three
-  bars for Good, two for Okay, one for Needs work). Add an item with the round + just above
-  the tab bar on the right, or with **Add Item** in an area's sheet. A new job has no due date
+  Each item is a card of its own: its area's drawing as a small picture, its title (two lines
+  at most), its urgency in words and when it is due ("Tomorrow", "In 4 days", "2 days late" in
+  red), then its area and who it is for (their emoji and first name), and a plain grey ring at
+  the end: tap it to tick the job off (the title is struck through for a moment, then the
+  card folds away, with Undo there at once for 8 seconds, and "Done. Next one in 8 weeks" for
+  a job that repeats). **Urgent** is a red pill, the loudest thing on a card; **Within the
+  month** is amber words; **Not urgent** grey words. A thing looked after has a small gauge
+  instead of a ring (three bars for Good, two for Okay, one for Needs work). In an area's
+  sheet each item is a row with the same words. Add an item with the round + just above the
+  tab bar on the right, or with **Add Item** in an area's sheet. A new job has no due date
   until someone gives it one, so nothing turns "late" by itself. Once saved, the app shows
-  where it went: on Home its area's card lights up for a moment; in an area's sheet, or on
-  Needs attention, its row does, with any "Show N more" over it opened, brought up clear of
-  the + and the tab bar. One saved into another area than the sheet open says so ("Saved in
-  Hallway."). For someone the person filter hides, Needs attention shows everyone's for that
-  visit only (Mine stays the choice it opens on). On the calendar, one it can't show says so
-  ("Saved in Kitchen. It has no date, so it isn't on the calendar.").
-- **Calendar** (Needs attention's second view): this week as a strip ("This week", "Next
-  week"), or the whole month with **Show month** (the phone remembers which). The arrows
-  either side of the days go back and forward a week (or a month), and **Today** brings you
-  back. Each day shows what is due as red, amber and green dots (up to three, then "+2"), a
-  missed day's date in red, a repeating job's later rounds as faint hollow dots, and the small
-  blue dot Housekeeping's calendar uses on the days the housekeeper came; a legend under the
-  days says what each means in words ("Urgent", "Within the month", "Not urgent", "Repeat",
-  "Housekeeping", "Red date: missed"), and VoiceOver hears it with each day ("2 due (1
-  urgent, 1 not urgent)"). It follows the person chosen: pick Shea and only Shea's jobs mark
-  it (the housekeeper's visits stay). Today is chosen at first, and what is due that day shows
-  underneath, after anything still open from before it ("1 late" beside the day, "2 days
-  late" on the row); tap any day to see what is due then, most urgent first, ticked off with
-  the ring just like in the list, the repeats coming round that day, and that day's
-  housekeeping visit, which opens it on the Housekeeping tab. In another week or month, one
-  line asks you to pick a day. To maintain items have no date, so they are never on it.
-  Housekeeping's calendar is the same one.
+  where it went: on Home its area's card lights up for a moment; in an area's sheet its row
+  does, with any "Show N more" over it opened; on Needs attention its card does, brought up
+  clear of the + and the tab bar. One saved into another area than the sheet open, or a thing
+  in good shape saved over Needs attention, says where it went ("Saved in Hallway."). For
+  someone the person filter hides, Needs attention shows everyone's for that visit only (Mine
+  stays the choice it opens on).
 - **Dark mode**: the whole app follows the phone's appearance (the hero keeps its own sky).
 - **The hero**: Home opens on an illustration that runs to the very top of the screen: the
   house in its garden, with a green duck and a brown hedgehog, under the sky as it is in London
@@ -123,8 +107,8 @@ npm run dev
 
 Open http://localhost:5173. Without Supabase settings the app runs in **demo mode**:
 sign-in is simulated and data stays in your browser. Add `?demo-seed=1` to the URL to jump
-straight into a household filled with example data (with a few extra jobs, so the calendar
-has a lively month), or `?demo-reset=1` to start over.
+straight into a household filled with example data (with a few extra jobs, so Needs attention
+has something due today and a busy week), or `?demo-reset=1` to start over.
 
 ## Server mode: shared on every phone, nothing to set up
 

@@ -572,3 +572,13 @@ export function londonDate(days = 0): string {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
+
+/**
+ * Needs attention's list (one list of cards since round 3; showAllRows() above is from its
+ * List / Calendar days): every card it shows for whoever the people menu shows, which is
+ * every open item but the things looked after that are Good. Resolves to the cards' buttons.
+ */
+export async function showAllCards(page: Page): Promise<Locator> {
+  await toTab(page, 'Attention');
+  return attentionScreen(page).locator('[data-attention-list] [data-item-open]');
+}

@@ -112,55 +112,19 @@
   text-decoration-color: currentColor;
 }
 
-/* One quiet line: the urgency in words, when, where. The room moves to the next line whole rather than shrinking. */
+/* One quiet line: how urgent (or its condition), then when it is due or was updated. */
 .meta {
   grid-area: meta;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
+  gap: 6px;
   min-width: 0;
-  /* The room's dot sits in this gap; on a line of its own the room starts flush, its dot clipped. */
-  column-gap: 16px;
-  row-gap: 2px;
   overflow: hidden;
   white-space: nowrap;
   font-size: 13px;
   line-height: 18px;
   letter-spacing: -0.05px;
   color: var(--label-secondary);
-}
-
-/* How urgent (or its condition), then when it is due or was updated. */
-.metaLead {
-  flex: 0 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/*
- * The room after the words: whole, on this line while it fits, else at the start of the next
- * ("Bathroom Small" and "Bathroom Large" must never both read "Bathroom ..."). Cut short only
- * when its name is wider than the whole line.
- */
-.roomPart {
-  position: relative;
-  flex: 0 0 auto;
-  max-width: 100%;
-  min-width: 0;
-  display: flex;
-}
-
-.roomSep {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -10px;
-  display: flex;
-  align-items: center;
-  color: var(--label-secondary);
-  opacity: 0.6;
 }
 
 .when {
@@ -180,26 +144,6 @@
 
 .part {
   flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* The room, with its drawing, where the list mixes rooms. */
-.room {
-  flex: 0 1 auto;
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.roomIcon {
-  flex: none;
-  opacity: 0.85;
-}
-
-.roomName {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
