@@ -14,6 +14,8 @@ import {
   applyVisitPatch,
   canHaveVisit,
   newVisit,
+  sectionNameFor,
+  sectionsNamed,
   visitOn,
   withListSettled,
   withSectionAdded,
@@ -303,6 +305,11 @@ export interface HomeContextValue {
    */
   removePerson(id: string): Promise<void>;
   createArea(name: string): Promise<Area>;
+  /**
+   * Renames an area, and the housekeeping section named after it with it (sectionsNamed(),
+   * sectionNameFor()), so the area keeps its housekeeping tasks: shown at once, the section's
+   * write sent once the area's is stored. Either failing takes back its own change.
+   */
   renameArea(id: string, name: string): Promise<void>;
   deleteArea(id: string): Promise<void>;
   reorderAreas(orderedIds: string[]): Promise<void>;
@@ -925,6 +932,26 @@ function deleteSectionChange(id: string, today: ISODate): Change {
         );
         return withHousekeeping(c, withListSettled({ ...h, sections, tasks, visits }, today));
       },
+    };
+  };
+}
+
+/**
+ * Renaming a section (withSectionRenamed()): today's visit follows the name. Nothing to do for
+ * a blank name (the backend's to refuse) or the same one. The revert puts the old name back
+ * where the new one still shows.
+ */
+function renameSectionChange(id: string, title: string, today: ISODate): Change {
+  return (cur) => {
+    const section = cur.housekeeping.sections.find((s) => s.id === id);
+    const clean = (title ?? '').trim();
+    if (!section || !clean || clean === section.title) return null;
+    return {
+      next: withHousekeeping(cur, withSectionRenamed(cur.housekeeping, id, clean, today)),
+      revert: (c) =>
+        c.housekeeping.sections.find((s) => s.id === id)?.title === clean
+          ? withHousekeeping(c, withSectionRenamed(c.housekeeping, id, section.title, today))
+          : c,
     };
   };
 }
@@ -1990,7 +2017,24 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         const d = requireData();
         return mutate(null, () => backend.createArea(d.household.id, name));
       },
-      renameArea: (id, name) => mutate(patchChange('areas', id, { name }), () => backend.renameArea(id, name)),
+      renameArea: (id, name) => {
+        // An area's housekeeping tasks are the section named after it (sectionsNamed()): that
+        // section takes the new name too, so the area keeps them. Shown at once with the area's
+        // new name; written once that is stored (docs/ARCHITECTURE.md "Housekeeping", "Areas").
+        const cur = dataRef.current;
+        const before = cur?.areas.find((a) => a.id === id)?.name;
+        const title = sectionNameFor(name ?? '');
+        const follow =
+          cur && before !== undefined && title ? sectionsNamed(cur.housekeeping.sections, before).filter((s) => s.title !== title) : [];
+        const saved = mutate(patchChange('areas', id, { name }), () => backend.renameArea(id, name));
+        for (const section of follow) {
+          void mutate(renameSectionChange(section.id, title, today), async () => {
+            await saved;
+            await backend.renameHousekeepingSection(section.id, title);
+          }).catch(() => {});
+        }
+        return saved;
+      },
       deleteArea: (id) =>
         mutate(
           (cur) => {
@@ -2141,22 +2185,7 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
         return section;
       },
       renameHousekeepingSection: (id, title) =>
-        mutate(
-          (cur) => {
-            const section = cur.housekeeping.sections.find((s) => s.id === id);
-            const clean = (title ?? '').trim();
-            // A blank name is the backend's to refuse; the list keeps showing the old one.
-            if (!section || !clean || clean === section.title) return null;
-            return {
-              next: withHousekeeping(cur, withSectionRenamed(cur.housekeeping, id, clean, today)),
-              revert: (c) =>
-                c.housekeeping.sections.find((s) => s.id === id)?.title === clean
-                  ? withHousekeeping(c, withSectionRenamed(c.housekeeping, id, section.title, today))
-                  : c,
-            };
-          },
-          () => backend.renameHousekeepingSection(id, title),
-        ),
+        mutate(renameSectionChange(id, title, today), () => backend.renameHousekeepingSection(id, title)),
       deleteHousekeepingSection: (id) => mutate(deleteSectionChange(id, today), () => backend.deleteHousekeepingSection(id)),
       moveHousekeepingSection: (id, index) =>
         mutate(

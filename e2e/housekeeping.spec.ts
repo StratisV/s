@@ -1,9 +1,12 @@
 import {
   addButton,
+  closeProfile,
   confirmation,
+  DEFAULT_AREAS,
   expect,
   goToTab,
   housekeepingScreen,
+  openProfile,
   openSeeded,
   reopen,
   settled,
@@ -62,7 +65,7 @@ async function chooseLastVisit(screen: Locator): Promise<void> {
 const said = (screen: Locator) => screen.locator('[data-announcer]');
 const message = (screen: Locator) => screen.getByRole('textbox', { name: 'Message for the housekeeper' });
 
-/** The task titles of a checklist, top to bottom, and which are ticked. */
+/** The task titles of a checklist (its open cards), top to bottom, and which are ticked. */
 async function checklist(group: Locator): Promise<{ title: string; done: boolean }[]> {
   return group.getByRole('checkbox').evaluateAll((boxes) =>
     boxes.map((box) => ({
@@ -70,6 +73,31 @@ async function checklist(group: Locator): Promise<{ title: string; done: boolean
       done: (box as HTMLInputElement).checked,
     })),
   );
+}
+
+const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** A card's header on the checklist: one button, named first by its card ("Kitchen, 2 of 5 done"). */
+const cardHeader = (scope: Locator, name: string) => scope.getByRole('button', { name: new RegExp(`^${escapeRe(name)}, `) });
+/** Opens a card (a tap on its header, unless it is open) and gives its tasks: a group named after it. */
+async function openCard(scope: Locator, name: string): Promise<Locator> {
+  const header = cardHeader(scope, name);
+  if ((await header.getAttribute('aria-expanded')) !== 'true') await header.click();
+  await expect(header).toHaveAttribute('aria-expanded', 'true');
+  return scope.getByRole('group', { name, exact: true });
+}
+/** The cards' headers as heard, top to bottom: "Whole home, 0 of 7 done", "Kitchen, no tasks yet". */
+const cardNames = (scope: Locator) =>
+  scope.locator('[data-card] h3 button').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')));
+/**
+ * The cards as heard: Whole home (when `home` is given), then the 11 areas ("no tasks yet", or
+ * "no tasks" on a day before today, unless `areas` says otherwise), then `rest`.
+ */
+function cards(home: string | null, areas: Record<string, string> = {}, rest: string[] = [], past = false): string[] {
+  return [
+    ...(home ? [`Whole home, ${home}`] : []),
+    ...DEFAULT_AREAS.map((name) => `${name}, ${areas[name] ?? (past ? 'no tasks' : 'no tasks yet')}`),
+    ...rest,
+  ];
 }
 
 test.describe('Housekeeping tab', () => {
@@ -159,8 +187,11 @@ test.describe('Housekeeping tab', () => {
     await expect(message(screen)).toHaveValue('Guests arrive Friday, please do the spare room first.');
     await expect(screen.getByText('🦆 Shea · Yesterday 19:20', { exact: true })).toBeVisible();
 
+    // A card a row: Whole home (the starter list, in no section), then each area, all closed.
     const tasks = today(screen).getByRole('group', { name: 'Tasks today' });
-    expect(await checklist(tasks)).toEqual(STARTER.map((title) => ({ title, done: false })));
+    expect(await cardNames(tasks)).toEqual(cards('0 of 7 done'));
+    await expect(tasks.getByRole('checkbox')).toHaveCount(0);
+    expect(await checklist(await openCard(tasks, 'Whole home'))).toEqual(STARTER.map((title) => ({ title, done: false })));
     await expect(today(screen).getByText("Not started yet. Ticking a task starts today's visit.")).toBeVisible();
 
     // Right under the title and its line: this week, today chosen and ringed, a line on today's visit.
@@ -189,9 +220,11 @@ test.describe('Housekeeping tab', () => {
     const visit = detail(screen);
     await expect(visit.getByRole('heading', { level: 2 })).toHaveText('Thursday 1 October');
     await expect(visit.getByText('Please leave the ironing for next week.', { exact: true })).toBeVisible();
-    expect(await checklist(visit.getByRole('group', { name: 'Tasks on Thursday 1 October' }))).toEqual(
-      STARTER.map((title) => ({ title, done: title !== 'Ironing' })),
-    );
+    // The cards open on today stay open on any day.
+    const visitTasks = visit.getByRole('group', { name: 'Tasks on Thursday 1 October' });
+    expect(await cardNames(visitTasks)).toEqual(cards('6 of 7 done', {}, [], true));
+    await expect(cardHeader(visitTasks, 'Whole home')).toHaveAttribute('aria-expanded', 'true');
+    expect(await checklist(visitTasks)).toEqual(STARTER.map((title) => ({ title, done: title !== 'Ironing' })));
     // Named with their day, apart from today's.
     await expect(visit.getByRole('textbox', { name: 'Comments, Thursday 1 October', exact: true })).toHaveValue(
       "Ironing left for next week as asked. We're out of bin bags.",
@@ -204,6 +237,7 @@ test.describe('Housekeeping tab', () => {
 
   test('ticking a task starts today’s visit; unticking takes the tick back', async ({ page }) => {
     const screen = await openHousekeeping(page);
+    await openCard(today(screen), 'Whole home');
     const box = today(screen).getByRole('checkbox', { name: 'Change the bed sheets' });
     await box.click();
     await expect(box).toBeChecked();
@@ -339,9 +373,9 @@ test.describe('Housekeeping tab', () => {
     const visit = detail(screen);
     await expect(visit.getByRole('heading', { level: 2 })).toHaveText('Thursday 24 September');
     await expect(visit.getByText('No message that day.', { exact: true })).toBeVisible();
-    expect(await checklist(visit.getByRole('group', { name: 'Tasks on Thursday 24 September' }))).toEqual(
-      STARTER.map((title) => ({ title, done: true })),
-    );
+    const visitTasks = visit.getByRole('group', { name: 'Tasks on Thursday 24 September' });
+    await expect(cardHeader(visitTasks, 'Whole home')).toContainText('All done');
+    expect(await checklist(await openCard(visitTasks, 'Whole home'))).toEqual(STARTER.map((title) => ({ title, done: true })));
     await expect(visit.getByRole('textbox', { name: 'Comments' })).toHaveValue(
       'Oven cleaned as well, it took an extra half hour.',
     );
@@ -416,8 +450,10 @@ test.describe('Housekeeping tab', () => {
     await expect(detail(screen).getByText('No visit recorded.', { exact: true })).toBeVisible();
     await detail(screen).getByRole('button', { name: 'Add a visit' }).click();
     const tasks = detail(screen).getByRole('group', { name: 'Tasks on Tuesday 6 October' });
-    expect(await checklist(tasks)).toEqual(STARTER.map((title) => ({ title, done: false })));
-    await expect(tasks.getByRole('checkbox').first()).toBeFocused();
+    // Focus on the visit's first card, ready to open it.
+    await expect(cardHeader(tasks, 'Whole home')).toBeFocused();
+    expect(await cardNames(tasks)).toEqual(cards('0 of 7 done', {}, [], true));
+    expect(await checklist(await openCard(tasks, 'Whole home'))).toEqual(STARTER.map((title) => ({ title, done: false })));
     await expect(said(screen)).toHaveText('Visit added');
     // Counted once something is recorded on it.
     await expect(detail(screen).getByText('Nothing recorded yet.', { exact: true })).toBeVisible();
@@ -431,6 +467,7 @@ test.describe('Housekeeping tab', () => {
 
   test('today’s visit can be deleted, after asking, once something is recorded', async ({ page }) => {
     let screen = await openHousekeeping(page);
+    await openCard(today(screen), 'Whole home');
     await today(screen).getByRole('checkbox', { name: 'Dust the surfaces' }).click();
     await expect(screen.getByText("Today's visit", { exact: true })).toBeVisible();
     await expect(line(screen)).toHaveText('1 of 7 done today');
@@ -561,6 +598,7 @@ test.describe('Housekeeping tab', () => {
   test('the task list sheet edits today’s list; last week’s visit keeps its own', async ({ page }) => {
     const screen = await openHousekeeping(page);
     // Today's visit exists (a tick), so it follows the list.
+    await openCard(today(screen), 'Whole home');
     await today(screen).getByRole('checkbox', { name: 'Clean the kitchen' }).click();
     await expect(said(screen)).toHaveText('Clean the kitchen done');
 
@@ -687,9 +725,6 @@ test.describe('Sections', () => {
 
   const names = (group: Locator) =>
     group.getByRole('textbox', { name: 'Task name' }).evaluateAll((els) => els.map((el) => (el as HTMLInputElement).value));
-  /** Today's section headings as heard: "Kitchen, 1 of 2 done". */
-  const headings = (tasks: Locator) =>
-    tasks.getByRole('heading', { level: 3 }).evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')));
   const taskMoves = (sheet: Locator) => sheet.locator('[data-task-moves]');
   const sectionMoves = (sheet: Locator) => sheet.locator('[data-section-moves]');
 
@@ -698,6 +733,7 @@ test.describe('Sections', () => {
   }) => {
     const screen = await openHousekeeping(page);
     // Today's visit has started, so it follows the list.
+    await openCard(today(screen), 'Whole home');
     await today(screen).getByRole('checkbox', { name: 'Clean the kitchen' }).click();
     await expect(said(screen)).toHaveText('Clean the kitchen done');
 
@@ -745,8 +781,14 @@ test.describe('Sections', () => {
     await expect(sheet.getByRole('group', { name: 'Kitchen and utility', exact: true })).toBeVisible();
     await closeEditor(sheet);
 
-    // Today: the tasks in no section first, then each section in order, its progress in its heading.
+    // Today: Whole home (the tasks in no section), the areas, then each section no area is
+    // called, in the sections' order, its progress in its header.
     const tasks = today(screen).getByRole('group', { name: 'Tasks today' });
+    await expect
+      .poll(() => cardNames(tasks))
+      .toEqual(cards('0 of 4 done', {}, ['Bathrooms, 0 of 2 done', 'Kitchen and utility, 1 of 2 done']));
+    await openCard(tasks, 'Bathrooms');
+    const kitchen = await openCard(tasks, 'Kitchen and utility');
     expect(await checklist(tasks)).toEqual([
       { title: 'Change the bed sheets', done: false },
       { title: 'Hoover and mop the floors', done: false },
@@ -757,24 +799,24 @@ test.describe('Sections', () => {
       { title: 'Clean the kitchen', done: true },
       { title: 'Empty the bins', done: false },
     ]);
-    await expect.poll(() => headings(tasks)).toEqual(['Bathrooms, 0 of 2 done', 'Kitchen and utility, 1 of 2 done']);
-    const kitchen = tasks.getByRole('group', { name: /^Kitchen and utility, / });
-    await expect(kitchen.getByText('1 of 2', { exact: true })).toBeVisible();
+    const progress = cardHeader(tasks, 'Kitchen and utility').locator('[data-progress]');
+    await expect(progress).toHaveText('1 of 2 done');
 
-    // The last one in a section: all done, shown and said.
+    // The last one on a card: all done, shown in green and said.
     await kitchen.getByRole('checkbox', { name: 'Empty the bins' }).click();
     await expect(said(screen)).toHaveText('Empty the bins done. Kitchen and utility, all 2 done');
-    await expect.poll(() => headings(tasks)).toEqual(['Bathrooms, 0 of 2 done', 'Kitchen and utility, all 2 done']);
-    await expect(kitchen.getByText('All done', { exact: true })).toBeVisible();
-    await expect(kitchen).toHaveAttribute('data-all-done', 'true');
+    await expect(progress).toHaveText('All done');
+    await expect(progress).toHaveCSS('color', 'rgb(31, 122, 54)');
+    await expect
+      .poll(() => cardNames(tasks))
+      .toEqual(cards('0 of 4 done', {}, ['Bathrooms, 0 of 2 done', 'Kitchen and utility, all 2 done']));
     await expect(line(screen)).toHaveText('2 of 8 done today');
 
     // Kept on this phone.
     await reopen(page);
-    await expect.poll(() => headings(today(housekeepingScreen(page)).getByRole('group', { name: 'Tasks today' }))).toEqual([
-      'Bathrooms, 0 of 2 done',
-      'Kitchen and utility, all 2 done',
-    ]);
+    await expect
+      .poll(() => cardNames(today(housekeepingScreen(page)).getByRole('group', { name: 'Tasks today' })))
+      .toEqual(cards('0 of 4 done', {}, ['Bathrooms, 0 of 2 done', 'Kitchen and utility, all 2 done']));
   });
 
   test('a tap on another Add Task while a name is typed: the name is kept and that field opens, in one tap', async ({ page }) => {
@@ -821,7 +863,10 @@ test.describe('Sections', () => {
     await page.keyboard.press('ArrowUp');
     await expect(taskMoves(sheet)).toHaveText('Clean the bathrooms moved to Kitchen, position 2 of 2.');
     await closeEditor(sheet);
-    await expect.poll(() => headings(today(screen).getByRole('group', { name: 'Tasks today' }))).toEqual(['Kitchen, 0 of 2 done']);
+    // Named after an area, the kitchen's tasks are on its card; the empty Bathrooms has none.
+    await expect
+      .poll(() => cardNames(today(screen).getByRole('group', { name: 'Tasks today' })))
+      .toEqual(cards('0 of 5 done', { Kitchen: '0 of 2 done' }));
   });
 
   test('deleting a section asks first, then keeps its tasks: at the top, on today’s visit too', async ({ page }) => {
@@ -832,9 +877,10 @@ test.describe('Sections', () => {
     await moveTo(page, sheet, 'Empty the bins', 'Kitchen');
     await closeEditor(sheet);
     const tasks = today(screen).getByRole('group', { name: 'Tasks today' });
-    await tasks.getByRole('checkbox', { name: 'Clean the kitchen' }).click();
+    // Named after an area: on the Kitchen card.
+    await (await openCard(tasks, 'Kitchen')).getByRole('checkbox', { name: 'Clean the kitchen' }).click();
     await expect(said(screen)).toHaveText('Clean the kitchen done');
-    await expect.poll(() => headings(tasks)).toEqual(['Kitchen, 1 of 2 done']);
+    await expect.poll(() => cardNames(tasks)).toEqual(cards('0 of 5 done', { Kitchen: '1 of 2 done' }));
 
     sheet = await openEditor(page, screen);
     await sectionMenu(page, sheet, 'Kitchen', 'Delete Section');
@@ -856,8 +902,8 @@ test.describe('Sections', () => {
     ]);
     await expect(sheet.getByRole('button', { name: 'Add Section' })).toBeFocused();
     await closeEditor(sheet);
-    await expect.poll(() => headings(tasks)).toEqual([]);
-    expect((await checklist(tasks)).slice(-2)).toEqual([
+    await expect.poll(() => cardNames(tasks)).toEqual(cards('1 of 7 done'));
+    expect((await checklist(await openCard(tasks, 'Whole home'))).slice(-2)).toEqual([
       { title: 'Clean the kitchen', done: true },
       { title: 'Empty the bins', done: false },
     ]);
@@ -874,7 +920,7 @@ test.describe('Sections', () => {
     await day(screen, 'Tuesday 6 October').click();
     await detail(screen).getByRole('button', { name: 'Add a visit' }).click();
     const tuesday = detail(screen).getByRole('group', { name: 'Tasks on Tuesday 6 October' });
-    await expect.poll(() => headings(tuesday)).toEqual(['Kitchen, 0 of 1 done']);
+    await expect.poll(() => cardNames(tuesday)).toEqual(cards('0 of 6 done', { Kitchen: '0 of 1 done' }, [], true));
 
     // Renamed, then deleted, today.
     await control(screen, 'Today').click();
@@ -888,13 +934,13 @@ test.describe('Sections', () => {
     await sectionMenu(page, sheet, 'Cooking', 'Delete Section');
     await (await confirmation(page, 'Delete Cooking?')).getByRole('button', { name: 'Delete Section' }).click();
     await closeEditor(sheet);
-    await expect.poll(() => headings(today(screen).getByRole('group', { name: 'Tasks today' }))).toEqual([]);
+    await expect.poll(() => cardNames(today(screen).getByRole('group', { name: 'Tasks today' }))).toEqual(cards('0 of 7 done'));
 
-    // Tuesday's visit still has its kitchen.
+    // Tuesday's visit still has its kitchen: on the Kitchen card, by the name it kept.
     await day(screen, 'Tuesday 6 October').click();
-    await expect.poll(() => headings(detail(screen).getByRole('group', { name: 'Tasks on Tuesday 6 October' }))).toEqual([
-      'Kitchen, 0 of 1 done',
-    ]);
+    await expect
+      .poll(() => cardNames(detail(screen).getByRole('group', { name: 'Tasks on Tuesday 6 October' })))
+      .toEqual(cards('0 of 6 done', { Kitchen: '0 of 1 done' }, [], true));
   });
 
   for (const width of [375, 430]) {
@@ -917,13 +963,202 @@ test.describe('Sections', () => {
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       await closeEditor(sheet);
-      const card = today(screen).getByRole('group', { name: /^Bathrooms and the downstairs cloakroom, / });
-      const heading = (await card.getByRole('heading', { level: 3 }).boundingBox())!;
-      const count = (await card.getByText('0 of 1', { exact: true }).boundingBox())!;
-      // The long name wraps; the count stays on the right, within the card.
-      expect(count.x).toBeGreaterThan(heading.x + heading.width - 1);
-      expect(count.x + count.width).toBeLessThanOrEqual(width - 16);
+      // Its card: the long name wraps in full beside the picture, the progress under it, all within the card.
+      const header = cardHeader(today(screen), 'Bathrooms and the downstairs cloakroom');
+      const box = (await header.boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(16 - 0.5);
+      expect(box.x + box.width).toBeLessThanOrEqual(width - 16 + 0.5);
+      const name = header.getByText('Bathrooms and the downstairs cloakroom', { exact: true });
+      expect(await name.evaluate((el) => el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+      const progress = (await header.locator('[data-progress]').boundingBox())!;
+      const named = (await name.boundingBox())!;
+      expect(progress.y).toBeGreaterThanOrEqual(named.y + named.height - 1);
+      await expect(header.locator('[data-progress]')).toHaveText('0 of 1 done');
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     });
   }
+});
+
+// ── Area cards (docs/ARCHITECTURE.md "Housekeeping", "Areas") ──
+
+test.describe('Area cards', () => {
+  for (const width of [375, 402]) {
+    test(`the day’s tasks are a stack of area cards at ${width}px: one a row, full width, each with its picture`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      const screen = await openHousekeeping(page);
+      const tasks = today(screen).getByRole('group', { name: 'Tasks today' });
+      const boxes = await tasks
+        .locator('[data-card]')
+        .evaluateAll((els) => els.map((el) => el.getBoundingClientRect().toJSON() as { x: number; y: number; width: number; height: number }));
+      expect(boxes).toHaveLength(12);
+      for (const [i, box] of boxes.entries()) {
+        expect(Math.abs(box.x - 16)).toBeLessThan(0.5);
+        expect(Math.abs(box.width - (width - 32))).toBeLessThan(0.5);
+        if (i) expect(box.y).toBeGreaterThan(boxes[i - 1].y + boxes[i - 1].height);
+      }
+      // Each area's own picture (Whole home: a house with every room in it), a rounded landscape thumbnail on the left.
+      const thumbs = await tasks.locator('[data-card] [data-area-art]').evaluateAll((els) =>
+        els.map((el) => {
+          const box = el.getBoundingClientRect();
+          return {
+            kind: el.getAttribute('data-area-art')!.split(':')[0],
+            landscape: box.width > box.height,
+            left: box.x,
+            radius: parseFloat(getComputedStyle(el.parentElement!).borderTopLeftRadius),
+          };
+        }),
+      );
+      expect(thumbs.map((t) => t.kind)).toEqual([
+        'home',
+        'kitchen',
+        'living',
+        'bathroom-alt',
+        'bathroom',
+        'bedroom-alt',
+        'bedroom',
+        'garden',
+        'gardenRoom',
+        'hotTub',
+        'hallway',
+        'frontGarden',
+      ]);
+      for (const t of thumbs) {
+        expect(t.landscape).toBe(true);
+        expect(t.left).toBeLessThan(40);
+        expect(t.radius).toBeGreaterThanOrEqual(12);
+      }
+      // The progress in grey with nothing to do; every header a target of 44px or more.
+      await expect(cardHeader(tasks, 'Kitchen').locator('[data-progress]')).toHaveText('No tasks yet');
+      await expect(cardHeader(tasks, 'Kitchen').locator('[data-progress]')).toHaveCSS('color', 'rgb(110, 110, 115)');
+      for (const h of await tasks.locator('[data-card] h3 button').evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height))) {
+        expect(h).toBeGreaterThanOrEqual(44);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    });
+  }
+
+  for (const reducedMotion of ['no-preference', 'reduce'] as const) {
+    test(`a tap opens a card in place, a tap on its header closes it, several stay open (${reducedMotion})`, async ({ page }) => {
+      await page.emulateMedia({ reducedMotion });
+      const screen = await openHousekeeping(page);
+      const tasks = today(screen).getByRole('group', { name: 'Tasks today' });
+      const header = cardHeader(tasks, 'Whole home');
+      const panel = tasks.getByRole('group', { name: 'Whole home', exact: true });
+      await expect(header).toHaveAttribute('aria-expanded', 'false');
+      await expect(tasks.locator('[data-card="home"] input[type="checkbox"]').first()).toBeHidden();
+      await header.click();
+      await expect(header).toHaveAttribute('aria-expanded', 'true');
+      await expect(header).toBeFocused();
+      await expect(panel.getByRole('checkbox', { name: 'Ironing' })).toBeVisible();
+      // It grows into place smoothly; at once with Reduce Motion.
+      const duration = await panel.evaluate((el) => getComputedStyle(el).transitionDuration);
+      expect(duration.split(',')[0].trim()).toBe(reducedMotion === 'reduce' ? '0s' : '0.36s');
+
+      // Another opens too, from the keyboard.
+      const kitchen = cardHeader(tasks, 'Kitchen');
+      await kitchen.focus();
+      await page.keyboard.press('Enter');
+      await expect(kitchen).toHaveAttribute('aria-expanded', 'true');
+      await expect(tasks.getByRole('group', { name: 'Kitchen', exact: true }).getByRole('button', { name: 'Add Task to Kitchen' })).toBeVisible();
+      await expect(header).toHaveAttribute('aria-expanded', 'true');
+
+      // A tap on the header again closes it: its rows go out of reach.
+      await header.click();
+      await expect(header).toHaveAttribute('aria-expanded', 'false');
+      await expect(panel).toHaveCount(0);
+      await expect(tasks.locator('[data-card="home"] input[type="checkbox"]').first()).toBeHidden();
+      // Kept open while the app runs: back from another tab, Kitchen is still open.
+      await goToTab(page, 'Home');
+      await goToTab(page, 'Housekeeping');
+      await expect(cardHeader(tasks, 'Kitchen')).toHaveAttribute('aria-expanded', 'true');
+      await expect(cardHeader(tasks, 'Whole home')).toHaveAttribute('aria-expanded', 'false');
+    });
+  }
+
+  test('Add Task on an area makes the section named after it; ticked, the card says All done; renamed, the area keeps its tasks', async ({ page }) => {
+    let screen = await openHousekeeping(page);
+    let tasks = today(screen).getByRole('group', { name: 'Tasks today' });
+    const kitchen = await openCard(tasks, 'Kitchen');
+    await expect(kitchen.getByRole('checkbox')).toHaveCount(0);
+    // Add Task becomes the new task's field, focused in the tap.
+    await kitchen.getByRole('button', { name: 'Add Task to Kitchen' }).click();
+    const field = kitchen.getByRole('textbox', { name: 'Task name' });
+    await expect(field).toBeFocused();
+    await expect(field).toHaveAttribute('placeholder', 'New task');
+    await page.keyboard.type('Wipe the worktops');
+    await page.keyboard.press('Enter');
+    // Added, and the field stays, empty, for the next one.
+    await expect(kitchen.getByRole('checkbox', { name: 'Wipe the worktops' })).toBeVisible();
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue('');
+    await expect(said(screen)).toHaveText('Wipe the worktops added to Kitchen');
+    await page.keyboard.type('Clean the hob');
+    await page.keyboard.press('Enter');
+    await expect(kitchen.getByRole('checkbox', { name: 'Clean the hob' })).toBeVisible();
+    // Enter with nothing typed: done, back on Add Task.
+    await page.keyboard.press('Enter');
+    await expect(kitchen.getByRole('button', { name: 'Add Task to Kitchen' })).toBeFocused();
+    await expect.poll(() => cardNames(tasks)).toEqual(cards('0 of 7 done', { Kitchen: '0 of 2 done' }));
+
+    // The task list has a Kitchen section with both.
+    await today(screen).getByRole('button', { name: 'Edit task list' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Task list' });
+    await settled(sheet.getByRole('button', { name: 'Done' }));
+    expect(
+      await sheet
+        .getByRole('group', { name: 'Kitchen', exact: true })
+        .getByRole('textbox', { name: 'Task name' })
+        .evaluateAll((els) => els.map((el) => (el as HTMLTextAreaElement).value)),
+    ).toEqual(['Wipe the worktops', 'Clean the hob']);
+    await sheet.getByRole('button', { name: 'Done' }).click();
+    await expect(sheet).toHaveCount(0);
+
+    // Ticked: its progress, then All done in green, said.
+    await kitchen.getByRole('checkbox', { name: 'Wipe the worktops' }).click();
+    await expect(cardHeader(tasks, 'Kitchen')).toHaveAccessibleName('Kitchen, 1 of 2 done');
+    await expect(cardHeader(tasks, 'Kitchen').locator('[data-progress]')).toHaveText('1 of 2 done');
+    await kitchen.getByText('Clean the hob', { exact: true }).click();
+    await expect(said(screen)).toHaveText('Clean the hob done. Kitchen, all 2 done');
+    await expect(cardHeader(tasks, 'Kitchen').locator('[data-progress]')).toHaveText('All done');
+    await expect(cardHeader(tasks, 'Kitchen').locator('[data-progress]')).toHaveCSS('color', 'rgb(31, 122, 54)');
+    await expect(line(screen)).toHaveText('2 of 9 done today');
+
+    // The area renamed in Profile: its section follows, so the card keeps its tasks.
+    const dialog = await openProfile(page);
+    await dialog.getByRole('button', { name: /^Household/ }).click();
+    const name = dialog
+      .getByRole('listitem')
+      .filter({ has: page.getByRole('button', { name: 'Delete Kitchen', exact: true }) })
+      .getByRole('textbox', { name: 'Area name' });
+    await name.fill('Kitchen and pantry');
+    await name.press('Enter');
+    await expect(dialog.getByRole('button', { name: 'Delete Kitchen and pantry', exact: true })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Profile', exact: true }).click();
+    await expect(dialog.getByRole('heading', { name: 'Household', level: 1 })).toHaveCount(0);
+    await closeProfile(page);
+    await expect(cardHeader(tasks, 'Kitchen and pantry')).toHaveAccessibleName('Kitchen and pantry, all 2 done');
+    await expect(tasks.locator('[data-card]')).toHaveCount(12);
+
+    // Stored: after a reload, and in the task list.
+    await reopen(page);
+    screen = housekeepingScreen(page);
+    tasks = today(screen).getByRole('group', { name: 'Tasks today' });
+    await expect(cardHeader(tasks, 'Kitchen and pantry')).toHaveAccessibleName('Kitchen and pantry, all 2 done');
+    await expect(tasks.locator('[data-card]')).toHaveCount(12);
+    await today(screen).getByRole('button', { name: 'Edit task list' }).click();
+    await expect(page.getByRole('dialog', { name: 'Task list' }).getByRole('group', { name: 'Kitchen and pantry', exact: true })).toBeVisible();
+  });
+
+  test('a day gone by: its areas as its visit had them, no Add Task', async ({ page }) => {
+    const screen = await openHousekeeping(page);
+    await chooseLastVisit(screen);
+    const tasks = detail(screen).getByRole('group', { name: 'Tasks on Thursday 1 October' });
+    expect(await cardNames(tasks)).toEqual(cards('6 of 7 done', {}, [], true));
+    const kitchen = await openCard(tasks, 'Kitchen');
+    await expect(kitchen.getByText('No tasks on this visit.', { exact: true })).toBeVisible();
+    await expect(cardHeader(tasks, 'Kitchen').locator('[data-progress]')).toHaveText('No tasks');
+    await openCard(tasks, 'Whole home');
+    await expect(tasks.getByRole('button', { name: /^Add Task/ })).toHaveCount(0);
+    await expect(tasks.getByRole('checkbox', { name: 'Ironing' })).not.toBeChecked();
+  });
 });

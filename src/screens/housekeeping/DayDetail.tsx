@@ -25,7 +25,7 @@ export function DayDetail({ date, announce, headingRef }: DayDetailProps) {
   const headingId = useId();
   const rootRef = useRef<HTMLElement>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  // Where focus goes once the change shows: the new visit's first task, or Add a visit.
+  // Where focus goes once the change shows: the new visit's first card (its header), or Add a visit.
   const focusAfter = useRef<'visit' | 'add' | null>(null);
   const visit = visitOn(data.housekeeping.visits, date);
   const hasVisit = !!visit;
@@ -35,7 +35,7 @@ export function DayDetail({ date, announce, headingRef }: DayDetailProps) {
     if (!root || !focusAfter.current) return;
     if (focusAfter.current === 'visit' && hasVisit) {
       focusAfter.current = null;
-      root.querySelector<HTMLElement>('input[type="checkbox"], textarea')?.focus();
+      root.querySelector<HTMLElement>('[data-card] h3 button, textarea')?.focus();
     } else if (focusAfter.current === 'add' && !hasVisit) {
       focusAfter.current = null;
       root.querySelector<HTMLElement>('[data-add-visit]')?.focus();

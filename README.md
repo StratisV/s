@@ -68,18 +68,25 @@ means under it ("Needs doing now", "Fine for now, keep an eye on it").
   else). Today's date over the title, as on Home. Under the title, the calendar Needs attention uses: this
   week as a strip (or the whole month, with each month's total), a blue dot on the days the
   housekeeper came, a line on how today's visit is going, and **Today** to come back. Then a
-  message for the housekeeper, then the day chosen in the calendar: today's checklist from the
-  household's task list (edit it with Edit: add, rename, reorder, delete), who ticked what,
-  comments and the price for the day in pounds, all saved as you go; or, for a past day, what
-  was asked, what was done, the comments and the price. Any past day's visit can be corrected
-  or deleted, and a missed one added.
-  The task list can be divided into sections (Kitchen, Bathrooms…): add, rename, reorder and
-  delete them in the task list (Add Section, and each section's "..." menu), add a task straight
-  into one, and move tasks between them by dragging, with the arrow keys, or with Move to
-  Section. On the checklist each section is a card of its own under one quiet line: its name,
-  and "2 of 5" on the right, which reads "All done" once its tasks are all ticked. Deleting a
-  section keeps its tasks: they move to the top of the list. Earlier visits keep the sections
-  they had. Two people sorting the list at the same time both keep their moves.
+  message for the housekeeper, then the day chosen in the calendar: its tasks as a stack of
+  area cards, one a row. **Whole home** comes first (the tasks that belong to no one area, its
+  picture a doll's house of every room), then each area with its own picture, its name and the
+  day's progress ("2 of 5 done", "All done" in green, "No tasks yet" in grey), then any section
+  no area is called. A tap opens a card in place to its checklist (a tap on its header closes
+  it again; several can be open): tick tasks, see who ticked what, and add a task to that area
+  with **Add Task**. Then comments and the price for the day in pounds, all saved as you go;
+  or, for a past day, what was asked, what was done, the comments and the price. Any past
+  day's visit can be corrected or deleted, and a missed one added. Edit opens the whole task
+  list (add, rename, reorder, delete).
+  An area's tasks are the section of the task list named after it (the case and extra spaces
+  don't matter): the first Add Task on an area makes that section, and renaming the area in
+  Household renames it too, so the area keeps its tasks. The task list can be divided into
+  sections by hand as well: add, rename, reorder and delete them in the task list (Add Section,
+  and each section's "..." menu), add a task straight into one, and move tasks between them by
+  dragging, with the arrow keys, or with Move to Section. Deleting a section keeps its tasks:
+  they move to the top of the list (Whole home). Earlier visits keep the sections they had, and
+  find their areas by those names. Two people sorting the list at the same time both keep
+  their moves.
 - **Stats**: who has done what.
 - **Share**: send an item (from its sheet, as the sheet shows it) or a whole area (Share Room
   in its sheet) to WhatsApp, Messages or Mail as a short summary with a link, which says

@@ -22,10 +22,11 @@ export type SceneKind =
   | 'loft'
   | 'balcony'
   | 'nursery'
+  | 'home'
   | 'room';
 
 /** Scenes under the sky (the rest are rooms with a wall and a floor). */
-const OUTDOOR: ReadonlySet<SceneKind> = new Set<SceneKind>(['garden', 'frontGarden', 'hotTub', 'balcony']);
+const OUTDOOR: ReadonlySet<SceneKind> = new Set<SceneKind>(['garden', 'frontGarden', 'hotTub', 'balcony', 'home']);
 
 /**
  * First match wins, so the more particular names come first: "Garden Lounge" before "Garden"
@@ -52,6 +53,8 @@ const RULES: readonly (readonly [RegExp, SceneKind])[] = [
   [/hall|entr(y|ance)|foyer|vestibule|corridor|lobby|passage|front door/, 'hallway'],
   [/loft|attic|eaves|roof ?space|mezzanine/, 'loft'],
   [/garden|yard|lawn|allotment|orchard|grounds|outside|outdoor|\bveg|flower ?bed|\bpond\b|hedge/, 'garden'],
+  // The whole place, last, so a room of it keeps its own ("Home office" is an office): Housekeeping's Whole home.
+  [/\bwhole\b|\bhome\b|\bhouse\b|\bflat\b|apartment|everywhere|\bgeneral\b|all rooms|throughout/, 'home'],
 ];
 
 /** Words for a smaller or second room: its other composition (a shower, a single bed). */

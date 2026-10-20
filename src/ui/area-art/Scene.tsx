@@ -1,6 +1,7 @@
 // The drawings, loaded as one chunk the first time an area's picture is shown (AreaArt.tsx).
 import { useId, useMemo } from 'react';
 import { AnyRoom, Bathroom, Bedroom, Dining, Garage, Hallway, Kitchen, Living, Loft, Nursery, Office, Stairs, Utility } from './indoor';
+import { Home } from './home';
 import { Defs, H, W, paint, type Ctx } from './kit';
 import { Balcony, FrontGarden, Garden, GardenRoom, HotTub } from './outdoor';
 import type { ArtPick, SceneKind } from './pick';
@@ -24,6 +25,7 @@ const SCENES: Record<SceneKind, (props: { c: Ctx }) => JSX.Element> = {
   loft: Loft,
   balcony: Balcony,
   nursery: Nursery,
+  home: Home,
   room: AnyRoom,
 };
 

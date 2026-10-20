@@ -151,6 +151,8 @@ describe('Housekeeping with the provider', () => {
     const calendar = screen.getByRole('region', { name: 'Calendar' });
     // The line beside the calendar says how today's visit is going.
     expect(within(calendar).getByText('No visit yet today')).toBeTruthy();
+    // The starter list is the Whole home card's: opened in place.
+    fireEvent.click(within(today()).getByRole('button', { name: /^Whole home, / }));
     const box = () => within(today()).getByRole('checkbox', { name: 'Change the bed sheets' });
     await act(async () => {
       fireEvent.click(box());
