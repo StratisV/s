@@ -1981,9 +1981,11 @@ Nothing new is stored on the server.
 **The tab bar** (`TabBar` in `screens/home/TabBar.tsx`, a `nav` named "Tabs"): five tabs along
 the bottom, in this order: **Home**, **Needs attention** (the label says "Attention": the full
 name does not fit five to a bar at 375px), **Chat**, **Housekeeping** and **Stats**. It is the
-iOS 26 floating bar: a capsule of frosted glass 62px tall, 12px in from each side (6px below
-360px wide) and `--tabbar-bottom` (22px, or the home indicator's inset less 12) above the
-bottom, each tab an icon (26px, filled) over its label (10px, 500), equal widths. The open
+docked bar iPhones use: frosted glass on the bottom edge, full width, with a hairline on
+top. Its tabs take 56px (`--tabbar-height`) and the glass runs on down through the home
+indicator's inset (`--bottom-inset`), so the bar never floats over the foot of the screen
+(`--tabbar-clear` is all of it, for what must stay clear). Each tab is an icon (26px,
+filled) over its label (10px, 500), equal widths. The open
 tab (`aria-current="page"`) is in the tint, on a glass highlight that slides under it
 (`--index`, none of the slide with Reduce Motion); the others in the label colour. Every
 tab is a target of 44px or more. Attention carries a red count of what needs attention

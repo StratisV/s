@@ -107,14 +107,15 @@
   --bottom-inset: env(safe-area-inset-bottom, 0px);
   --nav-row: 52px;
   /*
-   * The floating tab bar (TabBar.tsx): 62px of glass, 22px over the bottom edge (the home
-   * indicator runs beneath it), higher where the safe area asks for more.
+   * The tab bar (TabBar.tsx): docked on the bottom edge, full width. Its tabs take 56px and
+   * its glass runs on down through the home indicator's inset.
    */
-  --tabbar-bottom: max(22px, calc(var(--bottom-inset) - 12px));
-  --tabbar-height: 62px;
-  --tabbar-side: 12px;
+  --tabbar-bottom: 0px;
+  --tabbar-height: 56px;
   /* How much of the screen's foot the tab bar covers. */
-  --tabbar-clear: calc(var(--tabbar-bottom) + var(--tabbar-height));
+  --tabbar-clear: calc(var(--tabbar-bottom) + var(--tabbar-height) + var(--bottom-inset));
+  /* The round +, in from the right edge. */
+  --add-side: 16px;
   /* The round + floats over the tab bar, at the right (Home, Needs attention and Stats). */
   --add-size: 56px;
   --add-bottom: calc(var(--tabbar-clear) + 12px);
@@ -202,9 +203,3 @@
   }
 }
 
-/* The narrowest phones (320pt): the tab bar takes a little more of the width. */
-@media (max-width: 359px) {
-  :root {
-    --tabbar-side: 6px;
-  }
-}

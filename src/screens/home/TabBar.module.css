@@ -1,27 +1,25 @@
 /*
- * The tab bar: a capsule of glass floating over the foot of the screen (iOS 26), 12px in
- * from each side (so five names fit at 375pt, Housekeeping the longest) and 22px over the
- * bottom edge (var(--tabbar-bottom): higher where the safe area asks for more). Five equal
- * tabs, each a 56px tall target: the symbol over its name.
+ * The tab bar: frosted glass docked on the bottom edge, full width, as iPhone tab bars sit.
+ * Its tabs take the top 56px (var(--tabbar-height)) and the glass runs on down through the
+ * home indicator's inset (padding-bottom), so nothing floats over the foot of the screen.
+ * Five equal tabs, each a 52px tall target: the symbol over its name.
  */
 .bar {
   position: absolute;
-  left: var(--tabbar-side);
-  right: var(--tabbar-side);
+  left: 0;
+  right: 0;
   bottom: var(--tabbar-bottom);
   z-index: 6;
-  height: var(--tabbar-height);
-  padding: 3px;
-  border-radius: var(--r-tab);
+  height: var(--tabbar-clear);
+  padding: 4px 6px var(--bottom-inset);
+  border-radius: 0;
   display: grid;
   grid-template-columns: repeat(var(--count), minmax(0, 1fr));
   background: var(--glass-fill);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 0.5px solid var(--tabbar-edge);
-  box-shadow:
-    var(--shadow-glass),
-    inset 1.5px 1.5px 1px var(--glass-highlight);
+  border-top: 0.5px solid var(--tabbar-edge);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
@@ -47,10 +45,10 @@
 /* The open tab's highlight: a capsule as wide as a tab, sliding to the one chosen. */
 .highlight {
   position: absolute;
-  top: 3px;
-  bottom: 3px;
-  left: 3px;
-  width: calc((100% - 6px) / var(--count));
+  top: 4px;
+  bottom: var(--bottom-inset);
+  left: 6px;
+  width: calc((100% - 12px) / var(--count));
   border-radius: 28px;
   background: var(--tab-highlight);
   transform: translateX(calc(100% * var(--index)));
@@ -144,10 +142,10 @@
 
 /* ── Add button ────────────────────────────────────────── */
 
-/* Over the tab bar, its right edge in line with the bar's. */
+/* Over the tab bar, in from the right edge. */
 .add {
   position: absolute;
-  right: var(--tabbar-side);
+  right: var(--add-side);
   bottom: var(--add-bottom);
   z-index: 6;
   width: var(--add-size);

@@ -92,9 +92,9 @@ test.describe('Chat', () => {
     const lastBox = (await messageRow(page, "I'll order a new pack today.").boundingBox())!;
     const composerBox = (await chatScreen(page).getByRole('form', { name: 'New message' }).boundingBox())!;
     expect(lastBox.y + lastBox.height).toBeLessThanOrEqual(composerBox.y);
-    // The composer floats just over the tab bar, at the foot of the screen.
+    // The composer floats just over the tab bar, which sits on the foot of the screen.
     const bar = (await tabs(page).boundingBox())!;
-    expect(bar.y + bar.height).toBe(874 - 22);
+    expect(bar.y + bar.height).toBe(874);
     expect(composerBox.y + composerBox.height).toBeLessThanOrEqual(bar.y);
     expect(composerBox.y + composerBox.height).toBeGreaterThan(bar.y - 16);
 

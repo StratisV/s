@@ -151,7 +151,7 @@ test.describe('App shell', () => {
     expect(last.y + last.height).toBeLessThanOrEqual((await addButton(page).boundingBox())!.y);
   });
 
-  test('the tab bar floats over the foot of every tab, 22px over the bottom, and stays there as pages scroll', async ({ page }) => {
+  test('the tab bar sits on the foot of every tab, flush with the bottom edge and full width, and stays there as pages scroll', async ({ page }) => {
     await openSeeded(page);
     const hero = homeScreen(page).locator('[data-phase]').first();
     expect((await hero.boundingBox())!.y).toBe(0); // the hero reaches the top of the screen
@@ -159,18 +159,18 @@ test.describe('App shell', () => {
       const box = (await tabs(page).boundingBox())!;
       return [Math.round(box.x), Math.round(box.y + box.height), Math.round(box.width), Math.round(box.height)];
     };
-    expect(await at()).toEqual([12, 874 - 22, 402 - 24, 62]);
+    expect(await at()).toEqual([0, 874, 402, 56]);
     await homeScreen(page).evaluate((el) => {
       (el.firstElementChild as HTMLElement).scrollTop = 900;
     });
-    expect(await at()).toEqual([12, 874 - 22, 402 - 24, 62]);
-    // The round + over it, its right edge in line with the bar's.
+    expect(await at()).toEqual([0, 874, 402, 56]);
+    // The round + over it, 16px in from the right edge.
     const add = (await addButton(page).boundingBox())!;
-    expect(Math.round(add.x + add.width)).toBe(402 - 12);
-    expect(add.y + add.height).toBeLessThanOrEqual(874 - 22 - 62 - 8);
+    expect(Math.round(add.x + add.width)).toBe(402 - 16);
+    expect(add.y + add.height).toBeLessThanOrEqual(874 - 56 - 8);
     for (const name of ['Attention', 'Chat', 'Housekeeping', 'Stats'] as TabName[]) {
       await goToTab(page, name);
-      expect(await at(), name).toEqual([12, 874 - 22, 402 - 24, 62]);
+      expect(await at(), name).toEqual([0, 874, 402, 56]);
       // Each tab keeps Profile in reach, at the top right.
       const profile = (await page.getByRole('button', { name: 'Profile', exact: true }).boundingBox())!;
       expect(profile.y, name).toBeLessThan(60);
@@ -178,7 +178,7 @@ test.describe('App shell', () => {
     // Chat's composer floats over the bar.
     await goToTab(page, 'Chat');
     const composer = (await page.getByRole('form', { name: 'New message' }).boundingBox())!;
-    expect(composer.y + composer.height).toBeLessThanOrEqual(874 - 22 - 62);
+    expect(composer.y + composer.height).toBeLessThanOrEqual(874 - 56);
   });
 
   test('the open tab is in the tint, on a soft highlight; every tab a target of 44 by 44 or more', async ({ page }) => {

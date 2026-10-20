@@ -673,8 +673,8 @@ test.describe('Hero', () => {
       (el.firstElementChild as HTMLElement).scrollTop = 900;
     });
     await expect(strip).toHaveCSS('opacity', '1');
-    // The tab bar stays where it floats, over the foot of the screen.
-    await expect.poll(async () => Math.round((await tabs(page).boundingBox())!.y)).toBe(874 - 22 - 62);
+    // The tab bar stays where it sits, on the foot of the screen.
+    await expect.poll(async () => Math.round((await tabs(page).boundingBox())!.y)).toBe(874 - 56);
     await homeScreen(page).evaluate((el) => {
       (el.firstElementChild as HTMLElement).scrollTop = 0;
     });
