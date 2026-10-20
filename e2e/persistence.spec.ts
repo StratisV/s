@@ -28,6 +28,9 @@ test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
 
 test.describe('Persistence', () => {
   test('changes survive a reload', async ({ page }) => {
+    // A long walk (each area sheet opened and closed in turn, two reloads): about 32s here,
+    // over the default 30s, so it gets the slow-test allowance.
+    test.slow();
     await openSeeded(page);
 
     // Complete one item, repeat another, add one, edit one, change the emoji.
