@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatScreen } from './screens/chat/ChatScreen';
 import { AreaSheet } from './screens/home/AreaSheet';
+import { GoalsScreen } from './screens/goals/GoalsScreen';
 import { HomeScreen } from './screens/home/HomeScreen';
-import { NeedsAttentionScreen } from './screens/home/NeedsAttentionScreen';
 import { rowFallback, rowsBeside } from './screens/home/rowFocus';
 import { AddButton, hasAddButton, TabBar } from './screens/home/TabBar';
 import { HousekeepingScreen } from './screens/housekeeping/HousekeepingScreen';
@@ -15,7 +15,7 @@ import { ProfileScreen } from './screens/profile/ProfileScreen';
 import { useSharedLink } from './screens/share/useSharedLink';
 import { DoneSheet, type DoneTarget } from './screens/stats/DoneSheet';
 import { StatsScreen } from './screens/stats/StatsScreen';
-import { upNext } from './lib/logic/upNext';
+import { openThisWeek } from './lib/logic/goals';
 import type { ISODate } from './lib/types';
 import type { ItemSheetTarget, Tab } from './screens/types';
 import { ChatProvider, useChat } from './state/ChatProvider';
@@ -54,7 +54,7 @@ interface FocusReturn {
   target: HTMLElement;
   /** Fallbacks if the target's row is gone (completed or deleted): the rows after it, then before it. */
   nearby: HTMLElement[];
-  /** The target's section, whose heading (or Needs attention's sentence) is the last fallback. */
+  /** The target's section, whose heading is the last fallback. */
   section: HTMLElement | null;
 }
 
@@ -65,7 +65,7 @@ interface FocusReturn {
 function takeFocusReturn(root: HTMLElement | null): FocusReturn | null {
   const el = document.activeElement;
   if (!root || !(el instanceof HTMLElement) || !root.contains(el) || !isFocusVisible(el)) return null;
-  // The rows in its own list: a sheet's, or Needs attention's cards.
+  // The rows in its own list (an area's sheet's).
   const rows = rowsBeside(el, root);
   const i = rows.indexOf(el);
   const nearby = i < 0 ? [] : [...rows.slice(i + 1), ...rows.slice(0, i).reverse()];
@@ -90,7 +90,7 @@ function returnToOpener(opener: () => HTMLElement | null, root: HTMLElement, fal
   target?.focus({ preventScroll: true });
 }
 
-const TAB_IDS: readonly Tab[] = ['home', 'attention', 'chat', 'housekeeping', 'stats'];
+const TAB_IDS: readonly Tab[] = ['home', 'goals', 'chat', 'housekeeping', 'stats'];
 /** Where this device keeps the tab last open, so the app reopens on it. */
 const TAB_KEY = 'homeos.tab';
 
@@ -136,8 +136,8 @@ function MainApp() {
   );
 }
 
-/** Which screen shows an item just saved: Home (its area's card), Needs attention, or the area's sheet. */
-type RevealIn = 'home' | 'attention' | 'area';
+/** Which screen shows an item just saved: Home (its area's card), or the area's sheet. */
+type RevealIn = 'home' | 'area';
 
 function MainShell() {
   const { unread } = useChat();
@@ -146,8 +146,8 @@ function MainShell() {
   const [tab, setTab] = useState<Tab>(loadTab);
   useEffect(() => storeTab(tab), [tab]);
   const newNote = useNewNote(tab === 'housekeeping');
-  // How many things need attention across the house: the count on the Attention tab.
-  const attention = useMemo(() => upNext(data.items, today).counts.attention, [data.items, today]);
+  // How many of this week's goals are not done: the count on the Goals tab.
+  const goals = useMemo(() => openThisWeek(data.goals.list, today), [data.goals.list, today]);
   const [sheetTarget, setSheetTarget] = useState<ItemSheetTarget | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetKey, setSheetKey] = useState(0);
@@ -305,7 +305,7 @@ function MainShell() {
   // A save shows where the item went, on whatever is behind the sheet.
   const onSaved = (itemId: string) => {
     if (areaOpen) setReveal({ id: itemId, in: 'area' });
-    else if (tab === 'home' || tab === 'attention') setReveal({ id: itemId, in: tab });
+    else if (tab === 'home') setReveal({ id: itemId, in: tab });
   };
 
   const openProfile = () => setProfileOpen(true);
@@ -318,17 +318,11 @@ function MainShell() {
           <HomeScreen
             onOpenProfile={openProfile}
             onOpenArea={openArea}
-            onOpenAttention={() => switchTab('attention')}
             revealItem={revealFor('home')}
             onRevealed={clearReveal}
           />
-        ) : tab === 'attention' ? (
-          <NeedsAttentionScreen
-            onOpenItem={openItem}
-            onOpenProfile={openProfile}
-            revealItem={revealFor('attention')}
-            onRevealed={clearReveal}
-          />
+        ) : tab === 'goals' ? (
+          <GoalsScreen onOpenProfile={openProfile} />
         ) : tab === 'chat' ? (
           <ChatScreen onOpenProfile={openProfile} />
         ) : tab === 'housekeeping' ? (
@@ -342,7 +336,7 @@ function MainShell() {
           <StatsScreen onOpenProfile={openProfile} onOpenDone={openDone} />
         )}
         <AddButton tab={tab} onAdd={() => openSheet({ kind: 'new' })} />
-        <TabBar tab={tab} onTab={switchTab} attention={attention} unread={unread} newNote={newNote} />
+        <TabBar tab={tab} onTab={switchTab} goals={goals} unread={unread} newNote={newNote} />
         <div className={styles.dim} aria-hidden="true" />
       </div>
       {areaId ? (

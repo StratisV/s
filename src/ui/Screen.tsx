@@ -121,7 +121,7 @@ interface ScreenProps extends Omit<HeaderProps, 'scrollRef'> {
   label: string;
 }
 
-/** A tab screen (Home, Needs attention, Housekeeping, Stats): one scroll area, the header at its top. */
+/** A tab screen (Home, Goals, Housekeeping, Stats): one scroll area, the header at its top. */
 export function Screen({ children, withAdd = true, label, ...header }: ScreenProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   return (

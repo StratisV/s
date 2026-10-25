@@ -2,37 +2,21 @@ import {
   addButton,
   area,
   areaAction,
-  attentionCards,
   closeArea,
   detailValue,
   expect,
+  goToTab,
   itemSheet,
   openArea,
-  openNeedsAttention,
   openSeeded,
   settled,
   test,
   titlesIn,
-  toast,
   type Locator,
   type Page,
 } from './fixtures';
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
-
-/**
- * A row just saved comes up whole, clear of the round + and the tab bar floating over the
- * bottom of the screen (it used to stop flush with the bottom edge, under the +).
- */
-async function clearOfAdd(page: Page, row: Locator) {
-  await expect
-    .poll(async () => {
-      const box = await row.boundingBox();
-      const add = await addButton(page).boundingBox();
-      return !!box && !!add && box.y >= 0 && box.y + box.height <= add.y;
-    })
-    .toBe(true);
-}
 
 /** A row just saved in an area's sheet comes up whole, inside the screen. */
 async function inSheet(page: Page, row: Locator) {
@@ -122,39 +106,6 @@ test.describe('After saving, the item can be seen where it went', () => {
     // The light fades after a moment.
     await expect(row).not.toHaveAttribute('data-lit', { timeout: 5_000 });
   });
-
-  test('Needs attention: a job for later, low in the list, comes into view and lights up', async ({ page }) => {
-    await openNeedsAttention(page);
-    await addButton(page).click();
-    const sheet = itemSheet(page, 'New item');
-    await settled(sheet.getByRole('button', { name: 'Close' }));
-    await sheet.getByLabel('Title', { exact: true }).fill('Service the boiler');
-    await sheet.getByRole('radiogroup', { name: 'How urgent?' }).getByText('Not urgent', { exact: true }).click();
-    await sheet.getByLabel('Due', { exact: true }).fill('2026-12-01');
-    await sheet.getByRole('button', { name: 'Save' }).click();
-    await expect(sheet).toHaveCount(0);
-    const card = attentionCards(page).filter({ hasText: 'Service the boiler' });
-    await expect(card).toBeVisible();
-    await expect(card).toHaveAttribute('data-lit');
-    await clearOfAdd(page, card);
-    await expect(card).not.toHaveAttribute('data-lit', { timeout: 5_000 });
-  });
-
-  test('Needs attention: one it doesn’t list (a thing looked after in good shape) says where it went', async ({ page }) => {
-    await openNeedsAttention(page);
-    const before = await attentionCards(page).count();
-    await addButton(page).click();
-    const sheet = itemSheet(page, 'New item');
-    await settled(sheet.getByRole('button', { name: 'Close' }));
-    await sheet.getByLabel('Title', { exact: true }).fill('Grout');
-    await sheet.getByRole('radio', { name: 'To maintain' }).click();
-    await sheet.getByRole('radiogroup', { name: 'Condition' }).getByText('Good', { exact: true }).click();
-    await sheet.getByLabel('Area', { exact: true }).selectOption({ label: 'Bathroom Large' });
-    await sheet.getByRole('button', { name: 'Save' }).click();
-    await expect(sheet).toHaveCount(0);
-    await expect(toast(page, 'Saved in Bathroom Large.')).toBeVisible();
-    await expect(attentionCards(page)).toHaveCount(before);
-  });
 });
 
 test.describe('A shared area link', () => {
@@ -163,7 +114,7 @@ test.describe('A shared area link', () => {
       const doc = JSON.parse(localStorage.getItem('homeos.demo.v1')!);
       return doc.areas.find((a: { name: string }) => a.name === 'Garden').id as string;
     });
-    await openNeedsAttention(page);
+    await goToTab(page, 'Goals');
     await page.goto(`/?area=${garden}`);
     const sheet = area(page, 'Garden');
     await settled(sheet.getByRole('button', { name: 'Close', exact: true }));

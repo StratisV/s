@@ -199,10 +199,11 @@ const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isI
 /**
  * The DemoDoc lists the server relies on (DemoBackend fills in the rest as it reads). Lists
  * that came later are not required, so a home stored before them still parses: the live
- * home has no housekeeping_sections until its first write after sections (OPTIONAL_HOME_LISTS:
- * missing is none, but if present it must be a list).
+ * home has no housekeeping_sections until its first write after sections, and no goals or
+ * goal_links until its first write after goals (OPTIONAL_HOME_LISTS: missing is none, but if
+ * present it must be a list).
  */
-const OPTIONAL_HOME_LISTS = ['housekeeping_sections'] as const;
+const OPTIONAL_HOME_LISTS = ['housekeeping_sections', 'goals', 'goal_links'] as const;
 const HOME_LISTS = [
   'users',
   'households',

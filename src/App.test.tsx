@@ -29,12 +29,12 @@ function renderApp(backend: DemoBackend) {
 }
 
 /** The app on the seeded household, opened on `tab` (Home unless said otherwise). */
-async function setup(prepare?: (backend: DemoBackend) => Promise<void>, tab?: 'attention' | 'stats') {
+async function setup(prepare?: (backend: DemoBackend) => Promise<void>, tab?: 'goals' | 'stats') {
   if (tab) localStorage.setItem('homeos.tab', tab);
   const backend = new DemoBackend({ storage: new MemoryStorage(), search: '?demo-seed=1', latency: 0 });
   await prepare?.(backend);
   renderApp(backend);
-  await screen.findByRole('heading', { name: tab === 'attention' ? 'Needs attention' : tab === 'stats' ? 'Stats' : 'Home', level: 1 });
+  await screen.findByRole('heading', { name: tab === 'goals' ? 'Goals for the week' : tab === 'stats' ? 'Stats' : 'Home', level: 1 });
   return backend;
 }
 
@@ -79,7 +79,7 @@ function focusVisible(visible: boolean) {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
-  // The tab last open is kept per device: each test starts on Home, Needs attention on its list.
+  // The tab last open is kept per device: each test starts on Home.
   localStorage.clear();
   delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
 });
@@ -190,29 +190,6 @@ describe('focus after the Item sheet closes', () => {
     fireEvent.click(within(sheet).getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(document.activeElement).toBe(add));
   });
-
-  it('moves to the next row on Needs attention when the item was completed from the sheet', async () => {
-    await setup(undefined, 'attention');
-    focusVisible(true);
-    // The list: the heaters are the first row, the gutters the next.
-    const row = rowButton('Heaters not working');
-    const next = rows()[rows().indexOf(row) + 1];
-    expect(next).toBe(rowButton('Clear the gutters'));
-    const sheet = await openWith(row);
-    fireEvent.click(within(sheet).getByRole('button', { name: 'Mark as Done' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit item' })).toBeNull(), { timeout: 2000 });
-    expect(row.isConnected).toBe(false);
-    expect(document.activeElement).toBe(next);
-  });
-
-  it('goes back to the row on Needs attention it was opened from', async () => {
-    await setup(undefined, 'attention');
-    focusVisible(true);
-    const row = rowButton('Water the plants');
-    await openWith(row);
-    fireEvent.keyDown(window, { key: 'Escape' });
-    await waitFor(() => expect(document.activeElement).toBe(row));
-  });
 });
 
 describe('a shared area link', () => {
@@ -242,23 +219,24 @@ describe('a shared area link', () => {
 });
 
 describe('tab bar', () => {
-  it('has Home, Attention, Chat, Housekeeping and Stats at the foot; the + is on Home, Needs attention and Stats', async () => {
+  it('has Home, Goals, Chat, Housekeeping and Stats at the foot; the + is on Home and Stats', async () => {
     await setup();
     await within(tabBar()).findByRole('button', { name: 'Chat, unread messages' });
     expect(
       within(tabBar())
         .getAllByRole('button')
         .map((b) => b.textContent),
-    ).toEqual(['Home', '2Attention', 'Chat', 'Housekeeping', 'Stats']);
+    ).toEqual(['Home', '2Goals', 'Chat', 'Housekeeping', 'Stats']);
     // Beside the screen, not in it: one bar for every tab.
     const home = screen.getByRole('region', { name: 'Home' });
     expect(home.contains(tabBar())).toBe(false);
     expect(within(home).getByRole('heading', { name: 'Home', level: 1 })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'New item' })).toBeTruthy();
-    fireEvent.click(within(tabBar()).getByRole('button', { name: /^Attention/ }));
-    await screen.findByRole('heading', { name: 'Needs attention', level: 1 });
-    expect(within(tabBar()).getByRole('button', { name: /^Attention/ }).getAttribute('aria-current')).toBe('page');
-    expect(screen.getByRole('button', { name: 'New item' })).toBeTruthy();
+    fireEvent.click(within(tabBar()).getByRole('button', { name: /^Goals/ }));
+    await screen.findByRole('heading', { name: 'Goals for the week', level: 1 });
+    expect(within(tabBar()).getByRole('button', { name: /^Goals/ }).getAttribute('aria-current')).toBe('page');
+    // Goals has its own Add a Goal, so no round +.
+    expect(screen.queryByRole('button', { name: 'New item' })).toBeNull();
     fireEvent.click(within(tabBar()).getByRole('button', { name: /^Chat/ }));
     await screen.findByRole('heading', { name: 'Chat', level: 1 });
     expect(screen.queryByRole('button', { name: 'New item' })).toBeNull();
@@ -273,27 +251,26 @@ describe('tab bar', () => {
     expect(screen.getByRole('button', { name: 'Profile' })).toBeTruthy();
   });
 
-  it('counts what needs attention on Attention, and follows it', async () => {
-    const backend = await setup();
-    expect(within(tabBar()).getByRole('button', { name: 'Attention, 2 items' })).toBeTruthy();
-    const hid = (await backend.getMyHouseholdId())!;
-    const heaters = (await backend.load(hid)).items.find((it) => it.title === 'Heaters not working')!;
-    fireEvent.click(await screen.findByRole('button', { name: /^Hallway,/ }));
-    const sheet = await screen.findByRole('dialog', { name: 'Hallway' });
-    fireEvent.click(within(sheet).getByRole('button', { name: `Mark ${heaters.title} as done` }));
-    await waitFor(() => expect(within(tabBar()).getByRole('button', { name: 'Attention, 1 item', hidden: true })).toBeTruthy(), {
+  it('counts this week’s goals not done on Goals, and follows them', async () => {
+    await setup();
+    expect(within(tabBar()).getByRole('button', { name: 'Goals, 2 not done' })).toBeTruthy();
+    fireEvent.click(within(tabBar()).getByRole('button', { name: /^Goals/ }));
+    await screen.findByRole('heading', { name: 'Goals for the week', level: 1 });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Sort out the recycling rota' }));
+    await waitFor(() => expect(within(tabBar()).getByRole('button', { name: 'Goals, 1 not done' })).toBeTruthy(), {
       timeout: 3000,
     });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Plan Saturday’s dinner' }));
+    // None left: no badge at all.
+    await waitFor(() => expect(within(tabBar()).getByRole('button', { name: 'Goals' })).toBeTruthy(), { timeout: 3000 });
   });
 
-  it('Home’s sentence opens Needs attention', async () => {
+  it('Home’s sentence is plain words, not a way in', async () => {
     await setup();
-    fireEvent.click(document.querySelector<HTMLElement>('[data-home-summary]')!);
-    await screen.findByRole('heading', { name: 'Needs attention', level: 1 });
-    expect(within(tabBar()).getByRole('button', { name: /^Attention/ }).getAttribute('aria-current')).toBe('page');
-    expect(document.querySelector('[data-attention-summary]')!.textContent).toBe(
-      '2 things need attention and 1 is due today. Everything else can wait.',
-    );
+    const summary = document.querySelector<HTMLElement>('[data-home-summary]')!;
+    expect(summary.tagName).toBe('P');
+    expect(summary.closest('button, a')).toBeNull();
+    expect(summary.textContent).toBe('2 things need attention and 1 is due today. Everything else can wait.');
   });
 
   it('opens the task list from Housekeeping as a page sheet over the tab', async () => {
@@ -352,12 +329,12 @@ describe('tab bar', () => {
     await screen.findByRole('heading', { name: 'Housekeeping', level: 1 });
     expect(within(tabBar()).getByRole('button', { name: 'Housekeeping' }).getAttribute('aria-current')).toBe('page');
 
-    // Needs attention too.
-    fireEvent.click(within(tabBar()).getByRole('button', { name: /^Attention/ }));
-    await screen.findByRole('heading', { name: 'Needs attention', level: 1 });
+    // Goals too.
+    fireEvent.click(within(tabBar()).getByRole('button', { name: /^Goals/ }));
+    await screen.findByRole('heading', { name: 'Goals for the week', level: 1 });
     cleanup();
     renderApp(new DemoBackend({ storage: new MemoryStorage(), search: '?demo-seed=1', latency: 0 }));
-    await screen.findByRole('heading', { name: 'Needs attention', level: 1 });
+    await screen.findByRole('heading', { name: 'Goals for the week', level: 1 });
   });
 
   it('after the task list closes, focus goes back to Edit, however it was opened', async () => {

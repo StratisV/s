@@ -888,13 +888,15 @@ describe('SupabaseBackend offline: auth and realtime wiring', () => {
       ['postgres_changes', 'housekeeping_tasks', 'household_id=eq.h1', '*', 'public'],
       ['postgres_changes', 'housekeeping_visits', 'household_id=eq.h1', '*', 'public'],
       ['postgres_changes', 'housekeeping_visit_tasks', 'household_id=eq.h1', '*', 'public'],
+      ['postgres_changes', 'goals', 'household_id=eq.h1', '*', 'public'],
+      ['postgres_changes', 'goal_links', 'household_id=eq.h1', '*', 'public'],
     ]);
 
     rt.handlers[3].cb();
     expect(onChange).toHaveBeenCalledTimes(1);
-    // Housekeeping: a tick, the message, a section, the list, a visit all reload too.
+    // Housekeeping (a tick, the message, a section, the list, a visit) and goals (a goal, the link) reload too.
     for (const h of rt.handlers.slice(5)) h.cb();
-    expect(onChange).toHaveBeenCalledTimes(6);
+    expect(onChange).toHaveBeenCalledTimes(8);
     onChange.mockClear();
     rt.handlers[3].cb();
     expect(onChange).toHaveBeenCalledTimes(1);

@@ -183,6 +183,8 @@ function home(): ServerDoc {
       task('v-8oct', 'Floors', 2, false),
     ],
     housekeeping_sections: [],
+    goals: [],
+    goal_links: [],
   };
   const doc = newServerDoc(demo, new Date(T), { secret: 'c2VjcmV0' });
   doc.auth.devices = [

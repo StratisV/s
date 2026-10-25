@@ -13,6 +13,7 @@ import {
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { CHAT_PAGE_SIZE, REACTION_EMOJIS, TEXT_LIMITS } from '../constants';
 import { instantOf } from '../logic/chat';
+import { byGoalOrder, isGoalsToken, isWeekStart } from '../logic/goals';
 import { emptyHousekeeping, listOrder } from '../logic/housekeeping';
 import { isValidEmail, normaliseEmail } from '../logic/people';
 import type {
@@ -24,6 +25,8 @@ import type {
   ChatReaction,
   Completion,
   CreateHouseholdInput,
+  Goal,
+  GoalsLink,
   HomeEntry,
   Household,
   HouseholdData,
@@ -44,6 +47,7 @@ import type {
   JoinHouseholdInput,
   Member,
   NewPersonInput,
+  PublicGoals,
   PushSubscriptionInput,
 } from '../types';
 import {
@@ -71,6 +75,8 @@ const MESSAGE_WITH_REACTIONS = `${MESSAGE_COLS}, reactions:message_reactions(mes
 const HOUSEKEEPING_NOTE_COLS = 'body, updated_at, updated_by';
 const HOUSEKEEPING_SECTION_COLS = 'id, household_id, title, position';
 const HOUSEKEEPING_TASK_COLS = 'id, household_id, title, section_id, position';
+const GOAL_COLS = 'id, household_id, week, title, member_id, position, done, done_by, done_at, carried_from, created_by, created_at';
+const GOAL_LINK_COLS = 'token, created_by, created_at';
 const HOUSEKEEPING_VISIT_TASK_COLS =
   'id, visit_id, household_id, task_id, title, section_id, section_title, position, done, done_by, done_at';
 /** A visit with its tasks, in one request (PostgREST resource embedding). */
@@ -369,6 +375,30 @@ function toHousekeepingVisit(row: HousekeepingVisitRow): HousekeepingVisit {
   };
 }
 
+/** A goals row as the contract's Goal (exactly its keys). */
+function toGoal(row: Goal): Goal {
+  return {
+    id: row.id,
+    household_id: row.household_id,
+    week: row.week,
+    title: row.title,
+    member_id: row.member_id ?? null,
+    position: row.position,
+    done: row.done,
+    done_by: row.done_by ?? null,
+    done_at: row.done_at ?? null,
+    carried_from: row.carried_from ?? null,
+    created_by: row.created_by ?? null,
+    created_at: row.created_at,
+  };
+}
+
+/** A week's Monday (what add_goal and bring_over_goals take); else invalid_input: week, without a request. */
+function requireWeek(value: ISODate): ISODate {
+  if (!isWeekStart(value)) throw invalidInput('week');
+  return value;
+}
+
 type ChangePayload = RealtimePostgresChangesPayload<Record<string, unknown>>;
 
 /** The row a realtime change is about: the new row, or for a DELETE the old one (its primary key). */
@@ -582,7 +612,7 @@ export class SupabaseBackend implements Backend {
 
   async load(householdId: string): Promise<HouseholdData> {
     const db = this.client;
-    const [households, members, areas, items, completions, notes, sections, housekeepingTasks, visits] = await Promise.all([
+    const [households, members, areas, items, completions, notes, sections, housekeepingTasks, visits, goals, goalLinks] = await Promise.all([
       run<Household[]>(db.from('households').select(HOUSEHOLD_COLS).eq('id', householdId).limit(1)),
       runAll<Member>((from, to) =>
         db
@@ -656,6 +686,21 @@ export class SupabaseBackend implements Backend {
           .order('id')
           .range(from, to),
       ),
+      // Goals for the week: every week's, and the public link (no row: none).
+      runAll<Goal>((from, to) =>
+        db
+          .from('goals')
+          .select(GOAL_COLS)
+          .eq('household_id', householdId)
+          .order('week')
+          .order('position')
+          .order('created_at')
+          .order('id')
+          .range(from, to),
+      ),
+      runAll<GoalsLink>((from, to) =>
+        db.from('goal_links').select(GOAL_LINK_COLS).eq('household_id', householdId).range(from, to),
+      ),
     ]);
     // RLS hides other households, so "not a member" also lands here.
     if (!households[0]) throw new BackendError('not_found');
@@ -679,7 +724,12 @@ export class SupabaseBackend implements Backend {
       ),
       visits: visits.map(toHousekeepingVisit),
     };
-    return { household: toHousehold(households[0]), members, areas, items, completions, housekeeping };
+    const link = goalLinks[0];
+    const goalsData = {
+      list: goals.map(toGoal).sort(byGoalOrder),
+      link: link ? { token: link.token, created_by: link.created_by ?? null, created_at: link.created_at } : null,
+    };
+    return { household: toHousehold(households[0]), members, areas, items, completions, housekeeping, goals: goalsData };
   }
 
   subscribe(householdId: string, onChange: () => void): Unsubscribe {
@@ -694,6 +744,8 @@ export class SupabaseBackend implements Backend {
       ['housekeeping_tasks', `household_id=eq.${householdId}`],
       ['housekeeping_visits', `household_id=eq.${householdId}`],
       ['housekeeping_visit_tasks', `household_id=eq.${householdId}`],
+      ['goals', `household_id=eq.${householdId}`],
+      ['goal_links', `household_id=eq.${householdId}`],
     ];
     return this.listen(`household:${householdId}`, (channel, current) => {
       const notify = () => {
@@ -1261,5 +1313,81 @@ export class SupabaseBackend implements Backend {
   async deleteHousekeepingVisit(id: string): Promise<void> {
     // Its tasks go with it (on delete cascade).
     await runAffecting(this.client.from('housekeeping_visits').delete().eq('id', requireUuid(id)).select('id'));
+  }
+
+  // ── Goals for the week (supabase/migrations/20261025000100_goals.sql) ──
+  // Written only through the RPCs, each of which takes the household's goals lock; RLS lets
+  // members read. A goal or person elsewhere (or gone) is not_found.
+
+  async addGoal(householdId: string, week: ISODate, title: string, memberId?: string | null): Promise<Goal> {
+    const clean = requireText(title, 'title');
+    requireWeek(week);
+    requireUuid(householdId);
+    const row = await run<Goal | null>(
+      this.client.rpc('add_goal', {
+        p_household_id: householdId,
+        p_week: week,
+        p_title: clean,
+        p_member_id: memberId === null || memberId === undefined ? null : requireUuid(memberId),
+      }),
+    );
+    if (!row) throw new BackendError('not_found');
+    return toGoal(row);
+  }
+
+  async renameGoal(id: string, title: string): Promise<void> {
+    const clean = requireText(title, 'title');
+    await run<null>(this.client.rpc('rename_goal', { p_goal_id: requireUuid(id), p_title: clean }));
+  }
+
+  async setGoalPerson(id: string, memberId: string | null): Promise<void> {
+    await run<null>(
+      this.client.rpc('set_goal_person', {
+        p_goal_id: requireUuid(id),
+        p_member_id: memberId === null || memberId === undefined ? null : requireUuid(memberId),
+      }),
+    );
+  }
+
+  async setGoalDone(id: string, done: boolean): Promise<void> {
+    if (typeof done !== 'boolean') throw invalidInput('done');
+    await run<null>(this.client.rpc('set_goal_done', { p_goal_id: requireUuid(id), p_done: done }));
+  }
+
+  async moveGoal(id: string, index: number): Promise<void> {
+    requirePlace(index);
+    await run<null>(this.client.rpc('move_goal', { p_goal_id: requireUuid(id), p_index: index }));
+  }
+
+  async deleteGoal(id: string): Promise<void> {
+    await run<null>(this.client.rpc('delete_goal', { p_goal_id: requireUuid(id) }));
+  }
+
+  async bringOverGoals(householdId: string, week: ISODate): Promise<Goal[]> {
+    requireWeek(week);
+    requireUuid(householdId);
+    const rows = await run<Goal[] | null>(this.client.rpc('bring_over_goals', { p_household_id: householdId, p_week: week }));
+    return (rows ?? []).map(toGoal).sort(byGoalOrder);
+  }
+
+  async goalsLink(householdId: string): Promise<GoalsLink> {
+    requireUuid(householdId);
+    const row = await run<(GoalsLink & { household_id: string }) | null>(
+      this.client.rpc('goals_link', { p_household_id: householdId }),
+    );
+    if (!row?.token) throw new BackendError('not_found');
+    return { token: row.token, created_by: row.created_by ?? null, created_at: row.created_at };
+  }
+
+  async stopGoalsLink(householdId: string): Promise<void> {
+    requireUuid(householdId);
+    await run<null>(this.client.rpc('stop_goals_link', { p_household_id: householdId }));
+  }
+
+  /** Anyone, signed in or not (the anon key): RPC public_goals, which answers only PublicGoals' fields. */
+  async publicGoals(token: string): Promise<PublicGoals | null> {
+    if (!isGoalsToken(token)) return null;
+    const view = await run<PublicGoals | null>(this.client.rpc('public_goals', { p_token: token }));
+    return view ?? null;
   }
 }

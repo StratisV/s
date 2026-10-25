@@ -1983,3 +1983,107 @@ describe('sync guarantees', () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('goals for the week', () => {
+  const goalNamed = (home: () => HomeContextValue, title: string) => home().data!.goals.list.find((g) => g.title === title);
+  /** The titles of the week `title` is in, in order. */
+  const weekOf = (home: () => HomeContextValue, title: string) => {
+    const goal = goalNamed(home, title)!;
+    return home()
+      .data!.goals.list.filter((g) => g.week === goal.week)
+      .sort((a, b) => a.position - b.position)
+      .map((g) => g.title);
+  };
+
+  it('a tick shows at once, stamped with who and when; a failed one is put back and says so', async () => {
+    const { backend, home } = await seeded();
+    vi.spyOn(backend, 'load').mockRejectedValue(offline());
+    const write = deferred();
+    vi.spyOn(backend, 'setGoalDone').mockImplementationOnce(() => write.promise);
+    const goal = goalNamed(home, 'Plan Saturday’s dinner')!;
+    expect(goal.done).toBe(false);
+
+    let result: Promise<void> | undefined;
+    act(() => {
+      result = home().setGoalDone(goal.id, true);
+    });
+    const shown = goalNamed(home, 'Plan Saturday’s dinner')!;
+    expect([shown.done, shown.done_by, typeof shown.done_at]).toEqual([true, home().me!.id, 'string']);
+    write.reject(offline());
+    await act(async () => {
+      await expect(result).rejects.toThrow();
+    });
+    expect(goalNamed(home, 'Plan Saturday’s dinner')).toEqual(goal);
+    expect(home().toast?.message).toBe('Couldn’t save. No connection.');
+  });
+
+  it('a move and a delete show at once and come back when they fail', async () => {
+    const { backend, home } = await seeded();
+    vi.spyOn(backend, 'load').mockRejectedValue(offline());
+    vi.spyOn(backend, 'moveGoal').mockRejectedValue(offline());
+    vi.spyOn(backend, 'deleteGoal').mockRejectedValue(offline());
+    const before = weekOf(home, 'Plan Saturday’s dinner');
+    const last = goalNamed(home, before[before.length - 1])!;
+
+    let moved: Promise<void> | undefined;
+    act(() => {
+      moved = home().moveGoal(last.id, 0);
+    });
+    expect(weekOf(home, last.title)).toEqual([last.title, ...before.slice(0, -1)]);
+    await act(async () => {
+      await expect(moved).rejects.toThrow();
+    });
+    expect(weekOf(home, last.title)).toEqual(before);
+
+    let deleted: Promise<void> | undefined;
+    act(() => {
+      deleted = home().deleteGoal(last.id);
+    });
+    expect(goalNamed(home, last.title)).toBeUndefined();
+    await act(async () => {
+      await expect(deleted).rejects.toThrow();
+    });
+    expect(weekOf(home, last.title)).toEqual(before);
+  });
+
+  it('a new goal, the link and goals brought over show once stored; turning the link off shows at once', async () => {
+    const { backend, home, hid } = await seeded();
+    const week = goalNamed(home, 'Plan Saturday’s dinner')!.week;
+    let added: Awaited<ReturnType<HomeContextValue['addGoal']>> | undefined;
+    await act(async () => {
+      added = await home().addGoal(week, '  Book the chimney sweep ');
+    });
+    expect(goalNamed(home, 'Book the chimney sweep')).toEqual(added);
+    expect(weekOf(home, 'Book the chimney sweep').at(-1)).toBe('Book the chimney sweep');
+
+    expect(home().data!.goals.link).toBeNull();
+    let link: Awaited<ReturnType<HomeContextValue['goalsLink']>> | undefined;
+    await act(async () => {
+      link = await home().goalsLink();
+    });
+    expect(home().data!.goals.link).toEqual(link);
+    expect(await backend.publicGoals(link!.token)).not.toBeNull();
+    const stop = deferred();
+    vi.spyOn(backend, 'stopGoalsLink').mockImplementationOnce(() => stop.promise);
+    let stopped: Promise<void> | undefined;
+    act(() => {
+      stopped = home().stopGoalsLink();
+    });
+    expect(home().data!.goals.link).toBeNull();
+    stop.resolve();
+    await act(async () => {
+      await stopped;
+    });
+    expect(home().data!.goals.link).toBeNull();
+
+    // Into next week, empty: this week's three not done, in their order.
+    const next = addDays(week, 7);
+    let brought: Awaited<ReturnType<HomeContextValue['bringOverGoals']>> | undefined;
+    await act(async () => {
+      brought = await home().bringOverGoals(next);
+    });
+    expect(brought!.map((g) => g.title)).toEqual(['Sort out the recycling rota', 'Plan Saturday’s dinner', 'Book the chimney sweep']);
+    expect(home().data!.goals.list.filter((g) => g.week === next).map((g) => g.title)).toEqual(brought!.map((g) => g.title));
+    expect((await backend.load(hid)).goals.list.filter((g) => g.week === next)).toHaveLength(3);
+  });
+});

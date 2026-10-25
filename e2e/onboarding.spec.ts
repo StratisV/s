@@ -1,6 +1,5 @@
 import {
   areaCard,
-  attentionScreen,
   closeArea,
   confirmation,
   DEFAULT_AREAS,
@@ -11,7 +10,6 @@ import {
   homeSummary,
   meta,
   openArea,
-  openNeedsAttention,
   openFresh,
   openProfile,
   openSeeded,
@@ -23,10 +21,20 @@ import {
   who,
 } from './fixtures';
 
-/** How many To dos the house has open: the rings on Needs attention's list. */
+/** The titles of the To dos the house has open (jobs, not things looked after), as stored. */
+function openTodoTitles(page: Page): Promise<string[]> {
+  return page.evaluate(
+    (key) =>
+      JSON.parse(localStorage.getItem(key)!)
+        .items.filter((i: { status: string; kind: string }) => i.status === 'open' && i.kind === 'task')
+        .map((i: { title: string }) => i.title),
+    DEMO_STORAGE_KEY,
+  );
+}
+
+/** How many To dos the house has open. */
 async function openTodos(page: Page): Promise<number> {
-  await openNeedsAttention(page);
-  return attentionScreen(page).getByRole('button', { name: /^Mark .* as done$/ }).count();
+  return (await openTodoTitles(page)).length;
 }
 
 /**
@@ -121,12 +129,13 @@ test.describe('Sign-in and setup', () => {
     await expect(who(page, 'Kitchen paper')).toHaveText('🦊Stratis');
     await expect(meta(page, 'Kitchen paper')).toHaveText('Not urgent·In 4 weeks');
     await closeArea(page);
-    // Every To do, on Needs attention.
+    // Every To do.
     expect(await openTodos(page)).toBe(13);
 
-    // It is all still there after a reload, on the tab last shown.
+    // It is all still there after a reload.
     await reopen(page);
-    await expect(attentionScreen(page).getByRole('button', { name: 'Mark Heaters not working as done' })).toBeVisible();
+    await openArea(page, 'Hallway');
+    await expect(ring(page, 'Heaters not working')).toBeVisible();
   });
 
   test('a new home without the current list starts with empty areas', async ({ page }) => {
@@ -149,9 +158,7 @@ test.describe('Sign-in and setup', () => {
     for (const name of DEFAULT_AREAS) await expect(areaCard(page, name), name).toHaveAccessibleName(/\bAll good\b/);
     // No address entered: no subtitle under the title.
     await expect(home.getByText('21 Alderbrook Road')).toHaveCount(0);
-    // Needs attention says so too.
     expect(await openTodos(page)).toBe(0);
-    await expect(attentionScreen(page).getByRole('status').filter({ hasText: 'Nothing needs doing.' })).toBeVisible();
   });
 
   test('editing the areas during setup decides the areas and which items are seeded', async ({ page }) => {
@@ -175,7 +182,7 @@ test.describe('Sign-in and setup', () => {
     await expectAreas(page, expected);
     await expect(areaCard(page, 'Garage', expected)).toHaveAccessibleName(/^Garage\b.*All good/);
     expect(await openTodos(page)).toBe(10);
-    await expect(attentionScreen(page).getByRole('button', { name: 'Mark Heaters not working as done' })).toHaveCount(0);
+    expect(await openTodoTitles(page)).not.toContain('Heaters not working');
   });
 
   test('Sign Out on the profile step goes back to Welcome', async ({ page }) => {

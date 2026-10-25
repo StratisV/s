@@ -28,6 +28,12 @@
 //   GET  /api/home?op=tick      Vercel Cron only: `Authorization: Bearer <CRON_SECRET>`, no
 //                               X-HomeOS header (a cron can't send one) → TickResponse
 //
+// The public goals link (docs/ARCHITECTURE.md "Goals for the week"):
+//
+//   GET  /api/home?op=publicGoals&token=…   anyone: no sign-in, no X-HomeOS header
+//                               → PublicGoalsResponse (404 not_found), cached at the edge
+//                               (PUBLIC_GOALS_CACHE)
+//
 // Every request carries the header `X-HomeOS: 1` (API_HEADER), and every POST is
 // `Content-Type: application/json`; anything else is 403 'forbidden' (a cross-site page can't
 // send either without a CORS preflight, which the server never answers). Responses are JSON
@@ -48,6 +54,7 @@ import type {
   DeviceInfo,
   NotifyPrefs,
   NotifySettings,
+  PublicGoals,
   PushSubscriptionInput,
   ReminderInput,
 } from '../types';
@@ -426,6 +433,16 @@ export const RPC_METHODS = {
   saveHousekeepingVisit: 'write',
   addHousekeepingVisit: 'write',
   deleteHousekeepingVisit: 'write',
+  addGoal: 'write',
+  renameGoal: 'write',
+  setGoalPerson: 'write',
+  setGoalDone: 'write',
+  moveGoal: 'write',
+  deleteGoal: 'write',
+  bringOverGoals: 'write',
+  // Get or make: it stores a new link when there is none.
+  goalsLink: 'write',
+  stopGoalsLink: 'write',
 } as const satisfies { [M in keyof Backend]?: 'read' | 'write' };
 
 export type RpcMethod = keyof typeof RPC_METHODS;
@@ -458,4 +475,29 @@ export const NOT_RPC: { [M in Exclude<keyof Backend, RpcMethod | 'kind'>]: strin
   setPersonEmail: "rejects BackendError('unknown', 'invalid_input: email'): no Google emails in server mode",
   savePushSubscription: "POST {op:'pushSubscribe'}: this device's subscription (the member is whoever is signed in)",
   deletePushSubscription: "POST {op:'pushUnsubscribe'}: this device's subscription",
+  publicGoals: 'GET ?op=publicGoals&token=… (anyone: no sign-in, no X-HomeOS header; cached at the edge)',
 };
+
+// ── The public goals link (docs/ARCHITECTURE.md "Goals for the week") ──
+
+/**
+ * `GET /api/home?op=publicGoals&token=<token>`: what the public link shows (PublicGoals), for
+ * anyone. It needs no sign-in and no X-HomeOS header (a link opened from WhatsApp is a plain
+ * page load, and the answer must be shareable by the edge cache): it only reads, and only the
+ * fields of PublicGoals. 404 'not_found' for a token that is unknown, turned off or not shaped
+ * like one.
+ */
+export const PUBLIC_GOALS_OP = 'publicGoals';
+/**
+ * The public op's 200 is cached at the edge for a minute (and served stale for five more while
+ * it is fetched again), so a busy group chat costs at most about one function call a minute,
+ * not a Blob read per view. Browsers keep nothing (max-age=0). A link turned off can therefore
+ * show for a minute or so more where it was cached. Errors are never cached.
+ */
+export const PUBLIC_GOALS_CACHE = 'public, max-age=0, s-maxage=60, stale-while-revalidate=300';
+export type PublicGoalsResponse = PublicGoals;
+
+/** The public op's address for a token. */
+export function publicGoalsUrl(endpoint: string, token: string): string {
+  return `${endpoint}?op=${PUBLIC_GOALS_OP}&token=${encodeURIComponent(token)}`;
+}

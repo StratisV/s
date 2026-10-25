@@ -4,7 +4,7 @@ import { ConfettiProvider } from '../../ui/Confetti';
 import { ItemSheet } from '../item/ItemSheet';
 import { fakeBackend, makeHome, MockHome, sampleData } from '../testing/mockHome';
 import { HomeScreen, READ_ONLY_LINE } from './HomeScreen';
-import { NeedsAttentionScreen } from './NeedsAttentionScreen';
+import { GoalsScreen } from '../goals/GoalsScreen';
 
 vi.mock('../../state/HomeProvider', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../state/HomeProvider')>();
@@ -18,17 +18,17 @@ function showHome(home: HomeContextValue) {
   render(
     <MockHome initial={home}>
       <ConfettiProvider>
-        <HomeScreen onOpenProfile={() => {}} onOpenArea={() => {}} onOpenAttention={() => {}} />
+        <HomeScreen onOpenProfile={() => {}} onOpenArea={() => {}} />
       </ConfettiProvider>
     </MockHome>,
   );
 }
 
-function showAttention(home: HomeContextValue) {
+function showGoals(home: HomeContextValue) {
   render(
     <MockHome initial={home}>
       <ConfettiProvider>
-        <NeedsAttentionScreen onOpenItem={() => {}} onOpenProfile={() => {}} />
+        <GoalsScreen onOpenProfile={() => {}} />
       </ConfettiProvider>
     </MockHome>,
   );
@@ -56,11 +56,11 @@ describe('Home in server mode', () => {
     expect(line.previousElementSibling).toBe(document.querySelector('[data-home-summary]'));
     expect(line.nextElementSibling).toBe(screen.getByRole('list', { name: 'Areas' }));
     cleanup();
-    // On Needs attention too: under its sentence, above whose items.
-    showAttention(makeHome({ backend: server(), readOnly: true }));
+    // On Goals for the week too: under how much is done and Share, above the week.
+    showGoals(makeHome({ backend: server(), readOnly: true }));
     const again = screen.getByText(READ_ONLY_LINE);
-    expect(again.previousElementSibling).toBe(document.querySelector('[data-attention-summary]'));
-    expect(again.nextElementSibling!.contains(screen.getByRole('button', { name: 'Mine' }))).toBe(true);
+    expect(again.previousElementSibling!.contains(document.querySelector('[data-goals-progress]'))).toBe(true);
+    expect(again.nextElementSibling).toBe(document.querySelector('[data-goals-week]'));
   });
 
   it('says it with no areas too, and not at all while saving works', () => {

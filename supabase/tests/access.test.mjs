@@ -93,7 +93,7 @@ describe('structure', () => {
     for (const r of rows) assert.equal(r.relrowsecurity, true, `RLS off on ${r.relname}`);
   });
 
-  test('anon has no privilege on any table or function in public', async () => {
+  test('anon has no privilege on any table in public, nor on any function but public_goals', async () => {
     const { rows: tables } = await db(
       `select c.relname,
               has_table_privilege('anon', c.oid, 'select,insert,update,delete,truncate,references,trigger') as any_priv,
@@ -111,7 +111,8 @@ describe('structure', () => {
        where n.nspname = 'public'`,
     );
     assert.ok(fns.length >= RPCS.length);
-    for (const f of fns) assert.equal(f.exec, false, `anon can execute ${f.proname}`);
+    // The goals link's page, for anyone with the token (supabase/tests/goals.test.mjs).
+    for (const f of fns) assert.equal(f.exec, f.proname === 'public_goals', `anon and ${f.proname}`);
   });
 
   test('authenticated has exactly the intended table and column privileges', async () => {

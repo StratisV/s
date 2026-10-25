@@ -315,7 +315,11 @@ describe('createHousehold', () => {
 describe('load', () => {
   it('returns exactly the contract shape', async () => {
     const { data } = await setup();
-    expect(Object.keys(data).sort()).toEqual(['areas', 'completions', 'household', 'housekeeping', 'items', 'members']);
+    expect(Object.keys(data).sort()).toEqual(['areas', 'completions', 'goals', 'household', 'housekeeping', 'items', 'members']);
+    expect(Object.keys(data.goals).sort()).toEqual(['link', 'list']);
+    expect(Object.keys(data.goals.list[0]).sort()).toEqual(
+      ['carried_from', 'created_at', 'created_by', 'done', 'done_at', 'done_by', 'household_id', 'id', 'member_id', 'position', 'title', 'week'].sort(),
+    );
     expect(Object.keys(data.housekeeping).sort()).toEqual(['note', 'sections', 'tasks', 'visits']);
     expect(data.housekeeping.sections).toEqual([]);
     expect(Object.keys(data.housekeeping.note).sort()).toEqual(['body', 'updated_at', 'updated_by']);

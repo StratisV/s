@@ -44,11 +44,16 @@
 //             plans is recorded as sent before anything goes out), then deliver(); endpoints a
 //             push service says are gone are forgotten. A GET of /api/home with no op and the
 //             x-vercel-cron-schedule header counts as tick too.
+//    publicGoals (GET, for anyone: no X-HomeOS header, no sign-in) the public goals link:
+//             publicGoalsFor() of the household whose link has ?token= (every stored token
+//             compared in constant time), Cache-Control PUBLIC_GOALS_CACHE so the edge serves
+//             repeat views; 404 'not_found' (never cached) for any other token
 //    Every signed-in request marks its device as used (DeviceRow.seenAt) once: inside the
 //    write for a write, else with a 'meta' write of its own (one put per device, ever).
 // 6. Errors: toApiError(err) → { error: { code, message } } with API_ERROR_STATUS[code]
 //    (Retry-After for too_many_attempts). A 5xx logs the error (never a key, code or body).
-// Every response: Content-Type application/json; charset=utf-8, Cache-Control no-store.
+// Every response: Content-Type application/json; charset=utf-8, Cache-Control no-store (but a
+// public goals answer, which the edge may cache).
 
 import { createHash, timingSafeEqual } from 'node:crypto';
 import {
@@ -57,6 +62,8 @@ import {
   API_HEADER_VALUE,
   API_PATH,
   KEY_COOKIE,
+  PUBLIC_GOALS_CACHE,
+  PUBLIC_GOALS_OP,
   RPC_BODY_MAX,
   RPC_METHODS,
   SETUP_BODY_MAX,
@@ -68,6 +75,7 @@ import {
   type DevicesResponse,
   type NotifyResponse,
   type OkResponse,
+  type PublicGoalsResponse,
   type RpcResponse,
   type SessionResponse,
   type SetupRequest,
@@ -77,6 +85,8 @@ import {
   type VersionResponse,
 } from '../../src/lib/backend/serverApi';
 import { BackendError } from '../../src/lib/backend/types';
+import { publicGoalsFor } from '../../src/lib/backend/demo';
+import { isGoalsToken } from '../../src/lib/logic/goals';
 import type { DeviceInfo } from '../../src/lib/types';
 import {
   codeWorks,
@@ -439,6 +449,8 @@ async function route(request: ApiRequest, ctx: ServerContext): Promise<ApiRespon
   if (method === 'GET' && (navOp === 'tick' || (navOp === null && headers['x-vercel-cron-schedule'] !== undefined))) {
     return tick(request, ctx);
   }
+  // The public goals link: anyone, no X-HomeOS header (a read of public fields only).
+  if (method === 'GET' && navOp === PUBLIC_GOALS_OP) return publicGoals(url, ctx);
   if (headers[API_HEADER.toLowerCase()] !== API_HEADER_VALUE) throw new ApiError('forbidden', 'Missing the X-HomeOS header');
   const info: RequestInfo = { ip: request.ip || 'unknown', userAgent: headers['user-agent'] };
 
@@ -786,6 +798,44 @@ async function tick(request: ApiRequest, ctx: ServerContext): Promise<ApiRespons
       .catch((err) => console.error(`home.os api: could not forget gone subscriptions: ${toApiError(err).code}`));
   }
   return json(200, { ok: true, sent: delivery.sent, failed: delivery.failed, gone: delivery.gone.size } satisfies TickResponse);
+}
+
+// ── The public goals link (docs/ARCHITECTURE.md "Goals for the week") ──
+
+/** Whether `given` is `token`, comparing SHA-256 digests in time that does not depend on where they differ. */
+function sameGoalsToken(given: string, token: string): boolean {
+  const a = createHash('sha256').update(given, 'utf8').digest();
+  const b = createHash('sha256').update(String(token), 'utf8').digest();
+  return timingSafeEqual(a, b);
+}
+
+/**
+ * GET ?op=publicGoals&token=… for anyone (no sign-in, no X-HomeOS header): the current week of
+ * the goals of the household whose link has this token, as PublicGoals and nothing more,
+ * cached at the edge (PUBLIC_GOALS_CACHE, so a busy group chat can't use up the Blob read
+ * budget). A token not shaped like one is 404 without reading anything; an unknown or
+ * turned-off one is 404 too, never cached. The copy is this instance's (read(): no recheck,
+ * so strangers can't make it read the store more than freshness does), and every stored token
+ * is compared, in constant time.
+ */
+async function publicGoals(url: URL, ctx: ServerContext): Promise<ApiResponse> {
+  const token = url.searchParams.get('token') ?? '';
+  const notFound = () => json(404, errorBody('not_found', 'This link is no longer active'));
+  if (!isGoalsToken(token)) return notFound();
+  const snapshot = await ctx.store.read();
+  if (!snapshot) return notFound();
+  const home = snapshot.doc.home;
+  let householdId: string | null = null;
+  for (const link of home.goal_links ?? []) {
+    if (sameGoalsToken(token, link.token) && householdId === null) householdId = link.household_id;
+  }
+  if (householdId === null) return notFound();
+  const body: PublicGoalsResponse = publicGoalsFor(home, householdId, ctx.deps.now());
+  return {
+    status: 200,
+    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': PUBLIC_GOALS_CACHE },
+    body: JSON.stringify(body),
+  };
 }
 
 // ── Continue with Google (google.ts) ────────────────────

@@ -37,13 +37,12 @@ class MemoryStorage implements StorageLike {
 interface ReadyProps {
   onOpenProfile(): void;
   onOpenArea(areaId: string): void;
-  onOpenAttention(): void;
   onRevealed(): void;
   expose(home: HomeContextValue, reveal: (itemId: string) => void): void;
 }
 
 /** Home as App mounts it: `reveal` is what App does once an item is saved from Home's +. */
-function Ready({ onOpenProfile, onOpenArea, onOpenAttention, onRevealed, expose }: ReadyProps) {
+function Ready({ onOpenProfile, onOpenArea, onRevealed, expose }: ReadyProps) {
   const home = useHome();
   const [revealItem, setRevealItem] = useState<string | null>(null);
   expose(home, setRevealItem);
@@ -52,7 +51,6 @@ function Ready({ onOpenProfile, onOpenArea, onOpenAttention, onRevealed, expose 
     <HomeScreen
       onOpenProfile={onOpenProfile}
       onOpenArea={onOpenArea}
-      onOpenAttention={onOpenAttention}
       revealItem={revealItem}
       onRevealed={() => {
         onRevealed();
@@ -66,7 +64,6 @@ async function setup() {
   const backend = new DemoBackend({ storage: new MemoryStorage(), search: '?demo-seed=1', latency: 0 });
   const onOpenProfile = vi.fn();
   const onOpenArea = vi.fn();
-  const onOpenAttention = vi.fn();
   const onRevealed = vi.fn();
   let home!: HomeContextValue;
   let reveal!: (itemId: string) => void;
@@ -76,7 +73,6 @@ async function setup() {
         <Ready
           onOpenProfile={onOpenProfile}
           onOpenArea={onOpenArea}
-          onOpenAttention={onOpenAttention}
           onRevealed={onRevealed}
           expose={(h, r) => {
             home = h;
@@ -87,7 +83,7 @@ async function setup() {
     </HomeProvider>,
   );
   await screen.findByRole('heading', { name: 'Home', level: 1 });
-  return { onOpenProfile, onOpenArea, onOpenAttention, onRevealed, home: () => home, reveal: () => reveal };
+  return { onOpenProfile, onOpenArea, onRevealed, home: () => home, reveal: () => reveal };
 }
 
 /** The props of each area's card as last drawn, by area name. */
@@ -115,14 +111,13 @@ afterEach(() => {
 });
 
 describe('HomeScreen', () => {
-  it('leads with one sentence on what needs doing across the house; a tap opens Needs attention', async () => {
-    const { onOpenAttention } = await setup();
+  it('leads with one sentence on what needs doing across the house, plain words that link nowhere', async () => {
+    await setup();
     const summary = document.querySelector<HTMLElement>('[data-home-summary]')!;
     expect(summary.textContent).toBe('2 things need attention and 1 is due today. Everything else can wait.');
-    // One button, named by the sentence.
-    expect(screen.getByRole('button', { name: /^2 things need attention and 1 is due today\./ })).toBe(summary);
-    fireEvent.click(summary);
-    expect(onOpenAttention).toHaveBeenCalledTimes(1);
+    expect(summary.tagName).toBe('P');
+    expect(screen.queryByRole('button', { name: /^2 things need attention/ })).toBeNull();
+    expect(summary.querySelector('svg')).toBeNull();
   });
 
   it('shows a card for each area, in the household’s order, two to a row; each opens its area', async () => {

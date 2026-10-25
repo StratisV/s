@@ -1,17 +1,15 @@
 import {
   areaCard,
   areaStatus,
-  attentionScreen,
+  closeArea,
   confirmation,
   DEMO_STORAGE_KEY,
   detailValue,
   expect,
-  goToTab,
   homeScreen,
   itemSheet,
   meta,
   openArea,
-  openNeedsAttention,
   openItem,
   openNewItem,
   openSeeded,
@@ -361,10 +359,10 @@ test.describe('Item sheet: keyboard', () => {
   });
 
   test('after Mark as Done, keyboard focus moves to the next row', async ({ page }) => {
-    // On Needs attention's list: the heaters, then the gutters.
-    await openNeedsAttention(page);
-    const listRow = (title: string) => attentionScreen(page).getByRole('button', { name: new RegExp(`^${title} ?, `) });
-    await keyboardFocus(listRow('Heaters not working'));
+    // In the Garden's sheet: two one-off jobs, so the first leaves and focus goes to the other.
+    await openArea(page, 'Garden');
+    expect(await titlesIn(page, 'Garden')).toEqual(['Garden room wall panel', 'Give away the old firepit']);
+    await keyboardFocus(rowButton(page, 'Garden room wall panel'));
     await page.keyboard.press('Enter');
     const sheet = itemSheet(page);
     await expect(sheet).toBeFocused();
@@ -372,11 +370,11 @@ test.describe('Item sheet: keyboard', () => {
     await done.focus();
     await page.keyboard.press('Enter');
     await expect(sheet).toHaveCount(0);
-    await expect(listRow('Heaters not working')).toHaveCount(0);
-    await expect(listRow('Clear the gutters')).toBeFocused();
+    await expect(ring(page, 'Garden room wall panel')).toHaveCount(0);
+    await expect(rowButton(page, 'Give away the old firepit')).toBeFocused();
+    await closeArea(page);
 
     // In an area's sheet with no row left: its To do heading.
-    await goToTab(page, 'Home');
     await openArea(page, 'Bedroom Large');
     await keyboardFocus(rowButton(page, 'Wardrobe door hinge'));
     await page.keyboard.press('Enter');

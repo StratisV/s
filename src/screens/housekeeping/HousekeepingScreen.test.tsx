@@ -180,6 +180,7 @@ function householdData(housekeeping: HousekeepingData, areas: Area[] = AREAS): H
     items: [],
     completions: [],
     housekeeping,
+    goals: { list: [], link: null },
   };
 }
 

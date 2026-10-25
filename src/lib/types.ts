@@ -145,6 +145,8 @@ export interface HouseholdData {
   completions: Completion[];
   /** The Housekeeping tab: the message, the task list and every visit (see HousekeepingData). */
   housekeeping: HousekeepingData;
+  /** Goals for the week: every week's goals, and the public link (see GoalsData). */
+  goals: GoalsData;
 }
 
 export interface InvitePreview {
@@ -521,6 +523,83 @@ export interface HousekeepingVisitPatch {
   comments?: string;
   /** Whole pence, 0 to HOUSEKEEPING_PRICE_MAX_PENCE, or null to clear the price. */
   price_pence?: number | null;
+}
+
+// ── Goals for the week (docs/ARCHITECTURE.md "Goals for the week") ──
+// Tables in supabase/migrations/20261025000100_goals.sql. Every member reads and edits all of
+// it; the public link shows the current week's goals to anyone who has it.
+
+/**
+ * One of the household's goals for a week: something it means to get done that week ("Book
+ * the boiler service"), and who is on it if anyone. Weeks run Monday to Sunday in the
+ * household's time zone. Anyone in the household adds, renames, ticks, reorders and deletes
+ * them, in any week.
+ */
+export interface Goal {
+  id: string;
+  household_id: string;
+  /** The Monday its week starts on (household time zone). */
+  week: ISODate;
+  /** Trimmed, 1 to TEXT_LIMITS.goalTitle characters. */
+  title: string;
+  /** Who is on it; null for no one (also once that person is removed from the home). */
+  member_id: string | null;
+  /** Order within its week, 0 first. A new goal goes last. */
+  position: number;
+  done: boolean;
+  /** Who ticked it (null while not done, or once that person is removed). */
+  done_by: string | null;
+  /** When it was ticked (null while not done). */
+  done_at: ISOTimestamp | null;
+  /**
+   * The goal of the week before that this one was brought over from (Bring over), so it is
+   * never brought twice; null otherwise, or once that goal is deleted.
+   */
+  carried_from: string | null;
+  /** Who added it (null once that person is removed). */
+  created_by: string | null;
+  created_at: ISOTimestamp;
+}
+
+/**
+ * The household's public link to its goals (`<app>/?goals=<token>`): it always shows the
+ * current week's goals, read-only, to anyone who has it. One per household at most; turning
+ * it off deletes it (the token then answers "no longer active"), and a new one has a new token.
+ */
+export interface GoalsLink {
+  /** 16 random bytes as base64url: 22 characters of A to Z, a to z, 0 to 9, - and _. */
+  token: string;
+  /** Who made it (null once that person is removed). */
+  created_by: string | null;
+  created_at: ISOTimestamp;
+}
+
+/** The goals part of HouseholdData, loaded with the rest of the household. */
+export interface GoalsData {
+  /** Every week's goals: by week (oldest first), then position, then created_at, then id. */
+  list: Goal[];
+  /** The public link, or null when there is none (never made, or turned off). */
+  link: GoalsLink | null;
+}
+
+/**
+ * What the public link shows (Backend.publicGoals, no sign-in): the current week of the
+ * household's goals, and nothing else about the home: no names of the home or its areas, no
+ * address, no email, no other item, nobody who is not on a goal.
+ */
+export interface PublicGoals {
+  /** The Monday of the current week in the household's time zone. */
+  week: ISODate;
+  /** In their order. */
+  goals: PublicGoal[];
+}
+
+/** One goal as the public link shows it. */
+export interface PublicGoal {
+  title: string;
+  done: boolean;
+  /** Who is on it, by first name and emoji; null for no one. */
+  person: { name: string; emoji: string } | null;
 }
 
 // ── Server mode (docs/ARCHITECTURE.md "Server mode (no setup)") ──

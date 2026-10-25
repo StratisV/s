@@ -21,7 +21,7 @@ import {
 // The Housekeeping tab (docs/ARCHITECTURE.md "Housekeeping") against the demo seed, at the
 // e2e clock (Thu 8 Oct 2026, 10:00 London): the message from Shea yesterday at 19:20, the
 // starter task list, no visit today, and visits on Thu 1 Oct, 24 Sep, 17 Sep, 10 Sep and
-// 3 Sep (HOUSEKEEPING_DEMO_VISITS). The calendar is Needs attention's date picker: this week (5 to 11
+// 3 Sep (HOUSEKEEPING_DEMO_VISITS). The calendar is the app's shared date picker: this week (5 to 11
 // October) at first, with today chosen.
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
@@ -103,10 +103,10 @@ function cards(home: string | null, areas: Record<string, string> = {}, rest: st
 test.describe('Housekeeping tab', () => {
   test('is the fourth tab; the + is not on it and pops back on Stats', async ({ page }) => {
     await openSeeded(page);
-    await expect(tabs(page).getByRole('button')).toHaveText(['Home', /Attention$/, /^Chat/, 'Housekeeping', 'Stats']);
+    await expect(tabs(page).getByRole('button')).toHaveText(['Home', /Goals$/, /^Chat/, 'Housekeeping', 'Stats']);
     await expect(addButton(page)).toBeVisible();
     await goToTab(page, 'Housekeeping');
-    for (const name of ['Home', 'Attention', 'Chat', 'Stats'] as const) {
+    for (const name of ['Home', 'Goals', 'Chat', 'Stats'] as const) {
       await expect(tabButton(page, name)).not.toHaveAttribute('aria-current', 'page');
     }
     await expect(addButton(page)).toHaveCount(0);

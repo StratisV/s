@@ -9,12 +9,9 @@ const ICONS: Record<Tab, ReactNode> = {
   home: (
     <path d="M10.9 3.6a1.7 1.7 0 0 1 2.2 0l7.6 6.6c.6.5.2 1.5-.6 1.5H19v7.6c0 .9-.7 1.7-1.6 1.7h-3.1v-4.9c0-.7-.6-1.3-1.3-1.3h-2c-.7 0-1.3.6-1.3 1.3V21H6.6c-.9 0-1.6-.8-1.6-1.7v-7.6H3.9c-.8 0-1.2-1-.6-1.5z" />
   ),
-  // exclamationmark.circle.fill
-  attention: (
-    <path
-      fillRule="evenodd"
-      d="M12 2.5a9.5 9.5 0 1 0 0 19 9.5 9.5 0 0 0 0-19Zm0 4.1c.76 0 1.36.63 1.32 1.39l-.33 6.06a.99.99 0 0 1-1.98 0l-.33-6.06A1.32 1.32 0 0 1 12 6.6Zm0 11.4a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8Z"
-    />
+  // flag.fill: the week's goals
+  goals: (
+    <path d="M5.6 2.9c.6 0 1.1.5 1.1 1.1v.2c1.4-.8 3-1 4.9-.4l1.6.5c1.6.5 3.1.4 4.6-.4.7-.4 1.6.1 1.6.9v8.6c0 .5-.3.9-.7 1.1-1.9 1-3.9 1.2-6 .6l-1.6-.5c-1.5-.5-2.9-.3-4.4.5v6.2a1.1 1.1 0 0 1-2.2 0V4c0-.6.5-1.1 1.1-1.1Z" />
   ),
   // message.fill
   chat: (
@@ -45,12 +42,12 @@ function TabIcon({ tab }: { tab: Tab }) {
 }
 
 /**
- * The tabs, in this order. "Needs attention" is too long for a tab at 375pt wide (five to a
- * bar), so its tab says "Attention"; the screen itself is titled "Needs attention".
+ * The tabs, in this order. "Goals for the week" is too long for a tab, so its tab says
+ * "Goals"; the screen itself is titled "Goals for the week".
  */
 export const TABS: { id: Tab; label: string }[] = [
   { id: 'home', label: 'Home' },
-  { id: 'attention', label: 'Attention' },
+  { id: 'goals', label: 'Goals' },
   { id: 'chat', label: 'Chat' },
   { id: 'housekeeping', label: 'Housekeeping' },
   { id: 'stats', label: 'Stats' },
@@ -59,16 +56,16 @@ export const TABS: { id: Tab; label: string }[] = [
 /** Tabs without the round +: Chat has its composer at the bottom, Housekeeping has nothing to add. */
 const WITHOUT_ADD: readonly Tab[] = ['chat', 'housekeeping'];
 
-/** True for the tabs that show the round +. */
+/** True for the tabs that show the round +. Goals has its own Add a Goal, in its list. */
 export function hasAddButton(tab: Tab): boolean {
-  return !WITHOUT_ADD.includes(tab);
+  return tab !== 'goals' && !WITHOUT_ADD.includes(tab);
 }
 
 interface TabBarProps {
   tab: Tab;
   onTab(tab: Tab): void;
-  /** How many things need attention: a red count on Attention (none at 0). */
-  attention?: number;
+  /** How many of this week's goals are not done: a count on Goals (none at 0). */
+  goals?: number;
   /** Messages from others since the chat was last read: a dot on Chat. */
   unread?: boolean;
   /** A message for the housekeeper from someone else since the tab was last open: a dot on Housekeeping. */
@@ -79,27 +76,27 @@ interface TabBarProps {
 const badgeText = (n: number) => (n > 9 ? '9+' : String(n));
 
 /** A tab's name for assistive tech when its badge or dot says something (they are hidden). */
-function spokenName(id: Tab, label: string, attention: number, unread: boolean, newNote: boolean): string | undefined {
-  if (id === 'attention' && attention > 0) return `${label}, ${attention} ${attention === 1 ? 'item' : 'items'}`;
+function spokenName(id: Tab, label: string, goals: number, unread: boolean, newNote: boolean): string | undefined {
+  if (id === 'goals' && goals > 0) return `${label}, ${goals} not done`;
   if (id === 'chat' && unread) return `${label}, unread messages`;
   if (id === 'housekeeping' && newNote) return `${label}, new message`;
   return undefined;
 }
 
 /**
- * The tab bar (docs/ARCHITECTURE.md "Tab bar"): Home, Attention, Chat, Housekeeping and Stats
+ * The tab bar (docs/ARCHITECTURE.md "Tab bar"): Home, Goals, Chat, Housekeeping and Stats
  * in a capsule of glass floating over the foot of the screen, iOS 26's tab bar. Each tab is
  * its symbol over a short name; the open one is in the tint, on a soft glass highlight that
- * slides to it. A red count on Attention says how many things need attention; a dot on Chat
+ * slides to it. A count on Goals says how many of this week's goals are not done; a dot on Chat
  * (unread messages) and on Housekeeping (a new message for the housekeeper).
  */
-export function TabBar({ tab, onTab, attention = 0, unread = false, newNote = false }: TabBarProps) {
+export function TabBar({ tab, onTab, goals = 0, unread = false, newNote = false }: TabBarProps) {
   const index = Math.max(0, TABS.findIndex((t) => t.id === tab));
   return (
     <nav className={styles.bar} aria-label="Tabs" style={{ '--count': TABS.length, '--index': index } as CSSProperties}>
       <span className={styles.highlight} aria-hidden="true" />
       {TABS.map((t) => {
-        const badge = t.id === 'attention' && attention > 0;
+        const badge = t.id === 'goals' && goals > 0;
         const dot = (t.id === 'chat' && unread) || (t.id === 'housekeeping' && newNote);
         return (
           <button
@@ -108,14 +105,14 @@ export function TabBar({ tab, onTab, attention = 0, unread = false, newNote = fa
             className={styles.tab}
             data-tab={t.id}
             aria-current={tab === t.id ? 'page' : undefined}
-            aria-label={spokenName(t.id, t.label, attention, unread, newNote)}
+            aria-label={spokenName(t.id, t.label, goals, unread, newNote)}
             onClick={() => onTab(t.id)}
           >
             <span className={styles.icon}>
               <TabIcon tab={t.id} />
               {badge ? (
                 <span className={styles.badge} aria-hidden="true" data-badge="">
-                  {badgeText(attention)}
+                  {badgeText(goals)}
                 </span>
               ) : dot ? (
                 <span className={styles.dot} aria-hidden="true" data-dot="" />
@@ -130,8 +127,8 @@ export function TabBar({ tab, onTab, attention = 0, unread = false, newNote = fa
 }
 
 /**
- * The round add button, floating over the tab bar at the right on Home, Needs attention and
- * Stats. Opens the new-item sheet.
+ * The round add button, floating over the tab bar at the right on the tabs that have it
+ * (hasAddButton()). Opens the new-item sheet.
  */
 export function AddButton({ tab, onAdd }: { tab: Tab; onAdd(): void }) {
   // It pops in when it comes back from a tab without it, not when the app opens.

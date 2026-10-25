@@ -3,7 +3,6 @@ import { expect, goToTab, housekeepingScreen, openSeeded, test, type Locator, ty
 // The date picker (docs/ARCHITECTURE.md "The date picker": ui/DatePicker.tsx and its calendar
 // card ui/MonthCalendar.tsx) as Housekeeping uses it, against the demo seed at the e2e clock
 // (Thu 8 Oct 2026, 10:00 London): the housekeeper came on Thu 1 Oct (6 of 7 done, £60.00).
-// Needs attention had a calendar on it too, until it became one list.
 
 test.use({ timezoneId: 'Europe/London', serviceWorkers: 'block' });
 

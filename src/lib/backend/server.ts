@@ -10,6 +10,8 @@ import type {
   ChatPage,
   CreateHouseholdInput,
   DeviceInfo,
+  Goal,
+  GoalsLink,
   HomeEntry,
   HouseholdData,
   HousekeepingSection,
@@ -28,10 +30,12 @@ import type {
   NewPersonInput,
   NotifyPrefs,
   NotifySettings,
+  PublicGoals,
   PushSubscriptionInput,
   ReminderInput,
 } from '../types';
 import { appMode } from '../appMode';
+import { isGoalsToken } from '../logic/goals';
 import {
   API_HEADER,
   API_HEADER_VALUE,
@@ -39,12 +43,14 @@ import {
   codeLink,
   isSignInCode,
   normaliseCode,
+  publicGoalsUrl,
   toBackendError,
   type ApiGetOp,
   type ApiPostRequest,
   type CodeResponse,
   type DevicesResponse,
   type NotifyResponse,
+  type PublicGoalsResponse,
   type RpcMethod,
   type RpcResponse,
   type SessionResponse,
@@ -728,6 +734,70 @@ export class ServerBackend implements Backend, ServerAccess {
   }
   async deleteHousekeepingVisit(id: string): Promise<void> {
     await this.rpc('deleteHousekeepingVisit', [id]);
+  }
+
+  // ── Goals for the week (Backend, RPC; the public read is a GET of its own) ──
+
+  async addGoal(householdId: string, week: ISODate, title: string, memberId?: string | null): Promise<Goal> {
+    return (await this.rpc('addGoal', [householdId, week, title, memberId])) as Goal;
+  }
+  async renameGoal(id: string, title: string): Promise<void> {
+    await this.rpc('renameGoal', [id, title]);
+  }
+  async setGoalPerson(id: string, memberId: string | null): Promise<void> {
+    await this.rpc('setGoalPerson', [id, memberId]);
+  }
+  async setGoalDone(id: string, done: boolean): Promise<void> {
+    await this.rpc('setGoalDone', [id, done]);
+  }
+  async moveGoal(id: string, index: number): Promise<void> {
+    await this.rpc('moveGoal', [id, index]);
+  }
+  async deleteGoal(id: string): Promise<void> {
+    await this.rpc('deleteGoal', [id]);
+  }
+  async bringOverGoals(householdId: string, week: ISODate): Promise<Goal[]> {
+    return (await this.rpc('bringOverGoals', [householdId, week])) as Goal[];
+  }
+  async goalsLink(householdId: string): Promise<GoalsLink> {
+    return (await this.rpc('goalsLink', [householdId])) as GoalsLink;
+  }
+  async stopGoalsLink(householdId: string): Promise<void> {
+    await this.rpc('stopGoalsLink', [householdId]);
+  }
+
+  /**
+   * GET ?op=publicGoals: a plain request, without the X-HomeOS header or the cookie, so it works
+   * signed out and the edge can share the answer between everyone who opens the link. 404 is
+   * null; a token not shaped like one is null without asking.
+   */
+  async publicGoals(token: string): Promise<PublicGoals | null> {
+    if (!isGoalsToken(token)) return null;
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = setTimeout(() => controller?.abort(), REQUEST_TIMEOUT_MS);
+    let status: number;
+    let body: unknown = null;
+    try {
+      const res = await this.doFetch(publicGoalsUrl(this.endpoint, token), {
+        method: 'GET',
+        credentials: 'omit',
+        signal: controller?.signal,
+      });
+      status = res.status;
+      const text = await res.text();
+      try {
+        body = text ? JSON.parse(text) : null;
+      } catch {
+        body = null;
+      }
+    } catch (err) {
+      throw new BackendError('network', err instanceof Error ? err.message : 'network');
+    } finally {
+      clearTimeout(timer);
+    }
+    if (status === 404) return null;
+    if (status < 200 || status >= 300) throw toBackendError(status, body);
+    return body as PublicGoalsResponse;
   }
 
   // ── ServerAccess ───────────────────────────────────────

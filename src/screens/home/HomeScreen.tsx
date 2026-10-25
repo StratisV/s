@@ -4,7 +4,6 @@ import { longDay } from '../../lib/logic/dates';
 import { itemsByArea } from '../../lib/logic/items';
 import { homeSummary, upNext } from '../../lib/logic/upNext';
 import { useHousehold } from '../../state/HomeProvider';
-import { ChevronRightIcon } from '../../ui/icons';
 import { Screen } from '../../ui/Screen';
 import { AreaCard } from './AreaCard';
 import styles from './HomeScreen.module.css';
@@ -13,8 +12,6 @@ interface HomeScreenProps {
   onOpenProfile(): void;
   /** A card: opens its area in a sheet (App's AreaSheet). */
   onOpenArea(areaId: string): void;
-  /** The summary sentence: opens Needs attention. */
-  onOpenAttention(): void;
   /**
    * An item just saved from Home (the round +), so the person sees where it went: once it is
    * in the list, its area's card comes into view and lights up for a moment. Then
@@ -29,15 +26,15 @@ const CARD_FLASH_MS = 2400;
 
 /**
  * Home (docs/ARCHITECTURE.md "Home"): the hero, then one plain sentence on what needs doing
- * across the house ("2 things need attention and 1 is due today. Everything else can wait.";
- * a tap opens Needs attention), then a card for each area in the household's order, two to a
- * row: its illustration, its name, how many urgent tasks (red) and non-urgent ones (orange) it
- * has, or All good (green), and who is looking after them. A card opens its area in a sheet.
+ * across the house ("2 things need attention and 1 is due today. Everything else can wait."),
+ * then a card for each area in the household's order, two to a row: its illustration, its
+ * name, how many urgent tasks (red) and non-urgent ones (orange) it has, or All good (green),
+ * and who is looking after them. A card opens its area in a sheet.
  */
-export function HomeScreen({ onOpenProfile, onOpenArea, onOpenAttention, revealItem, onRevealed }: HomeScreenProps) {
+export function HomeScreen({ onOpenProfile, onOpenArea, revealItem, onRevealed }: HomeScreenProps) {
   const { data, me, today, readOnly } = useHousehold();
   const sections = useMemo(() => itemsByArea(data.areas, data.items), [data.areas, data.items]);
-  // The whole house, whoever is looking: Needs attention is where it narrows to one person.
+  // The whole house, whoever is looking.
   const summary = useMemo(() => homeSummary(upNext(data.items, today), today), [data.items, today]);
   const cards = useMemo(
     () => sections.map(({ area, items }) => ({ area, ...areaOverview(items, data.members) })),
@@ -76,11 +73,10 @@ export function HomeScreen({ onOpenProfile, onOpenArea, onOpenAttention, revealI
     >
       {sections.length ? (
         <>
-          <button type="button" className={styles.summaryButton} data-home-summary="" onClick={onOpenAttention}>
+          <p className={styles.summary} data-home-summary="">
             <span className={styles.summaryLead}>{summary.lead}</span>
             {summary.rest ? <span className={styles.summaryRest}> {summary.rest}</span> : null}
-            <ChevronRightIcon className={styles.summaryChevron} size={13} strokeWidth={2.6} />
-          </button>
+          </p>
           {readOnly ? <ReadOnlyLine /> : null}
           <ul className={styles.grid} role="list" aria-label="Areas" data-area-grid="">
             {cards.map(({ area, urgent, nonUrgent, people }) => (

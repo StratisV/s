@@ -12,6 +12,7 @@
 import { act } from '@testing-library/react';
 import { createContext, useContext, useState, type ReactNode } from 'react';
 import type { Backend } from '../../lib/backend/types';
+import { emptyGoals } from '../../lib/logic/goals';
 import { emptyHousekeeping } from '../../lib/logic/housekeeping';
 import type { AuthUser, HouseholdData, Item, Member, NotifyPrefs, NotifySettings, ReminderInput } from '../../lib/types';
 import type { HomeContextValue } from '../../state/HomeProvider';
@@ -146,6 +147,7 @@ export function sampleData(): HouseholdData {
     ],
     completions: [],
     housekeeping: emptyHousekeeping(),
+    goals: emptyGoals(),
   };
 }
 
@@ -277,6 +279,19 @@ export function makeHome(over: Partial<HomeContextValue> = {}): HomeContextValue
     saveHousekeepingVisit: vi.fn(async () => {}),
     addHousekeepingVisit: vi.fn(async () => {}),
     deleteHousekeepingVisit: vi.fn(async () => {}),
+    addGoal: vi.fn(async () => {
+      throw new Error('addGoal not set up in this test');
+    }),
+    renameGoal: vi.fn(async () => {}),
+    setGoalPerson: vi.fn(async () => {}),
+    setGoalDone: vi.fn(async () => {}),
+    moveGoal: vi.fn(async () => {}),
+    deleteGoal: vi.fn(async () => {}),
+    bringOverGoals: vi.fn(async () => []),
+    goalsLink: vi.fn(async () => {
+      throw new Error('goalsLink not set up in this test');
+    }),
+    stopGoalsLink: vi.fn(async () => {}),
     serverWelcome: null,
     bringHomeOnline: vi.fn(async () => {}),
     redeemCode: vi.fn(async () => {}),
