@@ -3,6 +3,8 @@ import type {
   AuthUser,
   CreateHouseholdInput,
   DeviceInfo,
+  Goal,
+  GoalsLink,
   HomeEntry,
   Household,
   HouseholdData,
@@ -21,6 +23,7 @@ import type {
   NewPersonInput,
   NotifyPrefs,
   NotifySettings,
+  PublicGoals,
   PushSubscriptionInput,
   ReminderInput,
 } from '../types';
@@ -356,6 +359,62 @@ export interface Backend {
   addHousekeepingVisit(householdId: string, date: ISODate): Promise<string>;
   /** Deletes a visit and its tasks, for everyone. Already gone or elsewhere: 'not_found'. */
   deleteHousekeepingVisit(id: string): Promise<void>;
+
+  // ── Goals for the week (docs/ARCHITECTURE.md "Goals for the week") ──
+  // A week's goals are read through load() (HouseholdData.goals, every week's) and live
+  // through subscribe(), like housekeeping. Every member edits every week's goals. A week is
+  // named by its Monday (household time zone): any other day is BackendError('unknown',
+  // 'invalid_input: week'). A household the caller is not in, or a goal or person from
+  // another household, is 'not_found'. A blank title or one longer than TEXT_LIMITS.goalTitle
+  // (after trimming) is BackendError('unknown', 'invalid_input…'), and nothing changes.
+
+  /**
+   * Adds a goal, trimmed, at the end of the week starting `week`, not done, with who is on it
+   * (`memberId`, someone in the household; null or left out: no one). A week has at most
+   * GOALS_PER_WEEK_MAX goals: one more is BackendError('unknown', 'invalid_input: goals…').
+   * Returns the new goal.
+   */
+  addGoal(householdId: string, week: ISODate, title: string, memberId?: string | null): Promise<Goal>;
+  /** Renames a goal (trimmed, not blank). */
+  renameGoal(id: string, title: string): Promise<void>;
+  /** Who is on a goal: someone in the household, or null for no one. The same again changes nothing. */
+  setGoalPerson(id: string, memberId: string | null): Promise<void>;
+  /**
+   * Ticks (done = true: done_by the caller, done_at now) or unticks (both cleared) a goal.
+   * Setting the state it already has changes nothing (the stamp stays).
+   */
+  setGoalDone(id: string, done: boolean): Promise<void>;
+  /**
+   * Moves one goal within its week to `index` among the others (0 first; past the end: last);
+   * the week's places run 0…n-1 again. Only this goal's place is decided, so two people moving
+   * different goals at once both keep their moves. An index that is not a whole number from 0
+   * is BackendError('unknown', 'invalid_input: index').
+   */
+  moveGoal(id: string, index: number): Promise<void>;
+  /** Deletes a goal for everyone; the rest of its week close up. A goal brought over from it keeps going (carried_from null). */
+  deleteGoal(id: string): Promise<void>;
+  /**
+   * Bring over: copies the goals of the week before `week` that are not done into `week`, in
+   * their order, at its end, each with its title and who is on it, not done, carried_from the
+   * goal it came from. A goal already brought into `week` (by anyone) is never brought again,
+   * so two people tapping at once bring each goal once; only as many as fit under
+   * GOALS_PER_WEEK_MAX come. Returns the goals it added (none: []).
+   */
+  bringOverGoals(householdId: string, week: ISODate): Promise<Goal[]>;
+  /**
+   * The household's public link to its goals (anyone with `<app>/?goals=<token>` sees the
+   * current week's goals, read-only, without signing in): the one there is, or a new one with
+   * a fresh 128-bit random token.
+   */
+  goalsLink(householdId: string): Promise<GoalsLink>;
+  /** Turns the public link off: its token stops working for good. No link: nothing to do. */
+  stopGoalsLink(householdId: string): Promise<void>;
+  /**
+   * The public read, for anyone, signed in or not: the current week (household time zone) of
+   * the goals of the household whose link has this token (PublicGoals, nothing else), or null
+   * for a token that is unknown, turned off or not shaped like one.
+   */
+  publicGoals(token: string): Promise<PublicGoals | null>;
 }
 
 /** Server mode: what polling says about the server besides changes. */

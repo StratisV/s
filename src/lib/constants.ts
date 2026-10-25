@@ -175,6 +175,8 @@ export const TEXT_LIMITS = {
   email: 254,
   /** A reminder someone set for themselves (server mode: Profile > Notifications). */
   reminderTitle: 80,
+  /** One of the household's goals for the week (goals_title_length). */
+  goalTitle: 120,
 } as const;
 
 // ── Housekeeping (docs/ARCHITECTURE.md "Housekeeping") ──────
@@ -319,4 +321,42 @@ export const HOUSEKEEPING_DEMO_VISITS: HousekeepingSeedVisit[] = [
     comments: 'The bathroom tap is dripping.',
     price_pence: 5500,
   },
+];
+
+// ── Goals for the week (docs/ARCHITECTURE.md "Goals for the week") ──
+
+/**
+ * The most goals one week may have. The database's trigger refuses more (check_violation
+ * goals_week_limit), DemoBackend too (invalid_input: goals); Bring over brings what fits.
+ */
+export const GOALS_PER_WEEK_MAX = 50;
+
+/** One goal in the demo household (see GOALS_DEMO). */
+export interface GoalSeed {
+  /** 0: this week (household time zone); 1: last week. */
+  weeksBack: 0 | 1;
+  title: string;
+  /** Who is on it, or null for no one. */
+  who: DemoPersonKey | null;
+  /**
+   * Ticked by this person `hoursAgo` hours before now, kept within its week (never before
+   * it began, never after it ended, never after now); left out: not done.
+   */
+  done?: { by: DemoPersonKey; hoursAgo: number };
+  /** This week's: brought over from last week's goal at this index in GOALS_DEMO. */
+  from?: number;
+}
+
+/**
+ * The demo household's goals (every demo household gets them, ?demo-seed=1 included): last
+ * week's, one of them unfinished and brought over, and this week's, half of them done.
+ */
+export const GOALS_DEMO: GoalSeed[] = [
+  { weeksBack: 1, title: 'Book the boiler service', who: 'shea', done: { by: 'shea', hoursAgo: 146 } },
+  { weeksBack: 1, title: 'Sort out the recycling rota', who: 'ela' },
+  { weeksBack: 1, title: 'Fix the bike lights', who: 'me', done: { by: 'me', hoursAgo: 120 } },
+  { weeksBack: 0, title: 'Sort out the recycling rota', who: 'ela', from: 1 },
+  { weeksBack: 0, title: 'Deep clean the fridge', who: 'shea', done: { by: 'shea', hoursAgo: 20 } },
+  { weeksBack: 0, title: 'Pay the window cleaner', who: 'me', done: { by: 'me', hoursAgo: 40 } },
+  { weeksBack: 0, title: 'Plan Saturday’s dinner', who: null },
 ];

@@ -35,14 +35,13 @@ and a private Blob store; see "Server mode (no setup)"). The design spec is `des
 - Radical simplicity: no filters, counters, dashboards or settings beyond the spec. The
   exceptions the household asked for: Home says in one sentence what needs attention and shows
   each area as a card with how many urgent and non-urgent tasks it has (or All good) and who
-  looks after it (see "Home" below); Needs attention, its own tab, lists the items in one list
-  in priority order, each a card with its area's picture (see "Needs attention").
+  looks after it (see "Home" below); Goals for the week, its own tab, is the household's
+  shared list for the week, which a public link shows read-only (see "Goals for the week").
 - **Colour always comes with a word** (`URGENCY_LABEL`, `CONDITION_LABEL`, `ragWord()` in
   `lib/constants.ts`): a To do's red, amber and green mean **Urgent**, **Within the month** and
   **Not urgent**; a To maintain item's mean **Needs work**, **Okay** and **Good**. The Item
   sheet's picker ("How urgent?" or "Condition", each word with what it means under it:
-  `RAG_HINT`), the rows in an area's sheet, Needs attention's cards and shared text all say the
-  word.
+  `RAG_HINT`), the rows in an area's sheet and shared text all say the word.
 - **Housekeeping** (see "Housekeeping" below): a tab for the weekly visit by the housekeeper,
   who is a household member like everyone else (no roles). A message for the housekeeper,
   today's checklist from the household's task list, comments and the price for the day, and a
@@ -60,8 +59,9 @@ src/
   lib/logic/*.ts           pure logic: dates, items (missed, sort, repeat, kinds), stats (donut),
                            months (month grids and weeks, Monday first), calendar (the date
                            picker's week titles and relative headings),
-                           areaStatus (an area's urgent and non-urgent tasks), upNext (Needs
-                           attention's list in priority order, the summary sentence),
+                           areaStatus (an area's urgent and non-urgent tasks), upNext (what
+                           needs attention, in priority order, and Home's summary sentence),
+                           goals (weeks, order, progress, bring over, the public link),
                            stamps (times in the household's time zone, who a member id is),
                            sun (London sun position), sky (time-of-day sky colours),
                            housekeeping (month grid, totals, GBP prices, checklist, optimistic edits),
@@ -86,9 +86,10 @@ src/
   ui/animals.ts            the drawn green duck and brown hedgehog (SVG) for HomeScene and Confetti
   lib/preview.ts           `?frame` simulates the 54px status bar inset for screenshots
   screens/home/            Home (the summary and the area cards, AreaCard, StatusLines), an
-                           area's sheet (AreaSheet, its rows ItemRow), Needs attention (the
-                           summary, whose items, and the list UpNextView of ItemCards), the tab
-                           bar (TabBar) and the floating + (AddButton)
+                           area's sheet (AreaSheet, its rows ItemRow), the tab bar (TabBar) and
+                           the floating + (AddButton)
+  screens/goals/           Goals for the week (GoalsScreen), its share sheet (GoalsShareSheet)
+                           and the public link's page (PublicGoalsPage)
   ui/area-art/             AreaArt: an area's illustration for its card and sheet: a drawn
                            scene for the kind of room its name says, coloured by its id (pick.ts),
                            the drawings in one lazy chunk (Scene.tsx, kit.tsx, indoor.tsx,
@@ -312,7 +313,8 @@ Details beyond the list above (all covered by `supabase/tests`):
   who subscribes without a filter receives DELETE notices from every household, without
   knowing any id. Each notice carries only the deleted row's primary key: the row id for
   `households`, `members`, `areas`, `items`, `completions`, `messages`,
-  `housekeeping_sections`, `housekeeping_tasks`, `housekeeping_visits` and `housekeeping_visit_tasks`,
+  `housekeeping_sections`, `housekeeping_tasks`, `housekeeping_visits`, `housekeeping_visit_tasks`,
+  `goals` and `goal_links` (which has its own id for this reason),
   (message_id, member_id, emoji) for `message_reactions`, where emoji is one of the app's
   reaction emoji, and the household id for `housekeeping_notes` (whose rows are only ever
   deleted with their household, alongside that household's own notice). No text, names or
@@ -500,7 +502,7 @@ Migration `supabase/migrations/20261010000500_one_home.sql`; `Member.user_id: st
 
 - A member row with `user_id` null is a person someone at home added who has not signed in yet
   (**Not joined yet**). They are a member like any other for items (assignee, created by),
-  completions (credited to), the person filter, Stats and the weekly email's text, and anyone
+  completions (credited to), goals (who is on one), Stats and the weekly email's text, and anyone
   edits their name and emoji (`updateMember`). They hold no account: no access,
   no push (forced off), no weekly email, no reminders. Use `hasJoined(member)`, never a null
   check of your own.
@@ -550,8 +552,7 @@ Migration `supabase/migrations/20261010000500_one_home.sql`; `Member.user_id: st
     of these people?", see "One home").
 - **Elsewhere**: the Item sheet's assignee list adds a quiet secondary "Not joined yet" after
   such a person's name (the Sharing work also edits the Item sheet: keep this to the option's
-  label). The Home person filter, Home rows and Stats show them like anyone else, with no
-  label (only the filter chip's VoiceOver name ends ", not joined yet").
+  label). Home rows, goals and Stats show them like anyone else, with no label.
 - **Scheduler** (`supabase/functions/_shared/plan.ts`, reading `members.user_id`): nobody with
   `user_id` null gets a reminder, a missed alert or the weekly email; an unassigned reminder
   goes to the members who have joined; a missed item assigned to someone who has not joined
@@ -811,7 +812,9 @@ One private blob, `ServerDoc` in `server/core/serverDoc.ts`, format `homeos.serv
   row types). At rest `session` is null and `users`, `invites`, `push_subs` are empty. Members
   who have joined have a `user_id` the server made (`u-<uuid>`); people not joined yet have null.
   Emails are always `''` (no Google). This is the only part any browser sees, and only through
-  what DemoBackend's methods return.
+  what DemoBackend's methods return (and, for anyone with the goals link, `publicGoalsFor()`'s
+  view). `housekeeping_sections`, `goals` and `goal_links` may be missing (documents from
+  before them): read as none (`OPTIONAL_HOME_LISTS`).
 - `auth` (server only, never in a response): `devices` (`DeviceRow`: id, `keyHash`, `userId`,
   `label`, `createdAt`, and `seenAt`, written once on the device's first signed-in request) and
   `codes` (`CodeRow`: id, `codeHash`, `memberId`, `createdBy`, `createdAt`, `expiresAt`, and once
@@ -923,7 +926,8 @@ visits 3,000): past them a write that adds is refused with 413
 
 ### The API (`src/lib/backend/serverApi.ts`, `server/core/handler.ts`)
 
-One path, `/api/home`; JSON both ways; `Cache-Control: no-store`. Every request needs the header
+One path, `/api/home`; JSON both ways; `Cache-Control: no-store` (but for the goals link's public
+answer). Every request but `GET ?op=publicGoals` and the cron's `tick` needs the header
 `X-HomeOS: 1`, and a POST `Content-Type: application/json`, else 403 `forbidden` (CSRF: a page
 on another site can't send either without a CORS preflight, which is never answered). Body
 limits: setup 4 MiB, rpc 256 KiB, else 4 KiB (413 `too_large`).
@@ -948,6 +952,7 @@ limits: setup 4 MiB, rpc 256 KiB, else 4 KiB (413 `too_large`).
 | `POST saveReminder` | yes | `{ reminder: { id?, title, days } }` | `NotifySettings` (404 for an id that is not theirs) |
 | `POST deleteReminder` | yes | `{ id }` | `NotifySettings` |
 | `GET ?op=tick` | `Authorization: Bearer <CRON_SECRET>`, no X-HomeOS | | `{ ok, sent, failed, gone }` (403 otherwise) |
+| `GET ?op=publicGoals&token=` | no, no X-HomeOS | | `PublicGoals`, `Cache-Control: public, max-age=0, s-maxage=60, stale-while-revalidate=300`; 404 `not_found` (no-store) for a token malformed, unknown or turned off (see "Goals for the week") |
 
 `user` is `{ id: user id, email: '', name }`, `entry` a `HomeEntry` (`member`; `claimed` from a
 redeem that made someone join). `app` (`AppMode`): `'standalone'` when the page runs as an
@@ -1012,6 +1017,14 @@ objects with only their listed keys; anything else is `invalid_input: args[i].ke
 | `saveHousekeepingVisit` | write | household id; date; `{ comments?: text, price_pence?: 0 to 1,000,000 or null }` |
 | `addHousekeepingVisit` | write | household id; date |
 | `deleteHousekeepingVisit` | write | id |
+| `addGoal` | write | household id; week, a date; title text; optional member id or null |
+| `renameGoal` | write | id; title text |
+| `setGoalPerson` | write | id; member id or null |
+| `setGoalDone` | write | id; done boolean |
+| `moveGoal` | write | id; index, a whole number 0 to 100,000 |
+| `deleteGoal` | write | id |
+| `bringOverGoals` | write | household id; week, a date |
+| `goalsLink`, `stopGoalsLink` | write | household id |
 
 Not RPCs (`NOT_RPC`, which with `RPC_METHODS` names every Backend method; a test checks it):
 `getUser` (GET session), `onAuthChange` (local), `signInWithGoogle` (rejects: no Google),
@@ -1021,7 +1034,7 @@ else the session's), `subscribe` and `reconnect` (polling), `createHousehold`
 `createInvite` (reject `invalid_invite`: codes replace invite links), `getInvitePreview` (null),
 `releaseClaim` (POST release), `importHousehold` (rejects: setup does it), `setPersonEmail`
 (rejects `invalid_input: email`), `savePushSubscription` (POST pushSubscribe, this device's),
-`deletePushSubscription` (POST pushUnsubscribe).
+`deletePushSubscription` (POST pushUnsubscribe), `publicGoals` (GET publicGoals, signed out).
 
 ### Signing in (`server/core/auth.ts`, `server/core/limits.ts`)
 
@@ -1241,7 +1254,7 @@ claim). New in `HomeContextValue`:
   "Only {name} can sign in on another device, from their Profile. If they lost their phone,
   remove it here, then send them a code." instead. Add Person has no email field; its footnote:
   "Then send them a code from their page."
-- **Read-only**: when `readOnly`, Home and Needs attention show one line under the summary (13/18 secondary):
+- **Read-only**: when `readOnly`, Home and Goals show one line under the summary (13/18 secondary):
   "Saving is paused until next month: the free storage limit is used up." A failed save says
   "Couldn't save. Saving is paused until next month." A save refused because the home reached
   its size limit says "Couldn't save. The home is full."
@@ -1363,10 +1376,10 @@ hand beyond the four settings (see "Deploying").
   cookie jar, with the same setup or redeem call the screens make, so a test that is not about
   signing in starts on Home; `inArea()` opens an area's sheet from its card (going Home and
   closing another area's sheet first), where these tests follow its rows, and stays open while
-  the other phone changes things; `showAllCards()` is Needs attention's list, every open item
-  but the things looked after that are Good (`showAllRows()`, from its List / Calendar days, is
-  left unused); the people menu is Needs attention's, and `expectPerson()` goes
-  back to the tab the phone was on; `userAgent` for an iPhone's Safari; unless `inUse: false`, a
+  the other phone changes things; `countAllRows()` counts every area's rows, one for each open
+  item; `expectPerson()` and `peopleInHome()` read Household's People (as VoiceOver hears each
+  row: "Shea, You", "Kim, Not joined yet") and close it again; the `goal*()` helpers follow the
+  Goals tab; `userAgent` for an iPhone's Safari; unless `inUse: false`, a
   harmless `wheel` event every 20 s, as a person looking at the phone would make, so a phone that
   only watches another's changes keeps its 3 s polls). Console errors fail a test, except the 400, 401 and 429 answers
   the app expects and shows (a signed-out session check, a refused code, a limit). It proves: setup from the user's home fixture
@@ -1604,7 +1617,7 @@ entry builds the same with its own store and `secureCookies: false`.)
 
 Home is the house at a glance (`screens/home/HomeScreen.tsx`, `AreaCard.tsx`, `StatusLines.tsx`,
 `AreaSheet.tsx`, logic in `lib/logic/areaStatus.ts` + `.test.ts`); what needs doing, item by
-item, is on the Needs attention tab (see "Needs attention"). The design follows Apple Home's
+item, is in each area's sheet. The design follows Apple Home's
 rooms and Things 3's Today: one accent (the tint) for what can be tapped, colour only where it
 means something and always with a word, and few visible controls.
 
@@ -1613,10 +1626,9 @@ means something and always with a word, and few visible controls.
   the label colour and the rest in grey: "2 things need attention and 1 is due today."
   "Everything else can wait."; "2 things are due today." "Nothing urgent or late."; "Nothing
   urgent today." "Next up: Water the plants, in 2 days."; "All clear." "Nothing to do right
-  now." It is one button (`data-home-summary`, a chevron at its end) that opens Needs
-  attention.
+  now." Plain words (`data-home-summary`, a `p`), not a way in to anything.
 - **The read-only line** (server mode, saving paused): one quiet line (`role="status"`) right
-  under the sentence, on Home and on Needs attention.
+  under the sentence, on Home and on Goals.
 - **The area cards**: a list named "Areas" (`data-area-grid`), two columns 12px apart, one
   card per area in the household's order (`li[data-area-id]`). The card is `AreaCard` (the
   contract below), fed by `areaOverview()`:
@@ -1655,8 +1667,7 @@ means something and always with a word, and few visible controls.
   by side, each a 50px target to its corners. Then **To do**: its To dos, most urgent first
   (`roomOrder()`, the order Share Room lists them in), three of them and "Show 2 more" / "Show
   fewer" when two or more are left (four show all four; `useFold()` in `ShowMore.tsx`), or
-  "Nothing to do here."; then **Looking after**: the things it looks after, Good ones too (Needs
-  attention leaves those out). An item opened from it stacks over it: the area's sheet steps
+  "Nothing to do here."; then **Looking after**: the things it looks after, Good ones too. An item opened from it stacks over it: the area's sheet steps
   back (scaled to 93%, dimmed, inert, `behind` on `ui/Sheet.tsx`) and comes forward again when
   the item's sheet closes, with focus back on its row (or the nearest row, or the To do
   heading). A deleted area's sheet closes itself. `?area=<id>` (a shared area link, see
@@ -1678,7 +1689,7 @@ means something and always with a word, and few visible controls.
   maintain item (`relativeUpdated()`, in the household's time zone). A dot follows quiet words;
   after a pill the next words follow straight on. Assistive tech hears one sentence instead of
   the visible lines (`itemWords()`): "Heaters not working, Urgent, 2 days late, Shea, has a
-  note." Completing (`useCompletion()`, shared with Needs attention's cards): the ring fills
+  note." Completing (`useCompletion()`): the ring fills
   with the tint, the check springs in and the title is struck through (420ms), a one-off folds
   away (260ms; none of the motion with Reduce Motion; a repeating job stays, with its next
   date), then the item completes with an Undo toast ("Marked as done", or for a repeating job
@@ -1689,33 +1700,25 @@ means something and always with a word, and few visible controls.
   completion that never saved has nothing to take back (its own toast says so). A toast with a
   button stays 8 seconds (`ACTION_TOAST_MS`; a finger can't hold it, only a hovering mouse or
   keyboard focus can), one with words alone 4 (`TOAST_MS`).
-- **The round +** (`AddButton` in `TabBar.tsx`, "New item"): adds an item, from Home, Needs
-  attention and Stats (`hasAddButton()`; Housekeeping has its own adds). It floats on the right just above the tab bar (`--add-bottom`), and springs in when
+- **The round +** (`AddButton` in `TabBar.tsx`, "New item"): adds an item, from Home and
+  Stats (`hasAddButton()`; Goals has Add a Goal and Housekeeping its own adds). It floats on
+  the right just above the tab bar (`--add-bottom`), and springs in when
   a tab that has it opens. An area's own Add Item chooses that area.
 - **What was saved can be seen**: when an item is created, or moved to another area, the Item
   sheet reports it (`onSaved(itemId)`), and App passes it on (`revealItem`) to what is behind
-  the sheet: the area's sheet if one is open, else Home or Needs attention. Home lights up the
+  the sheet: the area's sheet if one is open, else Home. Home lights up the
   item's area's card (a tint ring that fades over 2.4s, `data-lit`) and brings it into view
   (`block: 'nearest'`). An area's sheet lights up the row if the item is in that area, opening
   a "Show N more" over it, and otherwise says where it went in a toast ("Saved in Hallway.").
-  Needs attention shows everyone's items for that visit if the person filter hides it
-  (`showAllForNow`: not remembered, so Mine stays the choice it opens on) and holds the item
-  for a moment in `RevealContext` (`screens/home/reveal.ts`): its card lights up (a tint ring
-  that fades over 2.4s, `data-lit`) and comes into view whole, clear of the header and of the
-  + and the tab bar (`revealRow()`: measured, as `scrollIntoView` with the rows' scroll margins
-  stopped short in Chromium, which cut them at the cards' clipped edges, and at the scale of
-  the page still pushed back behind the closing sheet). One the list doesn't show (a thing
-  looked after in good shape) gets a toast saying where it went instead (`notListed()`: "Saved
-  in Garden."). Changing tab drops a reveal not yet shown, and closing an area's sheet drops
-  its own.
+  Changing tab drops a reveal not yet shown, and closing an area's sheet drops its own.
 - **Keyboard focus**: after a completion (`useCompletion()`) or when the Item sheet closes on a
   row that is gone (`App` `restoreFocus`), focus goes to the nearest row in the same list
   (`rowsBeside()` in `screens/home/rowFocus.ts`: the open sheet's rows, else the screen's),
-  else to the list's fallback (`rowFallback()`: an area's To do heading, or on Needs attention
-  the summary sentence, `data-row-fallback`, which then says what is left), else the round +.
+  else to the list's fallback (`rowFallback()`: an area's To do heading, `data-row-fallback`),
+  else the round +.
 - **Menus** (`ui/Menu.tsx`): a pull-down menu as iOS draws one, grown out of its button, an
-  optional small grey title ("Show tasks for", which names it), items with an optional second
-  line ("Not joined yet") and quiet trailing text ("5 open"); `aria-haspopup="menu"` and
+  optional small grey title ("Who’s on it", which names it), items with an optional leading
+  emoji or icon, second line and quiet trailing text; `aria-haspopup="menu"` and
   `aria-expanded` on the button; `menuitem` or `menuitemradio` items; focus goes to the chosen
   item (or the first), arrow keys, Home and End move, Escape or Tab close it and focus goes
   back to the button. Choosing an item puts focus back on the button first, so a sheet it opens
@@ -1734,79 +1737,202 @@ means something and always with a word, and few visible controls.
   `--tint-text`, and white words sit on `--tint-fill`, 4.5:1 or better in both appearances
   (see "Styling conventions").
 
-## Needs attention
+## Goals for the week
 
-The second tab (`screens/home/NeedsAttentionScreen.tsx` + `.test.tsx`, the list
-`UpNextView.tsx` and `ItemCard.tsx` + `.test.tsx`, logic in `lib/logic/upNext.ts` + `.test.ts`),
-"what needs me now?", answered first in words and then item by item, after Things 3's Today,
-Todoist's Overdue and Apple Reminders' Today. List only: no other views, no section headings and
-nothing folded.
+The second tab (`screens/goals/`), which took Needs attention's place: the household's shared
+promise for the week, "what would make it a good week at home?", which anyone at home builds
+and anyone edits, with one public link the household can send to WhatsApp so nobody forgets.
+Logic in `lib/logic/goals.ts` (+ `.test.ts`); limits `GOALS_PER_WEEK_MAX` (50) and
+`TEXT_LIMITS.goalTitle` (120) in `lib/constants.ts`; the demo seed in `GOALS_DEMO`.
 
-- **The header**: the compact one every tab but Home has (see "The tab bar and the headers"):
-  today's date, the Profile button and the large title "Needs attention".
-- **The summary sentence** (`homeSummary()`, `data-attention-summary`): as on Home, but it
-  counts what the person filter shows, and says whose they are while it narrows the list
-  (`SummaryScope`): "For you, 1 thing needs attention.", "For Shea, nothing urgent today.",
-  "Unassigned: 2 things are due today.", "All clear for Shea.", "Nothing unassigned to do."
-  Then the read-only line in server mode. It is where keyboard focus goes when the last card is
-  ticked off (`tabIndex={-1}`, `data-row-fallback`).
-- **Whose items**: one row under the sentence: **Mine** and the people menu (see "Needs
-  attention: date and the person filter").
-- **The list** (`upNext()`, `UpNextView.tsx`, `data-attention-list`): every open item across
-  every area that wants something from someone, in one list in priority order:
-  1. what needs attention (`needsAttention()`): late To dos, the most late first (then the most
-     urgent); then the other Urgent To dos, the soonest first (no date last); then things
-     looked after that need work, by name;
-  2. due today, the most urgent first;
-  3. the next 7 days (tomorrow to a week today) by date, then urgency (`compareByDate()`), so
-     "In 2 days" never sits under "In 6 days";
-  4. later than that, by urgency, then date (`compareByUrgency()`);
-  5. no date, by urgency;
-  6. things looked after that are Okay, by name.
-  Ties go to the oldest. Things looked after that are Good are not listed (their area's sheet
-  has them), nor is anything done. Nothing to show: one card (`role="status"`), "All clear",
-  "Nothing needs doing. Add something with the + button." (or "Nothing here", "Nothing for Ela
-  right now.").
-- **A card for each item** (`ItemCard.tsx`, `li[data-item-id]`, 10px apart, 16px in from the
-  page's edges): its area's picture (`AreaArt` with the area's name and id, 68px square, inset
-  8px with concentric corners and a hairline; 56px below 360px wide), then the title (17/22/600,
-  two lines at most), the quiet line as on a row (`RowMeta`: its urgency or condition in words,
-  then when it is due, "2 days late" in red, with the repeat glyph), and its area's name with
-  who it is for after it (`data-where`: "Hallway · 🦆 Shea"; who is left out while the person
-  filter shows one person's items). At the end, centred, the ring that ticks a To do off (a
-  44px circle), or a thing looked after's gauge. The rest of the card is one button that opens
-  the item (a pressed card gives a little, a tint ring for keyboard focus), at least 84px tall.
-  Assistive tech hears one sentence: "Heaters not working, Urgent, 2 days late, Hallway, Shea,
-  has a note." A ticked card is struck through for a moment, then folds away, a repeating job
-  too (it comes back further down, with its next date). White on the grey page with a soft
-  shadow; #1c1c1e and no shadow in dark, the pictures in their evening light.
-- **Its count in the tab bar**: the red badge on Attention is the count of what needs attention
-  for everyone (`upNext(items).counts.attention`), whatever the filter shows.
+### Product rules
 
-### Needs attention: date and the person filter
+- **A week** is Monday to Sunday in the household's time zone (`weekStart()`, `shiftWeek()`); a
+  goal belongs to one week (`week`, its Monday). The tab opens on this week; arrows go to the
+  weeks before and after, as far as anyone likes.
+- **Anyone at home** adds a goal (a title of 1 to 120 characters, trimmed; optionally who is on
+  it), renames it, chooses who is on it (anyone at home, joined or not, or no one), ticks it
+  (who ticked it and when are kept: `done_by`, `done_at`) or unticks it (both cleared), moves it
+  and deletes it, in any week. A week holds 50 goals at most. There are no roles.
+- **Order** is `position` within the week (then `created_at`, then id: `byGoalOrder()`). A move is
+  one goal to an index (`moveGoal(id, index)`): the week closes up around it, so two people
+  moving different goals at once both keep their moves. A new goal goes last.
+- **Bring over**: when this week has no goals and last week has goals not done, the empty week
+  offers "Bring over N from last week" (`toBringOver()`, `bringOverLabel()`). It copies them in,
+  in their order, not done, with the same person, each remembering the goal it came from
+  (`carried_from`), as many as fit. A goal is brought into a week at most once, so two phones
+  tapping it at the same moment bring each over once. Deleting the original keeps the copy.
+- **Removing a person** takes them off goals (`member_id`), ticks (`done_by`, keeping `done` and
+  `done_at`) and who added them (`created_by`); the goals stay.
+- **The public link**: one per home (`goal_links`), made by the first Share or Copy Link and the
+  same after that. Its token is 16 random bytes as base64url, 22 characters (`GOALS_TOKEN`), so
+  it can't be guessed; the link is `<app>/?goals=<token>` (`goalsLinkUrl()`). It always shows
+  the **current** week (not the week it was made in), read-only, to anyone, without signing in:
+  each goal's title, whether it is done, and who is on it as their first name and emoji
+  (`PublicGoals`). Nothing else: no ids, address, emails, who ticked it or when, other weeks or
+  any other part of the home. **Turn Off Link** deletes the row: the token never works again,
+  and a later Share makes a new token.
+- **The tab's badge** is this week's goals not done (`openThisWeek()`), named "Goals, 2 not
+  done"; none at zero.
 
-- The header's top line shows today's date in full ("FRIDAY 9 OCTOBER", `longDay()` in
-  `lib/logic/dates.ts`, the household's day), level with the avatar, as Home's hero does.
-- `PersonFilter` (`screens/home/PersonFilter.tsx`, logic in `personFilter.ts`), under the
-  sentence, 32px tall (44px targets), grey until they narrow the list, then a tint wash (never
-  a solid fill):
-  - **Mine**: one tap. A toggle button (`aria-pressed`, named "Mine") with your emoji and the
-    word. On, the list shows only your items; tapped again, everyone's.
-  - **The people menu**: a small pill (a people glyph and a chevron, or the chosen person's
-    emoji, or a dashed circle for Unassigned), named "Show tasks for: Everyone" (or "Shea",
-    "Stratis (you)", "Unassigned"), washed in the tint while it narrows the list to someone
-    other than you. It opens a menu titled "Show tasks for": Everyone, you, each other member and
-    Unassigned, each with how many cards the list has for them ("5 open"; VoiceOver "5 items";
-    things in good shape are not counted, as they are not listed) and, under someone who has
-    not joined yet, "Not joined yet"; the chosen one checked.
-  Choosing a person shows only items assigned to them (Home's cards always show everyone's).
-  The choice is kept per household on this device (`homeos.who.<householdId>`); a member who
-  left reads as Everyone. Saving an item the filter hides shows everyone's for that visit: not
-  remembered, and gone once the person picks, changes tab or reopens the app, so Mine stays
-  their own choice.
-- People's 🦆 and 🦔 are drawn (`ui/EmojiText.tsx`: the green duck and brown hedgehog of
-  `ui/animals.ts`) wherever a member's emoji shows, with the character kept in the text for
-  copying and screen readers.
+### Data
+
+| field | |
+| --- | --- |
+| `Goal` (`goals` table, DemoDoc `goals`) | id, household_id, week (a Monday), title, member_id (null: no one), position, done, done_by, done_at, carried_from (null, or the goal it was brought over from), created_by, created_at |
+| `GoalsLink` (`goal_links`, DemoDoc `goal_links`) | token, created_by, created_at (and household_id; in Supabase also its own id) |
+
+`HouseholdData.goals` is `GoalsData`: `{ list, link }`, every week's goals and the home's link
+(or null), loaded with the rest of the home (`load()`), so the badge, the tab and live updates
+work as for items. `emptyGoals()` is `{ list: [], link: null }`.
+
+### Backend methods (`src/lib/backend/types.ts`)
+
+`addGoal(householdId, week, title, memberId?)`, `renameGoal(id, title)`,
+`setGoalPerson(id, memberId | null)`, `setGoalDone(id, done)`, `moveGoal(id, index)`,
+`deleteGoal(id)`, `bringOverGoals(householdId, week): Goal[]`, `goalsLink(householdId):
+GoalsLink` (the one there is, else a new one), `stopGoalsLink(householdId)` and
+`publicGoals(token): PublicGoals | null` (no sign-in; null for a token that is malformed,
+unknown or turned off). A week that is not a Monday is `invalid_input: week`; a blank or long
+title `invalid_input: title`; a 51st goal `invalid_input: goals: a week has 50 at most`; a
+person or goal from another home `not_found`. All three backends keep the same rules:
+
+- **Demo** (`DemoBackend`, the server runs it too): `goals` and `goal_links` in `DemoDoc`
+  (documents from before goals load with none: `read()` fills them in). `publicGoalsFor(doc,
+  householdId, now)` builds the public view; `publicGoals(token)` reads it without a session
+  (so the public page works in demo mode, in a browser holding the demo's document). Every new
+  demo household gets `GOALS_DEMO`: last week's three goals (two done) and this week's four (two
+  done, one brought over from last week), ticks clamped inside their week and never in the
+  future.
+- **Server** (`ServerBackend`): the eight writes are RPCs (`RPC_METHODS`, all `write`; argument
+  shapes in `RPC_ARGS`). `publicGoals` is not an RPC (`NOT_RPC`): a plain
+  `GET /api/home?op=publicGoals&token=…` (`publicGoalsUrl()`), with `credentials: 'omit'` and no
+  `X-HomeOS` header, answered before the header check (see "The API"). The stored document's
+  home takes `goals` and `goal_links` as optional lists (`OPTIONAL_HOME_LISTS`: missing is none),
+  capped by `HOME_ROW_LIMITS` (10,000 goals, one link).
+- **Supabase**: migration `supabase/migrations/20261025000100_goals.sql` (re-runnable: `if not
+  exists`, `create or replace`, guarded publication changes; it never drops a table or deletes
+  data):
+  - `goals` (checks `goals_title_length` 1 to 120, `goals_week_monday`, `goals_done_stamp`:
+    `done_by` and `done_at` only while done; `member_id`, `done_by`, `created_by` and
+    `carried_from` on delete set null; unique `(week, carried_from)`), and `goal_links` (its own
+    id; `household_id` unique; `token` unique and shaped like one). Both have RLS on, members
+    may only select their household's rows, every write goes through an RPC, replica identity
+    full, and both join `supabase_realtime` (a delete's notice carries only a row's own id).
+  - Trigger `goals_before_write`: trims the title, puts a new goal last, raises
+    `goals_week_limit` (check_violation) for a 51st, and keeps household, week, created_by and
+    carried_from as they were (only the on-delete cascades may clear the last two).
+  - RPCs (`security definer`, `set search_path = ''`, each takes the household's
+    `goals_lock()` advisory lock): `add_goal`, `rename_goal`, `set_goal_person`,
+    `set_goal_done`, `move_goal`, `delete_goal`, `bring_over_goals` (setof goals),
+    `goals_link` (get or make; the token from `goals_new_token()`, two `gen_random_uuid()`s'
+    random bytes, no extension needed) and `stop_goals_link`, for `authenticated`;
+    `public_goals(p_token)` returns the JSON of `PublicGoals` and is executable by `anon`.
+  - `supabase/tests/goals.test.mjs` (`npm run test:db`) holds it to these rules.
+
+### The public op (server mode)
+
+`GET /api/home?op=publicGoals&token=<token>` needs no sign-in, no cookie and no `X-HomeOS`
+header (a link opened from WhatsApp sends none), and sets no cookie. A token not shaped like
+one is a 404 without reading the store. Otherwise the handler reads the document
+(`ctx.store.read()`), compares the token with every link's in constant time (SHA-256 of each,
+then `timingSafeEqual`, so how long it takes says nothing about how close a guess was) and
+answers:
+
+- **200** `{ week, goals: [{ title, done, person: { name, emoji } | null }] }`, this week in
+  the home's time zone, with `Cache-Control: public, max-age=0, s-maxage=60,
+  stale-while-revalidate=300` (`PUBLIC_GOALS_CACHE`): Vercel's edge keeps each answer a minute,
+  so a link shared to a busy group reads the store about once a minute, not once a view, and
+  the Blob budget (see "Budget") holds. Vercel's proxy keeps `stale-while-revalidate` for its
+  own cache and takes it out of what the browser gets, so the page's own requests always reach
+  the edge rather than a stale copy in the browser (the local server, `server/entry/local.ts`,
+  does the same). A change shows on the page within about a minute, and a
+  link turned off can still be answered from the edge for that minute (or, rarely, once more
+  while the edge revalidates).
+- **404** `{ error: { code: 'not_found' } }` with `Cache-Control: no-store` for an unknown or
+  turned-off token (not cached, so a new link works at once). Strangers guessing tokens are
+  bounded by the token's 128 bits, not by a rate limit.
+
+POST and every other method on `op=publicGoals` go through the normal checks (403 without the
+header, then `unknown_op`).
+
+### HomeProvider
+
+`addGoal(week, title, memberId?)`, `renameGoal`, `setGoalPerson`, `setGoalDone`, `moveGoal`,
+`deleteGoal`, `bringOverGoals(week)`, `goalsLink()` and `stopGoalsLink()`. Rename, person, tick
+(stamped with this person and now), move and delete change the data at once and put it back
+with a toast if the write fails (`mutate()`), as items do; add, bring over and the link wait for
+the stored rows (a new goal shows in its place, saving, meanwhile).
+
+### UI
+
+`screens/goals/GoalsScreen.tsx` (+ `Goals.module.css`, `icons.tsx`, `.test.tsx`):
+
+- **The header**: the compact one (see "The tab bar and the headers"): today's date, the
+  Profile button and the large title "Goals for the week". No round +: Add a Goal is in the list.
+- **Under the title**: how much of the week shown is done ("2 of 4 done", "All 4 done", "Nothing
+  planned yet", `progressLine()`, `data-goals-progress`) and a **Share** capsule; then the
+  read-only line in server mode.
+- **The week's card** (`data-goals-week`): Previous week, the week's name as a heading ("This
+  week, 19 to 25 Oct", "Last week, 12 to 18 Oct", "Next week, …", or the dates:
+  `weekLabel()`), Next week, and "This Week" to come back. An empty week asks "What would make
+  it a good week at home?" (this week) or "Plan ahead: what should get done that week?" (a
+  later one).
+- **A row for each goal** (`li[data-goal-id]`): a round tick (a checkbox named by the title,
+  green when done, with the confetti for the last one of the week), the title (edited in place,
+  `InlineText`, aria-label "Goal"), under it who is on it (a small capsule: their emoji and first
+  name, or "No one yet"; a tap opens the "Who’s on it" menu: No one, then everyone at home) and,
+  once done, "Done · Today 10:42" or "Done by Shea · Yesterday 19:20" when someone other than
+  the person on it ticked it (`doneLine()`); then the "…" menu (Rename, Move Up, Move Down,
+  Delete Goal) and the grip (drag, or the arrow keys, `useGroupedReorder` with one group).
+  Delete asks first ("Delete Plan Saturday’s dinner?", "It goes for everyone at home.").
+- **Add a Goal**: the row becomes a field at once (focused inside the tap, so iOS raises the
+  keyboard); Enter adds the goal and opens the next field, leaving it adds what is typed,
+  Escape drops it. A goal being saved shows in place with a spinner; a failed save gives the
+  title back in the field. Over 50: the button is off and a line says why.
+- **Bring over** (`data-bring-over`), on an empty this week, above Add a Goal.
+- **Under the card**: while the link is on, "Shared with a link. Anyone with it can see this
+  week’s goals." (it opens the share sheet); on an empty this week, "Anyone at home can add a
+  goal, tick it off or change it."
+
+`GoalsShareSheet.tsx` (+ `.module.css`): a bottom sheet, "Share this week’s goals": a preview of
+exactly what the link shows (this week's dates, up to four goals with ticks and first names,
+"and N more"), what it promises ("Anyone with the link sees this week’s goals as they change,
+and who is on each by first name. Nothing else of the home, and no sign-in."), the link once
+there is one, then **Share Link** (the system share sheet, title and text "Our goals for the
+week" with the link) or, where there is no share sheet, **Copy Link**; Copy Link; **Turn Off
+Link** (asks first); Done. The first Share or Copy makes the link. Escape and the backdrop
+close it; Tab stays inside.
+
+`PublicGoalsPage.tsx` (+ `PublicGoals.module.css`), for `<app>/?goals=<token>`: `main.tsx` reads
+the token (`goalsTokenIn()`) before anything else and renders this page alone, with no
+HomeProvider, sign-in or tabs. The hero (the house under London's sky)
+with "Goals for the week" and the week's dates on it; one card with how much is done and a slim
+green bar, then each goal with its tick and who is on it; a quiet line, "Shared from home.os.
+This page keeps itself up to date." (the first sentence alone once the link is off). It asks again when it comes back into view and every
+minute while in use (`PUBLIC_REFRESH_MS`), and stops after 15 minutes without a touch
+(`PUBLIC_IDLE_MS`); a failed refresh keeps what is shown. A token that is unknown or turned off
+shows "This link is no longer active" and "Ask whoever shared it for a new one."; no
+connection, "Couldn’t load the goals" and Try Again. Its title is "Goals for the week" and it
+asks search engines not to index it.
+
+Not carried over: goals are not part of "Bring this home online" (a home brought online starts
+with none) nor of the import from a phone's demo home.
+
+### Tests
+
+`lib/logic/goals.test.ts`, `lib/backend/demo.goals.test.ts` (the contract on DemoBackend),
+`server/core/publicGoals.test.ts` (the RPCs through the handler, and the public op: its fields,
+headers, 404s and that it reads nothing for a malformed token), `screens/goals/*.test.tsx`,
+`supabase/tests/goals.test.mjs`, `e2e/goals.spec.ts` (demo: build a week, a second person
+edits it, share, the page in a fresh signed-out browser, turn off) and `e2e-server/goals.spec.ts`
+(two phones on one week; the page and the op from a browser that never signed in).
+
+### Drawn emoji
+
+People's 🦆 and 🦔 are drawn (`ui/EmojiText.tsx`: the green duck and brown hedgehog of
+`ui/animals.ts`) wherever a member's emoji shows, with the character kept in the text for
+copying and screen readers.
 
 ### The date picker
 
@@ -1818,14 +1944,13 @@ chosen day and the week and month shown, `useChosenDay()`, `useCalendarView()` a
 headings `weekHeading()` and `monthHeading()`) and the month and week arithmetic in
 `lib/logic/months.ts`. Housekeeping uses it (see "Housekeeping" UI 2): a 44px bar, then the card
 as a week strip (one row of seven days, Monday first, Previous and Next round its title) or the
-whole month, 16px in from the page's edges; `e2e/calendar.spec.ts` checks it there. Needs
-attention had a calendar view built on it too, until Needs attention became one list.
+whole month, 16px in from the page's edges; `e2e/calendar.spec.ts` checks it there.
 
 ### The tab bar and the headers
 
 **The tab bar** (`TabBar` in `screens/home/TabBar.tsx`, a `nav` named "Tabs"): four tabs along
-the bottom, in this order: **Home**, **Needs attention** (the label says "Attention": the full
-name does not fit a tab at 375px), **Housekeeping** and **Stats**. It is the
+the bottom, in this order: **Home**, **Goals** (Goals for the week: the full name does not fit
+a tab at 375px), **Housekeeping** and **Stats**. It is the
 docked bar iPhones use: frosted glass on the bottom edge, full width, with a hairline on
 top. Its tabs take 56px (`--tabbar-height`) and the glass runs on down through the home
 indicator's inset (`--bottom-inset`), so the bar never floats over the foot of the screen
@@ -1833,11 +1958,11 @@ indicator's inset (`--bottom-inset`), so the bar never floats over the foot of t
 filled) over its label (10px, 500), equal widths. The open
 tab (`aria-current="page"`) is in the tint, on a glass highlight that slides under it
 (`--index`, none of the slide with Reduce Motion); the others in the label colour. Every
-tab is a target of 44px or more. Attention carries a red count of what needs attention
-(`data-badge`, "9+" over nine; named "Attention, 2 items") and Housekeeping a dot for a new
-message ("Housekeeping, new message"). The tab is kept on this device (`homeos.tab`; every read and write in try/catch),
-so the phone reopens on the tab last open (Home when it names a tab that is gone, such as
-Chat); a shared area link opens Home. Layout tokens
+tab is a target of 44px or more. Goals carries a red count of this week's goals not done
+(`data-badge`, "9+" over nine, none at zero; named "Goals, 2 not done") and Housekeeping a dot
+for a new message ("Housekeeping, new message"). The tab is kept on this device (`homeos.tab`;
+every read and write in try/catch), so the phone reopens on the tab last open (Home when it
+names a tab that is gone, such as Chat or Attention); a shared area link opens Home. Layout tokens
 (`styles/tokens.css`): `--tabbar-clear` (what the bar takes from the bottom), `--add-bottom`
 and `--add-clear` (the + above it); every scroll area's bottom padding, toasts (while no sheet
 is open) and the scroll margins of rows clear them. Sheets cover the bar, which is inert behind them with the rest of the
@@ -1847,7 +1972,7 @@ stage. `<html data-add>` says whether the open tab has the +.
 (`ui/Hero.tsx`) from the very top of the screen, with the title (an `h1`), the address and the
 Profile avatar on it. Every other tab has the compact header: a slim band of the same sky
 (`SkyBand`, `data-sky-band`, the hero's colours for now, `heroLook()`) behind the status bar
-and the top row (today's date on Needs attention and Housekeeping, and the Profile button),
+and the top row (today's date on Goals and Housekeeping, and the Profile button),
 its lower edge rounded into the page, then the large title (an `h1`, 34/41/700) and, where
 there is one, a line under it. `StatusSky` fills in behind the status bar once the hero or
 the band has scrolled away (`useHeroAtTop()`). Welcome uses the same hero, full bleed, over
@@ -1972,8 +2097,7 @@ Any item or area can be shared, for example to WhatsApp, Messages or Mail.
   survives signing in and the Google redirect, like an invite. It is forgotten after an hour,
   when taken, and on sign out. Once the household is ready, `useSharedLink` (in App's main
   shell) opens the item's sheet, or switches to Home and opens the area's sheet over it
-  (App's `openArea()`; see "Home"), with all of its items whoever the person filter shows
-  (the filter is Needs attention's): its Add Item adds to that area, and closing it puts focus
+  (App's `openArea()`; see "Home"), with all of its items: its Add Item adds to that area, and closing it puts focus
   on the area's card. An id this household doesn't have gets a toast ("That item
   isn’t in your home", "That area isn’t in your home"); a one-off item that has been done says
   "“<title>” is already done". RLS already keeps other households' rows out of `load()`, so a
@@ -2428,7 +2552,7 @@ if that fails. The optimistic copies come from `src/lib/logic/housekeeping.ts`:
 Pure functions; each doc comment is the spec and ends with the unit tests it needs ("Tests:",
 for `src/lib/logic/housekeeping.test.ts`). Calendar: `WEEKDAYS` (Monday first), `monthOf`,
 `shiftMonth`, `monthTitle` ("October 2026"), `monthGrid` (weeks of 7, Monday first, null
-padding; these five live in `lib/logic/months.ts`, which Needs attention's calendar shares, and are
+padding; these five live in `lib/logic/months.ts`, which the date picker shares, and are
 re-exported here), `canHaveVisit`, `longDay` ("Thursday 1 October"; `fullDay()` in
 `months.ts`), `calendarDayLabel` (", selected"
 for the chosen day), `daySelectedAnnouncement`, `todayLine` ("6 of 7 done today · £60.00").
@@ -2469,7 +2593,7 @@ Files under `src/screens/housekeeping/` (each with a `.module.css` where it has 
 | `Checklist.tsx` | the day's tasks as a stack of area cards that open in place to their checkboxes, with Add Task |
 | `SectionIcon.tsx` | a section's drawing: Home's room drawing for a room's name, else a list |
 | `PriceField.tsx` | the £ field: parse, format, error |
-| `Calendar.tsx` | the visits under the title: `ui/DatePicker.tsx` (Needs attention's date picker, on the card `ui/MonthCalendar.tsx`) with today's line, the month's summary, a dot for each visit (`data-visit`) and `lastDay` today; the view kept under `homeos.calendar.housekeeping` |
+| `Calendar.tsx` | the visits under the title: `ui/DatePicker.tsx` (the date picker, on the card `ui/MonthCalendar.tsx`) with today's line, the month's summary, a dot for each visit (`data-visit`) and `lastDay` today; the view kept under `homeos.calendar.housekeeping` |
 | `DayDetail.tsx` | a chosen day before today, in place of the Today section |
 | `TaskListSheet.tsx` | the page sheet that edits the task list and its sections; App mounts it beside the stage, like the Item sheet, so the screen behind is pushed back |
 | `useSavedText.ts` | the message and comments fields: save after a pause and on blur, keep a draft while editing or after a failed save |
@@ -2481,15 +2605,15 @@ and its CSS (four tabs), `App.tsx` (renders `HousekeepingScreen` for the tab), t
 (`housekeepingScreen(page)`, `'Housekeeping'` in `tabButton` and `goToTab`), and the tests that
 pin the tabs (`src/App.test.tsx` "tab bar", `e2e/onboarding.spec.ts` and any other).
 
-**The tab bar.** Home, Needs attention, Housekeeping, Stats, in that order, in the
+**The tab bar.** Home, Goals, Housekeeping, Stats, in that order, in the
 `nav` named "Tabs" with `aria-current="page"` on the open one (keep that contract and the
-Attention count; see "The tab bar and the headers"). Housekeeping has a
+Goals count; see "The tab bar and the headers"). Housekeeping has a
 dot too (named "Housekeeping, new message") while `useNewNote()` says the message is new to
 this member (`hasNewNote()`, last seen kept per member on this device). The app reopens on
 the tab last open on this device. The tabs share the bar equally; "Housekeeping" is the
 longest label and must stay whole, with no sideways scroll, at 320, 375, 402 and 430px (10px
 labels, 9px below 360px wide, where the bar is 6px from the edges). Measure it in the e2e test
-rather than trusting estimates. The round + shows on Home, Needs attention and Stats, and
+rather than trusting estimates. The round + shows on Home and Stats, and
 pops in when you come back from a tab without it.
 
 **Screen**, top to bottom (16px gutters, white cards radius 24, section headers 20/25/600 as
@@ -2500,12 +2624,12 @@ pops in when you come back from a tab without it.
    the secondary line `housekeepingSubtitle()` ("Today's visit", "Last visit Thu 1 Oct" or
    "Weekly") and the avatar, in the compact header (see "The tab bar and the headers").
    `Screen` with `label="Housekeeping"` and `withAdd={false}`.
-2. **Calendar** (`Calendar`, right under the title): Needs attention's date picker
-   (`ui/DatePicker.tsx`, see "Needs attention: the calendar"), in a section named by a visually hidden
+2. **Calendar** (`Calendar`, right under the title): the date picker
+   (`ui/DatePicker.tsx`, see "The date picker"), in a section named by a visually hidden
    `h2` **Calendar**. The 44px bar: on the left, while today is chosen and shown, a 15/20
    secondary line on today's visit (`todayLine()`: "No visit yet today", "6 of 7 done today ·
    £60.00"), else **Today**; on the right **Show month** / **Show week**, kept on this device
-   under `homeos.calendar.housekeeping` (apart from Needs attention's choice). Then the card: this week as
+   under `homeos.calendar.housekeeping`. Then the card: this week as
    a strip at first ("5 to 11 October" between Previous week and Next week, the grid named
    "Week of Monday 5 October"), or the month ("October 2026" between Previous month and Next
    month, with `monthSummary(monthTotals())` under it: "4 visits · £180.00"). No marks under
@@ -2513,7 +2637,7 @@ pops in when you come back from a tab without it.
    anywhere in the cell counts) and draws a round 40px circle (36px below 360px wide) with its
    number: today has a tint number and a 1.5px tint ring, the chosen day is filled with the
    tint and has a white number, a day with a recorded visit (`visitDays()`) has a 5px dot under
-   its number (tint; white when chosen), the mark Needs attention's calendar gives a visit, and future
+   its number (tint; white when chosen), and future
    days are dimmed (`--label-tertiary`) and disabled (`lastDay` today), as is Next once the
    week or month after would be all future: no visits can be ahead. The chosen day and the
    week and month shown (`useChosenDay()`) are remembered while the app runs, per household:
@@ -2598,8 +2722,7 @@ pops in when you come back from a tab without it.
    - Once something is recorded today, a card with **Delete Visit** under it, as on other days
      (title "Delete today's visit?"); afterwards focus goes to the Today heading.
 5. **A past day** (`DayDetail`), in place of the Today section while a day before today is
-   chosen in the calendar (a visit on Needs attention's calendar opens its day here, chosen, with focus on
-   this heading: see "Needs attention: the calendar"):
+   chosen in the calendar:
    - a heading (`h2`, 20/25/600, `tabIndex={-1}`): `longDay()` ("Thursday 1 October");
    - without a visit: "No visit recorded." and a tint **Add a visit** button
      (`addHousekeepingVisit(date)`; focus then moves to the first card's header);

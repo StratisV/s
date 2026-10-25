@@ -9,6 +9,7 @@ import {
 } from '../lib/backend/types';
 import { STATE_FIELDS } from '../lib/constants';
 import { todayIn } from '../lib/logic/dates';
+import { byGoalOrder, withGoalAdded, withGoalDeleted, withGoalMoved, withGoalPatched } from '../lib/logic/goals';
 import {
   applyTick,
   applyVisitPatch,
@@ -49,6 +50,9 @@ import type {
   CreateHouseholdInput,
   DemoHomeSummary,
   DeviceInfo,
+  Goal,
+  GoalsData,
+  GoalsLink,
   HomeEntry,
   HouseholdData,
   HousekeepingData,
@@ -397,6 +401,34 @@ export interface HomeContextValue {
    * they returned; if none of them stored it, there is nothing to delete.
    */
   deleteHousekeepingVisit(id: string): Promise<void>;
+
+  // ── Goals for the week (docs/ARCHITECTURE.md "Goals for the week") ──
+  // Like the rest: shown at once (optimistic, from src/lib/logic/goals.ts), then written; a
+  // failed write takes back only what it set, a "Couldn't save" toast shows and the promise
+  // rejects. `week` is a week's Monday in the household's time zone.
+
+  /**
+   * Adds a goal at the end of `week`, with who is on it if anyone. Not optimistic (like a
+   * task): resolves to the stored goal once written (the screen shows the title typed,
+   * saving, until then).
+   */
+  addGoal(week: ISODate, title: string, memberId?: string | null): Promise<Goal>;
+  /** Renames a goal (trimmed; blank or the same title: nothing to do). */
+  renameGoal(id: string, title: string): Promise<void>;
+  /** Who is on a goal, or null for no one. */
+  setGoalPerson(id: string, memberId: string | null): Promise<void>;
+  /** Ticks (stamped with `me` and now) or unticks a goal. */
+  setGoalDone(id: string, done: boolean): Promise<void>;
+  /** Moves one goal to `index` within its week (only its place is decided, as on the backend). */
+  moveGoal(id: string, index: number): Promise<void>;
+  /** Deletes a goal (the UI confirms first); the rest of its week close up. */
+  deleteGoal(id: string): Promise<void>;
+  /** Bring over: last week's unfinished goals into `week`; resolves to the goals it added once stored. */
+  bringOverGoals(week: ISODate): Promise<Goal[]>;
+  /** The public link to the goals: the one there is, or a new one (stored, then shown). */
+  goalsLink(): Promise<GoalsLink>;
+  /** Turns the public link off (shown at once). */
+  stopGoalsLink(): Promise<void>;
 
   // ── Server mode (docs/ARCHITECTURE.md "Server mode (no setup)") ──
   // backend.kind === 'server'. In the other modes serverWelcome is null, readOnly false, and
@@ -952,6 +984,79 @@ function renameSectionChange(id: string, title: string, today: ISODate): Change 
         c.housekeeping.sections.find((s) => s.id === id)?.title === clean
           ? withHousekeeping(c, withSectionRenamed(c.housekeeping, id, section.title, today))
           : c,
+    };
+  };
+}
+
+// ── Goals changes (docs/ARCHITECTURE.md "Goals for the week") ──
+// The optimistic copies come from src/lib/logic/goals.ts; each revert puts back only what its
+// write set, and only where the screen still shows what it set.
+
+const withGoals = (cur: HouseholdData, goals: GoalsData): HouseholdData => ({ ...cur, goals });
+
+/**
+ * A change to some fields of one goal (`patch` gives them from the goal as shown, or null for
+ * nothing to do). The revert puts back those fields where they still hold what it set.
+ */
+function goalPatchChange(id: string, patch: (goal: Goal) => Partial<Goal> | null): Change {
+  return (cur) => {
+    const goal = cur.goals.list.find((g) => g.id === id);
+    const set = goal ? patch(goal) : null;
+    if (!goal || !set) return null;
+    const keys = Object.keys(set) as (keyof Goal)[];
+    if (keys.every((k) => goal[k] === set[k])) return null;
+    const before = pick<Goal>(goal, set);
+    return {
+      next: withGoals(cur, withGoalPatched(cur.goals, id, set)),
+      revert: (c) => {
+        const shown = c.goals.list.find((g) => g.id === id);
+        if (!shown || !keys.every((k) => shown[k] === set[k])) return c;
+        return withGoals(c, withGoalPatched(c.goals, id, before));
+      },
+    };
+  };
+}
+
+/** Moving a goal (withGoalMoved()); the revert puts back each place it set that still holds. */
+function goalMoveChange(id: string, index: number): Change {
+  return (cur) => {
+    const next = withGoalMoved(cur.goals, id, index);
+    if (next === cur.goals) return null;
+    const was = new Map(cur.goals.list.map((g) => [g.id, g.position]));
+    const set = new Map(next.list.map((g) => [g.id, g.position]));
+    return {
+      next: withGoals(cur, next),
+      revert: (c) => {
+        let back = false;
+        const list = c.goals.list.map((g) => {
+          const w = was.get(g.id);
+          const s = set.get(g.id);
+          if (w === undefined || s === undefined || w === s || g.position !== s) return g;
+          back = true;
+          return { ...g, position: w };
+        });
+        return back ? withGoals(c, { ...c.goals, list: list.sort(byGoalOrder) }) : c;
+      },
+    };
+  };
+}
+
+/** Deleting a goal (withGoalDeleted()); the revert puts it back in its place unless it is back already. */
+function goalDeleteChange(id: string): Change {
+  return (cur) => {
+    const goal = cur.goals.list.find((g) => g.id === id);
+    if (!goal) return null;
+    const carried = new Set(cur.goals.list.filter((g) => g.carried_from === id).map((g) => g.id));
+    return {
+      next: withGoals(cur, withGoalDeleted(cur.goals, id)),
+      revert: (c) => {
+        if (c.goals.list.some((g) => g.id === id)) return c;
+        const list = c.goals.list.map((g) => {
+          if (carried.has(g.id) && g.carried_from === null) return { ...g, carried_from: id };
+          return g.week === goal.week && g.position >= goal.position ? { ...g, position: g.position + 1 } : g;
+        });
+        return withGoals(c, { ...c.goals, list: [...list, goal].sort(byGoalOrder) });
+      },
     };
   };
 }
@@ -2245,6 +2350,73 @@ export function HomeProvider({ backend, children }: { backend: Backend; children
             }
             if (date) visitIds.current.delete(date);
           },
+        );
+      },
+
+      // Goals for the week (docs/ARCHITECTURE.md "Goals for the week").
+      addGoal: async (week, title, memberId) => {
+        const d = requireData();
+        // Not optimistic (like a task): shown once stored; the reload that follows confirms it.
+        const goal = await mutate(null, () =>
+          memberId ? backend.addGoal(d.household.id, week, title, memberId) : backend.addGoal(d.household.id, week, title),
+        );
+        const cur = dataRef.current;
+        if (cur && cur.household.id === goal.household_id) commitData(withGoals(cur, withGoalAdded(cur.goals, goal)));
+        return goal;
+      },
+      renameGoal: (id, title) =>
+        mutate(
+          goalPatchChange(id, (goal) => {
+            const clean = (title ?? '').trim();
+            // A blank title is the backend's to refuse; the list keeps showing the old one.
+            return clean && clean !== goal.title ? { title: clean } : null;
+          }),
+          () => backend.renameGoal(id, title),
+        ),
+      setGoalPerson: (id, memberId) =>
+        mutate(
+          goalPatchChange(id, () => ({ member_id: memberId })),
+          () => backend.setGoalPerson(id, memberId),
+        ),
+      setGoalDone: (id, done) => {
+        const meId = dataRef.current?.members.find((m) => m.user_id === userRef.current?.id)?.id ?? null;
+        return mutate(
+          goalPatchChange(id, (goal) =>
+            goal.done === done ? null : done ? { done, done_by: meId, done_at: optimisticStamp() } : { done, done_by: null, done_at: null },
+          ),
+          () => backend.setGoalDone(id, done),
+        );
+      },
+      moveGoal: (id, index) => mutate(goalMoveChange(id, index), () => backend.moveGoal(id, index)),
+      deleteGoal: (id) => mutate(goalDeleteChange(id), () => backend.deleteGoal(id)),
+      bringOverGoals: async (week) => {
+        const d = requireData();
+        const added = await mutate(null, () => backend.bringOverGoals(d.household.id, week));
+        const cur = dataRef.current;
+        if (cur && cur.household.id === d.household.id && added.length) {
+          commitData(withGoals(cur, added.reduce((goals, goal) => withGoalAdded(goals, goal), cur.goals)));
+        }
+        return added;
+      },
+      goalsLink: async () => {
+        const d = requireData();
+        const link = await mutate(null, () => backend.goalsLink(d.household.id));
+        const cur = dataRef.current;
+        if (cur && cur.household.id === d.household.id) commitData(withGoals(cur, { ...cur.goals, link }));
+        return link;
+      },
+      stopGoalsLink: () => {
+        const d = requireData();
+        return mutate(
+          (cur) => {
+            const link = cur.goals.link;
+            if (!link) return null;
+            return {
+              next: withGoals(cur, { ...cur.goals, link: null }),
+              revert: (c) => (c.goals.link === null ? withGoals(c, { ...c.goals, link }) : c),
+            };
+          },
+          () => backend.stopGoalsLink(d.household.id),
         );
       },
 

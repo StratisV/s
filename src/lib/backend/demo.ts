@@ -11,6 +11,8 @@ import {
   DEFAULT_ADDRESS,
   DEFAULT_AREAS,
   DEMO_CALENDAR_ITEMS,
+  GOALS_DEMO,
+  GOALS_PER_WEEK_MAX,
   HOUSEKEEPING_DEMO_NOTE,
   HOUSEKEEPING_DEMO_VISITS,
   HOUSEKEEPING_PRICE_MAX_PENCE,
@@ -22,6 +24,17 @@ import {
   type DemoPersonKey,
 } from '../constants';
 import { addDays, addMonths, daysBetween, deviceTimeZone, parseISODate, todayIn, zonedParts } from '../logic/dates';
+import {
+  byGoalOrder,
+  isGoalsToken,
+  isWeekStart,
+  newGoalsToken,
+  publicGoalsOf,
+  sameToken,
+  shiftWeek,
+  toBringOver,
+  weekStart,
+} from '../logic/goals';
 import { emptyHousekeeping } from '../logic/housekeeping';
 import { applyKindRules, nextDueDate } from '../logic/items';
 import { hasJoined, isValidEmail, normaliseEmail } from '../logic/people';
@@ -30,6 +43,9 @@ import type {
   AuthUser,
   Completion,
   CreateHouseholdInput,
+  Goal,
+  GoalsData,
+  GoalsLink,
   HomeEntry,
   Household,
   HouseholdData,
@@ -51,6 +67,7 @@ import type {
   JoinHouseholdInput,
   Member,
   NewPersonInput,
+  PublicGoals,
   PushSubscriptionInput,
 } from '../types';
 import type { DemoImportMark } from '../logic/importHome';
@@ -192,6 +209,13 @@ export type HousekeepingVisitRow = Omit<HousekeepingVisit, 'tasks'>;
  */
 export type HousekeepingVisitTaskRow = HousekeepingVisitTask;
 
+/** goals: one of the household's goals for a week (every column is in the app's type). */
+export type GoalRow = Goal;
+/** goal_links: the household's public link to its goals (primary key household_id; token unique). */
+export interface GoalLinkRow extends GoalsLink {
+  household_id: string;
+}
+
 /** A member as stored: claimed_at (members.claimed_at) is kept for release_claim only. */
 export interface MemberRow extends Member {
   /** When an account became this person by a claim (null or missing otherwise). */
@@ -231,6 +255,13 @@ export interface DemoDoc {
    * having none. The server's live home is such a document until its first write.
    */
   housekeeping_sections: HousekeepingSectionRow[];
+  /**
+   * Goals for the week, and the public link to them (one per household at most). They came
+   * after everything else: read() fills them in (none) for documents stored before them. The
+   * server's live home is such a document until its first write.
+   */
+  goals: GoalRow[];
+  goal_links: GoalLinkRow[];
   /**
    * Set (by markDemoImported in lib/logic/importHome.ts, on the Supabase build) once this
    * document's home was brought over to the shared database. Kept as it is by read/write.
@@ -283,6 +314,8 @@ export function emptyDoc(): DemoDoc {
     housekeeping_visits: [],
     housekeeping_visit_tasks: [],
     housekeeping_sections: [],
+    goals: [],
+    goal_links: [],
   };
 }
 
@@ -529,6 +562,9 @@ export class DemoBackend implements Backend {
         this.backfillStarterTasks(doc);
       }
       for (const task of doc.housekeeping_tasks) if (task.section_id === undefined) task.section_id = null;
+      // Goals came later: a document from before them has none, and no public link.
+      if (!Array.isArray(doc.goals)) doc.goals = [];
+      if (!Array.isArray(doc.goal_links)) doc.goal_links = [];
       return doc;
     } catch {
       return emptyDoc();
@@ -812,6 +848,13 @@ export class DemoBackend implements Backend {
       if (hasJoined(person)) throw invalidInput('joined');
       const id = person.id;
       doc.members = doc.members.filter((m) => m.id !== id);
+      // goals: member_id, done_by and created_by on delete set null.
+      for (const g of doc.goals) {
+        if (g.member_id === id) g.member_id = null;
+        if (g.done_by === id) g.done_by = null;
+        if (g.created_by === id) g.created_by = null;
+      }
+      for (const l of doc.goal_links) if (l.created_by === id) l.created_by = null;
       for (const i of doc.items) {
         if (i.assignee_id === id) i.assignee_id = null;
         if (i.created_by === id) i.created_by = null;
@@ -866,7 +909,8 @@ export class DemoBackend implements Backend {
         .sort((a, b) => (a.completed_at < b.completed_at ? 1 : a.completed_at > b.completed_at ? -1 : 0))
         .map(toCompletion);
       const housekeeping = this.housekeepingOf(doc, householdId);
-      return { household: toHousehold(household), members, areas, items, completions, housekeeping };
+      const goals = this.goalsDataOf(doc, householdId);
+      return { household: toHousehold(household), members, areas, items, completions, housekeeping, goals };
     });
   }
 
@@ -992,6 +1036,7 @@ export class DemoBackend implements Backend {
     this.addHistory(doc, household, people, now);
     this.addStarterTasks(doc, household.id, now);
     this.addHousekeepingHistory(doc, household, people, now);
+    this.addDemoGoals(doc, household, people, now);
     return household.id;
   }
 
@@ -1960,4 +2005,239 @@ export class DemoBackend implements Backend {
       doc.housekeeping_visit_tasks = doc.housekeeping_visit_tasks.filter((r) => r.visit_id !== visit.id);
     });
   }
+
+  // ── Goals for the week (docs/ARCHITECTURE.md "Goals for the week") ──
+  // Mirrors supabase/migrations/20261025000100_goals.sql: every member edits every week's
+  // goals and the public link; anything in another household is not_found; a failed call
+  // stores nothing.
+
+  /** HouseholdData.goals: every week's goals in order, and the public link if there is one. */
+  private goalsDataOf(doc: DemoDoc, householdId: string): GoalsData {
+    const link = doc.goal_links.find((l) => l.household_id === householdId);
+    return {
+      list: doc.goals
+        .filter((g) => g.household_id === householdId)
+        .sort(byGoalOrder)
+        .map((g) => ({ ...g })),
+      link: link ? { token: link.token, created_by: link.created_by, created_at: link.created_at } : null,
+    };
+  }
+
+  /** The goals of the household's week starting `week`, in order. */
+  private weekGoals(doc: DemoDoc, householdId: string, week: ISODate): GoalRow[] {
+    return doc.goals.filter((g) => g.household_id === householdId && g.week === week).sort(byGoalOrder);
+  }
+
+  /** The caller's goal with this id; not_found when it is gone or in another household. */
+  private goalIn(doc: DemoDoc, me: Member, id: string): GoalRow {
+    const goal = doc.goals.find((g) => g.id === id && g.household_id === me.household_id);
+    if (!goal) throw new BackendError('not_found', 'Goal not found');
+    return goal;
+  }
+
+  /** Someone in the household (joined or not) to put on a goal; null for no one; not_found otherwise. */
+  private goalPerson(doc: DemoDoc, householdId: string, memberId: string | null | undefined): string | null {
+    if (memberId === null || memberId === undefined) return null;
+    const person = doc.members.find((m) => m.id === memberId && m.household_id === householdId);
+    if (!person) throw new BackendError('not_found', 'Person not found');
+    return person.id;
+  }
+
+  /** A new goal at the end of its week (positions run 0…n-1). */
+  private insertGoal(doc: DemoDoc, row: Omit<GoalRow, 'id' | 'position'>): GoalRow {
+    const here = this.weekGoals(doc, row.household_id, row.week);
+    const goal: GoalRow = { id: uuid(), position: here.length ? Math.max(...here.map((g) => g.position)) + 1 : 0, ...row };
+    doc.goals.push(goal);
+    return goal;
+  }
+
+  addGoal(householdId: string, week: ISODate, title: string, memberId: string | null = null): Promise<Goal> {
+    return this.mutate((doc) => {
+      const me = this.memberOf(doc, householdId);
+      const monday = requireWeek(week);
+      const clean = goalTitle(title);
+      const person = this.goalPerson(doc, householdId, memberId);
+      if (this.weekGoals(doc, householdId, monday).length >= GOALS_PER_WEEK_MAX) {
+        throw invalidInput(`goals: a week has ${GOALS_PER_WEEK_MAX} at most`);
+      }
+      const goal = this.insertGoal(doc, {
+        household_id: householdId,
+        week: monday,
+        title: clean,
+        member_id: person,
+        done: false,
+        done_by: null,
+        done_at: null,
+        carried_from: null,
+        created_by: me.id,
+        created_at: this.stamp(),
+      });
+      return { ...goal };
+    });
+  }
+
+  renameGoal(id: string, title: string): Promise<void> {
+    return this.mutate((doc) => {
+      const goal = this.goalIn(doc, this.meIn(doc), id);
+      goal.title = goalTitle(title);
+    });
+  }
+
+  setGoalPerson(id: string, memberId: string | null): Promise<void> {
+    return this.mutate((doc) => {
+      const goal = this.goalIn(doc, this.meIn(doc), id);
+      goal.member_id = this.goalPerson(doc, goal.household_id, memberId);
+    });
+  }
+
+  setGoalDone(id: string, done: boolean): Promise<void> {
+    return this.mutate((doc) => {
+      const me = this.meIn(doc);
+      if (typeof done !== 'boolean') throw invalidInput('done');
+      const goal = this.goalIn(doc, me, id);
+      // The same state again keeps the stamp.
+      if (goal.done === done) return;
+      goal.done = done;
+      goal.done_by = done ? me.id : null;
+      goal.done_at = done ? this.stamp() : null;
+    });
+  }
+
+  moveGoal(id: string, index: number): Promise<void> {
+    return this.mutate((doc) => {
+      const me = this.meIn(doc);
+      if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) throw invalidInput('index');
+      const goal = this.goalIn(doc, me, id);
+      // Only this goal's place is decided; the week's places run 0…n-1 again.
+      const week = this.weekGoals(doc, goal.household_id, goal.week).filter((g) => g !== goal);
+      week.splice(Math.min(index, week.length), 0, goal);
+      week.forEach((g, position) => (g.position = position));
+    });
+  }
+
+  deleteGoal(id: string): Promise<void> {
+    return this.mutate((doc) => {
+      const goal = this.goalIn(doc, this.meIn(doc), id);
+      doc.goals = doc.goals.filter((g) => g !== goal);
+      // carried_from: on delete set null.
+      for (const g of doc.goals) if (g.carried_from === goal.id) g.carried_from = null;
+      this.weekGoals(doc, goal.household_id, goal.week).forEach((g, position) => (g.position = position));
+    });
+  }
+
+  bringOverGoals(householdId: string, week: ISODate): Promise<Goal[]> {
+    return this.mutate((doc) => {
+      const me = this.memberOf(doc, householdId);
+      const monday = requireWeek(week);
+      const household = doc.goals.filter((g) => g.household_id === householdId);
+      const at = this.stamp();
+      return toBringOver(household, monday).map((from) => {
+        const goal = this.insertGoal(doc, {
+          household_id: householdId,
+          week: monday,
+          title: from.title,
+          member_id: from.member_id,
+          done: false,
+          done_by: null,
+          done_at: null,
+          carried_from: from.id,
+          created_by: me.id,
+          created_at: at,
+        });
+        return { ...goal };
+      });
+    });
+  }
+
+  goalsLink(householdId: string): Promise<GoalsLink> {
+    return this.mutate((doc) => {
+      const me = this.memberOf(doc, householdId);
+      let link = doc.goal_links.find((l) => l.household_id === householdId);
+      if (!link) {
+        link = { household_id: householdId, token: newGoalsToken(), created_by: me.id, created_at: this.stamp() };
+        doc.goal_links.push(link);
+      }
+      return { token: link.token, created_by: link.created_by, created_at: link.created_at };
+    });
+  }
+
+  stopGoalsLink(householdId: string): Promise<void> {
+    return this.mutate((doc) => {
+      this.memberOf(doc, householdId);
+      doc.goal_links = doc.goal_links.filter((l) => l.household_id !== householdId);
+    });
+  }
+
+  /** No sign-in needed: anyone with the token (this browser's document, in demo mode). */
+  publicGoals(token: string): Promise<PublicGoals | null> {
+    return this.query((doc) => {
+      const link = goalsLinkFor(doc, token);
+      return link ? publicGoalsFor(doc, link.household_id, this.now()) : null;
+    });
+  }
+
+  /**
+   * The demo's goals (GOALS_DEMO): last week's and this week's in the household's time zone,
+   * every stamp in the past and within its week.
+   */
+  private addDemoGoals(doc: DemoDoc, household: HouseholdRow, people: Record<DemoPerson, Member>, now: Date) {
+    const tz = household.timezone;
+    const monday = weekStart(todayIn(tz, now));
+    const made: GoalRow[] = [];
+    GOALS_DEMO.forEach((seed, i) => {
+      const week = shiftWeek(monday, -seed.weeksBack);
+      const start = zonedInstant(week, 0, 0, tz).getTime();
+      const end = zonedInstant(addDays(week, 7), 0, 0, tz).getTime() - 60_000;
+      const created = Math.min(start + i * 60_000, now.getTime());
+      const ticked = seed.done
+        ? Math.max(created, Math.min(now.getTime() - seed.done.hoursAgo * 3_600_000, end, now.getTime()))
+        : null;
+      made[i] = this.insertGoal(doc, {
+        household_id: household.id,
+        week,
+        title: seed.title,
+        member_id: seed.who ? people[seed.who].id : null,
+        done: !!seed.done,
+        done_by: seed.done ? people[seed.done.by].id : null,
+        done_at: ticked === null ? null : new Date(ticked).toISOString(),
+        carried_from: seed.from !== undefined ? (made[seed.from]?.id ?? null) : null,
+        created_by: people.me.id,
+        created_at: new Date(created).toISOString(),
+      });
+    });
+  }
+}
+
+/** A week: its Monday, else invalid_input: week (the goals_week check). */
+function requireWeek(value: ISODate): ISODate {
+  if (!isWeekStart(value)) throw invalidInput('week');
+  return value;
+}
+
+/** A goal's title as stored: trimmed, 1 to TEXT_LIMITS.goalTitle characters. */
+function goalTitle(value: string): string {
+  const title = typeof value === 'string' ? value.trim() : '';
+  if (!title) throw invalidInput('title');
+  return withinLimit(title, TEXT_LIMITS.goalTitle, 'title');
+}
+
+/** The public link with this token, compared in constant time; none for one not shaped like a token. */
+function goalsLinkFor(doc: DemoDoc, token: string): GoalLinkRow | null {
+  if (!isGoalsToken(token)) return null;
+  let found: GoalLinkRow | null = null;
+  // Every link is compared, so the time taken says nothing about where a token differs.
+  for (const link of doc.goal_links) if (sameToken(link.token, token) && !found) found = link;
+  return found;
+}
+
+/**
+ * What a household's public link shows at `now`: the goals of the current week in its time
+ * zone (PublicGoals, publicGoalsOf()). The server answers its public op with this too.
+ */
+export function publicGoalsFor(doc: DemoDoc, householdId: string, now: Date): PublicGoals {
+  const household = doc.households.find((h) => h.id === householdId);
+  const monday = weekStart(todayIn(household?.timezone ?? 'Europe/London', now));
+  const goals = (doc.goals ?? []).filter((g) => g.household_id === householdId);
+  const members = doc.members.filter((m) => m.household_id === householdId);
+  return publicGoalsOf(goals, members, monday);
 }

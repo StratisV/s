@@ -130,6 +130,22 @@ async function serveStatic(dir: string, req: IncomingMessage, res: ServerRespons
   createReadStream(target).pipe(res);
 }
 
+/**
+ * An answer as Vercel's proxy hands it to the browser: it keeps `stale-while-revalidate` and
+ * `stale-if-error` for its own cache and takes them out of Cache-Control, so a browser never
+ * serves itself a stale copy (the goals link's page would show the answer before last).
+ */
+function asVercelProxyWould(response: ApiResponse): ApiResponse {
+  const cacheControl = response.headers['Cache-Control'];
+  if (typeof cacheControl !== 'string' || !/stale-/i.test(cacheControl)) return response;
+  const kept = cacheControl
+    .split(',')
+    .map((d) => d.trim())
+    .filter((d) => !/^stale-(while-revalidate|if-error)=/i.test(d))
+    .join(', ');
+  return { ...response, headers: { ...response.headers, 'Cache-Control': kept } };
+}
+
 function main() {
   const opts = parseArgs(process.argv.slice(2));
   const memory = opts.memory ? new MemoryBlobStore() : null;
@@ -166,7 +182,7 @@ function main() {
         } catch (err) {
           response = errorResponse(err);
         }
-        writeResponse(res, response);
+        writeResponse(res, asVercelProxyWould(response));
         return;
       }
       if (opts.staticDir && (req.method === 'GET' || req.method === 'HEAD')) {

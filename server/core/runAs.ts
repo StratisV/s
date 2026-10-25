@@ -32,6 +32,10 @@ export const HOME_ROW_LIMITS = {
   housekeeping_visits: 3000,
   /** HOUSEKEEPING_SECTIONS_MAX: DemoBackend refuses a 31st section itself; this is the server's cap. */
   housekeeping_sections: 30,
+  /** Every week's goals (GOALS_PER_WEEK_MAX a week): about four years of full weeks. */
+  goals: 10_000,
+  /** One public link per household. */
+  goal_links: 1,
 } as const satisfies Partial<Record<keyof DemoDoc, number>>;
 
 /** Refuses `after` when it grew past a limit (see the top); `beforeSize` is the home's JSON size before. */

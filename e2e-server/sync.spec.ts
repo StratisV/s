@@ -279,7 +279,7 @@ test('people: an emoji, a name, someone added (then invited) and someone removed
   await dialog.getByRole('radiogroup', { name: 'Emoji', exact: true }).getByRole('radio', { name: '🐳' }).click();
   await dialog.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(personRow(dialog, 'Kim')).toHaveText('🐳Kim, Not joined yet');
-  await expectPerson(b, 'Kim, 0 items, not joined yet', SYNC_MS);
+  await expectPerson(b, 'Kim, Not joined yet', SYNC_MS);
 
   // Stratis renames Kim before inviting her.
   await quiet(shea);
@@ -288,7 +288,7 @@ test('people: an emoji, a name, someone added (then invited) and someone removed
   await name.fill('Kim L');
   await name.press('Enter');
   await expect(dialog.getByRole('button', { name: 'Invite Kim L' })).toBeVisible();
-  await expectPerson(b, 'Kim L, 0 items, not joined yet', SYNC_MS);
+  await expectPerson(b, 'Kim L, Not joined yet', SYNC_MS);
 
   // Shea, in her People, sees Kim L too; Stratis removes Kim L, and she is gone there too.
   profile = await openHousehold(b);

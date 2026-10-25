@@ -172,7 +172,7 @@ export async function stratisAndShea(browser: Browser, baseURL: string): Promise
   const shea = await openDevice(browser, baseURL, { signIn: { code: await codeFor(stratis.context, 'Shea') } });
   await expect(homeHeading(shea.page)).toBeVisible();
   // Stratis's phone hears that she joined.
-  await expectPerson(stratis.page, /^Shea, \d+ items?$/, SYNC_MS);
+  await expectPerson(stratis.page, 'Shea', SYNC_MS);
   return { stratis, shea };
 }
 
@@ -211,9 +211,9 @@ export function homeHeading(page: Page): Locator {
   return homeScreen(page).getByRole('heading', { name: 'Home', level: 1 });
 }
 
-/** The Needs attention tab (not its own Needs attention group, a region of that name inside it). */
-export function attentionScreen(page: Page): Locator {
-  return page.getByRole('region', { name: 'Needs attention', exact: true }).first();
+/** The Goals tab ("Goals for the week"). */
+export function goalsScreen(page: Page): Locator {
+  return page.getByRole('region', { name: 'Goals for the week', exact: true });
 }
 
 export function housekeepingScreen(page: Page): Locator {
@@ -346,11 +346,11 @@ export function tabs(page: Page): Locator {
   return page.getByRole('navigation', { name: 'Tabs' });
 }
 
-export type TabName = 'Home' | 'Attention' | 'Housekeeping' | 'Stats';
+export type TabName = 'Home' | 'Goals' | 'Housekeeping' | 'Stats';
 
-const TAB_NAMES: TabName[] = ['Home', 'Attention', 'Housekeeping', 'Stats'];
+const TAB_NAMES: TabName[] = ['Home', 'Goals', 'Housekeeping', 'Stats'];
 
-/** A tab in the tab bar, named with its count or dot after it ("Attention, 2 items", "Housekeeping, new message"). */
+/** A tab in the tab bar, named with its count or dot after it ("Goals, 2 not done", "Housekeeping, new message"). */
 export function tabButton(page: Page, name: TabName): Locator {
   return tabs(page).getByRole('button', { name: new RegExp(`^${name}(,.*)?$`) });
 }
@@ -375,77 +375,58 @@ async function toTab(page: Page, name: TabName): Promise<void> {
   if ((await openTab(page)) !== name) await goToTab(page, name);
 }
 
-/** Needs attention's people menu button, "Show tasks for: Everyone" (or whoever is chosen). */
-export function peopleButton(page: Page): Locator {
-  return attentionScreen(page).getByRole('button', { name: /^Show tasks for: / });
-}
-
-/** Mine, on Needs attention: one tap for only your items. */
-export function mine(page: Page): Locator {
-  return attentionScreen(page).getByRole('button', { name: 'Mine', exact: true });
-}
-
-/** Opens Needs attention's people menu (that tab opened first, if it isn't open); resolves to it. */
-export async function peopleMenu(page: Page): Promise<Locator> {
-  const menu = page.getByRole('menu', { name: 'Show tasks for' });
-  if (!(await menu.isVisible())) {
-    await toTab(page, 'Attention');
-    await peopleButton(page).click();
-  }
-  await expect(menu).toBeVisible();
-  return menu;
-}
-
-/** Looks in the people menu, then closes it and goes back to the tab the phone was on. */
-async function lookInPeopleMenu<T>(page: Page, look: (menu: Locator) => Promise<T>): Promise<T> {
-  const was = await openTab(page);
-  const menu = await peopleMenu(page);
-  try {
-    return await look(menu);
-  } finally {
-    await page.keyboard.press('Escape');
-    await expect(menu).toHaveCount(0);
-    if (was !== 'Attention') await goToTab(page, was);
-  }
+/** The labels of everyone in Household's People, top to bottom ("Stratis, You", "Shea, Not joined yet"). */
+function peopleLabels(dialog: Locator): Promise<string[]> {
+  return people(dialog)
+    .locator('[data-member-row]')
+    .evaluateAll((els) =>
+      els.map((el) => {
+        // As VoiceOver reads the row: without the emoji and the chevron.
+        const copy = el.cloneNode(true) as HTMLElement;
+        copy.querySelectorAll('[aria-hidden="true"], svg').forEach((n) => n.remove());
+        return (copy.textContent ?? '').trim();
+      }),
+    );
 }
 
 /**
- * Someone in the people menu, named as VoiceOver hears them ("Shea, 3 items", "Kim, 0 items,
- * not joined yet"), within `timeout` (another phone's change takes a poll); then the menu
- * closes and the phone goes back to the tab it was on (an area's sheet is closed).
+ * Someone in Household's People on this phone, named as VoiceOver hears their row ("Shea",
+ * "Stratis, You", "Kim, Not joined yet"), within `timeout` (another phone's change takes a
+ * poll); then Household closes, leaving the phone on the tab it was on.
  */
-export async function expectPerson(page: Page, name: string | RegExp, timeout?: number): Promise<void> {
-  await lookInPeopleMenu(page, (menu) =>
-    expect(menu.getByRole('menuitemradio', { name, exact: typeof name === 'string' })).toBeVisible({ timeout }),
-  );
+export async function expectPerson(page: Page, name: string, timeout?: number): Promise<void> {
+  const dialog = await openHousehold(page);
+  // The row's parts are separate boxes, so the name may read "Stratis , You".
+  const named = new RegExp(`^${name.split(', ').map(escapeRe).join('\\s*,\\s*')}$`);
+  await expect(people(dialog).getByRole('button', { name: named })).toBeVisible({ timeout });
+  await closeHousehold(page, dialog);
 }
 
-/** Chooses whose items Needs attention shows from the people menu (and stays there). */
-export async function chooseWho(page: Page, name: string | RegExp): Promise<void> {
-  const menu = await peopleMenu(page);
-  await menu.getByRole('menuitemradio', { name, exact: typeof name === 'string' }).click();
-  await expect(menu).toHaveCount(0);
-}
-
-/** The labels of everyone in the people menu, top to bottom; then as expectPerson() leaves it. */
-export async function peopleInMenu(page: Page): Promise<string[]> {
-  return lookInPeopleMenu(page, (menu) =>
-    menu.getByRole('menuitemradio').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label') ?? '')),
-  );
+/** Everyone in Household's People, as peopleLabels() reads them; then Household closes. */
+export async function peopleInHome(page: Page): Promise<string[]> {
+  const dialog = await openHousehold(page);
+  const labels = await peopleLabels(dialog);
+  await closeHousehold(page, dialog);
+  return labels;
 }
 
 /**
- * Needs attention's list with Later unfolded: every open item in the home (for whoever the
- * people menu shows), one row or tile each. Resolves to the rows.
+ * Every row in every area's sheet (each opened from Home in turn, all of it shown, then
+ * closed): one for each open item in the home, the things looked after included.
  */
-export async function showAllRows(page: Page): Promise<Locator> {
-  await toTab(page, 'Attention');
-  const screen = attentionScreen(page);
-  const list = screen.getByRole('radio', { name: 'List', exact: true });
-  if (!(await list.isChecked())) await list.click();
-  const more = screen.getByRole('button', { name: /^Show \d+ more$/ });
-  while ((await more.count()) > 0) await more.first().click();
-  return screen.locator('[data-item-open]');
+export async function countAllRows(page: Page): Promise<number> {
+  await toTab(page, 'Home');
+  const names = await homeScreen(page)
+    .getByRole('list', { name: 'Areas' })
+    .getByRole('button')
+    .evaluateAll((els) => els.map((el) => (el.getAttribute('aria-label') ?? '').split(',')[0]));
+  let rows = 0;
+  for (const name of names) {
+    const sheet = await inArea(page, name, { all: true });
+    rows += await sheet.locator('[data-item-open]').count();
+    await closeArea(page);
+  }
+  return rows;
 }
 
 export function itemSheet(page: Page, kind: 'Edit item' | 'New item' = 'Edit item'): Locator {
@@ -569,12 +550,42 @@ export function londonDate(days = 0): string {
   return d.toISOString().slice(0, 10);
 }
 
-/**
- * Needs attention's list (one list of cards since round 3; showAllRows() above is from its
- * List / Calendar days): every card it shows for whoever the people menu shows, which is
- * every open item but the things looked after that are Good. Resolves to the cards' buttons.
- */
-export async function showAllCards(page: Page): Promise<Locator> {
-  await toTab(page, 'Attention');
-  return attentionScreen(page).locator('[data-attention-list] [data-item-open]');
+// ── Goals for the week ───────────────────────────────────
+
+/** The week the Goals tab shows (its card; its name a level 2 heading, "This week, 19 to 25 Oct"). */
+export function goalsWeek(page: Page): Locator {
+  return goalsScreen(page).locator('[data-goals-week]');
+}
+
+/** A goal's tick, named by its title, in the week shown. */
+export function goalTick(page: Page, title: string): Locator {
+  return goalsWeek(page).getByRole('checkbox', { name: title, exact: true });
+}
+
+/** A goal's row, in the week shown. */
+export function goalRow(page: Page, title: string): Locator {
+  return goalsWeek(page)
+    .getByRole('listitem')
+    .filter({ has: page.getByRole('checkbox', { name: title, exact: true }) });
+}
+
+/** The titles of the week shown, top to bottom. */
+export function goalTitles(page: Page): Promise<string[]> {
+  return goalsWeek(page)
+    .locator('[data-goal-tick]')
+    .evaluateAll((els) => els.map((el) => el.getAttribute('aria-label') ?? ''));
+}
+
+/** Adds goals to the week shown with Add a Goal, Enter after each; resolves once they show. */
+export async function addGoals(page: Page, ...titles: string[]): Promise<void> {
+  const before = (await goalTitles(page)).length;
+  await goalsWeek(page).getByRole('button', { name: 'Add a Goal', exact: true }).click();
+  for (const title of titles) {
+    const field = goalsWeek(page).getByRole('textbox', { name: 'New goal', exact: true });
+    await expect(field).toBeFocused();
+    await field.fill(title);
+    await field.press('Enter');
+  }
+  await goalsWeek(page).getByRole('textbox', { name: 'New goal', exact: true }).press('Escape');
+  await expect(goalsWeek(page).locator('[data-goal-tick]')).toHaveCount(before + titles.length);
 }

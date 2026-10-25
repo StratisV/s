@@ -5,22 +5,19 @@ import {
   areaCard,
   areaCards,
   areas,
-  attentionScreen,
-  chooseWho,
   closeArea,
   confirmation,
   DEFAULT_AREAS,
   DEMO_STORAGE_KEY,
   expect,
+  goalsWeek,
   goToTab,
   homeScreen,
   itemSheet,
   openArea,
-  openNeedsAttention,
   openItem,
   openProfile,
   openSeeded,
-  peopleButton,
   settled,
   tabButton,
   test,
@@ -402,31 +399,16 @@ test.describe('Opening a shared link', () => {
     await expect(areas(page)).toHaveCount(0);
   });
 
-  test('?area= shows all the area’s items, whoever Needs attention is narrowed to', async ({ page }) => {
+  test('?area= from another tab: Home with the sheet over it; Goals is as it was', async ({ page }) => {
     await openSeeded(page);
-    const hallway = (await ids(page)).area('Hallway');
-    // Hallway's only item is Shea's.
-    await openNeedsAttention(page);
-    await chooseWho(page, /^Unassigned,/);
-    await page.goto(`/?area=${hallway}`);
-    await settled(area(page, 'Hallway').getByRole('button', { name: 'Close', exact: true }));
-    await expect(area(page, 'Hallway').getByRole('button', { name: 'Mark Heaters not working as done' })).toBeVisible();
-    // Needs attention keeps its own choice.
-    await closeArea(page);
-    await goToTab(page, 'Attention');
-    await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Unassigned');
-  });
-
-  test('?area= from another tab: Home with the sheet over it; Needs attention is as it was', async ({ page }) => {
-    await openSeeded(page);
-    await openNeedsAttention(page);
+    await goToTab(page, 'Goals');
     const garden = (await ids(page)).area('Garden');
     await page.goto(`/?area=${garden}`);
     await settled(area(page, 'Garden').getByRole('button', { name: 'Close', exact: true }));
     await expect(tabButton(page, 'Home')).toHaveAttribute('aria-current', 'page');
     await closeArea(page);
-    await goToTab(page, 'Attention');
-    await expect(attentionScreen(page).locator('[data-attention-list] li').first()).toBeVisible();
+    await goToTab(page, 'Goals');
+    await expect(goalsWeek(page).locator('[data-goal-tick]').first()).toBeVisible();
   });
 
   test('a link to an item this home does not have only says so', async ({ page }) => {

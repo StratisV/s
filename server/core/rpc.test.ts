@@ -41,6 +41,15 @@ const REAL: { [M in RpcMethod]: unknown[][] } = {
   saveHousekeepingVisit: [[H, '2026-10-09', { comments: 'Lovely' }], [H, '2026-10-09', { price_pence: 4500 }], [H, '2026-10-09', { price_pence: null }]],
   addHousekeepingVisit: [[H, '2026-10-01']],
   deleteHousekeepingVisit: [[ID]],
+  addGoal: [[H, '2026-10-05', 'Book the boiler service'], [H, '2026-10-05', 'Book the boiler service', ID], [H, '2026-10-12', 'x', null]],
+  renameGoal: [[ID, 'Book the boiler service for Friday']],
+  setGoalPerson: [[ID, ID], [ID, null]],
+  setGoalDone: [[ID, true], [ID, false]],
+  moveGoal: [[ID, 0], [ID, 4]],
+  deleteGoal: [[ID]],
+  bringOverGoals: [[H, '2026-10-05']],
+  goalsLink: [[H]],
+  stopGoalsLink: [[H]],
 };
 
 function refused(method: RpcMethod, args: unknown, path?: string) {

@@ -15,12 +15,12 @@ amber is **Within the month**, green is **Not urgent**. For a To maintain item i
 condition it is in: **Needs work**, **Okay** or **Good**. The Item sheet says what each one
 means under it ("Needs doing now", "Fine for now, keep an eye on it").
 
-- **Four tabs** along the bottom, in a floating bar of frosted glass: **Home**, **Needs
-  attention** (called **Attention** in the bar, with a red count of what needs attention),
-  **Housekeeping** (a dot for a new message) and **Stats**. The phone reopens on the tab last
-  open.
+- **Four tabs** along the bottom, in a bar of frosted glass docked on the bottom edge:
+  **Home**, **Goals** (Goals for the week, with a red count of this week's goals not done
+  yet), **Housekeeping** (a dot for a new message) and **Stats**. The phone reopens on the tab
+  last open.
 - **Home**: the hero, then one plain sentence on what needs doing ("2 things need attention
-  and 1 is due today. Everything else can wait."), which opens Needs attention when tapped.
+  and 1 is due today. Everything else can wait.").
   Then the areas of the house, two to a row, one card each with its own drawing of the room (a
   pot steaming in the kitchen, the green duck in the bath, a robin on the garden fence; each
   in its own colours, so no two look alike, and by lamplight in dark mode), its name, how it
@@ -30,39 +30,43 @@ means under it ("Needs doing now", "Fine for now, keep an eye on it").
   picture, its name, how it is (the same words) and who is on it, **Add Item** and **Share
   Room**, then its jobs, most urgent first (three, then "Show 2 more"), and the things it
   looks after.
-- **Needs attention**: the same sentence, whose items show (**Mine** in one tap, or anyone
-  from the people menu: Everyone, you, each person or Unassigned, with how many each has; the
-  phone remembers the choice; with someone chosen the sentence says so: "For Shea, 1 thing
-  needs attention."), then every area's items in one list in priority order, with no headings:
-  anything late (the most late first), urgent or needing work; then what is due today; the
-  next 7 days, in date order; later ones, the most urgent first; ones with no date; and last
-  the things looked after that are Okay. Things looked after that are Good stay in their
-  area's sheet.
 
-  Each item is a card of its own: its area's drawing as a small picture, its title (two lines
-  at most), its urgency in words and when it is due ("Tomorrow", "In 4 days", "2 days late" in
-  red), then its area and who it is for (their emoji and first name), and a plain grey ring at
-  the end: tap it to tick the job off (the title is struck through for a moment, then the
-  card folds away, with Undo there at once for 8 seconds, and "Done. Next one in 8 weeks" for
-  a job that repeats). **Urgent** is a red pill, the loudest thing on a card; **Within the
-  month** is amber words; **Not urgent** grey words. A thing looked after has a small gauge
-  instead of a ring (three bars for Good, two for Okay, one for Needs work). In an area's
-  sheet each item is a row with the same words. Add an item with the round + just above the
-  tab bar on the right, or with **Add Item** in an area's sheet. A new job has no due date
-  until someone gives it one, so nothing turns "late" by itself. Once saved, the app shows
-  where it went: on Home its area's card lights up for a moment; in an area's sheet its row
-  does, with any "Show N more" over it opened; on Needs attention its card does, brought up
-  clear of the + and the tab bar. One saved into another area than the sheet open, or a thing
-  in good shape saved over Needs attention, says where it went ("Saved in Hallway."). For
-  someone the person filter hides, Needs attention shows everyone's for that visit only (Mine
-  stays the choice it opens on).
+  In an area's sheet each item is a row: its title (two lines at most), its urgency in words
+  and when it is due ("Tomorrow", "In 4 days", "2 days late" in red), who it is for (their
+  emoji and first name), and a plain grey ring: tap it to tick the job off (the title is
+  struck through for a moment, then the row folds away, with Undo there at once for 8
+  seconds, and "Done. Next one in 8 weeks" for a job that repeats). **Urgent** is the loudest
+  word; **Within the month** is amber; **Not urgent** grey. A thing looked after has a small
+  gauge instead of a ring (three bars for Good, two for Okay, one for Needs work). Add an item
+  with the round + just above the tab bar on the right, or with **Add Item** in an area's
+  sheet. A new job has no due date until someone gives it one, so nothing turns "late" by
+  itself. Once saved, the app shows where it went: on Home its area's card lights up for a
+  moment; in an area's sheet its row does, with any "Show N more" over it opened. One saved
+  into another area than the sheet open says where it went ("Saved in Hallway.").
+- **Goals for the week**: the home's shared list for the week, Monday to Sunday in the home's
+  time zone. It opens on this week ("This week, 5 to 11 Oct", and how many are done), with
+  arrows to the weeks before and after. Anyone at home can add a goal (**Add a Goal**; Enter
+  adds it and starts the next), rename it in place, choose who is on it, tick it off (it then
+  says who ticked it and when) or untick it, move it (drag its grip, use the arrow keys, or
+  Move Up and Move Down in its "…" menu) and delete it, after a question. When this week is
+  empty and last week has goals not done, **Bring over 2 from last week** copies them in. A
+  week holds up to 50 goals, each up to 120 characters. Ticking the last one of the week sets
+  off the confetti.
+
+  **Share** gives the home one public link (`https://<your app>/?goals=<token>`), sent with
+  the phone's share sheet (WhatsApp is one tap) or copied. Anyone with it sees the current
+  week, read-only and without signing in: the house, "Goals for the week", the dates, and
+  each goal with its tick and who is on it (first name and emoji). Nothing else of the home.
+  The page keeps itself up to date (it asks again every minute while it is open). **Turn Off
+  Link** ends it: the old link then says "This link is no longer active", and a new link can
+  be made later.
 - **Dark mode**: the whole app follows the phone's appearance (the hero keeps its own sky).
 - **The hero**: Home opens on an illustration that runs to the very top of the screen: the
   house in its garden, with a green duck and a brown hedgehog, under the sky as it is in London
   right now (sunrise, daytime, sunset, dusk or a starry night). The other tabs keep a slim band
   of that sky at the top, over a large title and the profile button.
 - **Housekeeping**: the weekly visit by the housekeeper (a household member like everyone
-  else). Today's date over the title, as on Home. Under the title, the calendar Needs attention uses: this
+  else). Today's date over the title, as on Home. Under the title, the app's calendar: this
   week as a strip (or the whole month, with each month's total), a blue dot on the days the
   housekeeper came, a line on how today's visit is going, and **Today** to come back. Then a
   message for the housekeeper, then the day chosen in the calendar: its tasks as a stack of
@@ -111,8 +115,9 @@ npm run dev
 
 Open http://localhost:5173. Without Supabase settings the app runs in **demo mode**:
 sign-in is simulated and data stays in your browser. Add `?demo-seed=1` to the URL to jump
-straight into a household filled with example data (with a few extra jobs, so Needs attention
-has something due today and a busy week), or `?demo-reset=1` to start over.
+straight into a household filled with example data (with a few extra jobs, so there is
+something due today and a busy week, and goals for last week and this one), or
+`?demo-reset=1` to start over.
 
 ## Server mode: shared on every phone, nothing to set up
 
@@ -408,14 +413,21 @@ People can be in the home before they join (**Not joined yet**):
   emoji and the Google email they will sign in with), give them items, and set, change or
   clear their email. Each email belongs to one person in the home.
 - Until they sign in, such a person has no account: they give nobody access, get no
-  notifications or weekly email. Their items show on Home, in the
-  person filter and in Stats like anyone else's.
+  notifications or weekly email. Their items show on Home, on goals and in Stats like anyone
+  else's.
 - When they sign in with Google using that email (Google must have verified it), they become
   that person, keeping the name, emoji, items and Stats set up for them. Within a day they can
   say it isn't them (**Not Shea?**): the person waits to join again, without that email.
 - Anyone can remove a person who has not joined yet; their items become unassigned, and what
   they did leaves Stats (the confirmation says how many). Someone who has joined can't be
   removed from the app.
+
+Goals for the week follow the household rule too: anyone at home can add, rename, tick,
+untick, move and delete any goal, in any week, and make or turn off the public link. The
+public link is the one way in from outside: anyone with it sees this week's goals (titles,
+ticks, and the first name and emoji of who is on each), and nothing else. Its token is 128
+random bits, so it can't be guessed; turning it off ends it for good (a copy kept at the edge
+can still show the week for a minute or so).
 
 Housekeeping follows the household rule. The housekeeper joins like anyone else, and everyone
 can change the message for the housekeeper, the task list, any visit's ticks, comments and
@@ -426,5 +438,6 @@ ticking at the same time never undo each other's ticks.
 People outside the household can't see or change any of it. Someone new joins by signing in
 with Google using the email someone at home added for them, or with an invite link (valid for
 14 days); in server mode, with a code someone at home made for them (single use, valid 7 days). Anyone else who signs in sees "This home is private" and nothing of the home. A shared
-item or area link opens the item or area only for people in the household. The text of a shared
+item or area link opens the item or area only for people in the household (the goals link is
+the exception, above). The text of a shared
 message can be read by whoever it was sent to.

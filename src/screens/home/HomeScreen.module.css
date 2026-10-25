@@ -1,5 +1,5 @@
 /*
- * Home (HomeScreen.tsx) and Needs attention (NeedsAttentionScreen.tsx, UpNextView.tsx). One
+ * Home (HomeScreen.tsx), and the parts of an area's sheet it shares (ShowMore, the cards). One
  * page gutter: cards sit 16px in, text 20px in. One accent (the tint) for what can be tapped;
  * colour otherwise only where it means something (Urgent, Within the month, a late date, a
  * condition, an area's status).
@@ -14,7 +14,7 @@
  */
 .summary {
   margin: 0;
-  padding: 10px 20px 0;
+  padding: 2px 20px 4px;
   font-size: 20px;
   line-height: 25px;
   font-weight: 600;
@@ -23,40 +23,8 @@
   text-wrap: pretty;
 }
 
-/* Focused (tabIndex -1) when the last card is ticked off from the keyboard. */
-.summary:focus:not(:focus-visible) {
-  outline: none;
-}
-
-.summary:focus-visible {
-  outline-offset: -2px;
-  border-radius: 14px;
-}
-
 .summaryLead {
   color: var(--label);
-}
-
-/* On Home the sentence is one button: a tap opens Needs attention (the chevron says so). */
-.summaryButton {
-  composes: summary;
-  display: block;
-  width: 100%;
-  padding: 2px 20px 4px;
-  text-align: left;
-  -webkit-tap-highlight-color: transparent;
-  transition: opacity 0.15s ease;
-}
-
-.summaryButton:active {
-  opacity: 0.55;
-}
-
-.summaryChevron {
-  display: inline-block;
-  margin-left: 6px;
-  vertical-align: 0;
-  color: var(--tint);
 }
 
 .summaryRest {
@@ -71,23 +39,6 @@
   line-height: 18px;
   letter-spacing: -0.08px;
   color: var(--label-secondary);
-}
-
-/* ── Whose items (Mine, the people menu) ───────────────── */
-
-.controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 16px 16px 0;
-}
-
-/* ── The list (Needs attention): a card for each item ──── */
-
-.items {
-  list-style: none;
-  margin: 0;
-  padding: 16px 16px 0;
 }
 
 /* "Show 6 more" under a folded list (an area's To dos), lined up with the titles above it. */
@@ -136,40 +87,6 @@
 
 .more[aria-expanded='true'] .moreChevron {
   transform: rotate(180deg);
-}
-
-/* ── Nothing to show: one card ─────────────────────────── */
-
-.clear {
-  margin: 16px 16px 0;
-  padding: 22px 20px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  background: var(--card);
-  border-radius: var(--r-card);
-}
-
-.clearIcon {
-  flex: none;
-  color: var(--rag-green);
-}
-
-.clearText {
-  margin: 0;
-  font-size: 15px;
-  line-height: 20px;
-  letter-spacing: -0.2px;
-  color: var(--label-secondary);
-}
-
-.clearText strong {
-  display: block;
-  font-size: 17px;
-  line-height: 22px;
-  font-weight: 600;
-  letter-spacing: -0.4px;
-  color: var(--label);
 }
 
 /* ── Areas (Home): two cards to a row ──────────────────── */
@@ -281,8 +198,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .moreChevron,
-  .summaryButton {
+  .moreChevron {
     transition: none;
   }
 

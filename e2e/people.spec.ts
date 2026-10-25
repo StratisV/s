@@ -1,21 +1,20 @@
 import {
   areas,
-  attentionScreen,
   closeArea,
   closeProfile,
   confirmation,
   DEMO_STORAGE_KEY,
   expect,
+  goalsWeek,
   goToTab,
   homeScreen,
   meta,
   NOW,
-  openArea,
   openItem,
   openProfile,
   openSeeded,
-  peopleButton,
   reopen,
+  ring,
   rowButton,
   settled,
   showItem,
@@ -96,12 +95,17 @@ async function assign(page: Page, title: string, option: string): Promise<void> 
   await expect(sheet).toHaveCount(0);
 }
 
-/** Opens Needs attention's people menu ("Show tasks for"); resolves to the menu. */
+/** The goal on Goals whose "Who’s on it" menu lists everyone at home. */
+const GOAL = 'Plan Saturday’s dinner';
+
+/** Opens the "Who’s on it" menu of a goal this week, on Goals; resolves to the menu. */
 async function peopleMenu(page: Page): Promise<Locator> {
   if (await areas(page).count()) await closeArea(page);
-  if ((await tabButton(page, 'Attention').getAttribute('aria-current')) !== 'page') await goToTab(page, 'Attention');
-  await peopleButton(page).click();
-  const menu = page.getByRole('menu', { name: 'Show tasks for' });
+  if ((await tabButton(page, 'Goals').getAttribute('aria-current')) !== 'page') await goToTab(page, 'Goals');
+  await goalsWeek(page)
+    .getByRole('button', { name: new RegExp(`^(Choose who is on|On it: .*\\. Change who is on) ${GOAL}$`) })
+    .click();
+  const menu = page.getByRole('menu', { name: 'Who’s on it' });
   await expect(menu).toBeVisible();
   return menu;
 }
@@ -195,24 +199,16 @@ test.describe('People before they join', () => {
     await expect(who(page, 'Kitchen paper')).toHaveText('🐳Robin');
     await expect(meta(page, 'Kitchen paper')).toHaveText('Not urgent·In 4 weeks');
 
-    // In the people menu like anyone else, saying so (VoiceOver hears "not joined yet").
-    const menu = await peopleMenu(page);
-    const robin = menu.getByRole('menuitemradio', { name: 'Robin, 1 item, not joined yet' });
-    await expect(robin).toHaveText(/Robin.*Not joined yet.*1 open$/);
-    await robin.click();
-    await expect(peopleButton(page)).toHaveAccessibleName('Show tasks for: Robin');
-    await expect(attentionScreen(page).getByRole('button', { name: /^Kitchen paper ?, / })).toBeVisible();
-    await expect(attentionScreen(page).locator('[data-item-open]')).toHaveCount(1);
-    // One person's items: the rows leave who out.
-    await expect(attentionScreen(page).locator('[data-who]')).toHaveCount(0);
-
     // Done for Robin: credited to Robin. Monthly, so next on Sat 5 Dec.
-    await attentionScreen(page).getByRole('button', { name: 'Mark Kitchen paper as done', exact: true }).click();
-    await expect(attentionScreen(page).locator('[data-item-open]').filter({ hasText: 'In 8 weeks' })).toHaveCount(1);
-    await goToTab(page, 'Home');
-    await openArea(page, 'Kitchen');
+    await showItem(page, 'Kitchen paper');
+    await ring(page, 'Kitchen paper').click();
     await expect(meta(page, 'Kitchen paper')).toHaveText('Not urgent·In 8 weeks');
     await closeArea(page);
+
+    // On a goal like anyone else.
+    const menu = await peopleMenu(page);
+    await menu.getByRole('menuitemradio', { name: 'Robin' }).click();
+    await expect(goalsWeek(page).getByRole('button', { name: `On it: Robin. Change who is on ${GOAL}` })).toHaveText('🐳Robin');
     await goToTab(page, 'Stats');
     await expect(
       statsScreen(page).getByRole('list', { name: 'Done per person' }).getByRole('listitem').last(),
@@ -313,7 +309,7 @@ test.describe('People on two phones', () => {
     await expect(async () => {
       const menu = await peopleMenu(other);
       try {
-        await expect(menu.getByRole('menuitemradio', { name: /^Robin, 0 items, not joined yet$/ })).toBeVisible({ timeout: 1_000 });
+        await expect(menu.getByRole('menuitemradio', { name: 'Robin' })).toBeVisible({ timeout: 1_000 });
       } finally {
         await other.keyboard.press('Escape');
         await expect(menu).toHaveCount(0);

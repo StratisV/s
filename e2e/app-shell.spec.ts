@@ -1,18 +1,18 @@
 import {
   areaCard,
   areaCards,
-  attentionScreen,
   closeArea,
   closeProfile,
   confirmation,
   expect,
+  goalsScreen,
   goToTab,
   homeScreen,
   itemSheet,
   NOW,
   openArea,
-  openNeedsAttention,
   openFresh,
+  openGoals,
   openItem,
   openNewItem,
   openProfile,
@@ -143,11 +143,11 @@ test.describe('App shell', () => {
     const card = (await areaCards(page).last().boundingBox())!;
     const add = (await addButton(page).boundingBox())!;
     expect(card.y + card.height).toBeLessThanOrEqual(add.y);
-    // Needs attention's list too: its last card.
-    await openNeedsAttention(page);
-    await toBottom(attentionScreen(page));
-    const last = (await attentionScreen(page).locator('[data-item-open]').last().boundingBox())!;
-    expect(last.y + last.height).toBeLessThanOrEqual((await addButton(page).boundingBox())!.y);
+    // Goals too (no round + there): Add a Goal clear of the tab bar.
+    await openGoals(page);
+    await toBottom(goalsScreen(page));
+    const addGoal = (await goalsScreen(page).getByRole('button', { name: 'Add a Goal' }).boundingBox())!;
+    expect(addGoal.y + addGoal.height).toBeLessThanOrEqual((await tabs(page).boundingBox())!.y);
   });
 
   test('the tab bar sits on the foot of every tab, flush with the bottom edge and full width, and stays there as pages scroll', async ({ page }) => {
@@ -167,7 +167,7 @@ test.describe('App shell', () => {
     const add = (await addButton(page).boundingBox())!;
     expect(Math.round(add.x + add.width)).toBe(402 - 16);
     expect(add.y + add.height).toBeLessThanOrEqual(874 - 56 - 8);
-    for (const name of ['Attention', 'Housekeeping', 'Stats'] as TabName[]) {
+    for (const name of ['Goals', 'Housekeeping', 'Stats'] as TabName[]) {
       await goToTab(page, name);
       expect(await at(), name).toEqual([0, 874, 402, 56]);
       // Each tab keeps Profile in reach, at the top right.
@@ -178,7 +178,7 @@ test.describe('App shell', () => {
 
   test('the open tab is in the tint, on a soft highlight; every tab a target of 44 by 44 or more', async ({ page }) => {
     await openSeeded(page);
-    for (const name of ['Home', 'Attention', 'Housekeeping', 'Stats'] as TabName[]) {
+    for (const name of ['Home', 'Goals', 'Housekeeping', 'Stats'] as TabName[]) {
       await goToTab(page, name);
       const open = tabButton(page, name);
       await expect(open).toHaveCSS('color', 'rgb(0, 122, 255)');
@@ -312,8 +312,8 @@ for (const width of [320, 375]) {
       await page.keyboard.press('Escape');
       await expect(itemSheet(page)).toHaveCount(0);
       await closeArea(page);
-      await openNeedsAttention(page);
-      await noSideways('Needs attention');
+      await openGoals(page);
+      await noSideways('Goals');
       await goToTab(page, 'Stats');
       await noSideways('Stats');
       await goToTab(page, 'Housekeeping');

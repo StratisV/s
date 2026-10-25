@@ -110,7 +110,7 @@
   color: var(--tint-text);
 }
 
-/* How many things need attention, on Attention: white on red (4.5:1), over the symbol's corner. */
+/* How many of this week's goals are not done, on Goals: white on red (4.5:1), over the symbol's corner. */
 .badge {
   position: absolute;
   top: -5px;

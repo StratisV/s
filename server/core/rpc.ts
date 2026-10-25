@@ -141,6 +141,16 @@ export const RPC_ARGS: { [M in RpcMethod]: ArgSpec[] } = {
   ],
   addHousekeepingVisit: [id, date],
   deleteHousekeepingVisit: [id],
+  // Goals for the week: a week is a date (DemoBackend refuses one that is not a Monday).
+  addGoal: [id, date, text, opt(nullable(id))],
+  renameGoal: [id, text],
+  setGoalPerson: [id, nullable(id)],
+  setGoalDone: [id, bool],
+  moveGoal: [id, PLACE],
+  deleteGoal: [id],
+  bringOverGoals: [id, date],
+  goalsLink: [id],
+  stopGoalsLink: [id],
 };
 
 /** Whether `method` is in the allow-list (an own key of RPC_ARGS, so never 'constructor' and the like). */
