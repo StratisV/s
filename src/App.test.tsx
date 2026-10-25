@@ -221,7 +221,7 @@ describe('a shared area link', () => {
 describe('tab bar', () => {
   it('has Home, Goals, Housekeeping and Stats at the foot; the + is on Home and Stats', async () => {
     await setup();
-    await within(tabBar()).findByRole('button', { name: 'Attention, 2 items' });
+    await within(tabBar()).findByRole('button', { name: 'Goals, 2 not done' });
     expect(
       within(tabBar())
         .getAllByRole('button')

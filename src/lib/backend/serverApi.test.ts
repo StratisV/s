@@ -75,8 +75,8 @@ describe('the RPC allow-list', () => {
     const allowed = Object.keys(RPC_METHODS);
     const not = Object.keys(NOT_RPC);
     expect(allowed.filter((m) => not.includes(m))).toEqual([]);
-    expect(allowed).toHaveLength(38);
-    expect(not).toHaveLength(19);
+    expect(allowed).toHaveLength(39);
+    expect(not).toHaveLength(18);
   });
 
   it('still takes what an app from before sections sends, so a phone that kept the old page open after an update works', () => {
