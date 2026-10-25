@@ -18,6 +18,20 @@ html {
   text-size-adjust: 100%;
 }
 
+/*
+ * iOS 26 gives an app opened from the Home Screen a viewport shorter than the screen by the
+ * status bar's height when it uses viewport-fit=cover and the black-translucent status bar
+ * (WebKit bug 301108), so everything fixed to the foot, the tab bar included, stopped about
+ * 59pt above the bottom edge. Asking for a document as tall as the screen makes WebKit hand
+ * over the full viewport; min() keeps it from scrolling where the viewport is already full
+ * (it then computes to 100%). Safari tabs, Android and desktop are not in standalone mode.
+ */
+@media (display-mode: standalone) {
+  html {
+    min-height: min(100lvh, calc(100% + env(safe-area-inset-top, 0px)));
+  }
+}
+
 body {
   background: var(--bg);
   color: var(--label);
