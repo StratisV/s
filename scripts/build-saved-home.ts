@@ -87,15 +87,13 @@ writeFileSync(process.argv[2], JSON.stringify(JSON.parse(raw), null, 1) + '\n');
 const final = await b.load(hid);
 console.log('areas', final.areas.length, 'items', final.items.length, 'people', final.members.map((m) => `${m.emoji} ${m.name}`).join(', '));
 
-// Keep only this home: Stratis and Shea (not joined yet), no sample history, chat or visits.
+// Keep only this home: Stratis and Shea (not joined yet), no sample history or visits.
 const doc = JSON.parse(raw);
 const keepShea = doc.members.find((m: { name: string; user_id: string | null }) => m.name === 'Shea' && m.user_id === null).id;
 const keep = new Set([stratis, keepShea]);
 doc.members = doc.members.filter((m: { id: string }) => keep.has(m.id));
 doc.users = doc.users.filter((u: { id: string }) => u.id === 'demo-user-stratis');
 doc.completions = [];
-doc.messages = [];
-doc.message_reactions = [];
 doc.housekeeping_visits = [];
 doc.housekeeping_visit_tasks = [];
 doc.housekeeping_notes = doc.housekeeping_notes.map((n: object) => ({ ...n, body: '', updated_at: null, updated_by: null }));

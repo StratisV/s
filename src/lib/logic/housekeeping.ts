@@ -24,9 +24,9 @@ import type {
   ISOTimestamp,
   Member,
 } from '../types';
-import { senderOf, stampLabel, timeOf } from './chat';
 import { formatDay, zonedParts } from './dates';
 import { fullDay, monthOf, type YearMonth } from './months';
+import { senderOf, stampLabel, timeOf } from './stamps';
 
 // The month grid's helpers live in ./months (Needs attention's calendar shares them); Housekeeping
 // keeps exporting them under the names it has always had.
@@ -739,7 +739,7 @@ function who(memberId: string | null, members: Member[]): string {
   return `${emoji} ${name}`;
 }
 
-/** "Today 10:42", "Yesterday 19:20", "Thu 1 Oct 10:05" (chat's stampLabel()). */
+/** "Today 10:42", "Yesterday 19:20", "Thu 1 Oct 10:05" (stampLabel()). */
 function when(ts: ISOTimestamp, timeZone: string, now: Date): string {
   const { day, time } = stampLabel(ts, timeZone, now);
   return `${day} ${time}`;
@@ -749,7 +749,7 @@ function when(ts: ISOTimestamp, timeZone: string, now: Date): string {
  * Under the visit: `'Recorded by 🦊 Ela · Today 10:42'` (created_by, created_at), then,
  * when someone changed it later, `' · Updated by 🦆 Shea · Today 11:05'` (updated_by,
  * updated_at; left out when updated_at is within a minute of created_at). Days and times
- * as chat's stampLabel() ('Today', 'Yesterday', 'Thu 1 Oct'), names as senderOf() (a gone
+ * as stampLabel() ('Today', 'Yesterday', 'Thu 1 Oct'), names as senderOf() (a gone
  * member reads 'Former member' with 👤).
  * Tests: recorded only; recorded and updated by someone else; updated by the same person
  * later (still shown); updated within the minute (left out); a former member; yesterday and

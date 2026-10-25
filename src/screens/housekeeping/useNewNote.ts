@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { timeOf } from '../../lib/logic/chat';
 import { hasNewNote } from '../../lib/logic/housekeeping';
+import { timeOf } from '../../lib/logic/stamps';
 import type { ISOTimestamp } from '../../lib/types';
 import { useHousehold } from '../../state/HomeProvider';
 
@@ -26,8 +26,7 @@ function storeSeen(memberId: string, ts: ISOTimestamp) {
 /**
  * Whether the Housekeeping tab gets its dot: a message for the housekeeper written or
  * changed by someone else since this member last had the tab open on this device
- * (hasNewNote()), like Chat's unread dot. While the tab is open, the message on it counts
- * as seen.
+ * (hasNewNote()). While the tab is open, the message on it counts as seen.
  */
 export function useNewNote(tabOpen: boolean): boolean {
   const { data, me } = useHousehold();

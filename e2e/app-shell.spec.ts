@@ -167,22 +167,18 @@ test.describe('App shell', () => {
     const add = (await addButton(page).boundingBox())!;
     expect(Math.round(add.x + add.width)).toBe(402 - 16);
     expect(add.y + add.height).toBeLessThanOrEqual(874 - 56 - 8);
-    for (const name of ['Attention', 'Chat', 'Housekeeping', 'Stats'] as TabName[]) {
+    for (const name of ['Attention', 'Housekeeping', 'Stats'] as TabName[]) {
       await goToTab(page, name);
       expect(await at(), name).toEqual([0, 874, 402, 56]);
       // Each tab keeps Profile in reach, at the top right.
       const profile = (await page.getByRole('button', { name: 'Profile', exact: true }).boundingBox())!;
       expect(profile.y, name).toBeLessThan(60);
     }
-    // Chat's composer floats over the bar.
-    await goToTab(page, 'Chat');
-    const composer = (await page.getByRole('form', { name: 'New message' }).boundingBox())!;
-    expect(composer.y + composer.height).toBeLessThanOrEqual(874 - 56);
   });
 
   test('the open tab is in the tint, on a soft highlight; every tab a target of 44 by 44 or more', async ({ page }) => {
     await openSeeded(page);
-    for (const name of ['Home', 'Attention', 'Chat', 'Housekeeping', 'Stats'] as TabName[]) {
+    for (const name of ['Home', 'Attention', 'Housekeeping', 'Stats'] as TabName[]) {
       await goToTab(page, name);
       const open = tabButton(page, name);
       await expect(open).toHaveCSS('color', 'rgb(0, 122, 255)');
@@ -197,7 +193,7 @@ test.describe('App shell', () => {
           return Math.abs(h.x - box.x) + Math.abs(h.width - box.width);
         })
         .toBeLessThan(1);
-      for (const other of ['Home', 'Chat', 'Stats'] as TabName[]) {
+      for (const other of ['Home', 'Housekeeping', 'Stats'] as TabName[]) {
         if (other !== name) await expect(tabButton(page, other)).toHaveCSS('color', 'rgb(28, 28, 30)');
       }
     }
@@ -320,13 +316,8 @@ for (const width of [320, 375]) {
       await noSideways('Needs attention');
       await goToTab(page, 'Stats');
       await noSideways('Stats');
-      await goToTab(page, 'Chat');
-      await expect(page.getByRole('log', { name: 'Messages' }).getByRole('article').first()).toBeVisible();
-      await noSideways('Chat');
-      // The composer fits.
-      const composer = (await page.getByRole('form', { name: 'New message' }).boundingBox())!;
-      expect(composer.x).toBeGreaterThanOrEqual(0);
-      expect(composer.x + composer.width).toBeLessThanOrEqual(width);
+      await goToTab(page, 'Housekeeping');
+      await noSideways('Housekeeping');
       const dialog = await openProfile(page);
       await noSideways('Profile');
       await dialog.getByRole('button', { name: /^Household/ }).click();

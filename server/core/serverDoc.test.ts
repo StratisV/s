@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { emptyDoc } from '../../src/lib/backend/demo';
-import { chatFingerprint, homeBlobPath, newServerDoc, parseServerDoc, serialiseServerDoc, usageMonth } from './serverDoc';
+import { homeBlobPath, newServerDoc, parseServerDoc, serialiseServerDoc, usageMonth } from './serverDoc';
 
 const NOW = new Date('2026-10-09T11:00:00.000Z');
 
@@ -8,7 +8,8 @@ describe('the stored document', () => {
   it('starts at rev 1 with the home at rest and no sign-in data', () => {
     const home = { ...emptyDoc(), session: 'someone', users: [{ id: 'someone', email: '', name: 'X' }] };
     const doc = newServerDoc(home, NOW);
-    expect(doc).toMatchObject({ format: 'homeos.server/1', rev: 1, chatRev: 1, auth: { devices: [], codes: [] } });
+    expect(doc).toMatchObject({ format: 'homeos.server/1', rev: 1, auth: { devices: [], codes: [] } });
+    expect(doc).not.toHaveProperty('chatRev');
     expect(doc.home.session).toBeNull();
     expect(doc.home.users).toEqual([]);
     expect(doc.meta).toEqual({ createdAt: NOW.toISOString(), writes: [], usage: { month: '2026-10', puts: 0, reads: 0 } });
@@ -33,13 +34,15 @@ describe('the stored document', () => {
     expect(() => parseServerDoc(JSON.stringify({ ...doc, home: { ...doc.home, housekeeping_sections: {} } }))).toThrow();
   });
 
-  it('fingerprints only the chat', () => {
-    const home = emptyDoc();
-    const before = chatFingerprint(home);
-    home.items.push({} as never);
-    expect(chatFingerprint(home)).toBe(before);
-    home.message_reactions.push({ message_id: 'm', member_id: 'p', household_id: 'h', emoji: '👍', created_at: NOW.toISOString() });
-    expect(chatFingerprint(home)).not.toBe(before);
+  it('reads a document from when there was a chat as it is: its chatRev and the home’s messages stay', () => {
+    const doc = newServerDoc(emptyDoc(), NOW);
+    const message = { id: 'm', household_id: 'h', member_id: null, body: 'Hi', created_at: NOW.toISOString() };
+    const reaction = { message_id: 'm', member_id: 'p', household_id: 'h', emoji: '👍', created_at: NOW.toISOString() };
+    const old = { ...doc, chatRev: 4, home: { ...doc.home, messages: [message], message_reactions: [reaction] } };
+    const body = JSON.stringify(old);
+    const parsed = parseServerDoc(body);
+    expect(parsed).toEqual(old);
+    expect(serialiseServerDoc(parsed)).toBe(body);
   });
 
   it('keeps each Vercel environment in its own blob', () => {

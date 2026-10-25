@@ -69,8 +69,8 @@ export async function devicesOf(context: BrowserContext): Promise<{ id: string; 
   return devices;
 }
 
-/** The home's rev and chatRev now (GET version, as `context`'s person). */
-export async function version(context: BrowserContext): Promise<{ rev: number; chatRev: number }> {
+/** The home's rev now (GET version, as `context`'s person). */
+export async function version(context: BrowserContext): Promise<{ rev: number }> {
   return apiGet(context.request, 'version');
 }
 
@@ -216,10 +216,6 @@ export function attentionScreen(page: Page): Locator {
   return page.getByRole('region', { name: 'Needs attention', exact: true }).first();
 }
 
-export function chatScreen(page: Page): Locator {
-  return page.getByRole('region', { name: 'Chat', exact: true });
-}
-
 export function housekeepingScreen(page: Page): Locator {
   return page.getByRole('region', { name: 'Housekeeping', exact: true });
 }
@@ -350,11 +346,11 @@ export function tabs(page: Page): Locator {
   return page.getByRole('navigation', { name: 'Tabs' });
 }
 
-export type TabName = 'Home' | 'Attention' | 'Chat' | 'Housekeeping' | 'Stats';
+export type TabName = 'Home' | 'Attention' | 'Housekeeping' | 'Stats';
 
-const TAB_NAMES: TabName[] = ['Home', 'Attention', 'Chat', 'Housekeeping', 'Stats'];
+const TAB_NAMES: TabName[] = ['Home', 'Attention', 'Housekeeping', 'Stats'];
 
-/** A tab in the tab bar, named with its count or dot after it ("Attention, 2 items", "Chat, unread messages"). */
+/** A tab in the tab bar, named with its count or dot after it ("Attention, 2 items", "Housekeeping, new message"). */
 export function tabButton(page: Page, name: TabName): Locator {
   return tabs(page).getByRole('button', { name: new RegExp(`^${name}(,.*)?$`) });
 }

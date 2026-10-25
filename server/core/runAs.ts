@@ -1,6 +1,6 @@
 // Runs one DemoBackend method on the server's copy of the home, as the signed-in person. This
 // is how the server reuses the demo backend's data rules (validation, limits, one-home people,
-// housekeeping, chat) instead of keeping a second copy of them. docs/ARCHITECTURE.md "Server
+// housekeeping) instead of keeping a second copy of them. docs/ARCHITECTURE.md "Server
 // mode (no setup)", "Reusing DemoBackend".
 //
 // For each call: a fresh in-memory StorageLike holding JSON.stringify({ ...home, session:
@@ -20,7 +20,7 @@
 import { DEMO_STORAGE_KEY, DemoBackend, type DemoDoc, type StorageLike } from '../../src/lib/backend/demo';
 import { ApiError } from './errors';
 
-/** The largest the home may grow to (JSON characters). About 16,000 chat messages fit. */
+/** The largest the home may grow to (JSON characters). */
 export const HOME_MAX_BYTES = 4 * 1024 * 1024;
 
 /** The most rows a list may grow to. */
@@ -28,8 +28,6 @@ export const HOME_ROW_LIMITS = {
   members: 50,
   areas: 200,
   items: 2000,
-  messages: 20_000,
-  message_reactions: 50_000,
   housekeeping_tasks: 200,
   housekeeping_visits: 3000,
   /** HOUSEKEEPING_SECTIONS_MAX: DemoBackend refuses a 31st section itself; this is the server's cap. */

@@ -240,10 +240,6 @@ export function statsScreen(page: Page): Locator {
   return page.getByRole('region', { name: 'Stats', exact: true });
 }
 
-export function chatScreen(page: Page): Locator {
-  return page.getByRole('region', { name: 'Chat', exact: true });
-}
-
 export function area(page: Page, name: string): Locator {
   return homeScreen(page).getByRole('region', { name, exact: true });
 }
@@ -274,8 +270,8 @@ export function tabs(page: Page): Locator {
   return page.getByRole('navigation', { name: 'Tabs' });
 }
 
-export async function goToTab(page: Page, name: 'Home' | 'Chat' | 'Stats'): Promise<void> {
-  const tab = tabs(page).getByRole('button', { name: name === 'Chat' ? /^Chat(, unread messages)?$/ : name, exact: true });
+export async function goToTab(page: Page, name: 'Home' | 'Stats'): Promise<void> {
+  const tab = tabs(page).getByRole('button', { name, exact: true });
   await tab.click();
   await expect(tab).toHaveAttribute('aria-current', 'page');
 }

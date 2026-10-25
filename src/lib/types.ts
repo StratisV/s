@@ -349,42 +349,6 @@ export interface PushSubscriptionInput {
   keys: { p256dh: string; auth: string };
 }
 
-/** One emoji reaction by one member on a chat message. */
-export interface ChatReaction {
-  message_id: string;
-  member_id: string;
-  emoji: string;
-  created_at: ISOTimestamp;
-}
-
-/** A message in the household's group chat. Messages are kept forever. */
-export interface ChatMessage {
-  id: string;
-  household_id: string;
-  /** The sender; null if their member row no longer exists. */
-  member_id: string | null;
-  body: string;
-  created_at: ISOTimestamp;
-  /** Every reaction on the message, oldest first. */
-  reactions: ChatReaction[];
-}
-
-/** A page of chat history, oldest message first. */
-export interface ChatPage {
-  messages: ChatMessage[];
-  /** True when older messages exist before the first one in this page. */
-  hasMore: boolean;
-}
-
-/**
- * What changed in the chat, as reported by Backend.subscribeChat. 'resync'
- * means "something may have changed; reload the latest page".
- */
-export type ChatChange =
-  | { type: 'message'; messageId: string; deleted: boolean }
-  | { type: 'reaction'; messageId: string }
-  | { type: 'resync' };
-
 // ── Housekeeping (the weekly visit; docs/ARCHITECTURE.md "Housekeeping") ──
 // Tables in supabase/migrations/20261010000400_housekeeping.sql. Every member (the
 // housekeeper is one) reads and edits all of it.
@@ -556,13 +520,12 @@ export interface IssuedCode {
 /**
  * What "Bring this home online" shows (server mode): what comes along from this browser's
  * demo home. DemoHomeSummary's counts, without the people the demo made up that nobody used
- * (see serverImport.ts), plus the chat messages and housekeeping visits the household wrote.
+ * (see serverImport.ts), plus the housekeeping visits the household wrote.
  */
 export interface ServerSetupSummary extends DemoHomeSummary {
-  messages: number;
   visits: number;
   /**
-   * The newest change in what comes along (an item edited or done, a message, a visit), so an
+   * The newest change in what comes along (an item edited or done, a visit), so an
    * older copy (Safari's, say, while the home is kept in the Home Screen app) can be told
    * apart; null when nothing carries a time.
    */

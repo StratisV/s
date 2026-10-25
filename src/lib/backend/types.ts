@@ -1,9 +1,6 @@
 import type {
   Area,
   AuthUser,
-  ChatChange,
-  ChatMessage,
-  ChatPage,
   CreateHouseholdInput,
   DeviceInfo,
   HomeEntry,
@@ -16,7 +13,6 @@ import type {
   ImportPayload,
   InvitePreview,
   ISODate,
-  ISOTimestamp,
   IssuedCode,
   Item,
   ItemDraft,
@@ -131,9 +127,9 @@ export interface Backend {
    * without a close event, and the 25 s heartbeat takes up to a minute to notice, so the
    * Supabase backend does not trust it: it drops the socket and opens a fresh one (await
    * realtime.disconnect(), then realtime.connect()), at most once per 5 s. Every channel
-   * rejoins when the socket opens, and each join asks for a reload (subscribe: onChange;
-   * subscribeChat: resync). Returns at once; never throws. Demo: nothing to do (tabs share
-   * one storage). docs/ARCHITECTURE.md "Sync guarantees".
+   * rejoins when the socket opens, and each join asks for a reload (subscribe: onChange).
+   * Returns at once; never throws. Demo: nothing to do (tabs share one storage).
+   * docs/ARCHITECTURE.md "Sync guarantees".
    */
   reconnect(): void;
 
@@ -234,27 +230,6 @@ export interface Backend {
   // ── Push ──────────────────────────────────────────────
   savePushSubscription(memberId: string, sub: PushSubscriptionInput): Promise<void>;
   deletePushSubscription(endpoint: string): Promise<void>;
-
-  // ── Chat: one group chat per household, kept forever ──
-  /**
-   * Up to `limit` (default CHAT_PAGE_SIZE) of the newest messages created
-   * strictly before `before` (or the newest overall), returned oldest first,
-   * each with all its reactions.
-   */
-  listMessages(householdId: string, opts?: { before?: ISOTimestamp; limit?: number }): Promise<ChatPage>;
-  /** These messages (with reactions) if they still exist; deleted ids are simply missing. */
-  getMessages(ids: string[]): Promise<ChatMessage[]>;
-  /**
-   * Posts as the signed-in member. The body is trimmed; blank or longer than
-   * TEXT_LIMITS.chatMessage throws BackendError('unknown', 'invalid_input: body').
-   */
-  sendMessage(householdId: string, body: string): Promise<ChatMessage>;
-  /** Deletes one of your own messages (and its reactions). Someone else's: 'not_found'. */
-  deleteMessage(id: string): Promise<void>;
-  /** Adds (on = true) or removes your `emoji` reaction on a message. Idempotent. */
-  setReaction(messageId: string, emoji: string, on: boolean): Promise<void>;
-  /** Reports chat changes made by anyone (including this device) while subscribed. */
-  subscribeChat(householdId: string, onChange: (change: ChatChange) => void): Unsubscribe;
 
   // ── Housekeeping (docs/ARCHITECTURE.md "Housekeeping") ──
   // Read through load(); live through subscribe(). Every member edits everything here.

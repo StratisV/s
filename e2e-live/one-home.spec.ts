@@ -3,7 +3,6 @@ import { USER_DEMO_DOC } from '../src/lib/logic/importHome.fixture';
 import {
   area,
   areaHeadings,
-  chatScreen,
   chips,
   closeHousehold,
   closeProfile,
@@ -97,21 +96,6 @@ const OPEN_ITEMS = doc.items
 
 function rowFor(page: Page, title: string, areaTitle: string): Locator {
   return itemButton(area(page, areaTitle), title);
-}
-
-function log(page: Page): Locator {
-  return chatScreen(page).getByRole('log', { name: 'Messages' });
-}
-
-function bubble(page: Page, text: string): Locator {
-  return log(page).getByRole('article').filter({ hasText: text });
-}
-
-/** A message with its name, avatar and reaction chips. */
-function messageRow(page: Page, text: string): Locator {
-  return log(page)
-    .locator('[data-state]')
-    .filter({ has: page.getByRole('article').filter({ hasText: text }) });
 }
 
 test('the first person to sign in brings over the home from this phone', async ({ browser, baseURL }) => {
@@ -534,54 +518,6 @@ test('people: an emoji, a name, someone added and someone removed show on the ot
   ]);
   await closeHousehold(b, profile);
   await closeHousehold(a, dialog);
-
-  await expectNoReload(stratis);
-  await expectNoReload(shea);
-});
-
-test('chat: a message, a reaction on and off, and a delete show on the other phone', async () => {
-  const a = stratis.page;
-  const b = shea.page;
-  await goToTab(a, 'Chat');
-  await goToTab(b, 'Chat');
-  // Both chats loaded, nothing in flight: what shows next on the other phone came over Realtime.
-  await expect(chatScreen(a).getByText('Say hello', { exact: true })).toBeVisible();
-  await expect(chatScreen(b).getByText('Say hello', { exact: true })).toBeVisible();
-  await quiet(stratis);
-  await quiet(shea);
-
-  await chatScreen(a).getByRole('textbox', { name: 'Message' }).fill('Bins go out tonight.');
-  await chatScreen(a).getByRole('textbox', { name: 'Message' }).press('Enter');
-  await expect(bubble(b, 'Bins go out tonight.')).toBeVisible({ timeout: SYNC_MS });
-  await expect(bubble(b, 'Bins go out tonight.')).toHaveAttribute('aria-label', /^Stratis, /);
-
-  // Shea reacts, then takes it back.
-  await quiet(stratis);
-  await bubble(b, 'Bins go out tonight.').click({ button: 'right' });
-  await b.getByRole('dialog', { name: 'Message actions' }).getByRole('button', { name: 'React with ❤️' }).click();
-  await expect(messageRow(b, 'Bins go out tonight.').getByRole('button', { name: '❤️, 1 reaction from you' })).toBeVisible();
-  await expect(
-    messageRow(a, 'Bins go out tonight.').getByRole('button', { name: '❤️, 1 reaction from Shea' }),
-  ).toBeVisible({ timeout: SYNC_MS });
-  await quiet(stratis);
-  await messageRow(b, 'Bins go out tonight.').getByRole('button', { name: '❤️, 1 reaction from you' }).click();
-  await expect(messageRow(a, 'Bins go out tonight.').getByRole('button', { name: /^❤️/ })).toHaveCount(0, {
-    timeout: SYNC_MS,
-  });
-
-  // Shea answers, then deletes her message.
-  await quiet(stratis);
-  await chatScreen(b).getByRole('textbox', { name: 'Message' }).fill('On it, I will take the recycling too.');
-  await chatScreen(b).getByRole('textbox', { name: 'Message' }).press('Enter');
-  await expect(bubble(a, 'On it, I will take the recycling too.')).toBeVisible({ timeout: SYNC_MS });
-  await expect(bubble(a, 'On it, I will take the recycling too.')).toHaveAttribute('aria-label', /^Shea, /);
-  await quiet(stratis);
-  await bubble(b, 'On it, I will take the recycling too.').click({ button: 'right' });
-  await b.getByRole('dialog', { name: 'Message actions' }).getByRole('button', { name: 'Delete' }).click();
-  await (await confirmation(b, 'Delete this message?')).getByRole('button', { name: 'Delete Message' }).click();
-  await expect(bubble(b, 'On it, I will take the recycling too.')).toHaveCount(0);
-  await expect(bubble(a, 'On it, I will take the recycling too.')).toHaveCount(0, { timeout: SYNC_MS });
-  await expect(bubble(a, 'Bins go out tonight.')).toBeVisible();
 
   await expectNoReload(stratis);
   await expectNoReload(shea);

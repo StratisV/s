@@ -28,8 +28,6 @@ export type ArgSpec =
   | { t: 'bool' }
   /** A real calendar day, YYYY-MM-DD. */
   | { t: 'date' }
-  /** An ISO 8601 timestamp with a zone that Date.parse reads. */
-  | { t: 'timestamp' }
   /** A whole number from min to max. */
   | { t: 'int'; min: number; max: number }
   | { t: 'enum'; of: readonly string[] }
@@ -92,8 +90,7 @@ const PLACE: ArgSpec = { t: 'int', min: 0, max: 100_000 };
  * The argument specs of every allowed method, in the order the method takes them. Notes:
  * - updateMember: only name and emoji (weekly email and push are not in server mode).
  * - addPerson: email must be '' (or absent): no Google emails in server mode.
- * - listMessages: limit 1 to 999, like Supabase's cap; before a timestamp.
- * - reorderAreas / reorderHousekeepingTasks: at most 500 ids; getMessages: at most 1000.
+ * - reorderAreas / reorderHousekeepingTasks: at most 500 ids.
  * - reorderHousekeepingTasks: only for an app from before sections still running; the app
  *   moves one task at a time (moveHousekeepingTask).
  * - createHousekeepingTask: its section may be null or left out (no section).
@@ -114,14 +111,6 @@ export const RPC_ARGS: { [M in RpcMethod]: ArgSpec[] } = {
   deleteItem: [id],
   completeItem: [id],
   undoCompletion: [id],
-  listMessages: [
-    id,
-    opt({ t: 'object', keys: { before: opt(nullable({ t: 'timestamp' })), limit: opt({ t: 'int', min: 1, max: 999 }) } }),
-  ],
-  getMessages: [{ t: 'ids', max: 1000 }],
-  sendMessage: [id, text],
-  deleteMessage: [id],
-  setReaction: [id, text, bool],
   setHousekeepingNote: [id, text],
   undoClearHousekeepingNote: [id],
   createHousekeepingTask: [id, text, opt(nullable(id))],
@@ -173,9 +162,6 @@ function isDate(value: unknown): value is string {
   return d <= [31, isLeapYear(y) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
 }
 
-/** An ISO 8601 timestamp with a zone (as Postgres and DemoBackend read them). */
-const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}(:?\d{2})?)$/;
-
 /** A plain object as JSON.parse makes them (not an array, not null). */
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -196,9 +182,6 @@ function check(spec: ArgSpec, value: unknown, path: string): unknown {
       return value;
     case 'date':
       if (!isDate(value)) throw refuse(path);
-      return value;
-    case 'timestamp':
-      if (typeof value !== 'string' || !TIMESTAMP.test(value) || Number.isNaN(Date.parse(value))) throw refuse(path);
       return value;
     case 'int':
       if (typeof value !== 'number' || !Number.isInteger(value) || value < spec.min || value > spec.max) throw refuse(path);

@@ -101,12 +101,12 @@ function cards(home: string | null, areas: Record<string, string> = {}, rest: st
 }
 
 test.describe('Housekeeping tab', () => {
-  test('is the fourth tab; the + is not on it and pops back on Stats', async ({ page }) => {
+  test('is the third tab; the + is not on it and pops back on Stats', async ({ page }) => {
     await openSeeded(page);
-    await expect(tabs(page).getByRole('button')).toHaveText(['Home', /Attention$/, /^Chat/, 'Housekeeping', 'Stats']);
+    await expect(tabs(page).getByRole('button')).toHaveText(['Home', /Attention$/, 'Housekeeping', 'Stats']);
     await expect(addButton(page)).toBeVisible();
     await goToTab(page, 'Housekeeping');
-    for (const name of ['Home', 'Attention', 'Chat', 'Stats'] as const) {
+    for (const name of ['Home', 'Attention', 'Stats'] as const) {
       await expect(tabButton(page, name)).not.toHaveAttribute('aria-current', 'page');
     }
     await expect(addButton(page)).toHaveCount(0);
@@ -115,7 +115,7 @@ test.describe('Housekeeping tab', () => {
   });
 
   for (const width of [320, 375, 402, 430]) {
-    test(`the five tabs fit at ${width}px, untruncated, with the highlight under the open one`, async ({ page }) => {
+    test(`the four tabs fit at ${width}px, untruncated, with the highlight under the open one`, async ({ page }) => {
       await page.setViewportSize({ width, height: 800 });
       const screen = await openHousekeeping(page);
       const fit = await tabs(page).evaluate((nav) => {
@@ -142,7 +142,7 @@ test.describe('Housekeeping tab', () => {
           sizes: buttons.map((b) => [b.getBoundingClientRect().width, b.getBoundingClientRect().height]),
           clipped: buttons.filter((b) => !whole(b)).map((b) => b.textContent),
           overflow: nav.scrollWidth > nav.clientWidth,
-          last: buttons[4].getBoundingClientRect().right,
+          last: buttons[buttons.length - 1].getBoundingClientRect().right,
         };
       });
       expect(fit.scroll).toBeLessThanOrEqual(fit.inner);

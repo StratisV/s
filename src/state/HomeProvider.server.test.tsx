@@ -11,7 +11,6 @@ import { BackendError, type Backend } from '../lib/backend/types';
 import { DEMO_DOC_KEY } from '../lib/logic/importHome';
 import { USER_DEMO_DOC } from '../lib/logic/importHome.fixture';
 import { captureServerLinks, pendingSetupCode } from '../lib/serverLinks';
-import { ChatProvider, useChat, type ChatContextValue } from './ChatProvider';
 import { HomeProvider, useHome, type HomeContextValue } from './HomeProvider';
 
 const PHONE = JSON.stringify(USER_DEMO_DOC);
@@ -70,7 +69,7 @@ describe('the Welcome screen in server mode', () => {
     expect(home().serverWelcome).toEqual({
       kind: 'setup',
       setupCode: '',
-      summary: expect.objectContaining({ householdName: 'Our home', areas: 6, items: 19, done: 3, messages: 0, visits: 0 }),
+      summary: expect.objectContaining({ householdName: 'Our home', areas: 6, items: 19, done: 3, visits: 0 }),
     });
   });
 
@@ -338,31 +337,6 @@ describe('signed in', () => {
     // The next poll (at once on reconnect, as when the app comes back) brings it.
     act(() => other.backend.reconnect());
     await waitFor(() => expect(home().data!.areas.map((a) => a.name)).toContain('Garage'));
-  });
-
-  it("hears another person's chat message and reaction through polling", async () => {
-    const h = createHarness();
-    const { other, hid, sheaCode } = await homeElsewhere(h);
-    let chat: ChatContextValue | null = null;
-    const ExposeChat = () => {
-      chat = useChat();
-      return null;
-    };
-    const Chat = () => (useHome().phase.kind === 'ready' ? <ChatProvider><ExposeChat /></ChatProvider> : null);
-    render(
-      <HomeProvider backend={other.backend}>
-        <Chat />
-      </HomeProvider>,
-    );
-    await waitFor(() => expect(chat?.status).toBe('ready'));
-    const shea = phone(h);
-    await shea.backend.redeemCode(sheaCode);
-    const sent = await shea.backend.sendMessage(hid, 'Bins go out tonight');
-    act(() => other.backend.reconnect());
-    await waitFor(() => expect(chat!.entries.map((e) => e.message.body)).toEqual(['Bins go out tonight']));
-    await shea.backend.setReaction(sent.id, '👍', true);
-    act(() => other.backend.reconnect());
-    await waitFor(() => expect(chat!.entries[0].message.reactions.map((r) => r.emoji)).toEqual(['👍']));
   });
 
   it('says when saving is paused until next month', async () => {

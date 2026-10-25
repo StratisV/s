@@ -8,7 +8,7 @@ const H = '6f1c6b1e-6a47-4b7a-9d3c-7b0f6a1f2a10';
 const ID = '0b9e6f5a-1c2d-4e3f-8a9b-0c1d2e3f4a5b';
 const DRAFT = { ...newItemDraft(ID), title: 'Bleed the radiators' };
 
-/** What the app really sends for each method (HomeProvider, ChatProvider, the screens). */
+/** What the app really sends for each method (HomeProvider and the screens). */
 const REAL: { [M in RpcMethod]: unknown[][] } = {
   getMyHouseholdId: [[]],
   load: [[H]],
@@ -25,11 +25,6 @@ const REAL: { [M in RpcMethod]: unknown[][] } = {
   deleteItem: [[ID]],
   completeItem: [[ID]],
   undoCompletion: [[ID]],
-  listMessages: [[H], [H, { before: '2026-10-09T08:19:00.000Z' }], [H, { before: '2026-10-09T08:19:00+01:00', limit: 50 }], [H, {}]],
-  getMessages: [[[ID, H]], [[]]],
-  sendMessage: [[H, 'Hello']],
-  deleteMessage: [[ID]],
-  setReaction: [[ID, '👍', true], [ID, '👍', false]],
   setHousekeepingNote: [[H, 'Please do the windows'], [H, '']],
   undoClearHousekeepingNote: [[H]],
   createHousekeepingTask: [[H, 'Windows'], [H, 'Windows', ID], [H, 'Windows', null]],
@@ -90,7 +85,7 @@ describe('the RPC allow-list', () => {
     refused('load', 'not an array', 'args');
     refused('createArea', [H, 7], 'args[1]');
     refused('createArea', [H, 'x'.repeat(TEXT_CAP + 1)], 'args[1]');
-    refused('setReaction', [ID, '👍', 'yes'], 'args[2]');
+    refused('setHousekeepingTaskDone', [H, '2026-10-09', { taskId: ID }, 'yes'], 'args[3]');
     refused('createItem', [H, { ...DRAFT, rag: 'purple' }], 'args[1].rag');
     refused('createItem', [H, { ...DRAFT, kind: 'project' }], 'args[1].kind');
     refused('createItem', [H, { ...DRAFT, repeat: 'daily' }], 'args[1].repeat');
@@ -103,13 +98,8 @@ describe('the RPC allow-list', () => {
     refused('updateItem', [ID, { status: 'done' }], 'args[1].status');
     refused('updateItem', [ID, null], 'args[1]');
     refused('updateItem', [ID, [1]], 'args[1]');
-    refused('listMessages', [H, { limit: 1000 }], 'args[1].limit');
-    refused('listMessages', [H, { limit: 2.5 }], 'args[1].limit');
-    refused('listMessages', [H, { before: 'yesterday' }], 'args[1].before');
-    refused('listMessages', [H, null], 'args[1]');
-    refused('getMessages', [Array.from({ length: 1001 }, () => ID)], 'args[0]');
-    refused('getMessages', [[ID, 3]], 'args[0][1]');
     refused('reorderAreas', [H, Array.from({ length: 501 }, () => ID)], 'args[1]');
+    refused('reorderAreas', [H, [ID, 3]], 'args[1][1]');
     refused('saveHousekeepingVisit', [H, '2026-10-09', { price_pence: -1 }], 'args[2].price_pence');
     refused('saveHousekeepingVisit', [H, '2026-10-09', { price_pence: 1_000_001 }], 'args[2].price_pence');
     refused('saveHousekeepingVisit', [H, '2026-10-09', { price_pence: '45' }], 'args[2].price_pence');

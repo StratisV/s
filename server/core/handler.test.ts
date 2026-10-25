@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { API_PATH, CODE_TTL_MS, RPC_BODY_MAX, SETUP_BODY_MAX, SMALL_BODY_MAX } from '../../src/lib/backend/serverApi';
 import type { HouseholdData } from '../../src/lib/types';
 import { USER_DEMO_DOC } from '../../src/lib/logic/importHome.fixture';
+import { newItemDraft } from '../../src/lib/logic/items';
 import { MemoryBlobStore } from '../store/memory';
 import { BlobUnavailableError, type BlobStore } from '../store/types';
 import { createHarness, TEST_SETUP_CODE, type Browser, type Harness } from '../testing/harness';
@@ -296,7 +297,7 @@ describe('signed in', () => {
     expect(session.json).toMatchObject({ user: home.setup.user, entry: { status: 'member', householdId: home.hid }, rev: 1 });
     expect(session.json.device.current).toBe(true);
     const version = await call(home.stratis, 'version');
-    expect(version.json).toEqual({ rev: 1, chatRev: 1, pollMs: 3000, readOnly: false });
+    expect(version.json).toEqual({ rev: 1, pollMs: 3000, readOnly: false });
     // With a Bearer key (tools), no cookie is set.
     const bearer = await h.request({ method: 'GET', url: `${API_PATH}?op=session`, headers: { authorization: `Bearer ${home.stratis.key()}` } });
     expect(bearer.status).toBe(200);
@@ -390,15 +391,14 @@ describe('signed in', () => {
       rpc(sheaThere, 'setHousekeepingTaskDone', [home.hid, today, { taskId: t2.id }, true]),
       rpc(home.stratis, 'updateItem', [item.id, { note: 'Booked for Saturday' }]),
       rpc(sheaThere, 'updateItem', [item.id, { rag: 'green' }]),
-      rpc(sheaThere, 'sendMessage', [home.hid, 'On it']),
+      rpc(sheaThere, 'createArea', [home.hid, 'Shed']),
     ]);
     expect(results.map((r) => r.status)).toEqual([200, 200, 200, 200, 200]);
     const after = await home.load();
     const visit = after.housekeeping.visits.find((v) => v.visit_date === today)!;
     expect(visit.tasks.filter((t) => t.done).map((t) => t.task_id).sort()).toEqual([t1.id, t2.id].sort());
     expect(after.items.find((i) => i.id === item.id)).toMatchObject({ note: 'Booked for Saturday', rag: 'green' });
-    expect((await rpc(home.stratis, 'listMessages', [home.hid])).json.result.messages.map((m: { body: string }) => m.body)).toEqual(['On it']);
-    expect((await call(home.stratis, 'version')).json.chatRev).toBe(2);
+    expect(after.areas.map((a) => a.name)).toContain('Shed');
   });
 
   it('keeps both when two people move different tasks into sections at the same moment, and a task added meanwhile', async () => {
@@ -519,7 +519,7 @@ describe('secrets', () => {
     const h = createHarness();
     const home = await online(h);
     const { shea, code } = await sheaJoins(h, home);
-    await rpc(shea, 'sendMessage', [home.hid, 'Hello']);
+    await rpc(shea, 'createArea', [home.hid, 'Shed']);
     await call(home.stratis, 'devices');
     await call(shea, 'session');
     await rpc(home.stratis, 'load', [home.hid]);
@@ -920,16 +920,19 @@ describe('the size of the home', () => {
     const full = await rpc(home.stratis, 'createArea', [home.hid, 'One more']);
     expect([full.status, full.json.error.code]).toEqual([413, 'too_large']);
     expect((await rpc(home.stratis, 'deleteArea', ['extra-0'])).status).toBe(200);
-    // A home near its size: a long message that would take it past the limit is refused.
+    // A home near its size (here filled by messages from when there was a chat, which count
+    // too): a long note that would take it past the limit is refused.
     await h.ctx.store.write((doc) => {
       const filler = { id: 'filler', household_id: home.hid, member_id: home.person('Stratis').id, body: 'x'.repeat(4 * 1024 * 1024 - 60_000), created_at: new Date(h.clock.now).toISOString() };
-      doc.home = { ...doc.home, messages: [...doc.home.messages, filler as never] };
+      doc.home = { ...doc.home, messages: [filler] } as typeof doc.home;
     });
-    const big = await rpc(home.stratis, 'sendMessage', [home.hid, 'y'.repeat(3900)]);
-    const sent = await rpc(home.stratis, 'sendMessage', [home.hid, 'Hello']);
+    const areaId = (await home.load()).areas[0].id;
+    const withNote = (note: string) => ({ ...newItemDraft(areaId), title: 'Long note', note });
+    const big = await rpc(home.stratis, 'createItem', [home.hid, withNote('y'.repeat(3900))]);
+    const sent = await rpc(home.stratis, 'createItem', [home.hid, withNote('Hello')]);
     expect(sent.status).toBe(200);
     for (let i = 0; i < 20 && big.status === 200; i++) {
-      const more = await rpc(home.stratis, 'sendMessage', [home.hid, 'y'.repeat(3900)]);
+      const more = await rpc(home.stratis, 'createItem', [home.hid, withNote('y'.repeat(3900))]);
       if (more.status !== 200) {
         expect([more.status, more.json.error.code]).toEqual([413, 'too_large']);
         return;

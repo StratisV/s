@@ -1,7 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
   areaCard,
-  chatScreen,
   closeHousehold,
   closeProfile,
   codeFor,
@@ -302,77 +301,6 @@ test('people: an emoji, a name, someone added (then invited) and someone removed
   await expect(people(profile).getByRole('button')).toHaveText(['🦆Stratis', '🐧Shea, You', 'Add Person']);
   await closeHousehold(b, profile);
   await closeHousehold(a, dialog);
-
-  await expectNoReload(stratis);
-  await expectNoReload(shea);
-});
-
-function log(page: Page): Locator {
-  return chatScreen(page).getByRole('log', { name: 'Messages' });
-}
-
-function bubble(page: Page, text: string): Locator {
-  return log(page).getByRole('article').filter({ hasText: text });
-}
-
-/** A message with its name, avatar and reaction chips. */
-function messageRow(page: Page, text: string): Locator {
-  return log(page)
-    .locator('[data-state]')
-    .filter({ has: page.getByRole('article').filter({ hasText: text }) });
-}
-
-test('chat: a message, a reaction on and off, and a delete show on the other phone', async () => {
-  const a = stratis.page;
-  const b = shea.page;
-  await goToTab(a, 'Chat');
-  await goToTab(b, 'Chat');
-  await expect(chatScreen(a).getByText('Say hello', { exact: true })).toBeVisible();
-  await expect(chatScreen(b).getByText('Say hello', { exact: true })).toBeVisible();
-  await quiet(stratis);
-  await quiet(shea);
-
-  await chatScreen(a).getByRole('textbox', { name: 'Message' }).fill('Bins go out tonight.');
-  await chatScreen(a).getByRole('textbox', { name: 'Message' }).press('Enter');
-  await expect(bubble(b, 'Bins go out tonight.')).toBeVisible({ timeout: SYNC_MS });
-  await expect(bubble(b, 'Bins go out tonight.')).toHaveAttribute('aria-label', /^Stratis, /);
-
-  // Shea reacts, then takes it back.
-  await quiet(stratis);
-  await bubble(b, 'Bins go out tonight.').click({ button: 'right' });
-  await b.getByRole('dialog', { name: 'Message actions' }).getByRole('button', { name: 'React with ❤️' }).click();
-  await expect(messageRow(b, 'Bins go out tonight.').getByRole('button', { name: '❤️, 1 reaction from you' })).toBeVisible();
-  await expect(messageRow(a, 'Bins go out tonight.').getByRole('button', { name: '❤️, 1 reaction from Shea' })).toBeVisible({
-    timeout: SYNC_MS,
-  });
-  await quiet(stratis);
-  await messageRow(b, 'Bins go out tonight.').getByRole('button', { name: '❤️, 1 reaction from you' }).click();
-  await expect(messageRow(a, 'Bins go out tonight.').getByRole('button', { name: /^❤️/ })).toHaveCount(0, {
-    timeout: SYNC_MS,
-  });
-
-  // Shea answers, then deletes her message.
-  await quiet(stratis);
-  await chatScreen(b).getByRole('textbox', { name: 'Message' }).fill('On it, I will take the recycling too.');
-  await chatScreen(b).getByRole('textbox', { name: 'Message' }).press('Enter');
-  await expect(bubble(a, 'On it, I will take the recycling too.')).toBeVisible({ timeout: SYNC_MS });
-  await expect(bubble(a, 'On it, I will take the recycling too.')).toHaveAttribute('aria-label', /^Shea, /);
-  await quiet(stratis);
-  await bubble(b, 'On it, I will take the recycling too.').click({ button: 'right' });
-  await b.getByRole('dialog', { name: 'Message actions' }).getByRole('button', { name: 'Delete' }).click();
-  await (await confirmation(b, 'Delete this message?')).getByRole('button', { name: 'Delete Message' }).click();
-  await expect(bubble(b, 'On it, I will take the recycling too.')).toHaveCount(0);
-  await expect(bubble(a, 'On it, I will take the recycling too.')).toHaveCount(0, { timeout: SYNC_MS });
-  await expect(bubble(a, 'Bins go out tonight.')).toBeVisible();
-
-  // A message while Stratis is on Home: the Chat tab says there is something unread.
-  await goToTab(a, 'Home');
-  await quiet(stratis);
-  await chatScreen(b).getByRole('textbox', { name: 'Message' }).fill('Back at six.');
-  await chatScreen(b).getByRole('textbox', { name: 'Message' }).press('Enter');
-  await expect(a.getByRole('navigation', { name: 'Tabs' }).getByRole('button', { name: 'Chat, unread messages' })).toBeVisible({
-    timeout: SYNC_MS,
-  });
 
   await expectNoReload(stratis);
   await expectNoReload(shea);
@@ -708,9 +636,8 @@ test('three phones: two people writing at the same moment never lose a change', 
     await expect(rowFor(page, 'Remove AC', 'Living Room')).toHaveCount(0, { timeout: SYNC_MS });
   }
 
-  // A message and a tick of a housekeeping task at the same moment, and two ticks at once.
+  // A tick of a housekeeping task, then two ticks at once.
   await goToTab(a, 'Housekeeping');
-  await goToTab(b, 'Chat');
   await goToTab(c, 'Housekeeping');
   const ha = housekeepingScreen(a);
   const hc = housekeepingScreen(c);
@@ -718,11 +645,7 @@ test('three phones: two people writing at the same moment never lose a change', 
   // The starter list is Whole home's (in no section): open where it is ticked and watched.
   await openCard(today(ha), 'Whole home');
   await openCard(today(hc), 'Whole home');
-  await chatScreen(b).getByRole('textbox', { name: 'Message' }).fill('Leaving the key under the mat.');
-  await Promise.all([
-    chatScreen(b).getByRole('textbox', { name: 'Message' }).press('Enter'),
-    today(ha).getByRole('checkbox', { name: 'Empty the bins' }).click(),
-  ]);
+  await today(ha).getByRole('checkbox', { name: 'Empty the bins' }).click();
   await expect(today(hc).getByRole('checkbox', { name: 'Empty the bins' })).toBeChecked({ timeout: SYNC_MS });
   await goToTab(b, 'Housekeeping');
   const hb = housekeepingScreen(b);
@@ -737,8 +660,6 @@ test('three phones: two people writing at the same moment never lose a change', 
       await expect(today(s).getByRole('checkbox', { name: task }), task).toBeChecked({ timeout: SYNC_MS });
     }
   }
-  await goToTab(a, 'Chat');
-  await expect(bubble(a, 'Leaving the key under the mat.')).toBeVisible({ timeout: SYNC_MS });
 
   // And it is all in the stored home, once.
   const stored = await loadHome(stratis.context);

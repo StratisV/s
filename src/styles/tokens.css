@@ -21,8 +21,8 @@
    */
   --tint-text: #0058b9;
   /*
-   * A solid tint fill under white words (filled buttons, the chosen day or chip, your chat
-   * bubbles, the round +): 4.7:1 with white, in both appearances (#007aff is 4:1, #0a84ff 3.7:1).
+   * A solid tint fill under white words (filled buttons, the chosen day or chip, the round +):
+   * 4.7:1 with white, in both appearances (#007aff is 4:1, #0a84ff 3.7:1).
    */
   --tint-fill: #0071e3;
   /* A soft tint wash: a selected or lit-up control. */
@@ -53,7 +53,7 @@
   --sheet-card: #ffffff;
   --sheet-edge: transparent;
   --sheet-dim: rgba(0, 0, 0, 0.3);
-  /* Liquid glass controls over content (Chat's composer, its reaction bar and pills). */
+  /* Liquid glass over content (the tab bar and other bars that float). */
   --glass-fill: rgba(255, 255, 255, 0.72);
   --glass-strong: rgba(255, 255, 255, 0.92);
   --glass-highlight: rgba(255, 255, 255, 0.75);
@@ -61,7 +61,7 @@
   --toast-bg: rgba(28, 28, 30, 0.92);
   --toast-edge: transparent;
   --toast-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-  /* The words in a field before anything is typed (Chat's "Message"). */
+  /* The words in a field before anything is typed. */
   --placeholder: rgba(60, 60, 67, 0.6);
 
   --rag-red: #ff3b30;

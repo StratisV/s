@@ -205,15 +205,11 @@ export function statsScreen(page: Page): Locator {
   return page.getByRole('region', { name: 'Stats', exact: true });
 }
 
-export function chatScreen(page: Page): Locator {
-  return page.getByRole('region', { name: 'Chat', exact: true });
-}
-
 export function housekeepingScreen(page: Page): Locator {
   return page.getByRole('region', { name: 'Housekeeping', exact: true });
 }
 
-export type TabName = 'Home' | 'Attention' | 'Chat' | 'Housekeeping' | 'Stats';
+export type TabName = 'Home' | 'Attention' | 'Housekeeping' | 'Stats';
 
 export function tabs(page: Page): Locator {
   return page.getByRole('navigation', { name: 'Tabs' });
@@ -225,14 +221,12 @@ export function addButton(page: Page): Locator {
 }
 
 /**
- * A tab button. Attention is named "Attention, 2 items" while things need attention, Chat
- * "Chat, unread messages" while it has its dot, Housekeeping "Housekeeping, new message"
- * while it has its.
+ * A tab button. Attention is named "Attention, 2 items" while things need attention,
+ * Housekeeping "Housekeeping, new message" while it has its dot.
  */
 export function tabButton(page: Page, name: TabName): Locator {
   const named = {
     Attention: /^Attention(, \d+ items?)?$/,
-    Chat: /^Chat(, unread messages)?$/,
     Housekeeping: /^Housekeeping(, new message)?$/,
   } as const;
   return tabs(page).getByRole('button', { name: name in named ? named[name as keyof typeof named] : name, exact: true });

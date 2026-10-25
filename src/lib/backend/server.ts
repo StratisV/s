@@ -5,9 +5,6 @@
 import type {
   Area,
   AuthUser,
-  ChatChange,
-  ChatMessage,
-  ChatPage,
   CreateHouseholdInput,
   DeviceInfo,
   HomeEntry,
@@ -19,7 +16,6 @@ import type {
   ImportPayload,
   InvitePreview,
   ISODate,
-  ISOTimestamp,
   IssuedCode,
   Item,
   ItemDraft,
@@ -128,13 +124,6 @@ function storage(): Storage | null {
   }
 }
 
-interface ChatListener {
-  householdId: string;
-  onChange: (change: ChatChange) => void;
-  /** Gets a resync on the next successful poll (just subscribed, or a poll failed since). */
-  due: boolean;
-}
-
 interface ChangeListener {
   onChange: () => void;
   due: boolean;
@@ -152,7 +141,7 @@ interface KeptSession {
  * every read, so a browser never reads older than it has seen), the session from GET ?op=session
  * for 2 s (getUser and enterHome right after each other share it), the one-off entry from
  * bringOnline/redeemCode (the next enterHome() returns it once, so a claim gets its welcome
- * step), and the listeners. One poller serves subscribe, subscribeChat and onStatus: it polls
+ * step), and the listeners. One poller serves subscribe and onStatus: it polls
  * GET ?op=version every `pollMs` while the page is visible (document.visibilityState), at once
  * on 'visibilitychange' to visible, 'focus', 'online' and reconnect(), never while hidden, and
  * stops when nothing listens.
@@ -190,7 +179,6 @@ export class ServerBackend implements Backend, ServerAccess {
 
   // ── The poller ──
   private changeListeners = new Set<ChangeListener>();
-  private chatListeners = new Set<ChatListener>();
   private statusListeners = new Set<(status: ServerStatus) => void>();
   private status: ServerStatus = { readOnly: false };
   private pollMs: number;
@@ -204,9 +192,8 @@ export class ServerBackend implements Backend, ServerAccess {
   private parked = false;
   /** The poll scheduled now is an idle one (IDLE_POLL_MS). */
   private slow = false;
-  /** The highest rev and chatRev polls have shown (null: no poll yet). */
+  /** The highest rev polls have shown (null: no poll yet). */
   private polledRev: number | null = null;
-  private polledChatRev: number | null = null;
   private unwatchPage: (() => void) | null = null;
 
   constructor(readonly options: ServerBackendOptions = {}) {
@@ -626,55 +613,6 @@ export class ServerBackend implements Backend, ServerAccess {
     await this.call({ post: { op: 'pushUnsubscribe' } });
   }
 
-  // ── Chat (Backend, RPC) ────────────────────────────────
-
-  async listMessages(householdId: string, opts?: { before?: ISOTimestamp; limit?: number }): Promise<ChatPage> {
-    return (await this.rpc('listMessages', [householdId, opts])) as ChatPage;
-  }
-  async getMessages(ids: string[]): Promise<ChatMessage[]> {
-    return (await this.rpc('getMessages', [ids])) as ChatMessage[];
-  }
-
-  /** Tells this backend's chat listeners about its own chat write (as the demo backend does). */
-  private emitChat(change: ChatChange, householdId?: string) {
-    for (const l of [...this.chatListeners]) {
-      if (householdId !== undefined && l.householdId !== householdId) continue;
-      try {
-        l.onChange(change);
-      } catch (err) {
-        // The write is stored; a failing listener must not make it look failed.
-        console.error(err);
-      }
-    }
-  }
-
-  /** RPC; then emits { type: 'message', messageId, deleted: false } to this backend's chat listeners before resolving. */
-  async sendMessage(householdId: string, body: string): Promise<ChatMessage> {
-    const message = (await this.rpc('sendMessage', [householdId, body])) as ChatMessage;
-    this.emitChat({ type: 'message', messageId: message.id, deleted: false }, householdId);
-    return message;
-  }
-  /** RPC; then emits { type: 'message', messageId: id, deleted: true }. */
-  async deleteMessage(id: string): Promise<void> {
-    await this.rpc('deleteMessage', [id]);
-    this.emitChat({ type: 'message', messageId: id, deleted: true });
-  }
-  /** RPC; then emits { type: 'reaction', messageId }. */
-  async setReaction(messageId: string, emoji: string, on: boolean): Promise<void> {
-    await this.rpc('setReaction', [messageId, emoji, on]);
-    this.emitChat({ type: 'reaction', messageId });
-  }
-  /** The poller: { type: 'resync' } on the first successful poll, when chatRev goes up, and after a failed poll. */
-  subscribeChat(householdId: string, onChange: (change: ChatChange) => void): Unsubscribe {
-    const listener: ChatListener = { householdId, onChange, due: true };
-    this.chatListeners.add(listener);
-    this.startPolling();
-    return () => {
-      this.chatListeners.delete(listener);
-      this.stopPollingIfIdle();
-    };
-  }
-
   // ── Housekeeping (Backend, RPC) ────────────────────────
 
   async setHousekeepingNote(householdId: string, body: string): Promise<void> {
@@ -833,7 +771,7 @@ export class ServerBackend implements Backend, ServerAccess {
   // ── Polling ────────────────────────────────────────────
 
   private hasListeners(): boolean {
-    return this.changeListeners.size + this.chatListeners.size + this.statusListeners.size > 0;
+    return this.changeListeners.size + this.statusListeners.size > 0;
   }
 
   /** Someone is using the app now (input, focus, back in view or online): polling goes back to its pace. */
@@ -892,7 +830,6 @@ export class ServerBackend implements Backend, ServerAccess {
     this.slow = false;
     // A later subscription starts again as from a fresh connection.
     this.polledRev = null;
-    this.polledChatRev = null;
     this.pollFailed = false;
   }
 
@@ -957,23 +894,12 @@ export class ServerBackend implements Backend, ServerAccess {
     const recovered = this.pollFailed;
     this.pollFailed = false;
     const revUp = this.polledRev !== null && v.rev > this.polledRev;
-    const chatUp = this.polledChatRev !== null && v.chatRev > this.polledChatRev;
     this.polledRev = Math.max(this.polledRev ?? v.rev, v.rev);
-    this.polledChatRev = Math.max(this.polledChatRev ?? v.chatRev, v.chatRev);
     for (const l of [...this.changeListeners]) {
       if (!(recovered || revUp || l.due)) continue;
       l.due = false;
       try {
         l.onChange();
-      } catch (err) {
-        console.error(err);
-      }
-    }
-    for (const l of [...this.chatListeners]) {
-      if (!(recovered || chatUp || l.due)) continue;
-      l.due = false;
-      try {
-        l.onChange({ type: 'resync' });
       } catch (err) {
         console.error(err);
       }

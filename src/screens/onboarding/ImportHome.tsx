@@ -12,14 +12,11 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 
 /**
  * "6 areas · 19 items" (open items: the ones that show on Home), plus "· 3 done" when history
- * comes along, and (server mode's setup) "· 12 messages" when the chat does.
+ * comes along.
  */
-export function summaryCounts(
-  summary: Pick<DemoHomeSummary, 'areas' | 'items' | 'done'> & { messages?: number },
-): string {
+export function summaryCounts(summary: Pick<DemoHomeSummary, 'areas' | 'items' | 'done'>): string {
   const counts = [plural(summary.areas, 'area', 'areas'), plural(summary.items, 'item', 'items')];
   if (summary.done > 0) counts.push(`${summary.done} done`);
-  if (summary.messages) counts.push(plural(summary.messages, 'message', 'messages'));
   return counts.join(' · ');
 }
 
@@ -32,7 +29,7 @@ export function HomeSummaryCard({
   summary,
   busy = false,
 }: {
-  summary: DemoHomeSummary & { messages?: number };
+  summary: DemoHomeSummary;
   busy?: boolean;
 }) {
   const peopleId = useId();
@@ -41,7 +38,7 @@ export function HomeSummaryCard({
       <div className={styles.home}>
         <p className={styles.homeName}>{summary.householdName}</p>
         {summary.address ? <p className={styles.detail}>{summary.address}</p> : null}
-        {/* Each count stays whole ("12 messages") when the line wraps. */}
+        {/* Each count stays whole ("19 items") when the line wraps. */}
         <p className={styles.detail}>{summaryCounts(summary).replace(/(\d) /g, '$1\u00a0')}</p>
       </div>
       <span id={peopleId} className="visually-hidden">

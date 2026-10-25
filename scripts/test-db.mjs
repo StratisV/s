@@ -3,8 +3,8 @@
 //
 // Default: starts a throwaway Postgres 16 in a temp dir (unix socket only, port 54329,
 // trust auth), applies supabase/tests/supabase_stub.sql and every migration (twice, to
-// prove they can be re-applied), runs supabase/tests/*.test.mjs with node:test, then stops
-// the server and deletes the temp dir.
+// prove they can be re-applied), runs supabase/tests/*.test.mjs with node:test (one file at a
+// time), then stops the server and deletes the temp dir.
 //
 // DATABASE_URL=postgresql://... runs the same tests against an existing database that
 // already has the migrations, e.g. the local Supabase stack after `npx supabase db reset`:
@@ -103,7 +103,9 @@ async function checkManyHomes(url) {
 }
 
 function runTests(env) {
-  const res = spawnSync(process.execPath, ['--test', '--test-reporter=spec', ...testFiles], {
+  // One file at a time: they share one database, and some re-apply a migration (its DDL takes
+  // exclusive locks), which can deadlock with another file's RPCs run at the same moment.
+  const res = spawnSync(process.execPath, ['--test', '--test-concurrency=1', '--test-reporter=spec', ...testFiles], {
     cwd: root,
     stdio: 'inherit',
     env: { ...process.env, ...env },

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChatScreen } from './screens/chat/ChatScreen';
 import { AreaSheet } from './screens/home/AreaSheet';
 import { HomeScreen } from './screens/home/HomeScreen';
 import { NeedsAttentionScreen } from './screens/home/NeedsAttentionScreen';
@@ -18,7 +17,6 @@ import { StatsScreen } from './screens/stats/StatsScreen';
 import { upNext } from './lib/logic/upNext';
 import type { ISODate } from './lib/types';
 import type { ItemSheetTarget, Tab } from './screens/types';
-import { ChatProvider, useChat } from './state/ChatProvider';
 import { useHome, useHousehold } from './state/HomeProvider';
 import { StatusSky } from './ui/StatusSky';
 import { Toast } from './ui/Toast';
@@ -90,7 +88,7 @@ function returnToOpener(opener: () => HTMLElement | null, root: HTMLElement, fal
   target?.focus({ preventScroll: true });
 }
 
-const TAB_IDS: readonly Tab[] = ['home', 'attention', 'chat', 'housekeeping', 'stats'];
+const TAB_IDS: readonly Tab[] = ['home', 'attention', 'housekeeping', 'stats'];
 /** Where this device keeps the tab last open, so the app reopens on it. */
 const TAB_KEY = 'homeos.tab';
 
@@ -126,21 +124,16 @@ function areaPanel(): HTMLElement | null {
   return document.querySelector<HTMLElement>('[data-area-sheet]')?.closest<HTMLElement>('[role="dialog"]') ?? null;
 }
 
-/** The ready app: the chat lives as long as the household is open (its tab comes and goes). */
+/** The ready app, started afresh for each household. */
 function MainApp() {
   const { data } = useHousehold();
-  return (
-    <ChatProvider key={data.household.id}>
-      <MainShell />
-    </ChatProvider>
-  );
+  return <MainShell key={data.household.id} />;
 }
 
 /** Which screen shows an item just saved: Home (its area's card), Needs attention, or the area's sheet. */
 type RevealIn = 'home' | 'attention' | 'area';
 
 function MainShell() {
-  const { unread } = useChat();
   const { data, today } = useHousehold();
   // The tab last open on this device (the housekeeper reopens on Housekeeping).
   const [tab, setTab] = useState<Tab>(loadTab);
@@ -329,8 +322,6 @@ function MainShell() {
             revealItem={revealFor('attention')}
             onRevealed={clearReveal}
           />
-        ) : tab === 'chat' ? (
-          <ChatScreen onOpenProfile={openProfile} />
         ) : tab === 'housekeeping' ? (
           <HousekeepingScreen
             onOpenProfile={openProfile}
@@ -342,7 +333,7 @@ function MainShell() {
           <StatsScreen onOpenProfile={openProfile} onOpenDone={openDone} />
         )}
         <AddButton tab={tab} onAdd={() => openSheet({ kind: 'new' })} />
-        <TabBar tab={tab} onTab={switchTab} attention={attention} unread={unread} newNote={newNote} />
+        <TabBar tab={tab} onTab={switchTab} attention={attention} newNote={newNote} />
         <div className={styles.dim} aria-hidden="true" />
       </div>
       {areaId ? (

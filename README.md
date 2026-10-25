@@ -15,10 +15,10 @@ amber is **Within the month**, green is **Not urgent**. For a To maintain item i
 condition it is in: **Needs work**, **Okay** or **Good**. The Item sheet says what each one
 means under it ("Needs doing now", "Fine for now, keep an eye on it").
 
-- **Five tabs** along the bottom, in a floating bar of frosted glass: **Home**, **Needs
+- **Four tabs** along the bottom, in a floating bar of frosted glass: **Home**, **Needs
   attention** (called **Attention** in the bar, with a red count of what needs attention),
-  **Chat** (a dot for unread messages), **Housekeeping** (a dot for a new message) and
-  **Stats**. The phone reopens on the tab last open.
+  **Housekeeping** (a dot for a new message) and **Stats**. The phone reopens on the tab last
+  open.
 - **Home**: the hero, then one plain sentence on what needs doing ("2 things need attention
   and 1 is due today. Everything else can wait."), which opens Needs attention when tapped.
   Then the areas of the house, two to a row, one card each with its own drawing of the room (a
@@ -61,9 +61,6 @@ means under it ("Needs doing now", "Fine for now, keep an eye on it").
   house in its garden, with a green duck and a brown hedgehog, under the sky as it is in London
   right now (sunrise, daytime, sunset, dusk or a starry night). The other tabs keep a slim band
   of that sky at the top, over a large title and the profile button.
-- **Chat**: one group chat for the whole household. Messages are kept for good (no limit on how
-  long they stay), anyone can react to a message with emoji (long-press it, or tap a reaction
-  to add yours), and a dot on the Chat tab shows unread messages.
 - **Housekeeping**: the weekly visit by the housekeeper (a household member like everyone
   else). Today's date over the title, as on Home. Under the title, the calendar Needs attention uses: this
   week as a strip (or the whole month, with each month's total), a blue dot on the days the
@@ -127,7 +124,7 @@ mode (they need other services), and are hidden in the app.
 
 **What you do, once:** open the **setup link** you were sent (it ends in `?setup=…`) on the
 phone that has the home, check what comes along (the home's name and address, areas, items,
-who's who, real history, chat and housekeeping, and when that copy last changed) and tap
+who's who, real history and housekeeping, and when that copy last changed) and tap
 **Bring It Online**. That phone is now signed in as you, and everyone else in the home is
 waiting to join with their items. If the home lives in the home.os app on your Home Screen and
 the link opened in Safari instead, Safari says so and shows the setup code with **Copy Code**:
@@ -378,7 +375,7 @@ Ela who came along. Then, from no home: he brings it over (every area, item, ass
 real Stats history), adds Shea's Google email, and Shea signs in and is Shea with her items;
 someone else sees "This home is private" until they are added;
 then every change one phone makes (items, What good looks like, kind, done and undo, delete,
-areas, household name and address, people, chat messages and reactions) shows on the other
+areas, household name and address, people) shows on the other
 within 5 seconds, without a reload, and a phone that was offline catches up as soon as it is
 back online.
 
@@ -391,7 +388,7 @@ the setup link (and with the code typed, after a wrong one), everything coming a
 joining with her code typed or as a link and seeing her items, used codes and the used setup
 link refused, a stranger kept out, wrong codes refused then limited and never stored, Add
 another device, removing a device signing that browser out, Sign Out, the last-device warning,
-"Not Shea?", read-only mode, and every kind of change (items, areas, household, people, chat,
+"Not Shea?", read-only mode, and every kind of change (items, areas, household, people,
 housekeeping) showing on the other phone within 5 seconds without a reload, including two
 people writing at the same moment on three phones, a phone that was offline catching up, and
 no polling while the app is hidden. `npm run test:build` and `scripts/vercel-function.test.ts`
@@ -411,7 +408,7 @@ People can be in the home before they join (**Not joined yet**):
   emoji and the Google email they will sign in with), give them items, and set, change or
   clear their email. Each email belongs to one person in the home.
 - Until they sign in, such a person has no account: they give nobody access, get no
-  notifications or weekly email, and can't post in the chat. Their items show on Home, in the
+  notifications or weekly email. Their items show on Home, in the
   person filter and in Stats like anyone else's.
 - When they sign in with Google using that email (Google must have verified it), they become
   that person, keeping the name, emoji, items and Stats set up for them. Within a day they can
@@ -419,15 +416,6 @@ People can be in the home before they join (**Not joined yet**):
 - Anyone can remove a person who has not joined yet; their items become unassigned, and what
   they did leaves Stats (the confirmation says how many). Someone who has joined can't be
   removed from the app.
-
-The household chat has its own rules:
-
-- Everyone in the household reads and posts in it.
-- Messages are kept forever: nothing deletes them by age. If someone's account is removed,
-  their messages stay (shown as from a former member).
-- Anyone can react to any message, with several different emoji, once each, and can take back
-  only their own reactions.
-- Only the author can delete a message (for everyone); nobody can edit one.
 
 Housekeeping follows the household rule. The housekeeper joins like anyone else, and everyone
 can change the message for the housekeeper, the task list, any visit's ticks, comments and

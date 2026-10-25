@@ -168,8 +168,6 @@ function home(): ServerDoc {
     ],
     invites: [],
     push_subs: [],
-    messages: [],
-    message_reactions: [],
     housekeeping_notes: [],
     housekeeping_tasks: [],
     housekeeping_visits: [

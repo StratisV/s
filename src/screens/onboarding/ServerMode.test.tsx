@@ -29,7 +29,6 @@ const SUMMARY: ServerSetupSummary = {
   areas: 6,
   items: 19,
   done: 3,
-  messages: 4,
   visits: 2,
   people: [
     { name: 'Stratis', emoji: '🦆', me: true },
@@ -294,7 +293,7 @@ describe('Welcome in server mode', () => {
         kind: 'setupElsewhere',
         setupCode: 'K7QMXRPWN9D3',
         summary: { ...SUMMARY, lastChanged: '2026-09-02T09:00:00.000Z' },
-        saved: { ...SUMMARY, areas: 11, items: 21, done: 0, messages: 0 },
+        saved: { ...SUMMARY, areas: 11, items: 21, done: 0 },
         ios: true,
       }),
     );
@@ -307,7 +306,7 @@ describe('Welcome in server mode', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy Code' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('K7QM-XRPW-N9D3'));
     // This browser's own copy, with its age, can still come online instead.
-    expect(screen.getByText(/This browser has a copy too: Our home, 6\sareas · 19\sitems · 3\sdone · 4\smessages, last changed Wed 2 Sep( 2026)?\./)).toBeTruthy();
+    expect(screen.getByText(/This browser has a copy too: Our home, 6\sareas · 19\sitems · 3\sdone, last changed Wed 2 Sep( 2026)?\./)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Use This Copy Instead' }));
     expect(home.chooseSetupHere).toHaveBeenCalled();
     // The household's saved copy can come online from here too.
@@ -321,7 +320,7 @@ describe('Welcome in server mode', () => {
     expect(screen.queryByRole('button', { name: 'Use the Saved Copy' })).toBeNull();
     expect(screen.queryByRole('textbox')).toBeNull();
     cleanup();
-    show(signedOut({ kind: 'setupElsewhere', setupCode: 'K7QMXRPWN9D3', summary: null, saved: { ...SUMMARY, done: 0, messages: 0 }, ios: false }));
+    show(signedOut({ kind: 'setupElsewhere', setupCode: 'K7QMXRPWN9D3', summary: null, saved: { ...SUMMARY, done: 0 }, ios: false }));
     expect(screen.getByText(/^Or bring your saved copy online from here: Our home, 6\sareas · 19\sitems\.$/)).toBeTruthy();
   });
 
@@ -463,7 +462,7 @@ describe('Bring this home online', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Bring this home online' })).toBeTruthy();
     expect(screen.getByText('Our home')).toBeTruthy();
     expect(screen.getByText('21 Alderbrook Road')).toBeTruthy();
-    expect(screen.getByText('6 areas · 19 items · 3 done · 4 messages')).toBeTruthy();
+    expect(screen.getByText('6 areas · 19 items · 3 done')).toBeTruthy();
     const people = within(screen.getByRole('list', { name: 'People' })).getAllByRole('listitem');
     expect(people.map((p) => p.textContent)).toEqual(['🦆Stratis (you)', '🦔Shea']);
 
@@ -510,12 +509,9 @@ describe('Bring this home online', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('There’s no setup code to paste. Copy it from the link first.');
   });
 
-  it('counts one message as one, and leaves out none', () => {
-    show(signedOut({ kind: 'setup', summary: { ...SUMMARY, messages: 1, done: 0 }, setupCode: '' }));
-    expect(screen.getByText('6 areas · 19 items · 1 message')).toBeTruthy();
-    cleanup();
-    show(signedOut({ kind: 'setup', summary: { ...SUMMARY, messages: 0 }, setupCode: '' }));
-    expect(screen.getByText('6 areas · 19 items · 3 done')).toBeTruthy();
+  it('counts one of each as one, and leaves out nothing done', () => {
+    show(signedOut({ kind: 'setup', summary: { ...SUMMARY, areas: 1, items: 1, done: 0 }, setupCode: '' }));
+    expect(screen.getByText('1 area · 1 item')).toBeTruthy();
   });
 
   it('takes a typed code when there was no link, and is off until it is long enough', async () => {

@@ -21,12 +21,13 @@ export interface ServerDoc {
   format: typeof SERVER_DOC_FORMAT;
   /** 1 when the home came online; +1 with every stored change (one per put, however many writes it holds). */
   rev: number;
-  /** +1 with every stored change in which the chat (messages, reactions) changed. */
-  chatRev: number;
   /**
    * The home, exactly as DemoBackend stores it, at rest with `session` null and `users`,
    * `invites` and `push_subs` empty (runAs() puts the caller in for one call and takes them
    * out again). Never sent to a browser as it is: browsers get what DemoBackend's methods return.
+   * A home from when there was a chat still holds its messages (`messages`,
+   * `message_reactions`) and the document its `chatRev`: nothing reads them any more, and every
+   * write keeps them as they are.
    */
   home: DemoDoc;
   /** Server-only: never in any response. */
@@ -174,14 +175,13 @@ export function usageMonth(at: Date): string {
 }
 
 /**
- * A new document for a home that is coming online (setup): rev 1, chatRev 1, no devices or codes
+ * A new document for a home that is coming online (setup): rev 1, no devices or codes
  * yet; `auth` gets the token secret and the setup code's hash when given.
  */
 export function newServerDoc(home: DemoDoc, now: Date, auth: { secret?: string; setupHash?: string } = {}): ServerDoc {
   return {
     format: SERVER_DOC_FORMAT,
     rev: 1,
-    chatRev: 1,
     home: { ...home, session: null, users: [], invites: [], push_subs: [] },
     auth: {
       devices: [],
@@ -212,8 +212,6 @@ const HOME_LISTS = [
   'completions',
   'invites',
   'push_subs',
-  'messages',
-  'message_reactions',
   'housekeeping_notes',
   'housekeeping_tasks',
   'housekeeping_visits',
@@ -224,7 +222,7 @@ const HOME_LISTS = [
 export function parseServerDoc(body: string): ServerDoc {
   const doc: unknown = JSON.parse(body);
   if (!isRecord(doc) || doc.format !== SERVER_DOC_FORMAT) throw new Error('not a home.os server document');
-  if (!isCount(doc.rev) || doc.rev < 1 || !isCount(doc.chatRev)) throw new Error('server document: bad rev');
+  if (!isCount(doc.rev) || doc.rev < 1) throw new Error('server document: bad rev');
   const home = doc.home;
   if (
     !isRecord(home) ||
@@ -266,9 +264,4 @@ export function parseServerDoc(body: string): ServerDoc {
 /** The body to store (JSON). */
 export function serialiseServerDoc(doc: ServerDoc): string {
   return JSON.stringify(doc);
-}
-
-/** The chat part of the home, as a string to compare before and after a write (chatRev). */
-export function chatFingerprint(home: DemoDoc): string {
-  return JSON.stringify([home.messages ?? [], home.message_reactions ?? []]);
 }

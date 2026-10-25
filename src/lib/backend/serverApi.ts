@@ -250,8 +250,6 @@ export type SignedInResponse = SessionResponse;
 export interface VersionResponse {
   /** Goes up by one with every stored change to the home (anything at all). */
   rev: number;
-  /** Goes up whenever the chat (messages, reactions) changed in a stored change. */
-  chatRev: number;
   /** How long to wait before the next poll while visible (ms); the server raises it to save Blob reads. */
   pollMs: number;
   readOnly: boolean;
@@ -405,11 +403,6 @@ export const RPC_METHODS = {
   deleteItem: 'write',
   completeItem: 'write',
   undoCompletion: 'write',
-  listMessages: 'read',
-  getMessages: 'read',
-  sendMessage: 'write',
-  deleteMessage: 'write',
-  setReaction: 'write',
   setHousekeepingNote: 'write',
   undoClearHousekeepingNote: 'write',
   createHousekeepingTask: 'write',
@@ -447,7 +440,6 @@ export const NOT_RPC: { [M in Exclude<keyof Backend, RpcMethod | 'kind'>]: strin
   takeAuthError: 'always null',
   enterHome: "the entry kept from setup or redeem (once), else GET ?op=session's entry",
   subscribe: 'polls GET ?op=version; onChange when rev changes, and on the first poll and after a failed one',
-  subscribeChat: "the same poll; { type: 'resync' } when chatRev changes, and the change of its own chat writes",
   reconnect: 'polls at once',
   createHousehold: "rejects 'home_exists': a home comes online only through setup",
   joinHousehold: "rejects 'invalid_invite': codes replace invite links",

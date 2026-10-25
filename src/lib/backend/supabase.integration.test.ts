@@ -14,17 +14,14 @@ import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { addDays, todayIn } from '../logic/dates';
 import { seedItemsFor } from '../logic/items';
-import { CHAT_PAGE_SIZE, HOUSEKEEPING_PRICE_MAX_PENCE, HOUSEKEEPING_STARTER_TASKS } from '../constants';
+import { HOUSEKEEPING_PRICE_MAX_PENCE, HOUSEKEEPING_STARTER_TASKS } from '../constants';
 import type {
   Area,
-  ChatChange,
-  ChatPage,
   CreateHouseholdInput,
   HouseholdData,
   ItemDraft,
   PushSubscriptionInput,
 } from '../types';
-import { instantOf } from '../logic/chat';
 import { buildImportPayload, readDemoDoc } from '../logic/importHome';
 import { USER_DEMO_DOC } from '../logic/importHome.fixture';
 import { RECONNECT_MIN_MS, SupabaseBackend, toAuthUser, toBackendError, toHHMM, toHomeEntry } from './supabase';
@@ -925,77 +922,6 @@ describe('SupabaseBackend offline: auth and realtime wiring', () => {
     expect(first).not.toBe(second);
     expect(String(first)).toContain('h1');
   });
-
-  it('subscribeChat() maps both chat tables to ChatChange events on one channel', () => {
-    const rt = fakeRealtimeClient();
-    const backend = new SupabaseBackend(FAKE_URL, FAKE_KEY, { client: rt.client as unknown as SupabaseClient });
-    const seen: ChatChange[] = [];
-    const stop = backend.subscribeChat('h1', (c) => seen.push(c));
-
-    expect(rt.client.channel).toHaveBeenCalledTimes(1);
-    expect(String((rt.client.channel.mock.calls[0] as unknown[])[0])).toMatch(/^chat:h1:/);
-    // Deletes are filtered too: with replica identity full the old row carries household_id.
-    expect(rt.handlers.map((h) => [h.type, h.filter.table, h.filter.filter, h.filter.event, h.filter.schema])).toEqual([
-      ['postgres_changes', 'messages', 'household_id=eq.h1', '*', 'public'],
-      ['postgres_changes', 'message_reactions', 'household_id=eq.h1', '*', 'public'],
-    ]);
-    const [messages, reactions] = rt.handlers;
-    const change = (eventType: string, row: object) =>
-      eventType === 'DELETE' ? { eventType, new: {}, old: row, errors: null } : { eventType, new: row, old: {}, errors: null };
-
-    messages.cb(change('INSERT', { id: 'm1', household_id: 'h1', body: 'Hi' }));
-    messages.cb(change('DELETE', { id: 'm1' })); // a DELETE carries the primary key only
-    reactions.cb(change('INSERT', { message_id: 'm2', member_id: 'p1', emoji: '👍', household_id: 'h1' }));
-    reactions.cb(change('DELETE', { message_id: 'm2', member_id: 'p1', emoji: '👍' }));
-    messages.cb(change('DELETE', {})); // names no message: reload
-    reactions.cb(change('INSERT', { message_id: 42 }));
-    expect(seen).toEqual([
-      { type: 'message', messageId: 'm1', deleted: false },
-      { type: 'message', messageId: 'm1', deleted: true },
-      { type: 'reaction', messageId: 'm2' },
-      { type: 'reaction', messageId: 'm2' },
-      { type: 'resync' },
-      { type: 'resync' },
-    ]);
-
-    // Every join resyncs, the first included: a message posted between the first page and
-    // the join, or while a dropped connection was down, is never replayed.
-    rt.setStatus('SUBSCRIBED');
-    expect(seen).toHaveLength(7);
-    expect(seen.at(-1)).toEqual({ type: 'resync' });
-    rt.setStatus('CHANNEL_ERROR');
-    expect(seen).toHaveLength(7);
-    rt.setStatus('SUBSCRIBED');
-    expect(seen.at(-1)).toEqual({ type: 'resync' });
-    expect(seen).toHaveLength(8);
-
-    stop();
-    stop();
-    expect(rt.client.removeChannel).toHaveBeenCalledTimes(1);
-    expect(rt.client.removeChannel).toHaveBeenCalledWith(rt.channel);
-    messages.cb(change('INSERT', { id: 'm3' }));
-    rt.setStatus('SUBSCRIBED');
-    expect(seen).toHaveLength(8);
-  });
-
-  it('subscribeChat() keeps delivering when a listener throws', () => {
-    const rt = fakeRealtimeClient();
-    const backend = new SupabaseBackend(FAKE_URL, FAKE_KEY, { client: rt.client as unknown as SupabaseClient });
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      let calls = 0;
-      backend.subscribeChat('h1', () => {
-        calls++;
-        throw new Error('listener failed');
-      });
-      expect(() => rt.handlers[0].cb({ eventType: 'INSERT', new: { id: 'm1' }, old: {} })).not.toThrow();
-      rt.handlers[1].cb({ eventType: 'INSERT', new: { message_id: 'm1' }, old: {} });
-      expect(calls).toBe(2);
-      expect(errors).toHaveBeenCalledTimes(2);
-    } finally {
-      errors.mockRestore();
-    }
-  });
 });
 
 describe('SupabaseBackend offline: reconnect', () => {
@@ -1064,14 +990,14 @@ describe('SupabaseBackend offline: reconnect', () => {
     const fake = fakeSocketClient();
     const backend = new SupabaseBackend(FAKE_URL, FAKE_KEY, { client: fake.client });
     const reloads = vi.fn();
-    const chat: ChatChange[] = [];
+    const others = vi.fn();
     backend.subscribe('h1', reloads);
-    backend.subscribeChat('h1', (c) => chat.push(c));
-    const [home, talk] = fake.channels;
+    backend.subscribe('h2', others);
+    const [home, other] = fake.channels;
     home.status('SUBSCRIBED');
-    talk.status('SUBSCRIBED');
+    other.status('SUBSCRIBED');
     expect(reloads).toHaveBeenCalledTimes(1);
-    expect(chat).toEqual([{ type: 'resync' }]);
+    expect(others).toHaveBeenCalledTimes(1);
     fake.log.length = 0;
 
     backend.reconnect();
@@ -1085,29 +1011,29 @@ describe('SupabaseBackend offline: reconnect', () => {
       `open ${fake.channels[2].topic}`,
       `remove ${home.topic}`,
       `open ${fake.channels[3].topic}`,
-      `remove ${talk.topic}`,
+      `remove ${other.topic}`,
     ]);
-    const [, , home2, talk2] = fake.channels;
+    const [, , home2, other2] = fake.channels;
     expect(home2.topic).toMatch(/^household:h1:/);
-    expect(talk2.topic).toMatch(/^chat:h1:/);
+    expect(other2.topic).toMatch(/^household:h2:/);
     expect(home2.topic).not.toBe(home.topic);
     expect(home2.handlers.map((h) => h.table)).toEqual(home.handlers.map((h) => h.table));
-    expect(talk2.handlers.map((h) => h.table)).toEqual(['messages', 'message_reactions']);
+    expect(other2.handlers.map((h) => h.table)).toEqual(other.handlers.map((h) => h.table));
 
     // The fresh channels' joins ask for a reload; the old ones are silent from now on.
     home2.status('SUBSCRIBED');
-    talk2.status('SUBSCRIBED');
+    other2.status('SUBSCRIBED');
     expect(reloads).toHaveBeenCalledTimes(2);
-    expect(chat).toEqual([{ type: 'resync' }, { type: 'resync' }]);
+    expect(others).toHaveBeenCalledTimes(2);
     home.handlers[3].cb();
     home.status('SUBSCRIBED');
-    talk.handlers[0].cb({ eventType: 'INSERT', new: { id: 'm1' }, old: {} });
+    other.handlers[0].cb();
     expect(reloads).toHaveBeenCalledTimes(2);
-    expect(chat).toHaveLength(2);
+    expect(others).toHaveBeenCalledTimes(2);
     home2.handlers[3].cb();
-    talk2.handlers[0].cb({ eventType: 'INSERT', new: { id: 'm1' }, old: {} });
+    other2.handlers[0].cb();
     expect(reloads).toHaveBeenCalledTimes(3);
-    expect(chat.at(-1)).toEqual({ type: 'message', messageId: 'm1', deleted: false });
+    expect(others).toHaveBeenCalledTimes(3);
   });
 
   it('runs at most once per 5 s, returns at once and never throws', async () => {
@@ -1160,223 +1086,17 @@ describe('SupabaseBackend offline: reconnect', () => {
     const backend = new SupabaseBackend(FAKE_URL, FAKE_KEY, { client: fake.client });
     const reloads = vi.fn();
     const stop = backend.subscribe('h1', reloads);
-    const keep = backend.subscribeChat('h1', () => {});
+    const keep = backend.subscribe('h2', () => {});
     fake.hold();
     backend.reconnect();
     stop();
     fake.release();
     await settle();
-    // Only the chat got a fresh channel.
-    expect(fake.channels.map((c) => c.topic.split(':')[0])).toEqual(['household', 'chat', 'chat']);
+    // Only the one still open got a fresh channel.
+    expect(fake.channels.map((c) => c.topic.split(':').slice(0, 2).join(':'))).toEqual(['household:h1', 'household:h2', 'household:h2']);
     expect(fake.channels[0].removed).toBe(true);
     keep();
     expect(fake.channels[2].removed).toBe(true);
-  });
-});
-
-describe('SupabaseBackend offline: chat requests', () => {
-  const H = '22222222-2222-4222-8222-222222222222';
-  const ME = '33333333-3333-4333-8333-333333333333';
-  const uid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-  const SELECT = 'id,household_id,member_id,body,created_at,reactions:message_reactions(message_id,member_id,emoji,created_at)';
-  const row = (n: number, created_at: string, reactions: object[] = []) => ({
-    id: uid(n),
-    household_id: H,
-    member_id: ME,
-    body: `Message ${n}`,
-    created_at,
-    reactions,
-  });
-  const at = (s: number) => `2026-10-09T19:13:${String(s).padStart(2, '0')}.5+00:00`;
-  const pgError = (message: string, code = 'P0001', status = 400) => ({
-    status,
-    body: { message, code, details: null, hint: null },
-  });
-
-  it('instantOf keeps the microseconds PostgREST prints', () => {
-    expect(instantOf('2026-10-09T19:13:24.1021+00:00') - instantOf('2026-10-09T19:13:24.102+00:00')).toBe(100);
-    expect(instantOf('2026-10-09T19:13:24.000001+00:00') - instantOf('2026-10-09T19:13:24+00:00')).toBe(1);
-    expect(instantOf('2026-10-09T19:13:24.5Z')).toBe(instantOf('2026-10-09T20:13:24.500000+01:00'));
-    expect(instantOf('2026-10-09T19:13:24.999999+00:00')).toBeLessThan(instantOf('2026-10-09T19:13:25+00:00'));
-  });
-
-  it('listMessages reads the newest page with its reactions in one request, oldest first', async () => {
-    const reactions = [
-      { message_id: uid(3), member_id: 'p2', emoji: '🎉', created_at: '2026-10-09T19:14:00.10215+00:00' },
-      { message_id: uid(3), member_id: 'p1', emoji: '❤️', created_at: '2026-10-09T19:14:00.1021+00:00' },
-    ];
-    const { backend, rest } = fakeServer(() => ({ body: [row(3, at(3), reactions), row(2, at(2)), row(1, at(1))] }));
-    const page = await backend.listMessages(H, { limit: 2 });
-    expect(page.hasMore).toBe(true);
-    expect(page.messages.map((m) => m.body)).toEqual(['Message 2', 'Message 3']);
-    // Reactions oldest first, to the microsecond; exactly the contract's keys.
-    expect(page.messages[1].reactions.map((r) => r.emoji)).toEqual(['❤️', '🎉']);
-    expect(Object.keys(page.messages[1]).sort()).toEqual(['body', 'created_at', 'household_id', 'id', 'member_id', 'reactions']);
-    expect(Object.keys(page.messages[1].reactions[0]).sort()).toEqual(['created_at', 'emoji', 'member_id', 'message_id']);
-
-    const q = rest('messages')[0].url.searchParams;
-    expect(rest('messages')).toHaveLength(1);
-    expect(q.get('select')).toBe(SELECT);
-    expect(q.get('household_id')).toBe(`eq.${H}`);
-    expect(q.get('order')).toBe('created_at.desc,id.desc');
-    expect(q.get('limit')).toBe('3');
-    expect(q.has('created_at')).toBe(false);
-
-    // `before` goes to the API exactly as given (microseconds intact).
-    const before = '2026-10-09T19:13:24.1021+00:00';
-    const older = await backend.listMessages(H, { before, limit: 5 });
-    expect(older).toMatchObject({ hasMore: false });
-    expect(older.messages.map((m) => m.body)).toEqual(['Message 1', 'Message 2', 'Message 3']);
-    expect(rest('messages')[1].url.searchParams.get('created_at')).toBe(`lt.${before}`);
-  });
-
-  it('listMessages page sizes: a positive whole number below max_rows, 50 by default', async () => {
-    const { backend, rest } = fakeServer(() => ({ body: [row(1, at(1))] }));
-    for (const limit of [undefined, Number.NaN, 0, -3, 2.7, 10_000, Infinity]) await backend.listMessages(H, { limit });
-    expect(rest('messages').map((c) => c.url.searchParams.get('limit'))).toEqual(['51', '51', '2', '2', '3', '1000', '1000']);
-  });
-
-  it('listMessages never ends a page inside a group of messages sharing one created_at', async () => {
-    // Newest first: 5 at t5, then 4, 3 and 2 sharing t3 (one transaction), then 1 at t1.
-    const all = [row(5, at(5)), row(4, at(3)), row(3, at(3)), row(2, at(3)), row(1, at(1))];
-    const { backend, rest } = fakeServer((call) => {
-      const q = call.url.searchParams;
-      const lt = q.get('created_at')?.startsWith('lt.') ? instantOf(q.get('created_at')!.slice(3)) : Infinity;
-      const eq = q.get('created_at')?.startsWith('eq.') ? q.get('created_at')!.slice(3) : null;
-      const rows = all.filter((m) => (eq ? m.created_at === eq : instantOf(m.created_at) < lt));
-      return { body: rows.slice(0, Number(q.get('limit') ?? rows.length)) };
-    });
-
-    // A page of 3 would end inside the group: it stops before the group instead.
-    const first = await backend.listMessages(H, { limit: 3 });
-    expect([first.messages.map((m) => m.body), first.hasMore]).toEqual([['Message 5'], true]);
-    // The group is bigger than the page: the whole group comes back.
-    const second = await backend.listMessages(H, { before: first.messages[0].created_at, limit: 2 });
-    expect([second.messages.map((m) => m.body), second.hasMore]).toEqual([['Message 2', 'Message 3', 'Message 4'], true]);
-    const groupRead = rest('messages').find((c) => c.url.searchParams.get('created_at') === `eq.${at(3)}`)!;
-    expect(groupRead.url.searchParams.get('household_id')).toBe(`eq.${H}`);
-    expect(groupRead.url.searchParams.get('select')).toBe(SELECT);
-    const third = await backend.listMessages(H, { before: second.messages[0].created_at, limit: 2 });
-    expect([third.messages.map((m) => m.body), third.hasMore]).toEqual([['Message 1'], false]);
-
-    // The group is the oldest history: nothing more.
-    all.pop();
-    const last = await backend.listMessages(H, { before: at(4), limit: 1 });
-    expect([last.messages.map((m) => m.body), last.hasMore]).toEqual([['Message 2', 'Message 3', 'Message 4'], false]);
-  });
-
-  it('listMessages reports an empty chat, or a household the caller cannot see', async () => {
-    let visible: object[] = [{ id: H }];
-    const { backend, rest } = fakeServer((call) => ({ body: call.url.pathname === '/rest/v1/households' ? visible : [] }));
-    expect(await backend.listMessages(H)).toEqual({ messages: [], hasMore: false });
-    expect(rest('households')[0].url.searchParams.get('id')).toBe(`eq.${H}`);
-    visible = [];
-    await rejectsWith(backend.listMessages(H), 'not_found');
-    await rejectsWith(backend.listMessages(H, { before: 'yesterday-ish' }), 'unknown', /^invalid_input: before$/);
-    const before = rest('messages').length;
-    await rejectsWith(backend.listMessages('another-household'), 'not_found');
-    expect(rest('messages')).toHaveLength(before);
-  });
-
-  it('getMessages reloads the messages that still exist, in chat order', async () => {
-    // Same millisecond: only the microseconds tell them apart.
-    const a = row(1, '2026-10-09T19:13:24.10215+00:00');
-    const b = row(2, '2026-10-09T19:13:24.1021+00:00');
-    const { backend, rest } = fakeServer(() => ({ body: [a, b] }));
-    const got = await backend.getMessages([a.id, 'tmp-1', b.id, a.id]);
-    expect(got.map((m) => m.id)).toEqual([b.id, a.id]);
-    expect(rest('messages')).toHaveLength(1);
-    expect(rest('messages')[0].url.searchParams.get('id')).toBe(`in.(${a.id},${b.id})`);
-    expect(rest('messages')[0].url.searchParams.get('select')).toBe(SELECT);
-
-    expect(await backend.getMessages([])).toEqual([]);
-    expect(await backend.getMessages(['tmp-1'])).toEqual([]);
-    expect(rest('messages')).toHaveLength(1);
-
-    // Long lists go in several short requests.
-    await backend.getMessages(Array.from({ length: 250 }, (_, i) => uid(i)));
-    const sizes = rest('messages')
-      .slice(1)
-      .map((c) => c.url.searchParams.get('id')!.split(',').length);
-    expect(sizes).toEqual([100, 100, 50]);
-  });
-
-  it('sendMessage posts only the household and the trimmed body', async () => {
-    let reply: Reply = { status: 201, body: [{ ...row(1, at(1)), body: 'The engineer is here', reactions: undefined }] };
-    const { backend, rest } = fakeServer(() => reply);
-    const sent = await backend.sendMessage(H, '  The engineer is here \n');
-    expect(sent).toEqual({ ...row(1, at(1)), body: 'The engineer is here', reactions: [] });
-    const post = rest('messages')[0];
-    expect(post.method).toBe('POST');
-    expect(post.body).toEqual({ household_id: H, body: 'The engineer is here' });
-    expect(post.url.searchParams.get('select')).toBe('id,household_id,member_id,body,created_at');
-
-    // Characters as Postgres counts them: an emoji is one.
-    await backend.sendMessage(H, '🦔'.repeat(4000));
-    await backend.sendMessage(H, ` ${'x'.repeat(4000)}\n`);
-    expect(rest('messages')).toHaveLength(3);
-    for (const body of ['', '   ', '\n\t ', 'x'.repeat(4001), '🦔'.repeat(4001), null as unknown as string]) {
-      await rejectsWith(backend.sendMessage(H, body), 'unknown', /^invalid_input: body$/);
-    }
-    await rejectsWith(backend.sendMessage('another-household', 'Hi'), 'not_found');
-    expect(rest('messages')).toHaveLength(3);
-
-    reply = pgError('new row violates row-level security policy for table "messages"', '42501', 403);
-    await rejectsWith(backend.sendMessage(H, 'Hi'), 'not_found');
-    // The database's own check, should it ever refuse what the client let through.
-    reply = pgError('new row for relation "messages" violates check constraint "messages_body_length"', '23514');
-    await rejectsWith(backend.sendMessage(H, 'Hi'), 'unknown', /^invalid_input: messages_body_length$/);
-  });
-
-  it('deleteMessage deletes one of your own messages, else not_found', async () => {
-    let rows: object[] = [{ id: uid(1) }];
-    const { backend, rest } = fakeServer(() => ({ body: rows }));
-    await backend.deleteMessage(uid(1));
-    const del = rest('messages')[0];
-    expect([del.method, del.url.searchParams.get('id'), del.url.searchParams.get('select')]).toEqual([
-      'DELETE',
-      `eq.${uid(1)}`,
-      'id',
-    ]);
-    rows = []; // someone else's message, or gone: RLS deletes nothing
-    await rejectsWith(backend.deleteMessage(uid(1)), 'not_found');
-    await rejectsWith(backend.deleteMessage('nope'), 'not_found');
-    expect(rest('messages')).toHaveLength(2);
-  });
-
-  it('setReaction adds idempotently and removes only by message and emoji', async () => {
-    let reply: Reply = { status: 201 };
-    const { backend, rest } = fakeServer(() => reply);
-    await backend.setReaction(uid(1), '❤️', true);
-    const add = rest('message_reactions')[0];
-    expect(add.method).toBe('POST');
-    expect(add.body).toEqual({ message_id: uid(1), emoji: '❤️' });
-    expect(add.url.searchParams.get('on_conflict')).toBe('message_id,member_id,emoji');
-    expect(add.headers.get('prefer')).toMatch(/resolution=ignore-duplicates/);
-
-    reply = { status: 204 };
-    await backend.setReaction(uid(1), '❤️', false);
-    const remove = rest('message_reactions')[1];
-    expect(remove.method).toBe('DELETE');
-    expect(remove.url.searchParams.get('message_id')).toBe(`eq.${uid(1)}`);
-    expect(remove.url.searchParams.get('emoji')).toBe('eq.❤️');
-    // RLS keeps the delete to the caller's own reactions.
-    expect(remove.url.searchParams.has('member_id')).toBe(false);
-
-    await backend.setReaction(uid(1), '🛠️', true); // two code points (U+FE0F)
-    // Only REACTION_EMOJIS (message_reactions_emoji_allowed), refused before any request.
-    for (const emoji of ['', '🦔'.repeat(17), '👨‍👩‍👧‍👦', '❤', 'pay rent 1234']) {
-      await rejectsWith(backend.setReaction(uid(1), emoji, true), 'unknown', /^invalid_input: emoji$/);
-    }
-    await rejectsWith(backend.setReaction('nope', '👍', true), 'not_found');
-    await backend.setReaction('nope', '👍', false);
-    await backend.setReaction(uid(1), '', false);
-    expect(rest('message_reactions')).toHaveLength(3);
-
-    reply = pgError('not_found'); // the trigger: no such message
-    await rejectsWith(backend.setReaction(uid(2), '👍', true), 'not_found');
-    reply = pgError('new row violates row-level security policy for table "message_reactions"', '42501', 403);
-    await rejectsWith(backend.setReaction(uid(2), '👍', true), 'not_found');
   });
 });
 
@@ -2575,343 +2295,6 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     expect(await waitFor(() => people.a.client.getChannels().length === 0, 5000)).toBe(true);
   });
 
-  // ── Chat ────────────────────────────────────────────────
-
-  /** Messages as the service role writes them: with chosen times (members cannot set created_at). */
-  async function seedMessages(rows: { member_id: string; body: string; created_at: string }[]) {
-    const { data, error } = await admin
-      .from('messages')
-      .insert(rows.map((r) => ({ household_id: hidA, ...r })))
-      .select('id, body, created_at');
-    if (error) throw error;
-    return data as { id: string; body: string; created_at: string }[];
-  }
-
-  /** A household's message ids as stored, in chat order (created_at to the microsecond, then id). */
-  async function storedMessageIds(hid: string): Promise<string[]> {
-    const { data, error } = await admin.from('messages').select('id').eq('household_id', hid).order('created_at').order('id');
-    if (error) throw error;
-    return data.map((m) => m.id as string);
-  }
-
-  async function storedReactions(messageId: string) {
-    const { data, error } = await admin
-      .from('message_reactions')
-      .select('member_id, household_id, emoji')
-      .eq('message_id', messageId)
-      .order('created_at');
-    if (error) throw error;
-    return data;
-  }
-
-  it('chat: members post and read; an outsider sees nothing and cannot post', async () => {
-    const fromA = await A().sendMessage(hidA, '  The engineer is here \n');
-    expect(fromA).toEqual({
-      id: fromA.id,
-      household_id: hidA,
-      member_id: memberA,
-      body: 'The engineer is here',
-      created_at: fromA.created_at,
-      reactions: [],
-    });
-    const fromB = await B().sendMessage(hidA, 'Thanks, I will put the kettle on');
-    expect(fromB).toMatchObject({ household_id: hidA, member_id: memberB, reactions: [] });
-    expect(instantOf(fromB.created_at)).toBeGreaterThan(instantOf(fromA.created_at));
-
-    const page = await B().listMessages(hidA);
-    expect(page).toEqual({ messages: [fromA, fromB], hasMore: false });
-    expect(await A().listMessages(hidA)).toEqual(page);
-    expect(await A().getMessages([fromB.id, 'tmp-1', fromA.id, fromB.id])).toEqual([fromA, fromB]);
-
-    // TEXT_LIMITS.chatMessage, in characters as Postgres counts them: an emoji is one.
-    const longest = await A().sendMessage(hidA, '🦔'.repeat(4000));
-    expect(Array.from(longest.body)).toHaveLength(4000);
-    for (const body of ['', '   ', '\n\t ', 'x'.repeat(4001), '🦔'.repeat(4001)]) {
-      await rejectsWith(A().sendMessage(hidA, body), 'unknown', /^invalid_input: body$/);
-    }
-    await A().deleteMessage(longest.id);
-
-    // C belongs to another household: A's chat is invisible and closed to them.
-    await rejectsWith(C().listMessages(hidA), 'not_found');
-    await rejectsWith(C().listMessages(hidA, { before: fromB.created_at }), 'not_found');
-    await rejectsWith(C().sendMessage(hidA, 'Hi'), 'not_found');
-    expect(await C().getMessages([fromA.id, fromB.id])).toEqual([]);
-    await rejectsWith(C().setReaction(fromA.id, '👍', true), 'not_found');
-    await C().setReaction(fromA.id, '👍', false);
-    await rejectsWith(C().deleteMessage(fromA.id), 'not_found');
-
-    // C's own chat starts empty and stays out of A's sight.
-    expect(await C().listMessages(hidC)).toEqual({ messages: [], hasMore: false });
-    const fromC = await C().sendMessage(hidC, 'Only for the shed');
-    expect(fromC).toMatchObject({ household_id: hidC, member_id: memberC });
-    expect(await A().getMessages([fromC.id])).toEqual([]);
-    await rejectsWith(A().listMessages(hidC), 'not_found');
-    await rejectsWith(A().setReaction(fromC.id, '👍', true), 'not_found');
-    await rejectsWith(A().deleteMessage(fromC.id), 'not_found');
-
-    expect(await storedMessageIds(hidA)).toEqual([fromA.id, fromB.id]);
-    expect(await storedMessageIds(hidC)).toEqual([fromC.id]);
-    expect(await storedReactions(fromA.id)).toEqual([]);
-  });
-
-  it('chat: pages backwards through the whole history, to the microsecond', async () => {
-    const current = await storedMessageIds(hidA);
-    // Older history: a regular stretch longer than two pages, two messages one microsecond
-    // apart, and three sharing one created_at (as rows written in a single transaction do).
-    const t = (time: string) => `2026-01-01T${time}+00:00`;
-    const regular = Array.from({ length: 2 * CHAT_PAGE_SIZE + 5 }, (_, i) => ({
-      member_id: i % 2 ? memberB : memberA,
-      body: `History ${i + 1}`,
-      created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
-    }));
-    const seeded = await seedMessages([
-      ...regular,
-      { member_id: memberA, body: 'One microsecond', created_at: t('12:00:00.000001') },
-      { member_id: memberB, body: 'Then the next', created_at: t('12:00:00.000002') },
-      { member_id: memberA, body: 'Before the group', created_at: t('12:30:00') },
-      ...['Group 1', 'Group 2', 'Group 3'].map((body) => ({ member_id: memberB, body, created_at: t('13:00:00.5') })),
-      { member_id: memberA, body: 'After the group', created_at: t('13:00:01') },
-      { member_id: memberA, body: 'Later still', created_at: t('13:00:02') },
-    ]);
-    const seededAt = (body: string) => seeded.find((m) => m.body === body)!.created_at;
-    const expected = await storedMessageIds(hidA);
-    expect(expected).toHaveLength(current.length + seeded.length);
-    expect(expected.slice(-current.length)).toEqual(current);
-
-    /** Every page from the newest back, oldest page first. */
-    async function readAll(limit?: number): Promise<ChatPage[]> {
-      const pages: ChatPage[] = [];
-      let before: string | undefined;
-      for (;;) {
-        const page = await B().listMessages(hidA, { before, limit });
-        pages.unshift(page);
-        if (!page.hasMore) return pages;
-        expect(page.messages.length).toBeGreaterThan(0);
-        before = page.messages[0].created_at;
-      }
-    }
-    const ids = (pages: ChatPage[]) => pages.flatMap((p) => p.messages.map((m) => m.id));
-
-    const pages = await readAll();
-    expect(pages.length).toBeGreaterThanOrEqual(3);
-    expect(pages.at(-1)!.messages).toHaveLength(CHAT_PAGE_SIZE);
-    expect(ids(pages)).toEqual(expected);
-    for (const page of pages) {
-      const times = page.messages.map((m) => instantOf(m.created_at));
-      expect([...times].sort((x, y) => x - y)).toEqual(times);
-    }
-    // Tiny pages cross the microsecond pair and the shared created_at at every alignment.
-    for (const limit of [1, 2, 3]) expect(ids(await readAll(limit)), `pages of ${limit}`).toEqual(expected);
-
-    // `before` is strict and keeps its microseconds.
-    expect(seededAt('Then the next')).toMatch(/\.000002\+00(:00)?$/);
-    const previous = await A().listMessages(hidA, { before: seededAt('Then the next'), limit: 1 });
-    expect(previous.messages.map((m) => m.body)).toEqual(['One microsecond']);
-    // A page that would end inside the group stops before it; a group bigger than the page comes whole.
-    const stopsShort = await A().listMessages(hidA, { before: seededAt('Later still'), limit: 3 });
-    expect([stopsShort.messages.map((m) => m.body), stopsShort.hasMore]).toEqual([['After the group'], true]);
-    const group = await A().listMessages(hidA, { before: seededAt('After the group'), limit: 2 });
-    expect([group.messages.map((m) => m.body).sort(), group.hasMore]).toEqual([['Group 1', 'Group 2', 'Group 3'], true]);
-    // The start of the chat.
-    expect(await A().listMessages(hidA, { before: pages[0].messages[0].created_at })).toEqual({
-      messages: [],
-      hasMore: false,
-    });
-    await rejectsWith(A().listMessages(hidA, { before: 'yesterday-ish' }), 'unknown', /^invalid_input: before$/);
-  });
-
-  it('chat: reactions from two members, several emoji each, once each; only your own come off', async () => {
-    const msg = await A().sendMessage(hidA, 'The firepit has gone to its new home');
-    await A().setReaction(msg.id, '❤️', true);
-    await A().setReaction(msg.id, '❤️', true); // again: still one
-    await A().setReaction(msg.id, '🎉', true);
-    await B().setReaction(msg.id, '❤️', true);
-    await B().setReaction(msg.id, '🛠️', true); // one emoji of two code points (U+FE0F)
-
-    let [got] = await B().getMessages([msg.id]);
-    expect(got.reactions.map((r) => [r.member_id, r.emoji])).toEqual([
-      [memberA, '❤️'],
-      [memberA, '🎉'],
-      [memberB, '❤️'],
-      [memberB, '🛠️'],
-    ]);
-    expect(got.reactions.every((r) => r.message_id === msg.id)).toBe(true);
-    // The newest page carries the same message with the same reactions.
-    expect(await A().listMessages(hidA, { limit: 1 })).toEqual({ messages: [got], hasMore: true });
-
-    // Removing touches only your own reaction.
-    await B().setReaction(msg.id, '❤️', false);
-    await B().setReaction(msg.id, '❤️', false); // already off
-    await B().setReaction(msg.id, '🎉', false); // A's 🎉 stays
-    [got] = await A().getMessages([msg.id]);
-    expect(got.reactions.map((r) => [r.member_id, r.emoji])).toEqual([
-      [memberA, '❤️'],
-      [memberA, '🎉'],
-      [memberB, '🛠️'],
-    ]);
-    // The database fills in the member and the message's household.
-    expect(await storedReactions(msg.id)).toEqual([
-      { member_id: memberA, household_id: hidA, emoji: '❤️' },
-      { member_id: memberA, household_id: hidA, emoji: '🎉' },
-      { member_id: memberB, household_id: hidA, emoji: '🛠️' },
-    ]);
-
-    for (const emoji of ['', '🦔'.repeat(17), '👨‍👩‍👧‍👦', '❤', 'pay rent 1234']) {
-      await rejectsWith(B().setReaction(msg.id, emoji, true), 'unknown', /^invalid_input: emoji$/);
-    }
-    // The database refuses anything else too, for a client that skips the backend's check.
-    for (const emoji of ['<b>hi</b>', '👨‍👩‍👧‍👦', '❤']) {
-      const { error } = await people.b.client.from('message_reactions').insert({ message_id: msg.id, emoji });
-      expect(error?.code, emoji).toBe('23514');
-      expect(error?.message).toMatch(/message_reactions_emoji_allowed/);
-    }
-    await rejectsWith(B().setReaction(crypto.randomUUID(), '👍', true), 'not_found');
-    await B().setReaction(crypto.randomUUID(), '👍', false);
-    expect(await storedReactions(msg.id)).toHaveLength(3);
-  });
-
-  it('chat: members delete only their own messages, and the reactions go with them', async () => {
-    const fromA = await A().sendMessage(hidA, 'Hi Bea');
-    const fromB = await B().sendMessage(hidA, 'Hello from Bea');
-    await A().setReaction(fromB.id, '❤️', true);
-    await B().setReaction(fromA.id, '👍', true);
-
-    await rejectsWith(A().deleteMessage(fromB.id), 'not_found');
-    await rejectsWith(C().deleteMessage(fromB.id), 'not_found');
-    await rejectsWith(A().deleteMessage('nope'), 'not_found');
-    expect((await B().getMessages([fromA.id, fromB.id])).map((m) => m.id)).toEqual([fromA.id, fromB.id]);
-
-    await B().deleteMessage(fromB.id); // A's reaction on it goes too
-    await rejectsWith(B().deleteMessage(fromB.id), 'not_found');
-    expect(await A().getMessages([fromB.id])).toEqual([]);
-    expect(await storedReactions(fromB.id)).toEqual([]);
-
-    await A().deleteMessage(fromA.id);
-    expect(await storedReactions(fromA.id)).toEqual([]);
-    expect(await B().getMessages([fromA.id, fromB.id])).toEqual([]);
-    expect((await B().listMessages(hidA)).messages.some((m) => m.id === fromA.id || m.id === fromB.id)).toBe(false);
-  });
-
-  it('subscribeChat: a member hears messages, reactions and deletes; other households hear none of it', { timeout: 60_000 }, async () => {
-    const heardB: ChatChange[] = [];
-    const heardC: ChatChange[] = [];
-    const stopB = B().subscribeChat(hidA, (c) => heardB.push(c));
-    const stopC = C().subscribeChat(hidC, (c) => heardC.push(c));
-    // C also listens to A's household with the same filters (as if C knew its id). RLS keeps
-    // every INSERT from C; a DELETE notice carries the primary key only.
-    type Heard = { table: string; eventType: string; new: object; old: object };
-    const outsiderHeard: Heard[] = [];
-    const outsider = people.c.client.channel(`chat-outsider:${hidA}:${runId}`);
-    for (const table of ['messages', 'message_reactions']) {
-      const filter = `household_id=eq.${hidA}`;
-      outsider.on('postgres_changes', { event: '*', schema: 'public', table, filter }, (p) => outsiderHeard.push(p));
-    }
-    outsider.subscribe();
-
-    const joined = (p: Person) => {
-      const channels = p.client.getChannels();
-      return channels.length > 0 && channels.every((c) => c.state === 'joined');
-    };
-    const messageEvent = (id: string, deleted: boolean) => (c: ChatChange) =>
-      c.type === 'message' && c.messageId === id && c.deleted === deleted;
-    const reactionEvents = (list: ChatChange[], id: string) =>
-      list.filter((c) => c.type === 'reaction' && c.messageId === id).length;
-    const sentInA: string[] = [];
-    const sentInC: string[] = [];
-
-    const resyncs = (list: ChatChange[]) => list.filter((c) => c.type === 'resync').length;
-    try {
-      expect(await waitFor(() => joined(people.b) && joined(people.c), 10_000), 'realtime channels joined').toBe(true);
-      // Every join resyncs, the first included: a message posted between the first page and
-      // the join is never replayed.
-      expect(await waitFor(() => resyncs(heardB) === 1 && resyncs(heardC) === 1, 5000), 'the first join resyncs').toBe(true);
-      // Postgres changes start flowing a moment after the join, so keep posting until one arrives.
-      const until = Date.now() + 20_000;
-      let flowing = false;
-      for (let n = 1; !flowing && Date.now() < until; n++) {
-        const warm = await A().sendMessage(hidA, `Warming up ${n}`);
-        sentInA.push(warm.id);
-        flowing = await waitFor(() => heardB.some(messageEvent(warm.id, false)), 1500);
-      }
-      expect(flowing, 'chat events heard by a member').toBe(true);
-
-      // A's message, a reaction on and off, B's own reaction, then the delete, which takes B's
-      // reaction with it. Realtime drops an INSERT whose row is gone by the time it reads it,
-      // so each step waits until B has heard the previous one.
-      const msg = await A().sendMessage(hidA, `Secret ${runId}`);
-      sentInA.push(msg.id);
-      expect(await waitFor(() => heardB.some(messageEvent(msg.id, false)), 10_000), 'B heard the message').toBe(true);
-      const steps: [string, () => Promise<void>][] = [
-        ['reaction', () => A().setReaction(msg.id, '👍', true)],
-        ['un-reaction', () => A().setReaction(msg.id, '👍', false)],
-        ['own reaction', () => B().setReaction(msg.id, '❤️', true)],
-      ];
-      for (const [what, step] of steps) {
-        const before = reactionEvents(heardB, msg.id);
-        await step();
-        expect(await waitFor(() => reactionEvents(heardB, msg.id) > before, 10_000), `B heard the ${what}`).toBe(true);
-      }
-      const reactionsBefore = reactionEvents(heardB, msg.id);
-      await A().deleteMessage(msg.id);
-      expect(await waitFor(() => heardB.some(messageEvent(msg.id, true)), 10_000), 'B heard the delete').toBe(true);
-      expect(
-        await waitFor(() => reactionEvents(heardB, msg.id) > reactionsBefore, 10_000),
-        'B heard the reaction removed with the message',
-      ).toBe(true);
-
-      // The same in C's household reaches C only.
-      const fromC = await C().sendMessage(hidC, `Shed ${runId}`);
-      sentInC.push(fromC.id);
-      expect(await waitFor(() => heardC.some(messageEvent(fromC.id, false)), 10_000), 'C heard their message').toBe(true);
-      await C().setReaction(fromC.id, '👍', true);
-      expect(await waitFor(() => reactionEvents(heardC, fromC.id) > 0, 10_000), 'C heard their reaction').toBe(true);
-      await C().deleteMessage(fromC.id);
-      expect(await waitFor(() => heardC.some(messageEvent(fromC.id, true)), 10_000), 'C heard their delete').toBe(true);
-      await sleep(1000);
-
-      // A new subscription may first hear changes committed just before it (Realtime reads
-      // the write-ahead log a little behind), here from the earlier chat tests in A's
-      // household. From the first warm-up message on, B hears exactly what this test did there.
-      const named = (list: ChatChange[]) => list.flatMap((c) => (c.type === 'resync' ? [] : [c.messageId]));
-      const sinceWarmUp = named(heardB).slice(named(heardB).indexOf(sentInA[0]));
-      expect(sinceWarmUp.filter((id) => !sentInA.includes(id)), 'B heard only its own household').toEqual([]);
-      expect(named(heardC).filter((id) => sentInA.includes(id)), 'C heard nothing of A').toEqual([]);
-      expect(resyncs(heardB), 'no resync without a rejoin').toBe(1);
-      for (const heard of outsiderHeard) {
-        expect(heard.eventType, `outsider heard ${heard.eventType} on ${heard.table}`).toBe('DELETE');
-        expect(heard.new).toEqual({});
-        const primaryKey = heard.table === 'messages' ? ['id'] : ['emoji', 'member_id', 'message_id'];
-        expect(Object.keys(heard.old).sort()).toEqual(primaryKey);
-      }
-
-      // A dropped connection: once the channel has rejoined, B is told to resync and hears
-      // changes again.
-      type Socket = { close(code?: number, reason?: string): void };
-      const realtime = people.b.client.realtime as unknown as { socketAdapter?: { socket?: { conn?: Socket } }; conn?: Socket };
-      const socket = realtime.socketAdapter?.socket?.conn ?? realtime.conn;
-      expect(socket, 'the realtime WebSocket').toBeTruthy();
-      socket!.close(4000, 'test: connection dropped');
-      expect(await waitFor(() => resyncs(heardB) > 1, 15_000), 'B told to resync').toBe(true);
-      const rejoined = Date.now() + 20_000;
-      flowing = false;
-      for (let n = 1; !flowing && Date.now() < rejoined; n++) {
-        const next = await A().sendMessage(hidA, `After the drop ${n}`);
-        flowing = await waitFor(() => heardB.some(messageEvent(next.id, false)), 1500);
-      }
-      expect(flowing, 'B hears again after rejoining').toBe(true);
-    } finally {
-      stopB();
-      stopC();
-      void people.c.client.removeChannel(outsider);
-    }
-    // Unsubscribing removes the channel, and nothing more arrives.
-    expect(await waitFor(() => people.b.client.getChannels().length === 0, 5000)).toBe(true);
-    const heard = heardB.length;
-    await A().sendMessage(hidA, 'After unsubscribing');
-    await sleep(1000);
-    expect(heardB).toHaveLength(heard);
-  });
-
   // ── One home (docs/ARCHITECTURE.md "One home", "People before they join") ──
 
   it('one home: where each account belongs, people added by email, and a claim', { timeout: 60_000 }, async () => {
@@ -3025,14 +2408,11 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
     const F = () => people.f.backend;
     const E = () => people.e.backend;
     let changes = 0;
-    const chat: ChatChange[] = [];
     const stop = A().subscribe(hidA, () => changes++);
-    const stopChat = A().subscribeChat(hidA, (c) => chat.push(c));
     const joined = () => {
       const channels = people.a.client.getChannels();
-      return channels.length === 2 && channels.every((c) => c.state === 'joined');
+      return channels.length === 1 && channels.every((c) => c.state === 'joined');
     };
-    const resyncs = () => chat.filter((c) => c.type === 'resync').length;
 
     /** B (or `by`) makes the change; A must hear it within 2 s. */
     const heard = async (what: string, edit: () => Promise<unknown>) => {
@@ -3041,11 +2421,6 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
       expect(await waitFor(() => changes > before, 2000), `A heard: ${what}`).toBe(true);
       // Let any second event of the same change land, so the next step starts clean.
       await sleep(150);
-    };
-    const heardInChat = async (what: string, edit: () => Promise<unknown>, match: (c: ChatChange) => boolean) => {
-      const before = chat.length;
-      await edit();
-      expect(await waitFor(() => chat.slice(before).some(match), 2000), `A heard in chat: ${what}`).toBe(true);
     };
     const flowing = async (poke: (n: number) => Promise<unknown>) => {
       const until = Date.now() + 20_000;
@@ -3059,7 +2434,7 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
 
     try {
       expect(await waitFor(joined, 10_000), 'channels joined').toBe(true);
-      expect(await waitFor(() => changes > 0 && resyncs() > 0, 5000), 'the first joins ask for a reload').toBe(true);
+      expect(await waitFor(() => changes > 0, 5000), 'the first join asks for a reload').toBe(true);
       const data = await B().load(hidA);
       const [first, second] = data.areas;
       expect(await flowing((n) => B().renameArea(first.id, `Warm ${runId} ${n}`)), 'events flowing').toBe(true);
@@ -3113,47 +2488,20 @@ describeLive('SupabaseBackend live (SUPABASE_TEST_URL)', { timeout: 30_000 }, ()
       await heard('person removed', () => B().removePerson(tempId));
       await heard('a member edited their own profile', () => F().updateMember(fenId, { emoji: '🦆' }));
 
-      // Chat.
-      let messageId = '';
-      await heardInChat(
-        'message sent',
-        async () => (messageId = (await B().sendMessage(hidA, `Sync ${runId}`)).id),
-        (c) => c.type === 'message' && c.messageId === messageId && !c.deleted,
-      );
-      await heardInChat(
-        'reaction added',
-        () => B().setReaction(messageId, '👍', true),
-        (c) => c.type === 'reaction' && c.messageId === messageId,
-      );
-      await heardInChat(
-        'reaction removed',
-        () => B().setReaction(messageId, '👍', false),
-        (c) => c.type === 'reaction' && c.messageId === messageId,
-      );
-      await heardInChat(
-        'message deleted',
-        () => B().deleteMessage(messageId),
-        (c) => c.type === 'message' && c.messageId === messageId && c.deleted,
-      );
-
-      // Reconnect: the socket is dropped and reopened, both subscriptions get a fresh channel,
-      // and each join asks for a reload within 5 s.
-      const before = { changes, resyncs: resyncs() };
+      // Reconnect: the socket is dropped and reopened, the subscription gets a fresh channel,
+      // and its join asks for a reload within 5 s.
+      const before = changes;
       A().reconnect();
-      expect(
-        await waitFor(() => changes > before.changes && resyncs() > before.resyncs, 5000),
-        'rejoined and asked for a reload',
-      ).toBe(true);
-      expect(await waitFor(joined, 5000), 'two joined channels after reconnect').toBe(true);
+      expect(await waitFor(() => changes > before, 5000), 'rejoined and asked for a reload').toBe(true);
+      expect(await waitFor(joined, 5000), 'a joined channel after reconnect').toBe(true);
       // A second call within 5 s does nothing.
       A().reconnect();
       await sleep(500);
-      expect(people.a.client.getChannels()).toHaveLength(2);
+      expect(people.a.client.getChannels()).toHaveLength(1);
       // And changes are heard again.
       expect(await flowing((n) => B().renameArea(first.id, `After ${runId} ${n}`)), 'events flowing after reconnect').toBe(true);
     } finally {
       stop();
-      stopChat();
     }
     expect(await waitFor(() => people.a.client.getChannels().length === 0, 5000)).toBe(true);
   });

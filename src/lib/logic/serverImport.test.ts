@@ -34,7 +34,7 @@ async function loadAsOwner(home: DemoDoc, householdId: string, now = NOW) {
   const user = { id: 'u-owner', email: '', name: 'Stratis' };
   storage.setItem(DEMO_STORAGE_KEY, JSON.stringify({ ...home, session: user.id, users: [user] }));
   const backend = new DemoBackend({ storage, user, now: () => now, search: '', latency: 0 });
-  return { backend, data: await backend.load(householdId), chat: await backend.listMessages(householdId) };
+  return { backend, data: await backend.load(householdId) };
 }
 
 describe("buildServerHome: the user's home", () => {
@@ -98,9 +98,10 @@ describe("buildServerHome: the user's home", () => {
     expect(home.completions.find((c) => c.item_title === 'Fix the doorbell')!.item_id).toBeNull();
   });
 
-  it('leaves the made-up chat behind and gives the starter task list to a home from before housekeeping', () => {
+  it('leaves the chat behind and gives the starter task list to a home from before housekeeping', () => {
     const { home, summary } = build(USER_DEMO_DOC)!;
-    expect(home.messages).toEqual([]);
+    expect(home).not.toHaveProperty('messages');
+    expect(home).not.toHaveProperty('message_reactions');
     expect(home.housekeeping_tasks.map((t) => [t.title, t.position])).toEqual(HOUSEKEEPING_STARTER_TASKS.map((t, i) => [t, i]));
     expect(home.housekeeping_notes).toEqual([]);
     expect(home.housekeeping_visits).toEqual([]);
@@ -114,7 +115,6 @@ describe("buildServerHome: the user's home", () => {
         { name: 'Stratis', emoji: '🦆', me: true },
         { name: 'Shea', emoji: '🦔', me: false },
       ],
-      messages: 0,
       visits: 0,
       // The newest change on the phone (an item edited that morning), so an older copy shows its age.
       lastChanged: '2026-10-09T08:30:00.000Z',
@@ -143,11 +143,10 @@ describe("buildServerHome: the user's home", () => {
 });
 
 describe('buildServerHome: a home the demo set up, then used', () => {
-  it('brings the one thing really done, and none of the made-up history, chat or visits', async () => {
+  it('brings the one thing really done, and none of the made-up history or visits', async () => {
     const doc = await demoCreatedDoc();
     const built = build(doc, new Date('2026-10-09T12:00:00.000Z'))!;
     expect(built.home.completions).toHaveLength(1);
-    expect(built.home.messages).toEqual([]);
     expect(built.home.housekeeping_visits).toEqual([]);
     expect(built.home.housekeeping_notes).toEqual([]);
     expect(built.home.housekeeping_tasks.map((t) => t.title)).toEqual([...HOUSEKEEPING_STARTER_TASKS]);
@@ -156,7 +155,7 @@ describe('buildServerHome: a home the demo set up, then used', () => {
     expect(built.home.members.filter((m) => m.user_id === null).map((m) => m.name)).toEqual(['Shea', 'Ela']);
   });
 
-  it('brings the chat and housekeeping the household wrote after set-up', async () => {
+  it('brings the housekeeping the household wrote after set-up, and none of a chat from before', async () => {
     const storage = new MapStorage();
     let now = new Date('2026-10-08T09:12:00.000Z');
     const demo = new DemoBackend({ storage, now: () => now, search: '', latency: 0 });
@@ -171,22 +170,23 @@ describe('buildServerHome: a home the demo set up, then used', () => {
       items: [],
     });
     now = new Date('2026-10-09T08:00:00.000Z');
-    const sent = await demo.sendMessage(hid, '  Bins go out tonight  ');
-    await demo.setReaction(sent.id, '👍', true);
     await demo.setHousekeepingNote(hid, 'Windows, please');
     const tasks = (await demo.load(hid)).housekeeping.tasks;
     await demo.setHousekeepingTaskDone(hid, '2026-10-09', { taskId: tasks[0].id }, true);
     await demo.saveHousekeepingVisit(hid, '2026-10-09', { comments: 'All good', price_pence: 4500 });
     await demo.renameHousekeepingTask(tasks[1].id, 'Hoover the stairs');
 
-    const raw = storage.getItem(DEMO_STORAGE_KEY)!;
+    // A phone from when there was a chat: what was said there stays on the phone.
+    const stored = JSON.parse(storage.getItem(DEMO_STORAGE_KEY)!);
+    const me = stored.members[0].id;
+    stored.messages = [{ id: 'msg-1', household_id: hid, member_id: me, body: 'Bins go out tonight', created_at: '2026-10-09T07:55:00.000Z' }];
+    stored.message_reactions = [{ message_id: 'msg-1', member_id: me, household_id: hid, emoji: '👍', created_at: '2026-10-09T07:56:00.000Z' }];
+    const raw = JSON.stringify(stored);
     const built = buildServerHome(raw, { now, ownerUserId: 'u-owner', newId: ids() })!;
     const { home, summary } = built;
     const owner = home.members.find((m) => m.user_id === 'u-owner')!;
-    expect(home.messages.map((m) => [m.body, m.member_id])).toEqual([['Bins go out tonight', owner.id]]);
-    expect(home.message_reactions).toEqual([
-      expect.objectContaining({ message_id: home.messages[0].id, member_id: owner.id, emoji: '👍', household_id: built.householdId }),
-    ]);
+    expect(home).not.toHaveProperty('messages');
+    expect(home).not.toHaveProperty('message_reactions');
     expect(home.housekeeping_notes).toEqual([
       expect.objectContaining({ body: 'Windows, please', updated_by: owner.id, cleared_body: null }),
     ]);
@@ -197,11 +197,11 @@ describe('buildServerHome: a home the demo set up, then used', () => {
     expect(rows.every((r) => r.visit_id === home.housekeeping_visits[0].id)).toBe(true);
     // The made-up housemates stay behind: nothing that came along is theirs.
     expect(home.members.map((m) => m.name)).toEqual(['Stratis']);
-    expect(summary).toMatchObject({ messages: 1, visits: 1, people: [{ name: 'Stratis', me: true }] });
+    expect(summary).toMatchObject({ visits: 1, people: [{ name: 'Stratis', me: true }] });
+    expect(summary).not.toHaveProperty('messages');
 
     // And it all reads back through DemoBackend.
-    const { data, chat } = await loadAsOwner(home, built.householdId, now);
-    expect(chat.messages.map((m) => [m.body, m.reactions.length])).toEqual([['Bins go out tonight', 1]]);
+    const { data } = await loadAsOwner(home, built.householdId, now);
     expect(data.housekeeping.visits[0].tasks.filter((t) => t.done)).toHaveLength(1);
     expect(data.housekeeping.note.body).toBe('Windows, please');
   });
@@ -271,12 +271,20 @@ describe('buildServerHome: a home the demo set up, then used', () => {
   });
 
   it('brings a made-up housemate along when the household used them', async () => {
-    const doc = structuredClone(USER_DEMO_DOC) as typeof USER_DEMO_DOC & { message_reactions: unknown[] };
-    doc.messages.push({ id: 'msg-2', household_id: 'hh-our-home', member_id: 'm-stratis', body: 'Ela, the firepit?', created_at: '2026-10-09T07:00:00.000Z' });
-    doc.message_reactions.push({ message_id: 'msg-2', member_id: 'm-ela', household_id: 'hh-our-home', emoji: '👍', created_at: '2026-10-09T07:01:00.000Z' });
+    const doc = structuredClone(USER_DEMO_DOC) as unknown as Record<string, unknown>;
+    // Ela left the message for the housekeeper after the home was set up.
+    doc.housekeeping_notes = [{ household_id: 'hh-our-home', body: 'Windows, please', updated_at: '2026-10-09T07:00:00.000Z', updated_by: 'm-ela' }];
     const { home } = build(doc)!;
     expect(home.members.map((m) => m.name)).toEqual(['Stratis', 'Shea', 'Ela']);
-    expect(home.messages.map((m) => m.body)).toEqual(['Ela, the firepit?']);
+    expect(home.housekeeping_notes[0].updated_by).toBe(home.members[2].id);
+  });
+
+  it('leaves a made-up housemate behind when only a chat from before was theirs', () => {
+    const doc = structuredClone(USER_DEMO_DOC) as typeof USER_DEMO_DOC & { message_reactions: unknown[] };
+    doc.messages.push({ id: 'msg-2', household_id: 'hh-our-home', member_id: 'm-ela', body: 'The firepit?', created_at: '2026-10-09T07:00:00.000Z' });
+    doc.message_reactions.push({ message_id: 'msg-2', member_id: 'm-ela', household_id: 'hh-our-home', emoji: '👍', created_at: '2026-10-09T07:01:00.000Z' });
+    const { home } = build(doc)!;
+    expect(home.members.map((m) => m.name)).toEqual(['Stratis', 'Shea']);
   });
 });
 
@@ -293,12 +301,10 @@ describe('buildServerHome: anything at all', () => {
     doc.households[0].timezone = 'Mars/Olympus';
     doc.items.push(null as never, 'x' as never);
     (doc.items[0] as Record<string, unknown>).updated_at = '2030-01-01T00:00:00.000Z';
-    doc.messages = [{ id: 'm', household_id: 'hh-our-home', member_id: 'm-shea', body: 'From the future', created_at: '2030-01-01T00:00:00.000Z' }];
     const { home } = build(doc)!;
     expect(home.households[0].timezone).toBe('Europe/London');
     expect(home.items).toHaveLength(20);
     expect(home.items.find((i) => i.title === 'Rubbish fill level')!.updated_at).toBe(NOW.toISOString());
-    expect(home.messages).toEqual([]);
   });
 });
 

@@ -62,7 +62,7 @@ src/
                            picker's week titles and relative headings),
                            areaStatus (an area's urgent and non-urgent tasks), upNext (Needs
                            attention's list in priority order, the summary sentence),
-                           chat (order, merge, runs, separators, reactions, unread, keyboard),
+                           stamps (times in the household's time zone, who a member id is),
                            sun (London sun position), sky (time-of-day sky colours),
                            housekeeping (month grid, totals, GBP prices, checklist, optimistic edits),
                            people (joined or not, email rules), importHome (the demo home this
@@ -93,10 +93,8 @@ src/
                            scene for the kind of room its name says, coloured by its id (pick.ts),
                            the drawings in one lazy chunk (Scene.tsx, kit.tsx, indoor.tsx,
                            outdoor.tsx); see "Area art"
-  screens/chat/            Household group chat with emoji reactions
   screens/housekeeping/    Housekeeping tab: message, today's checklist, comments, price, calendar,
                            task list sheet
-  state/ChatProvider.tsx   chat state: pages, realtime merge, optimistic send/react, unread dot
   screens/item/            Item sheet (edit / new)
   screens/share/           useShare (share or copy, with its toasts), useSharedLink (opens a link)
   screens/stats/           Stats screen + donut
@@ -130,8 +128,7 @@ scripts/                   migrate, build-server (Build Output for Vercel, local
   word in the tint (text buttons and links, Done, Cancel, Today, Clear, Edit, today's date on
   a calendar), 6:1 or better on the page where the system blue is 3.6:1; `--tint-fill`
   (#0071e3 in both appearances, #0040dd with Increase Contrast) is a solid fill under white
-  words or glyphs (filled buttons, Mark as Done, the chosen day or chip, your chat bubbles,
-  the round +), 4.7:1 with white where the system blue is 4:1 (3.7:1 in dark). In dark mode
+  words or glyphs (filled buttons, Mark as Done, the chosen day or chip, the round +), 4.7:1 with white where the system blue is 4:1 (3.7:1 in dark). In dark mode
   `--destructive` is iOS's accessible red #ff6961 (4.8:1 on the action sheets' glass). A
   bottom sheet over the page (the code sheet) takes `--sheet-bg`, `--sheet-card`,
   `--sheet-edge` and `--sheet-dim`: the page's colours in light; in dark mode lifted a step
@@ -321,7 +318,7 @@ Details beyond the list above (all covered by `supabase/tests`):
   deleted with their household, alongside that household's own notice). No text, names or
   other household ids. This is how Supabase Realtime treats deletes,
   and it cannot be filtered per table in the publication. The app's own subscriptions
-  (`subscribe`, `subscribeChat`) always filter by household: by `household_id` on the tables
+  (`subscribe`) always filter by household: by `household_id` on the tables
   that carry it (all with replica identity full, so the filter also applies to deletes) and by
   `id`, the primary key, on `households`. Members therefore never receive other households'
   notices. The live suite pins
@@ -504,7 +501,7 @@ Migration `supabase/migrations/20261010000500_one_home.sql`; `Member.user_id: st
 - A member row with `user_id` null is a person someone at home added who has not signed in yet
   (**Not joined yet**). They are a member like any other for items (assignee, created by),
   completions (credited to), the person filter, Stats and the weekly email's text, and anyone
-  edits their name and emoji (`updateMember`). They hold no account: no access, no chat posts,
+  edits their name and emoji (`updateMember`). They hold no account: no access,
   no push (forced off), no weekly email, no reminders. Use `hasJoined(member)`, never a null
   check of your own.
 - **Emails**: stored trimmed and lower case by the `members_before_write` trigger (so any
@@ -643,16 +640,14 @@ coming back into view or back online.
 | area add, rename, reorder, delete | areas (and items on delete) | `subscribe` → reload |
 | household name, address, time zone | households | `subscribe` → reload |
 | person added, edited (name, emoji), email set, removed, claimed or joined | members | `subscribe` → reload |
-| chat message sent or deleted | messages | `subscribeChat` → message |
-| reaction added or removed | message_reactions | `subscribeChat` → reaction |
 
 What makes it hold (timings are constants in `src/state/HomeProvider.tsx`: `RETRY_STEPS_MS`,
 `RETRY_EVERY_MS`, `RESUME_AFTER_MS`, `SAFETY_MS`):
 
-1. **Realtime**: `subscribe` (one channel, five tables, filtered by household) and
-   `subscribeChat`; every table is in the `supabase_realtime` publication with replica identity
-   full. Each channel join, the first and every rejoin, asks for a reload (`onChange`) or a
-   `resync`, because Realtime never replays what happened while it was not joined.
+1. **Realtime**: `subscribe` (one channel, five tables, filtered by household); every table is
+   in the `supabase_realtime` publication with replica identity full. Each channel join, the
+   first and every rejoin, asks for a reload (`onChange`), because Realtime never replays what
+   happened while it was not joined.
 2. **Loads in order**: HomeProvider reloads 250 ms after the last event; a reload never shows
    older data than what is shown, and waits for writes in flight (the write's own reload
    follows).
@@ -661,19 +656,19 @@ What makes it hold (timings are constants in `src/state/HomeProvider.tsx`: `RETR
    load is).
 4. **Coming back**: on `visibilitychange` to visible after 10 s or more hidden, on `pageshow`
    with `persisted`, and on `online`, HomeProvider calls `backend.reconnect()` (it alone does)
-   and reloads at once; ChatProvider resyncs on the same three events. A shorter hide keeps the
+   and reloads at once. A shorter hide keeps the
    debounced reload it has today. In phase `private` the same events run `recheckHome()`, and in
    phase `error` (no connection when the app opened, say) they run `retry()`, as does a 15 s
    timer while in view, so the home opens by itself once the connection is back.
 5. **Reconnect** (`Backend.reconnect`): the Supabase backend drops the socket and opens a fresh
    one, at most once per 5 s (`RECONNECT_MIN_MS`), because a phone that slept can hold a socket
    that says it is open but is dead, and the 25 s heartbeat takes up to a minute to notice. Each
-   subscription (`subscribe`, `subscribeChat`) then gets a fresh channel with the same listeners
+   subscription (`subscribe`) then gets a fresh channel with the same listeners
    on the new socket, and the old one is removed: a channel whose socket died without a close
    event still believes it is joined and would never rejoin by itself. Each fresh join asks for
    a reload; events from a replaced channel are ignored.
 6. **Safety net**: while visible and `ready`, when 60 s pass with no realtime event and no
-   reload, HomeProvider reloads and ChatProvider loads the newest page. This covers a channel
+   reload, HomeProvider reloads. This covers a channel
    that joined but silently stopped delivering.
 
 Tests that pin it (required with the data work):
@@ -682,12 +677,12 @@ Tests that pin it (required with the data work):
   on separate clients, A subscribed. For every row of the table above, B makes the change and
   A hears it within 2 s once events flow; the claim is made by a third account whose email B
   added. After `reconnect()`, A's channel rejoins and asks for a reload within 5 s.
-- Unit (`src/state/HomeProvider.test.tsx`, `ChatProvider.test.tsx`, fake timers): the retry
+- Unit (`src/state/HomeProvider.test.tsx`, fake timers): the retry
   steps, the resume events (one `reconnect()`, one reload), the 60 s safety net, and the
   recheck in phase `private`. Offline (`supabase.integration.test.ts`, a fake client): the
   fresh channels after `reconnect()`, in order, at most once per 5 s, never throwing.
 - e2e (demo, two pages in one browser context, which share localStorage): a change on one page
-  shows on the other without a reload, for an item, an area, a person and a chat message.
+  shows on the other without a reload, for an item, an area and a person.
 - Live e2e (`e2e-live/one-home.spec.ts`, `npm run test:e2e:live`, README "Development"): the
   app built against the local stack, one browser context per person. Stratis brings over the
   fixture home, Shea claims her person by email, a stranger sees "This home is private" until
@@ -706,7 +701,7 @@ Two builders work from this in parallel. **Data**: `DemoBackend` and `SupabaseBa
 HomeProvider (bootstrap through `enterHome`, the phases, `claimed`, `confirmClaimed`,
 `demoImport`, `importDemoHome`, `declineDemoImport`, `recheckHome`, the guarded
 `createHousehold`, `addPerson`, `setPersonEmail` and `removePerson` (both optimistic), and
-"Sync guarantees" 3 to 6), ChatProvider's resume and safety net, and their tests. **UI**: the
+"Sync guarantees" 3 to 6), and their tests. **UI**: the
 three Onboarding views, Household > People (Add Person, the email and Remove on PersonPage,
 "Not joined yet"), the Item sheet's label, demo e2e tests, and README ("On each iPhone",
 "Permissions"). Every `TODO(one-home ...)` stub names its owner by area.
@@ -746,7 +741,7 @@ same function, once a day from Vercel Cron (see "Notifications").
 
 The server holds the same document the demo backend keeps in localStorage and runs the
 **DemoBackend's own code** on it for every call, as the signed-in person, so the data rules
-(lengths, kinds, people, chat, housekeeping) are written once.
+(lengths, kinds, people, housekeeping) are written once.
 
 ### Choosing the backend
 
@@ -830,9 +825,10 @@ One private blob, `ServerDoc` in `server/core/serverDoc.ts`, format `homeos.serv
   `housekeeping` and `reminders`, `list`: their reminders, at most 20, and `sent`: what the
   morning run sent them last). Each person only ever sees their own (GET notify).
   `pruneAuth()` drops the rows of people who are gone or no longer joined.
-- `rev` (1 when the home came online, +1 with every stored change of data), `chatRev` (+1 when
-  the chat changed in a stored change), `meta` (`createdAt`, `writes`: the last 50 put ids,
-  `usage`: Blob operations this UTC month).
+- `rev` (1 when the home came online, +1 with every stored change of data), `meta` (`createdAt`,
+  `writes`: the last 50 put ids, `usage`: Blob operations this UTC month). A document from when
+  there was a chat also holds `chatRev` (and its home `messages` and `message_reactions`): kept
+  as they are, read by nothing (see "Chat (taken out)").
 
 ### Storage, reads and writes
 
@@ -864,7 +860,7 @@ One private blob, `ServerDoc` in `server/core/serverDoc.ts`, format `homeos.serv
     object back and a copy of `auth`; any other from a copy of the whole document). A batch that
     changes nothing (same JSON) is not stored. Before each put: `rev` + 1 when a `'data'` write
     changed something (`'meta'` writes, marking a device used or storing the read count, keep
-    the rev, so browsers do not reload), `chatRev` + 1 when `chatFingerprint()` changed, a fresh
+    the rev, so browsers do not reload), a fresh
     id appended to `meta.writes`, usage counted, `pruneAuth()`. A body over `MAX_DOC_BYTES`
     (5 MiB) is refused (`too_large`).
   - **Conflicts**: `BlobConflictError` means another instance stored first: re-read, then, unless
@@ -872,7 +868,7 @@ One private blob, `ServerDoc` in `server/core/serverDoc.ts`, format `homeos.serv
     then retried), wait a jittered 50 to 300 ms times the attempt and apply the whole batch again
     to what is there. Seven attempts, then `busy` (nothing stored; ServerBackend asks once more).
     Every write is applied to the latest document, so **two people writing at once never lose
-    a change**: two ticks on one visit, two edits to different fields of one item, a message and
+    a change**: two ticks on one visit, two edits to different fields of one item, an area and
     a tick, two tasks moved into sections, a task added while another is moved, all land (a
     move names one task and where it goes, never the whole list as one phone last saw it).
     The same field edited by two people at once: the later write wins, as on Supabase.
@@ -920,9 +916,9 @@ storage and `session` and `users` cleared before it is kept. DemoBackend only st
 document when the change succeeded, so a refused call changes nothing, and its BackendError
 goes to the browser as the same code. Nothing else in the server knows the data rules.
 Server-only rules on top: the auth section (codes, devices), `pruneAuth()` after every write, and
-limits on what one write may grow the home to: `HOME_MAX_BYTES` (4 MiB of JSON, about 16,000 chat
-messages) and `HOME_ROW_LIMITS` (members 50, areas 200, items 2,000, messages 20,000, reactions
-50,000, housekeeping sections 30, tasks 200, visits 3,000): past them a write that adds is refused with 413
+limits on what one write may grow the home to: `HOME_MAX_BYTES` (4 MiB of JSON) and
+`HOME_ROW_LIMITS` (members 50, areas 200, items 2,000, housekeeping sections 30, tasks 200,
+visits 3,000): past them a write that adds is refused with 413
 `too_large` ("Couldn't save. The home is full."); one that keeps or shrinks the home always works.
 
 ### The API (`src/lib/backend/serverApi.ts`, `server/core/handler.ts`)
@@ -936,7 +932,7 @@ limits: setup 4 MiB, rpc 256 KiB, else 4 KiB (413 `too_large`).
 | --- | --- | --- | --- |
 | `GET ?op=status` | no | | `{ home }` (is a home online; from memory once this instance has seen one) |
 | `GET ?op=session` | yes | | `{ user, entry, device, rev }`; renews the cookie |
-| `GET ?op=version` | yes | | `{ rev, chatRev, pollMs, readOnly }` |
+| `GET ?op=version` | yes | | `{ rev, pollMs, readOnly }` |
 | `GET ?op=devices` | yes | | `{ devices: DeviceInfo[] }` |
 | `POST setup` | no | `{ code, phone, app? }` | `{ user, entry, device, rev }` + cookie |
 | `POST redeem` | no | `{ code, app? }` | `{ user, entry, device, rev }` + cookie |
@@ -1001,11 +997,6 @@ objects with only their listed keys; anything else is `invalid_input: args[i].ke
 | `createItem` | write | household id; ItemDraft, every key: `area_id` id, `kind` task/state, `title` `note` `good` text, `rag` red/amber/green, `due_date` date or null, `assignee_id` id or null, `repeat` none/weekly/monthly/quarterly/biannual/yearly, `notify` none/same_day/day_before/week_before |
 | `updateItem` | write | id; any of ItemDraft's keys, same checks |
 | `deleteItem`, `completeItem`, `undoCompletion` | write | id |
-| `listMessages` | read | household id; `{ before?: timestamp or null, limit?: 1 to 999 }` optional |
-| `getMessages` | read | up to 1000 ids |
-| `sendMessage` | write | household id; body text |
-| `deleteMessage` | write | id |
-| `setReaction` | write | message id; emoji text; on boolean |
 | `setHousekeepingNote` | write | household id; body text |
 | `undoClearHousekeepingNote` | write | household id |
 | `createHousekeepingTask` | write | household id; title text; optional section id or null |
@@ -1025,7 +1016,7 @@ objects with only their listed keys; anything else is `invalid_input: args[i].ke
 Not RPCs (`NOT_RPC`, which with `RPC_METHODS` names every Backend method; a test checks it):
 `getUser` (GET session), `onAuthChange` (local), `signInWithGoogle` (rejects: no Google),
 `signOut` (POST signOut), `takeAuthError` (null), `enterHome` (setup's or redeem's entry once,
-else the session's), `subscribe`, `subscribeChat` and `reconnect` (polling), `createHousehold`
+else the session's), `subscribe` and `reconnect` (polling), `createHousehold`
 (rejects `home_exists`: a home comes online only through setup), `joinHousehold` and
 `createInvite` (reject `invalid_invite`: codes replace invite links), `getInvitePreview` (null),
 `releaseClaim` (POST release), `importHousehold` (rejects: setup does it), `setPersonEmail`
@@ -1110,12 +1101,11 @@ second chance, or `home_exists`). In short, from the phone's `homeos.demo.v1`:
   nothing that comes along refers to: so Shea (with her items) comes, Ela (nothing of hers) does
   not. A person can always be added again in People.
 - The household's name, address and time zone, areas, every item with all its fields, real
-  completions, the **chat the household wrote** (messages after the home was set up on the
-  phone, their reactions), and **housekeeping** (the task list as it is, its sections (at most
+  completions, and **housekeeping** (the task list as it is, its sections (at most
   30, names cut to 40) included, the message if written after set-up, the visits created after
   set-up with their ticks, comments, prices and the sections their rows had).
 - Fresh ids for everything. `serverSetupSummary(raw)` is the same rules' summary for the screen
-  (`ServerSetupSummary`: DemoHomeSummary plus `messages`, `visits` and `lastChanged`, the newest
+  (`ServerSetupSummary`: DemoHomeSummary plus `visits` and `lastChanged`, the newest
   change that comes along, so an older copy is recognisable).
 
 ### ServerBackend (`src/lib/backend/server.ts`)
@@ -1137,7 +1127,7 @@ second chance, or `home_exists`). In short, from the phone's `homeos.demo.v1`:
   before anything else at start-up (`getUser()`) and on `online`; a new sign-in drops it.
 - Every read sends `minRev`: the newest rev this browser has seen (from polls and every
   response), so it never reads older than it has shown.
-- **Polling** (one poller for `subscribe`, `subscribeChat` and `onStatus`): GET version every
+- **Polling** (one poller for `subscribe` and `onStatus`): GET version every
   `pollMs` (3 s until the server says otherwise) while `document.visibilityState` is visible and
   someone is using the page: after 3 minutes without input (`pointerdown`, `keydown`,
   `touchstart`, `wheel`, `scroll`) once a minute (`IDLE_POLL_MS`), after 15 minutes not at all
@@ -1145,9 +1135,7 @@ second chance, or `home_exists`). In short, from the phone's `homeos.demo.v1`:
   also count as someone being back); never while hidden; stopped when nothing listens. A tablet
   on a stand left on Home asks about 70 times and then nothing. `subscribe`'s `onChange` fires on
   the first successful poll, whenever `rev` goes up, and on the first success after a failed poll
-  (the "rejoin" of Sync guarantees). `subscribeChat` gets `{ type: 'resync' }` on the same
-  occasions for `chatRev`, plus the change of each of its own chat writes just before that write
-  resolves (as the demo backend does). `onStatus` gets `{ readOnly }`.
+  (the "rejoin" of Sync guarantees). `onStatus` gets `{ readOnly }`.
 
 ### HomeProvider in server mode
 
@@ -1386,8 +1374,7 @@ hand beyond the four settings (see "Deploying").
   Shea joining with her code (typed, and as a link) and seeing her items; a stranger with no code
   sees "This home is private"; wrong codes are refused and then limited; removing a device signs
   that browser out; Sign Out; "Not Shea?"; and every kind of change (item create, edit, kind,
-  done and undo, delete; areas; household; people added, edited, removed; chat messages and
-  reactions; housekeeping message, ticks, comments, price, task list, visits) showing on the
+  done and undo, delete; areas; household; people added, edited, removed; housekeeping message, ticks, comments, price, task list, visits) showing on the
   other context within 5 s without a reload (a mark on the page a reload would lose), including
   two people ticking different tasks and editing different fields of one item at the same moment
   (both changes stay), with a third context (Stratis's tablet) seeing it all and the stored home
@@ -1423,10 +1410,10 @@ hand beyond the four settings (see "Deploying").
   the ceiling stopping reads, Bring It Online and a code entered again after a lost reply, the size
   and row limits, the Home Screen app label); `serverImport` (the fixture: Stratis owner, Shea with her items, Ela and the
   made-up history and chat left behind, the starter task list; `demoCreatedDoc()`: one
-  completion; real chat and visits after set-up come along); `deviceLabel`; and
+  completion; visits after set-up come along, a chat from before never); `deviceLabel`; and
   `server/client.test.ts`: ServerBackend against `handleApi` in-process (a fake `fetch`), every
-  RPC round trip, polling with fake timers (visible, hidden, focus, online, first poll, rev and
-  chatRev changes, recovery, idle backoff and a tab left open for five days), 401 signing out
+  RPC round trip, polling with fake timers (visible, hidden, focus, online, first poll, rev
+  changes, recovery, idle backoff and a tab left open for five days), 401 signing out
   (and asked once more just after signing in), `busy` asked once more, Sign Out while offline
   finishing when back online and at start-up, `home_exists` with this browser signed in, the
   `app` hint, the one-off `claimed` entry. HomeProvider and the screens' server-mode behaviour in
@@ -1510,7 +1497,7 @@ session checks (no user step, no setup code needed, nothing here changes the hom
 7. Then the setup link `https://<app>/?setup=<HOMEOS_SETUP_CODE>` goes to the user; once the
    home is online, step 2 gives `{"home":true}`, step 4's setup with the real code gives 409
    `home_exists` once the owner's phone has made a request, and `GET ?op=version` with the
-   user's cookie gives `{ rev, chatRev, pollMs: 3000, readOnly: false }`.
+   user's cookie gives `{ rev, pollMs: 3000, readOnly: false }`.
 
 Connected Blob stores also get `BLOB_STORE_ID` and OIDC credentials; `@vercel/blob` uses OIDC
 when it can and falls back to `BLOB_READ_WRITE_TOKEN` (its token lookup never throws), so
@@ -1703,8 +1690,7 @@ means something and always with a word, and few visible controls.
   button stays 8 seconds (`ACTION_TOAST_MS`; a finger can't hold it, only a hovering mouse or
   keyboard focus can), one with words alone 4 (`TOAST_MS`).
 - **The round +** (`AddButton` in `TabBar.tsx`, "New item"): adds an item, from Home, Needs
-  attention and Stats (`hasAddButton()`; Chat has its composer and Housekeeping its own
-  adds). It floats on the right just above the tab bar (`--add-bottom`), and springs in when
+  attention and Stats (`hasAddButton()`; Housekeeping has its own adds). It floats on the right just above the tab bar (`--add-bottom`), and springs in when
   a tab that has it opens. An area's own Add Item chooses that area.
 - **What was saved can be seen**: when an item is created, or moved to another area, the Item
   sheet reports it (`onSaved(itemId)`), and App passes it on (`revealItem`) to what is behind
@@ -1837,9 +1823,9 @@ attention had a calendar view built on it too, until Needs attention became one 
 
 ### The tab bar and the headers
 
-**The tab bar** (`TabBar` in `screens/home/TabBar.tsx`, a `nav` named "Tabs"): five tabs along
+**The tab bar** (`TabBar` in `screens/home/TabBar.tsx`, a `nav` named "Tabs"): four tabs along
 the bottom, in this order: **Home**, **Needs attention** (the label says "Attention": the full
-name does not fit five to a bar at 375px), **Chat**, **Housekeeping** and **Stats**. It is the
+name does not fit a tab at 375px), **Housekeeping** and **Stats**. It is the
 docked bar iPhones use: frosted glass on the bottom edge, full width, with a hairline on
 top. Its tabs take 56px (`--tabbar-height`) and the glass runs on down through the home
 indicator's inset (`--bottom-inset`), so the bar never floats over the foot of the screen
@@ -1848,14 +1834,13 @@ filled) over its label (10px, 500), equal widths. The open
 tab (`aria-current="page"`) is in the tint, on a glass highlight that slides under it
 (`--index`, none of the slide with Reduce Motion); the others in the label colour. Every
 tab is a target of 44px or more. Attention carries a red count of what needs attention
-(`data-badge`, "9+" over nine; named "Attention, 2 items"), Chat a dot for unread messages
-("Chat, unread messages") and Housekeeping a dot for a new message ("Housekeeping, new
-message"). The tab is kept on this device (`homeos.tab`; every read and write in try/catch),
-so the phone reopens on the tab last open; a shared area link opens Home. Layout tokens
+(`data-badge`, "9+" over nine; named "Attention, 2 items") and Housekeeping a dot for a new
+message ("Housekeeping, new message"). The tab is kept on this device (`homeos.tab`; every read and write in try/catch),
+so the phone reopens on the tab last open (Home when it names a tab that is gone, such as
+Chat); a shared area link opens Home. Layout tokens
 (`styles/tokens.css`): `--tabbar-clear` (what the bar takes from the bottom), `--add-bottom`
-and `--add-clear` (the + above it); every scroll area's bottom padding, the Chat composer
-(`--composer-bottom`), toasts (`--toast-bottom` while no sheet is open) and the scroll margins
-of rows clear them. Sheets cover the bar, which is inert behind them with the rest of the
+and `--add-clear` (the + above it); every scroll area's bottom padding, toasts (while no sheet
+is open) and the scroll margins of rows clear them. Sheets cover the bar, which is inert behind them with the rest of the
 stage. `<html data-add>` says whether the open tab has the +.
 
 **The headers** (`ScreenHeader` in `ui/Screen.tsx`): Home starts with the `Hero`
@@ -2044,112 +2029,27 @@ Migrations `supabase/migrations/20261010000200_item_kind.sql` and
 - Demo documents stored before kinds existed read their items as tasks, and items stored before
   "What good looks like" existed read as `good: ''`.
 
-## Chat (household group chat)
+## Chat (taken out)
 
-One group chat per household. Every member can read and post; messages are **kept forever**
-(no retention limit, no automatic deletion). Anyone can react to any message with emoji;
-each member can add several different emoji to the same message, once each. A member can
-delete only their own messages (and remove only their own reactions). Messages cannot be
-edited.
+The household chat was taken out of the app: its tab, screen and provider, and the chat methods
+of the backend contract and of all three backends (and server mode's RPC allow-list). What it
+stored stays where it is, untouched:
 
-### Tables (migration `supabase/migrations/20261010000100_chat.sql`)
-
-| table | columns |
-| --- | --- |
-| `messages` | id uuid pk, household_id → households on delete cascade, member_id → members on delete set null (null = former member), body text not null (trimmed, 1 to 4000 chars), created_at timestamptz not null default now(); index (household_id, created_at desc) |
-| `message_reactions` | message_id → messages on delete cascade, member_id → members on delete cascade, household_id → households on delete cascade (copied from the message), emoji text not null (one of the app's reaction emoji, `REACTION_EMOJIS`), created_at; primary key (message_id, member_id, emoji) |
-
-Check constraints (SQLSTATE 23514, which the client maps to `invalid_input`):
-`messages_body_length` (1 to 4000 characters after trimming), `message_reactions_emoji_length`
-(1 to 16 characters) and `message_reactions_emoji_allowed` (exactly one of the 32
-`REACTION_EMOJIS` in `src/lib/constants.ts`, same code points including U+FE0F;
-`src/lib/constants.test.ts` compares the two lists). Check constraints run in name order, so
-`_allowed` reports first.
-
-Triggers (security definer, empty `search_path`, not callable by clients): on INSERT into
-`messages`, `member_id := coalesce(current_member_id(), member_id)` (the service role keeps
-what it sends) and the body is trimmed of the same whitespace as JavaScript's `trim()` (not
-only spaces, so a body of only newlines is rejected); on INSERT into `message_reactions`, the
-same for `member_id`, and `household_id` from the message (a missing message raises
-`not_found`).
-
-RLS: `messages` SELECT where `is_household_member(household_id)`, INSERT where member and
-`member_id = current_member_id()`, DELETE where `member_id = current_member_id()`, no UPDATE.
-`message_reactions` the same. Grants: messages select, insert (household_id, body), delete;
-message_reactions select, insert (message_id, emoji), delete. `anon` gets nothing. Both tables
-join the `supabase_realtime` publication with replica identity full, like the other published
-tables.
-
-### Backend methods (`src/lib/backend/types.ts`)
-
-`listMessages(householdId, { before?, limit? })` pages backwards by `created_at` (oldest first
-within a page, `hasMore` when older ones exist); `getMessages(ids)` reloads specific messages
-with reactions; `sendMessage`, `deleteMessage`, `setReaction(messageId, emoji, on)`;
-`subscribeChat(householdId, onChange)` reports `ChatChange` events: a message added or deleted,
-a reaction changed on a message, or `resync`. The Supabase backend maps realtime events on
-both tables to these (a DELETE carries the primary key, which is enough); the demo backend
-emits them for its own writes and on `storage` events from other tabs.
-
-Both backends behave the same on the edges: a household the caller cannot see is `not_found`;
-a blank body or one over 4000 characters (an emoji counts as one) is `invalid_input: body`;
-deleting a message that is not yours (or is gone) is `not_found`; adding a reaction is
-idempotent, needs one of `REACTION_EMOJIS` (`invalid_input: emoji` otherwise) and an existing
-message (`not_found`); removing one touches only your own and never errors when nothing
-matches. Messages order by `created_at` to the microsecond (`instantOf` in
-`src/lib/logic/chat.ts`; a JS Date stops at milliseconds), then id.
-
-- Supabase: `listMessages` embeds reactions in one request (`reactions:message_reactions(...)`,
-  sorted oldest first in the client), caps `limit` at 999 (the API returns at most 1000 rows
-  and one extra row tells `hasMore`), never ends a page inside a group of messages sharing one
-  `created_at` (a group bigger than the page is returned whole, so a page can then be longer
-  than `limit`), and passes `before` on unchanged, microseconds included (never through a JS
-  Date). `sendMessage` sends only `household_id` and `body`. `subscribeChat` listens on one
-  channel to both tables with `household_id=eq.<id>` for every event, deletes included,
-  maps a messages DELETE `old.id` and a message_reactions `message_id` to `ChatChange`, and
-  emits `resync` on every join (the first included). A new subscription may first replay
-  changes made shortly before it joined, so handling is idempotent.
-- Demo: messages and reactions live in the same localStorage document (`messages`,
-  `message_reactions`). Listeners hear a write synchronously, just before its promise
-  resolves; no-op writes emit nothing; another tab's change to this household's chat emits
-  `resync`. Every demo household starts with a short seeded conversation between Stratis,
-  Shea and Ela.
-- `ChatProvider` merges by id only, keeps a sent message's bubble key, takes a stored message
-  for a pending send only if it was posted after the send began (and gives the bubble back if
-  the send then fails), and on `resync` reloads the newest page and then the older loaded
-  messages it doesn't cover.
-
-### UI
-
-- The tab bar at the bottom (see "The tab bar and the headers"): **Home, Needs attention, Chat,
-  Housekeeping, Stats**. The round + (new item) floats just above it on the right on Home, Needs
-  attention and Stats, not on Chat (its composer sits just above the bar) or Housekeeping. A small dot on Chat means unread messages from others (last-read time is kept per
-  member on this device); one on Housekeeping means a message for the housekeeper written or
-  changed by someone else since the member last had that tab open on this device. The app
-  reopens on the tab last open on this device (`homeos.tab` in localStorage, Home when there is
-  none), so the housekeeper lands on Housekeeping.
-- Chat screen: large title "Chat", message bubbles (own on the right in the tint colour, others
-  on the left in white with the sender's emoji and name), reactions as small chips under a
-  bubble (tap a chip to add or remove that reaction), long-press (or the context-menu key /
-  right-click / Enter on a focused bubble) on a bubble opens the reaction bar (six quick
-  reactions plus "+" for the full grid) with Copy and, for your own messages, Delete (confirmed;
-  from the keyboard, focus moves on to the next message). Older messages load as you scroll up.
-- Runs group one sender's messages within 5 minutes (the name over the first, the avatar beside
-  the last, the tail on the last bubble). Separators read "Today 08:05", "Yesterday 18:42" or
-  "Tue 6 Oct 18:42" in the household's time zone and also appear after an hour's pause. A
-  message of only one to three emoji shows large with no bubble. A missing sender reads
-  "Former member".
-- The unread dot uses a last-read time per member on this device, in localStorage under
-  `homeos.chat.read.<memberId>`.
-- Composer: sits at the bottom. While typing it follows the iPhone keyboard
-  (`visualViewport`); when the field was tapped
-  with a finger, it stays where it was until the keyboard's height is known (or 600 ms pass),
-  so it never drops behind the rising keyboard first. Tapped with a finger, Return starts a new
-  line and the round button sends (like Messages); with a hardware keyboard, Enter sends and
-  Shift+Enter starts a new line; Ctrl or Cmd+Enter always sends. The send button is
-  `aria-disabled` while blank, so Tab from the field reaches it. On Chat,
-  toasts sit above the composer (`--toast-bottom`, set by ChatScreen and read by `Toast`).
-- Home: each area header has a small + that opens the new-item sheet with that area chosen
-  (see "Home" above).
+- Supabase: the tables `messages` and `message_reactions` (migration
+  `supabase/migrations/20261010000100_chat.sql`) stay as migrated, with their RLS, grants and
+  realtime publication; no migration drops them. The app neither reads nor writes them.
+- Server mode: a stored document from when there was a chat still holds `home.messages`,
+  `home.message_reactions` and `chatRev`. Nothing reads them, and every write keeps them as
+  they are (the home is kept as parsed JSON, so keys DemoBackend no longer knows ride along;
+  `serverDoc.test.ts` and `homeStore.test.ts` pin it). `GET ?op=version` no longer answers
+  `chatRev`.
+- Demo: a localStorage document from when there was a chat keeps its `messages` and
+  `message_reactions` the same way; a new demo household starts with no chat.
+- "Bring this home online" and "Bring over the home from this phone" leave a phone's chat
+  behind.
+- A phone that last had Chat open reopens on Home (`homeos.tab` names a tab that is gone), and
+  a page from before still open on a phone gets 400 `unknown_op` for its chat calls until it
+  reloads.
 
 ## Housekeeping
 
@@ -2453,7 +2353,7 @@ whose task has been deleted). `checklistFor()` picks it. `HousekeepingVisitPatch
   created_by, created_at, updated_by, updated_at, tasks:housekeeping_visit_tasks(id, visit_id,
   household_id, task_id, title, section_id, section_title, position, done, done_by, done_at)`, ordered by visit_date
   descending, rows sorted in the client). An id that is not a uuid is `not_found` without a
-  request (like chat); a date that is not `YYYY-MM-DD` is `invalid_input: date`; a blank title
+  request; a date that is not `YYYY-MM-DD` is `invalid_input: date`; a blank title
   is `invalid_input: title` (like `requireText`). Also refused before any request: a tick
   target that is not exactly one of `taskId` and `visitTaskId` (`invalid_input: target`), and
   a price that is not a whole number or null (`invalid_input: price`; JSON would send NaN or
@@ -2577,16 +2477,16 @@ Files under `src/screens/housekeeping/` (each with a `.module.css` where it has 
 
 Elsewhere: `screens/types.ts` (`Tab` already includes `'housekeeping'`), `screens/home/TabBar.tsx`
 and its CSS (four tabs), `App.tsx` (renders `HousekeepingScreen` for the tab), the comments in
-`ui/Screen.tsx` and `TabBar.tsx` (they now say "Home / Chat / Housekeeping / Stats"), `e2e/fixtures.ts`
+`ui/Screen.tsx` and `TabBar.tsx` (they now say "Home / Housekeeping / Stats"), `e2e/fixtures.ts`
 (`housekeepingScreen(page)`, `'Housekeeping'` in `tabButton` and `goToTab`), and the tests that
 pin the tabs (`src/App.test.tsx` "tab bar", `e2e/onboarding.spec.ts` and any other).
 
-**The tab bar.** Home, Needs attention, Chat, Housekeeping, Stats, in that order, in the
-`nav` named "Tabs" with `aria-current="page"` on the open one (keep that contract, the
-Attention count and Chat's unread dot; see "The tab bar and the headers"). Housekeeping has a
+**The tab bar.** Home, Needs attention, Housekeeping, Stats, in that order, in the
+`nav` named "Tabs" with `aria-current="page"` on the open one (keep that contract and the
+Attention count; see "The tab bar and the headers"). Housekeeping has a
 dot too (named "Housekeeping, new message") while `useNewNote()` says the message is new to
 this member (`hasNewNote()`, last seen kept per member on this device). The app reopens on
-the tab last open on this device. The five tabs share the bar equally; "Housekeeping" is the
+the tab last open on this device. The tabs share the bar equally; "Housekeeping" is the
 longest label and must stay whole, with no sideways scroll, at 320, 375, 402 and 430px (10px
 labels, 9px below 360px wide, where the bar is 6px from the edges). Measure it in the e2e test
 rather than trusting estimates. The round + shows on Home, Needs attention and Stats, and
