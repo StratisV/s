@@ -16,20 +16,14 @@
 //   has none). Join order kept: created_at = now + index ms. claimed_at null for all.
 //   Left behind: a person the demo made up (DemoBackend's DEMO_PEOPLE: user_id
 //   `demo-user-<key>-…`) whom nothing that comes along refers to: no item assigned, created or
-//   updated by them, no completion credited to or completed by them, no message or reaction
-//   from them, nothing in housekeeping by them. So a demo housemate the household used (Shea,
+//   updated by them, no completion credited to or completed by them, nothing in housekeeping
+//   by them. So a demo housemate the household used (Shea,
 //   with her items) comes along, and one nobody used (Ela) does not. `me` always comes along.
 // - Areas in order (position 0…n-1, created_at = now + index ms).
 // - Items, open and done, every field (kind, title, note, good, rag, due date, repeat, notify,
 //   status, assignee, created and updated by, created, updated and completed times), each time
 //   no later than now (missing: now), the kind rules applied (applyKindRules).
 // - Completions: the payload's (real ones only), linked to their new items.
-// - Chat: the messages written after the household was set up on the phone (created_at later
-//   than the stored household's created_at; the demo's made-up conversation is dated before
-//   it), body trimmed and 1 to TEXT_LIMITS.chatMessage characters (else left out), created_at a
-//   timestamp no later than now (else left out), sender mapped (someone who does not come
-//   along: null, "Former member"). Their reactions by people who come along, emoji one of
-//   REACTION_EMOJIS, once per (message, person, emoji). At most the newest 5000 messages.
 // - Housekeeping: the task list's sections as they are (names 1 to 40 characters, at most
 //   HOUSEKEEPING_SECTIONS_MAX, positions 0…n-1 in their order; none in a document from before
 //   sections) and the task list as it is (titles 1 to 200 characters, each in its section, or in
@@ -42,17 +36,17 @@
 //   mapped to the new task, or null; section_id to the new section, or null; the section's
 //   name as stored), ticks, comments and price as stored, within the limits (else the value is
 //   cut or, for a price, cleared). At most 2000 visits (the newest).
-// - Not: invites, push subscriptions, users, the session, the `imported`/`declined` marks.
+// - Not: chat messages and reactions (a phone from when there was a chat may still hold them),
+//   invites, push subscriptions, users, the session, the `imported`/`declined` marks.
 //
 // Every row gets a fresh id from `newId`; nothing from the document is used as an id.
 
-import { emptyDoc, type DemoDoc, type MemberRow, type ReactionRow } from '../backend/demo';
+import { emptyDoc, type DemoDoc, type MemberRow } from '../backend/demo';
 import {
   HOUSEKEEPING_PRICE_MAX_PENCE,
   HOUSEKEEPING_SECTIONS_MAX,
   HOUSEKEEPING_STARTER_TASKS,
   MEMBER_COLORS,
-  REACTION_EMOJIS,
   TEXT_LIMITS,
 } from '../constants';
 import type { ISODate, ISOTimestamp, ServerSetupSummary } from '../types';
@@ -77,8 +71,8 @@ export interface ServerHome {
   summary: ServerSetupSummary;
 }
 
-/** The most messages and visits that come along (the newest). */
-export const SERVER_IMPORT_LIMITS = { messages: 5000, visits: 2000 } as const;
+/** The most visits that come along (the newest). */
+export const SERVER_IMPORT_LIMITS = { visits: 2000 } as const;
 
 /** A person DemoBackend made up for every new demo home (DEMO_PEOPLE): user_id `demo-user-<key>-<household>`. */
 const MADE_UP_USER = /^demo-user-(shea|ela)-/;
@@ -175,23 +169,8 @@ function build(raw: string, opts: BuildServerHomeOptions): ServerHome | null {
   const storedMembers = new Map(stored.members.map((m) => [m.id, m]));
   const payloadPerson = (storedId: unknown) => (typeof storedId === 'string' ? keyOfStored.get(storedId) : undefined);
 
-  // ── Chat and housekeeping as stored (only this home's rows) ──
+  // ── Housekeeping as stored (only this home's rows) ──
   const householdOf = (r: Row) => r.household_id === ids.household;
-  const messageRows = rowsOf(parsed.messages)
-    .filter((m) => householdOf(m) && typeof m.id === 'string' && afterSetUp(m.created_at) && timeOf(m.created_at) <= nowMs)
-    .map((m) => ({ row: m, body: cut(m.body, Number.MAX_SAFE_INTEGER) }))
-    .filter(({ body }) => body !== '' && chars(body).length <= TEXT_LIMITS.chatMessage)
-    .sort((a, b) => timeOf(a.row.created_at) - timeOf(b.row.created_at) || (str(a.row.id) < str(b.row.id) ? -1 : 1))
-    .slice(-SERVER_IMPORT_LIMITS.messages);
-  const messageIds = new Set(messageRows.map(({ row }) => row.id as string));
-  const reactionRows = rowsOf(parsed.message_reactions).filter(
-    (r) =>
-      typeof r.message_id === 'string' &&
-      messageIds.has(r.message_id) &&
-      payloadPerson(r.member_id) !== undefined &&
-      typeof r.emoji === 'string' &&
-      (REACTION_EMOJIS as readonly string[]).includes(r.emoji),
-  );
 
   /** Rows in their order: `rank` (a task's section), then position, created_at, id. */
   const inOrder =
@@ -244,8 +223,6 @@ function build(raw: string, opts: BuildServerHomeOptions): ServerHome | null {
   const refStored = (id: unknown) => refKey(payloadPerson(id) ?? null);
   for (const item of payload.items) [item.assignee, item.created_by, item.updated_by].forEach(refKey);
   for (const c of payload.completions) [c.credited_to, c.completed_by].forEach(refKey);
-  for (const { row } of messageRows) refStored(row.member_id);
-  for (const r of reactionRows) refStored(r.member_id);
   if (noteRow) refStored(noteRow.updated_by);
   for (const v of visitRows) [v.created_by, v.updated_by].forEach(refStored);
   for (const r of visitTaskRows) if (r.done === true) refStored(r.done_by);
@@ -347,37 +324,6 @@ function build(raw: string, opts: BuildServerHomeOptions): ServerHome | null {
     });
   }
 
-  // ── Chat ──
-  const messageOf = new Map<string, string>();
-  for (const { row, body } of messageRows) {
-    const id = newId();
-    messageOf.set(row.id as string, id);
-    home.messages.push({
-      id,
-      household_id: householdId,
-      member_id: personOfStored(row.member_id),
-      body,
-      created_at: row.created_at as string,
-    });
-  }
-  const reactionSeen = new Set<string>();
-  for (const r of reactionRows) {
-    const messageId = messageOf.get(r.message_id as string);
-    const memberId = personOfStored(r.member_id);
-    if (!messageId || !memberId) continue;
-    const key = `${messageId}\n${memberId}\n${r.emoji as string}`;
-    if (reactionSeen.has(key)) continue;
-    reactionSeen.add(key);
-    const reaction: ReactionRow = {
-      message_id: messageId,
-      member_id: memberId,
-      household_id: householdId,
-      emoji: r.emoji as string,
-      created_at: clamp(r.created_at),
-    };
-    home.message_reactions.push(reaction);
-  }
-
   // ── Housekeeping ──
   const sectionOf = new Map<string, string>();
   sectionRows.forEach(({ row, title }, i) => {
@@ -463,12 +409,10 @@ function build(raw: string, opts: BuildServerHomeOptions): ServerHome | null {
     items: home.items.filter((i) => i.status === 'open').length,
     done: home.completions.length,
     people: comes.map((p) => ({ name: p.name, emoji: p.emoji, me: p.me === true })),
-    messages: home.messages.length,
     visits: home.housekeeping_visits.length,
     lastChanged: newestOf([
       ...home.items.flatMap((i) => [i.updated_at, i.completed_at]),
       ...home.completions.map((c) => c.completed_at),
-      ...home.messages.map((m) => m.created_at),
       ...home.housekeeping_visits.map((v) => v.updated_at),
       ...home.housekeeping_notes.map((n) => n.updated_at),
     ]),

@@ -14,7 +14,7 @@ import {
 } from '../src/lib/backend/server';
 import { normaliseCode } from '../src/lib/backend/serverApi';
 import { USER_DEMO_DOC } from '../src/lib/logic/importHome.fixture';
-import type { AuthUser, ChatChange } from '../src/lib/types';
+import type { AuthUser } from '../src/lib/types';
 import { createHarness, TEST_SETUP_CODE, type Browser, type Harness } from './testing/harness';
 
 const PHONE = JSON.stringify(USER_DEMO_DOC);
@@ -181,13 +181,6 @@ describe('ServerBackend: the Backend methods', () => {
     const person = await b.addPerson(hid, { name: 'Ela', emoji: '🦊', email: '' });
     await b.updateMember(person.id, { emoji: '🦉' });
     await b.removePerson(person.id);
-    const message = await b.sendMessage(hid, 'Hello');
-    await b.setReaction(message.id, '👍', true);
-    expect((await b.getMessages([message.id]))[0].reactions).toHaveLength(1);
-    expect((await b.listMessages(hid)).messages.map((m) => m.body)).toEqual(['Hello']);
-    expect((await b.listMessages(hid, { before: message.created_at, limit: 10 })).messages).toEqual([]);
-    await b.setReaction(message.id, '👍', false);
-    await b.deleteMessage(message.id);
     await b.setHousekeepingNote(hid, 'Windows please');
     await b.setHousekeepingNote(hid, '');
     await b.undoClearHousekeepingNote(hid);
@@ -273,8 +266,8 @@ describe('ServerBackend: the Backend methods', () => {
     const rpcs = stratis.requests.filter((r) => r.op === 'rpc');
     expect(rpcs.at(-1)!.body!.minRev).toBe(2);
     // Arguments left out are left off the end (JSON has no undefined).
-    await stratis.backend.listMessages(hid);
-    expect(stratis.requests.at(-1)!.body!.args).toEqual([hid]);
+    await stratis.backend.createHousekeepingTask(hid, 'Fridge');
+    expect(stratis.requests.at(-1)!.body!.args).toEqual([hid, 'Fridge']);
   });
 
   it("fails as 'network' when offline or when the server does not answer in 15 s", async () => {
@@ -370,26 +363,6 @@ describe('ServerBackend: polling', () => {
     expect(polls(stratis)).toBe(3);
   });
 
-  it('tells the chat to resync when the chat changed, and its own writes at once', async () => {
-    const { stratis, shea, hid } = await setUp();
-    const heard: ChatChange[] = [];
-    stratis.backend.subscribeChat(hid, (c) => heard.push(c));
-    await flush();
-    expect(heard).toEqual([{ type: 'resync' }]);
-    await settle(shea.backend.createArea(hid, 'Garage'));
-    await tick();
-    expect(heard).toHaveLength(1);
-    await settle(shea.backend.sendMessage(hid, 'Hi'));
-    await tick();
-    expect(heard).toEqual([{ type: 'resync' }, { type: 'resync' }]);
-    const mine = await settle(stratis.backend.sendMessage(hid, 'Hello'));
-    expect(heard.at(-1)).toEqual({ type: 'message', messageId: mine.id, deleted: false });
-    await settle(stratis.backend.setReaction(mine.id, '👍', true));
-    expect(heard.at(-1)).toEqual({ type: 'reaction', messageId: mine.id });
-    await settle(stratis.backend.deleteMessage(mine.id));
-    expect(heard.at(-1)).toEqual({ type: 'message', messageId: mine.id, deleted: true });
-  });
-
   it('never polls while hidden; polls at once on visible, focus, online and reconnect', async () => {
     const view = page();
     const { stratis, hid, polls } = await setUp();
@@ -419,18 +392,16 @@ describe('ServerBackend: polling', () => {
   it('counts a failed poll as a dropped connection: the next success asks for a reload', async () => {
     const { stratis, hid } = await setUp();
     const changed = vi.fn();
-    const chat = vi.fn();
     stratis.backend.subscribe(hid, changed);
-    stratis.backend.subscribeChat(hid, chat);
     await flush();
-    expect([changed.mock.calls.length, chat.mock.calls.length]).toEqual([1, 1]);
+    expect(changed).toHaveBeenCalledTimes(1);
     stratis.browser.offline = true;
     await tick();
     stratis.browser.offline = false;
     await tick();
-    expect([changed.mock.calls.length, chat.mock.calls.length]).toEqual([2, 2]);
+    expect(changed).toHaveBeenCalledTimes(2);
     await tick();
-    expect([changed.mock.calls.length, chat.mock.calls.length]).toEqual([2, 2]);
+    expect(changed).toHaveBeenCalledTimes(2);
   });
 
   it('says when saving is paused, at once and with each change', async () => {

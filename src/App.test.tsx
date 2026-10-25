@@ -242,14 +242,14 @@ describe('a shared area link', () => {
 });
 
 describe('tab bar', () => {
-  it('has Home, Attention, Chat, Housekeeping and Stats at the foot; the + is on Home, Needs attention and Stats', async () => {
+  it('has Home, Attention, Housekeeping and Stats at the foot; the + is on Home, Needs attention and Stats', async () => {
     await setup();
-    await within(tabBar()).findByRole('button', { name: 'Chat, unread messages' });
+    await within(tabBar()).findByRole('button', { name: 'Attention, 2 items' });
     expect(
       within(tabBar())
         .getAllByRole('button')
         .map((b) => b.textContent),
-    ).toEqual(['Home', '2Attention', 'Chat', 'Housekeeping', 'Stats']);
+    ).toEqual(['Home', '2Attention', 'Housekeeping', 'Stats']);
     // Beside the screen, not in it: one bar for every tab.
     const home = screen.getByRole('region', { name: 'Home' });
     expect(home.contains(tabBar())).toBe(false);
@@ -259,9 +259,6 @@ describe('tab bar', () => {
     await screen.findByRole('heading', { name: 'Needs attention', level: 1 });
     expect(within(tabBar()).getByRole('button', { name: /^Attention/ }).getAttribute('aria-current')).toBe('page');
     expect(screen.getByRole('button', { name: 'New item' })).toBeTruthy();
-    fireEvent.click(within(tabBar()).getByRole('button', { name: /^Chat/ }));
-    await screen.findByRole('heading', { name: 'Chat', level: 1 });
-    expect(screen.queryByRole('button', { name: 'New item' })).toBeNull();
     fireEvent.click(within(tabBar()).getByRole('button', { name: /^Housekeeping/ }));
     await screen.findByRole('heading', { name: 'Housekeeping', level: 1 });
     expect(within(tabBar()).getByRole('button', { name: 'Housekeeping' }).getAttribute('aria-current')).toBe('page');
@@ -313,16 +310,6 @@ describe('tab bar', () => {
     expect(document.documentElement.hasAttribute('data-sheet')).toBe(false);
   });
 
-  it('shows a dot on Chat for unread messages until the chat has been seen', async () => {
-    await setup();
-    expect(await within(tabBar()).findByRole('button', { name: 'Chat, unread messages' })).toBeTruthy();
-    fireEvent.click(within(tabBar()).getByRole('button', { name: /^Chat/ }));
-    await screen.findByRole('log', { name: 'Messages' });
-    await waitFor(() => expect(within(tabBar()).getByRole('button', { name: 'Chat' }).getAttribute('aria-current')).toBe('page'));
-    fireEvent.click(within(tabBar()).getByRole('button', { name: 'Home' }));
-    expect(within(tabBar()).getByRole('button', { name: 'Chat' })).toBeTruthy();
-  });
-
   it('shows a dot on Housekeeping for a message from someone else until the tab has been open', async () => {
     const backend = await setup();
     const hk = await within(tabBar()).findByRole('button', { name: 'Housekeeping, new message' });
@@ -360,6 +347,14 @@ describe('tab bar', () => {
     await screen.findByRole('heading', { name: 'Needs attention', level: 1 });
   });
 
+  it('opens on Home when the tab last open is one the app no longer has (Chat)', async () => {
+    localStorage.setItem('homeos.tab', 'chat');
+    await setup();
+    await screen.findByRole('heading', { name: 'Home', level: 1 });
+    expect(within(tabBar()).getByRole('button', { name: 'Home' }).getAttribute('aria-current')).toBe('page');
+    expect(within(tabBar()).queryByRole('button', { name: /^Chat/ })).toBeNull();
+  });
+
   it('after the task list closes, focus goes back to Edit, however it was opened', async () => {
     await setup();
     fireEvent.click(within(tabBar()).getByRole('button', { name: /^Housekeeping/ }));
@@ -372,21 +367,11 @@ describe('tab bar', () => {
     await waitFor(() => expect(document.activeElement).toBe(edit));
   });
 
-  it('stays where it is while typing a message', async () => {
-    await setup();
-    fireEvent.click(within(tabBar()).getByRole('button', { name: /^Chat/ }));
-    const field = await screen.findByRole('textbox', { name: 'Message' });
-    act(() => field.focus());
-    expect(tabBar().hasAttribute('aria-hidden')).toBe(false);
-    expect(within(tabBar()).getByRole('button', { name: 'Home' })).toBeTruthy();
-    act(() => field.blur());
-  });
-
   it('tells the toast whether the round + is there, so it can float clear of it', async () => {
     await setup();
     expect(document.documentElement.hasAttribute('data-add')).toBe(true);
-    fireEvent.click(within(tabBar()).getByRole('button', { name: /^Chat/ }));
-    await screen.findByRole('heading', { name: 'Chat', level: 1 });
+    fireEvent.click(within(tabBar()).getByRole('button', { name: /^Housekeeping/ }));
+    await screen.findByRole('heading', { name: 'Housekeeping', level: 1 });
     expect(document.documentElement.hasAttribute('data-add')).toBe(false);
   });
 });

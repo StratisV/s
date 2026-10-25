@@ -17,7 +17,7 @@
 //    status   { home }: true for good once this instance has seen a home (no read); else
 //             read() with "no home" kept NO_HOME_FRESH_MS
 //    session  { user, entry: member, device, rev } and Set-Cookie renewing the token
-//    version  { rev, chatRev, pollMs: pressure().pollMs, readOnly: pressure().readOnly }
+//    version  { rev, pollMs: pressure().pollMs, readOnly: pressure().readOnly }
 //    devices  { devices: deviceInfos(doc, device.id) }
 //    setup    setupHome() (./setup.ts)
 //    redeem   limiter.begin(ip) (429 while blocked; the attempt counts as failed until it
@@ -494,7 +494,7 @@ async function get(op: GetOp, request: ApiRequest, ctx: ServerContext): Promise<
     }
     case 'version': {
       const pressure = ctx.store.pressure();
-      const response: VersionResponse = { rev: doc.rev, chatRev: doc.chatRev, pollMs: pressure.pollMs, readOnly: pressure.readOnly };
+      const response: VersionResponse = { rev: doc.rev, pollMs: pressure.pollMs, readOnly: pressure.readOnly };
       return json(200, response);
     }
     case 'devices':

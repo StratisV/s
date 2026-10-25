@@ -32,7 +32,7 @@
 // document taken before it), and stored with ONE put { ifMatch: the copy's etag } (group commit). Nothing changed (the JSON is the same):
 // no put. Before the put: rev + 1 when a 'data' write changed something (a 'meta' write, such as
 // marking a device used or storing the read count, keeps the rev, so browsers do not reload
-// for it), chatRev + 1 when chatFingerprint() changed, meta.writes gets a fresh id, usage
+// for it), meta.writes gets a fresh id, usage
 // counted, pruneAuth(). A body over MAX_DOC_BYTES is refused ('too_large'). On
 // BlobConflictError: re-read the store and, unless its meta.writes holds this put's id (it
 // landed after all), wait a little (jittered, longer each time) and apply the batch again on
@@ -50,7 +50,7 @@ import { BlobConflictError, BlobUnavailableError, type BlobStore } from '../stor
 import { pruneAuth } from './auth';
 import { DEFAULT_BUDGET } from './config';
 import { ApiError } from './errors';
-import { chatFingerprint, parseServerDoc, RECENT_WRITES, serialiseServerDoc, usageMonth, type ServerDoc } from './serverDoc';
+import { parseServerDoc, RECENT_WRITES, serialiseServerDoc, usageMonth, type ServerDoc } from './serverDoc';
 
 /** Tries per batch before 'busy'. */
 export const WRITE_ATTEMPTS = 7;
@@ -418,7 +418,6 @@ export class HomeStore {
     const now = new Date(this.clock());
     const month = usageMonth(now);
     doc.rev = bump ? base.rev + 1 : base.rev;
-    doc.chatRev = bump && chatFingerprint(doc.home) !== chatFingerprint(base.home) ? base.chatRev + 1 : base.chatRev;
     pruneAuth(doc, now);
     doc.meta.writes = [...doc.meta.writes, writeId].slice(-RECENT_WRITES);
     const pending = this.counts();

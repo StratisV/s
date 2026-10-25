@@ -163,7 +163,6 @@ export const TEXT_LIMITS = {
   areaName: 60,
   /** No input: emoji come from EMOJI_SET. The database still caps what a client can store. */
   memberEmoji: 16,
-  chatMessage: 4000,
   /** A task on the housekeeping task list (and its copy on a visit). */
   housekeepingTask: 200,
   /** A section of the housekeeping task list (and its name on a visit's rows). */
@@ -178,25 +177,6 @@ export const TEXT_LIMITS = {
   reminderTitle: 80,
 } as const;
 
-/** Messages per chat page (the newest page first, older ones as you scroll up). */
-export const CHAT_PAGE_SIZE = 50;
-
-/** One-tap reactions shown above a message (iOS tapback style). */
-export const QUICK_REACTIONS = ['❤️', '👍', '😂', '😮', '😢', '🙏'] as const;
-
-/**
- * The fuller reaction grid behind the "+" in the reaction bar, and the only
- * emoji a reaction may be. Keep in step with the check constraint
- * message_reactions_emoji_allowed in supabase/migrations/20261010000100_chat.sql
- * (exact code points, including U+FE0F; constants.test.ts compares them).
- */
-export const REACTION_EMOJIS = [
-  '❤️', '👍', '👎', '😂', '😮', '😢', '🙏', '🎉',
-  '🔥', '👏', '💯', '✅', '❌', '👀', '🤔', '😍',
-  '🥳', '😅', '🙌', '💪', '🏡', '🧹', '🛠️', '🦔',
-  '🦆', '🦊', '🌻', '⭐', '☕', '🍕', '😴', '🤞',
-] as const;
-
 // ── Housekeeping (docs/ARCHITECTURE.md "Housekeeping") ──────
 
 /**
@@ -209,7 +189,7 @@ export const HOUSEKEEPING_PRICE_MAX_PENCE = 1_000_000;
  * The task list every new household starts with, in this order. Keep in step with the
  * array in create_household and the backfill in
  * supabase/migrations/20261010000400_housekeeping.sql (same titles, same order; a unit
- * test compares them, like the reaction emoji).
+ * test compares them).
  */
 export const HOUSEKEEPING_STARTER_TASKS = [
   'Change the bed sheets',

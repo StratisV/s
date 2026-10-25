@@ -2,7 +2,7 @@
  * The tab bar: frosted glass docked on the bottom edge, full width, as iPhone tab bars sit.
  * Its tabs take the top 56px (var(--tabbar-height)) and the glass runs on down through the
  * home indicator's inset (padding-bottom), so nothing floats over the foot of the screen.
- * Five equal tabs, each a 52px tall target: the symbol over its name.
+ * Equal tabs, each a 52px tall target: the symbol over its name.
  */
 .bar {
   position: absolute;
@@ -129,7 +129,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Unread messages on Chat; a new message for the housekeeper on Housekeeping. */
+/* A new message for the housekeeper, on Housekeeping. */
 .dot {
   position: absolute;
   top: -1px;
@@ -159,7 +159,7 @@
   transition: transform 0.12s ease;
 }
 
-/* Back from Chat or Housekeeping: the button pops in. */
+/* Back from Housekeeping: the button pops in. */
 .add[data-enter] {
   animation: add-in 0.3s var(--sheet-ease);
 }

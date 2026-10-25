@@ -2,8 +2,8 @@
   position: fixed;
   left: 0;
   right: 0;
-  /* Above the tab bar; a screen with its own bottom bar (Chat's composer) sets --toast-bottom. */
-  bottom: var(--toast-bottom, calc(var(--tabbar-clear) + 12px));
+  /* Above the tab bar. */
+  bottom: calc(var(--tabbar-clear) + 12px);
   /* Above the app, below action sheets (900) so a toast never covers a confirmation. */
   z-index: 850;
   display: flex;
@@ -14,7 +14,7 @@
 
 /* Over the round + too, on the tabs that have it (App sets data-add), unless a sheet covers it. */
 :global(html[data-add]:not([data-sheet])) .wrap {
-  bottom: var(--toast-bottom, calc(var(--add-clear) + 12px));
+  bottom: calc(var(--add-clear) + 12px);
 }
 
 /* The live region: always in the page, as big as the toast (nothing when idle). */

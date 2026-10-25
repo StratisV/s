@@ -8,7 +8,6 @@
 //   ?demo-reset=1  wipe everything (signed out, no household)
 
 import {
-  CHAT_PAGE_SIZE,
   DEFAULT_ADDRESS,
   DEFAULT_AREAS,
   DEMO_CALENDAR_ITEMS,
@@ -18,7 +17,6 @@ import {
   HOUSEKEEPING_SECTIONS_MAX,
   HOUSEKEEPING_STARTER_TASKS,
   MEMBER_COLORS,
-  REACTION_EMOJIS,
   SEED_ITEMS,
   TEXT_LIMITS,
   type DemoPersonKey,
@@ -30,10 +28,6 @@ import { hasJoined, isValidEmail, normaliseEmail } from '../logic/people';
 import type {
   Area,
   AuthUser,
-  ChatChange,
-  ChatMessage,
-  ChatPage,
-  ChatReaction,
   Completion,
   CreateHouseholdInput,
   HomeEntry,
@@ -135,59 +129,6 @@ const HISTORY_TITLES = [
 /** Months of older history before the current one (the prototype says "since March 2026" in October). */
 const HISTORY_MONTHS = 7;
 
-/**
- * The group chat every demo household starts with: yesterday evening and this
- * morning in household time (a day earlier while this morning is still ahead).
- * Reactions follow their message a minute apart, in this order.
- */
-const SEED_CHAT: {
-  who: DemoPerson;
-  daysBack: number;
-  hour: number;
-  minute: number;
-  body: string;
-  reactions?: { who: DemoPerson; emoji: string }[];
-}[] = [
-  { who: 'shea', daysBack: 1, hour: 18, minute: 42, body: 'The heating engineer can come on Saturday between 10 and 12. Is anyone in?' },
-  { who: 'me', daysBack: 1, hour: 18, minute: 51, body: "I'm in all morning, I'll let him in.", reactions: [{ who: 'shea', emoji: '🙏' }] },
-  { who: 'ela', daysBack: 1, hour: 19, minute: 7, body: 'Thank you! The hallway is freezing at night.' },
-  { who: 'ela', daysBack: 1, hour: 21, minute: 15, body: 'Also, is the old firepit still up for grabs? I could pick it up on Sunday.' },
-  {
-    who: 'shea',
-    daysBack: 1,
-    hour: 21,
-    minute: 22,
-    body: "It's all yours 🔥 I'll leave it by the side gate.",
-    reactions: [
-      { who: 'ela', emoji: '❤️' },
-      { who: 'me', emoji: '👍' },
-    ],
-  },
-  {
-    who: 'me',
-    daysBack: 0,
-    hour: 8,
-    minute: 5,
-    body: 'Restocked the olive oil, the 5L tin is in the pantry.',
-    reactions: [
-      { who: 'shea', emoji: '👍' },
-      { who: 'ela', emoji: '❤️' },
-    ],
-  },
-  { who: 'shea', daysBack: 0, hour: 8, minute: 19, body: "Legend. We're nearly out of the jacuzzi test strips too." },
-  {
-    who: 'ela',
-    daysBack: 0,
-    hour: 8,
-    minute: 31,
-    body: "I'll order a new pack today.",
-    reactions: [
-      { who: 'me', emoji: '👍' },
-      { who: 'shea', emoji: '🙏' },
-    ],
-  },
-];
-
 // ── Stored rows (SQL columns, including the ones the UI types leave out) ──
 // Exported for the server (server/), which keeps the same document for the home it holds.
 
@@ -223,18 +164,6 @@ export interface PushSubRow {
   auth: string;
   user_agent: string | null;
   created_at: ISOTimestamp;
-}
-export interface MessageRow {
-  id: string;
-  household_id: string;
-  /** Null once the sender's member row is gone (on delete set null). */
-  member_id: string | null;
-  body: string;
-  created_at: ISOTimestamp;
-}
-/** Primary key (message_id, member_id, emoji); household_id is copied from the message. */
-export interface ReactionRow extends ChatReaction {
-  household_id: string;
 }
 /** housekeeping_notes: one row per household (primary key household_id); none = never written. */
 export interface HousekeepingNoteRow {
@@ -288,9 +217,6 @@ export interface DemoDoc {
   completions: CompletionRow[];
   invites: InviteRow[];
   push_subs: PushSubRow[];
-  /** Chat came later: read() fills these in for documents stored before it. */
-  messages: MessageRow[];
-  message_reactions: ReactionRow[];
   /**
    * Housekeeping came later still: read() fills these in for documents stored before it,
    * and gives each household the starter task list once (like the migration's backfill).
@@ -338,8 +264,6 @@ const PUSH_ENDPOINT_MAX = 2048;
 const PUSH_KEY_MAX = 256;
 const USER_AGENT_MAX = 512;
 const HTTPS_URL = /^https:\/\/\S+$/;
-/** message_reactions.emoji: 1 to 16 characters. */
-const REACTION_EMOJI_MAX = 16;
 
 /** An empty document (nobody signed in, no household). */
 export function emptyDoc(): DemoDoc {
@@ -354,8 +278,6 @@ export function emptyDoc(): DemoDoc {
     completions: [],
     invites: [],
     push_subs: [],
-    messages: [],
-    message_reactions: [],
     housekeeping_notes: [],
     housekeeping_tasks: [],
     housekeeping_visits: [],
@@ -520,7 +442,6 @@ const toArea = (a: AreaRow): Area => ({ id: a.id, household_id: a.household_id, 
 const toMember = ({ claimed_at: _c, ...member }: MemberRow): Member => member;
 const toItem = ({ completed_at: _c, ...item }: ItemRow): Item => item;
 const toCompletion = ({ prev_due_date: _d, prev_status: _s, ...c }: CompletionRow): Completion => c;
-const toReaction = ({ household_id: _h, ...r }: ReactionRow): ChatReaction => r;
 const toHousekeepingTask = (t: HousekeepingTaskRow): HousekeepingTask => ({
   id: t.id,
   household_id: t.household_id,
@@ -548,26 +469,6 @@ const toVisitTask = (r: HousekeepingVisitTaskRow): HousekeepingVisitTask => ({
   done_at: r.done_at,
 });
 
-const timeOf = (ts: ISOTimestamp) => new Date(ts).getTime();
-
-/** Chat order: created_at, then id (created_at is unique per household, so the id never decides). */
-function byCreated(a: MessageRow, b: MessageRow): number {
-  return timeOf(a.created_at) - timeOf(b.created_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-}
-
-/** listMessages' page size: a positive whole number, CHAT_PAGE_SIZE when missing or not a number. */
-function pageSize(limit: number | undefined): number {
-  if (limit === undefined || Number.isNaN(limit)) return CHAT_PAGE_SIZE;
-  return Math.max(1, Math.floor(limit));
-}
-
-interface ChatListener {
-  householdId: string;
-  onChange: (change: ChatChange) => void;
-  /** The household's chat as last reported, so storage events that leave it alone stay quiet. */
-  seen: string;
-}
-
 export class DemoBackend implements Backend {
   readonly kind = 'demo' as const;
 
@@ -576,7 +477,6 @@ export class DemoBackend implements Backend {
   private readonly account: AuthUser;
   private readonly latency: number;
   private authListeners = new Set<(user: AuthUser | null) => void>();
-  private chatListeners = new Set<ChatListener>();
 
   constructor(opts: DemoBackendOptions = {}) {
     this.storage = opts.storage ?? browserStorage() ?? new MemoryStorage();
@@ -606,8 +506,6 @@ export class DemoBackend implements Backend {
       if (!parsed || parsed.version !== 1) return emptyDoc();
       // Version 1 grows by adding collections; a document from before one starts it empty.
       const doc = { ...emptyDoc(), ...parsed };
-      if (!Array.isArray(doc.messages)) doc.messages = [];
-      if (!Array.isArray(doc.message_reactions)) doc.message_reactions = [];
       // Items stored before kinds existed are tasks, and before "What good looks like"
       // existed have none (the columns' defaults).
       if (Array.isArray(doc.items)) {
@@ -906,7 +804,7 @@ export class DemoBackend implements Backend {
    * remove_person on the demo document: only someone who has not joined (invalid_input
    * otherwise; not_found outside the caller's home). What the foreign keys do when a member
    * row goes: items unassigned (and their author forgotten), completions credited to nobody,
-   * messages kept without a sender, reactions, push subscriptions and invites' author gone.
+   * push subscriptions and invites' author gone.
    */
   removePerson(memberId: string): Promise<void> {
     return this.mutate((doc) => {
@@ -923,10 +821,8 @@ export class DemoBackend implements Backend {
         if (c.credited_to === id) c.credited_to = null;
         if (c.completed_by === id) c.completed_by = null;
       }
-      for (const m of doc.messages) if (m.member_id === id) m.member_id = null;
       for (const i of doc.invites) if (i.created_by === id) i.created_by = null;
       for (const h of doc.households) if (h.updated_by === id) h.updated_by = null;
-      doc.message_reactions = doc.message_reactions.filter((r) => r.member_id !== id);
       doc.push_subs = doc.push_subs.filter((s) => s.member_id !== id);
     });
   }
@@ -1094,7 +990,6 @@ export class DemoBackend implements Backend {
     });
 
     this.addHistory(doc, household, people, now);
-    this.addChat(doc, household, people, now);
     this.addStarterTasks(doc, household.id, now);
     this.addHousekeepingHistory(doc, household, people, now);
     return household.id;
@@ -1164,37 +1059,6 @@ export class DemoBackend implements Backend {
       });
       if (ticks > 0) visit.updated_at = new Date(created + ticks * 60_000).toISOString();
       doc.housekeeping_visits.push(visit);
-    }
-  }
-
-  /** SEED_CHAT with its reactions, every timestamp in the past. */
-  private addChat(doc: DemoDoc, household: HouseholdRow, people: Record<DemoPerson, Member>, now: Date) {
-    const tz = household.timezone;
-    const today = todayIn(tz, now);
-    const at = (daysBack: number, hour: number, minute: number) => zonedInstant(addDays(today, -daysBack), hour, minute, tz);
-    // The last message and its reactions must already have happened: before 08:36 or so,
-    // "this morning" is still ahead, so the whole conversation moves a day earlier.
-    const last = SEED_CHAT[SEED_CHAT.length - 1];
-    const shift = at(last.daysBack, last.hour, last.minute + 5).getTime() > now.getTime() ? 1 : 0;
-    for (const seed of SEED_CHAT) {
-      const sent = at(seed.daysBack + shift, seed.hour, seed.minute).getTime();
-      const message: MessageRow = {
-        id: uuid(),
-        household_id: household.id,
-        member_id: people[seed.who].id,
-        body: seed.body,
-        created_at: new Date(sent).toISOString(),
-      };
-      doc.messages.push(message);
-      (seed.reactions ?? []).forEach((r, i) => {
-        doc.message_reactions.push({
-          message_id: message.id,
-          member_id: people[r.who].id,
-          household_id: household.id,
-          emoji: r.emoji,
-          created_at: new Date(sent + (i + 1) * 60_000).toISOString(),
-        });
-      });
     }
   }
 
@@ -1617,188 +1481,6 @@ export class DemoBackend implements Backend {
   /** Demo sign-in can't fail. */
   takeAuthError(): string | null {
     return null;
-  }
-
-  // ── Chat (one group chat per household, kept forever) ──
-  // RLS: members read and post; only your own messages and reactions can be deleted.
-
-  /** Messages as the API returns them, each with its reactions oldest first. */
-  private toMessages(doc: DemoDoc, rows: MessageRow[]): ChatMessage[] {
-    const ids = new Set(rows.map((m) => m.id));
-    const reactions = new Map<string, ChatReaction[]>();
-    doc.message_reactions
-      .filter((r) => ids.has(r.message_id))
-      .sort((a, b) => timeOf(a.created_at) - timeOf(b.created_at))
-      .forEach((r) => {
-        const list = reactions.get(r.message_id) ?? [];
-        list.push(toReaction(r));
-        reactions.set(r.message_id, list);
-      });
-    return rows.map((m) => ({
-      id: m.id,
-      household_id: m.household_id,
-      member_id: m.member_id,
-      body: m.body,
-      created_at: m.created_at,
-      reactions: reactions.get(m.id) ?? [],
-    }));
-  }
-
-  listMessages(householdId: string, opts: { before?: ISOTimestamp; limit?: number } = {}): Promise<ChatPage> {
-    return this.query((doc) => {
-      this.memberOf(doc, householdId);
-      const before = opts.before == null ? Infinity : timeOf(opts.before);
-      if (Number.isNaN(before)) throw invalidInput('before');
-      const older = doc.messages
-        .filter((m) => m.household_id === householdId && timeOf(m.created_at) < before)
-        .sort(byCreated);
-      const page = older.slice(Math.max(0, older.length - pageSize(opts.limit)));
-      return { messages: this.toMessages(doc, page), hasMore: page.length < older.length };
-    });
-  }
-
-  getMessages(ids: string[]): Promise<ChatMessage[]> {
-    return this.query((doc) => {
-      const user = this.userIn(doc);
-      // RLS filters rather than refuses: anything outside your household is simply missing.
-      const me = doc.members.find((m) => m.user_id === user.id);
-      if (!me) return [];
-      const wanted = new Set(ids);
-      const rows = doc.messages.filter((m) => wanted.has(m.id) && m.household_id === me.household_id).sort(byCreated);
-      return this.toMessages(doc, rows);
-    });
-  }
-
-  sendMessage(householdId: string, body: string): Promise<ChatMessage> {
-    return this.chatWrite((doc) => {
-      const me = this.memberOf(doc, householdId);
-      const text = (body ?? '').trim();
-      if (!text || charCount(text) > TEXT_LIMITS.chatMessage) throw invalidInput('body');
-      // Strictly after the newest message, even within one millisecond, so paging by
-      // created_at never skips or repeats a message.
-      const newest = doc.messages.reduce(
-        (t, m) => (m.household_id === householdId ? Math.max(t, timeOf(m.created_at)) : t),
-        -Infinity,
-      );
-      const row: MessageRow = {
-        id: uuid(),
-        household_id: householdId,
-        member_id: me.id,
-        body: text,
-        created_at: new Date(Math.max(this.now().getTime(), newest + 1)).toISOString(),
-      };
-      doc.messages.push(row);
-      const change: ChatChange = { type: 'message', messageId: row.id, deleted: false };
-      return { result: this.toMessages(doc, [row])[0], householdId, change };
-    });
-  }
-
-  deleteMessage(id: string): Promise<void> {
-    return this.chatWrite((doc) => {
-      const me = this.meIn(doc);
-      const row = doc.messages.find((m) => m.id === id && m.household_id === me.household_id && m.member_id === me.id);
-      if (!row) throw new BackendError('not_found', 'Message not found');
-      doc.messages = doc.messages.filter((m) => m.id !== row.id);
-      // on delete cascade
-      doc.message_reactions = doc.message_reactions.filter((r) => r.message_id !== row.id);
-      const change: ChatChange = { type: 'message', messageId: row.id, deleted: true };
-      return { result: undefined, householdId: row.household_id, change };
-    });
-  }
-
-  setReaction(messageId: string, emoji: string, on: boolean): Promise<void> {
-    return this.chatWrite((doc) => {
-      const user = this.userIn(doc);
-      const value = emoji ?? '';
-      const changed: ChatChange = { type: 'reaction', messageId };
-      if (!on) {
-        // A delete that matches nothing is fine (already off, the message is gone, or no household).
-        const me = doc.members.find((m) => m.user_id === user.id);
-        const count = doc.message_reactions.length;
-        if (me) {
-          doc.message_reactions = doc.message_reactions.filter(
-            (r) => !(r.message_id === messageId && r.member_id === me.id && r.emoji === value),
-          );
-        }
-        const didChange = doc.message_reactions.length < count;
-        return { result: undefined, householdId: me?.household_id ?? '', change: didChange ? changed : null };
-      }
-      const me = this.meIn(doc);
-      const mine = (r: ReactionRow) => r.message_id === messageId && r.member_id === me.id && r.emoji === value;
-      const done = (didChange: boolean) => ({ result: undefined, householdId: me.household_id, change: didChange ? changed : null });
-      // Only the app's reaction emoji, like the migration's message_reactions_emoji_allowed.
-      if (!value || charCount(value) > REACTION_EMOJI_MAX || !(REACTION_EMOJIS as readonly string[]).includes(value)) {
-        throw invalidInput('emoji');
-      }
-      const message = doc.messages.find((m) => m.id === messageId && m.household_id === me.household_id);
-      if (!message) throw new BackendError('not_found', 'Message not found');
-      if (doc.message_reactions.some(mine)) return done(false);
-      doc.message_reactions.push({
-        message_id: message.id,
-        member_id: me.id,
-        household_id: message.household_id,
-        emoji: value,
-        created_at: this.stamp(),
-      });
-      return done(true);
-    });
-  }
-
-  subscribeChat(householdId: string, onChange: (change: ChatChange) => void): Unsubscribe {
-    const listener: ChatListener = { householdId, onChange, seen: this.chatSnapshot(householdId) };
-    this.chatListeners.add(listener);
-    // Another tab wrote to the document: resync when this household's chat is not as last seen.
-    const onStorage = (e: StorageEvent) => {
-      if (e.key !== DEMO_STORAGE_KEY && e.key !== null) return;
-      const seen = this.chatSnapshot(householdId);
-      if (seen === listener.seen) return;
-      listener.seen = seen;
-      onChange({ type: 'resync' });
-    };
-    const hasWindow = typeof window !== 'undefined';
-    if (hasWindow) window.addEventListener('storage', onStorage);
-    return () => {
-      this.chatListeners.delete(listener);
-      if (hasWindow) window.removeEventListener('storage', onStorage);
-    };
-  }
-
-  /** The household's messages and reactions as stored, to tell whether they changed. */
-  private chatSnapshot(householdId: string, doc: DemoDoc = this.read()): string {
-    return JSON.stringify([
-      doc.messages.filter((m) => m.household_id === householdId),
-      doc.message_reactions.filter((r) => r.household_id === householdId),
-    ]);
-  }
-
-  /**
-   * Runs a chat write, then reports its change (null: nothing changed, like a
-   * realtime feed) to this instance's listeners for that household, just
-   * before the returned promise settles. Other tabs hear of it through storage events.
-   */
-  private async chatWrite<T>(
-    fn: (doc: DemoDoc) => { result: T; householdId: string; change: ChatChange | null },
-  ): Promise<T> {
-    let seen = '';
-    const { result, householdId, change } = await this.mutate((doc) => {
-      const out = fn(doc);
-      // Snapshot the document as written, not after the delay, so another tab's write
-      // in between still reads as a change.
-      if (out.change) seen = this.chatSnapshot(out.householdId, doc);
-      return out;
-    });
-    if (!change) return result;
-    for (const l of [...this.chatListeners]) {
-      if (l.householdId !== householdId) continue;
-      l.seen = seen;
-      try {
-        l.onChange(change);
-      } catch (err) {
-        // The write is stored; a failing listener must not make it look failed.
-        console.error(err);
-      }
-    }
-    return result;
   }
 
   // ── Housekeeping (docs/ARCHITECTURE.md "Housekeeping") ──

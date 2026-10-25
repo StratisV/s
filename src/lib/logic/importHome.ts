@@ -358,7 +358,7 @@ export function buildImportPayload(doc: StoredDemoDoc): ImportPayload | null {
 
 /**
  * Which stored rows the payload's keys came from (buildImportPayloadWithIds): server mode
- * brings the chat and housekeeping along too (lib/logic/serverImport.ts), and needs to know
+ * brings housekeeping along too (lib/logic/serverImport.ts), and needs to know
  * who in the document became which person.
  */
 export interface ImportPayloadIds {

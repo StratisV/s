@@ -242,7 +242,7 @@ export const USER_DEMO_DOC = {
   ],
   invites: [],
   push_subs: [],
-  // Chat stays behind (the demo's chat starts with a made-up conversation).
+  // From when there was a chat: it stays behind.
   messages: [
     { id: 'msg-1', household_id: HOUSEHOLD, member_id: SHEA, body: 'Legend. We are nearly out of the jacuzzi test strips too.', created_at: '2026-10-08T08:19:00.000Z' },
   ],
@@ -252,7 +252,7 @@ export const USER_DEMO_DOC = {
 /**
  * A home as the demo itself sets one up on a phone, made by the real DemoBackend: Continue with
  * Google, then Create Home with the default areas and the current list. Like every home the
- * demo sets up, it comes with 111 made-up completions (Stats history) and a made-up chat. A
+ * demo sets up, it comes with 111 made-up completions (Stats history). A
  * day later, one thing really gets done. Deterministic for a given clock (the payload uses
  * keys, not the demo's random ids).
  *

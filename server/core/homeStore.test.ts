@@ -97,21 +97,27 @@ describe('HomeStore: writing', () => {
     expect(rev).toBe(2);
     const doc = stored(blobs);
     expect(doc.rev).toBe(2);
-    expect(doc.chatRev).toBe(1);
     expect(doc.meta.writes).toHaveLength(2);
     expect(doc.meta.usage).toMatchObject({ month: '2026-10', puts: 2 });
     expect((await a.read())!.doc.home.households[0].name).toBe('1');
   });
 
-  it('counts a chat change in chatRev', async () => {
-    const { a } = setUp();
-    await a.create(seedDoc());
-    await a.write((doc) => {
-      doc.home.messages.push({ id: 'm1', household_id: 'h1', member_id: null, body: 'hi', created_at: new Date(START).toISOString() });
-    });
-    const doc = (await a.read())!.doc;
-    expect(doc.rev).toBe(2);
-    expect(doc.chatRev).toBe(2);
+  it('keeps what a document from when there was a chat holds (its messages, reactions and chatRev) through writes', async () => {
+    const { a, blobs } = setUp();
+    const messages = [{ id: 'm1', household_id: 'h1', member_id: null, body: 'hi', created_at: new Date(START).toISOString() }];
+    const reactions = [{ message_id: 'm1', member_id: 'p1', household_id: 'h1', emoji: '👍', created_at: new Date(START).toISOString() }];
+    const seed = seedDoc();
+    const old = { ...seed, chatRev: 7, home: { ...seed.home, messages, message_reactions: reactions } } as ServerDoc;
+    await a.create(old);
+    await a.write(bump);
+    await a.write(bump);
+    const raw = JSON.parse(blobs.peek(PATH)!.body);
+    expect(raw.rev).toBe(3);
+    expect(raw.home.households[0].name).toBe('2');
+    expect(raw.chatRev).toBe(7);
+    expect(raw.home.messages).toEqual(messages);
+    expect(raw.home.message_reactions).toEqual(reactions);
+    expect(stored(blobs).rev).toBe(3);
   });
 
   it('stores nothing when nothing changed', async () => {

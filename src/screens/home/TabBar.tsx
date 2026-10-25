@@ -16,10 +16,6 @@ const ICONS: Record<Tab, ReactNode> = {
       d="M12 2.5a9.5 9.5 0 1 0 0 19 9.5 9.5 0 0 0 0-19Zm0 4.1c.76 0 1.36.63 1.32 1.39l-.33 6.06a.99.99 0 0 1-1.98 0l-.33-6.06A1.32 1.32 0 0 1 12 6.6Zm0 11.4a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8Z"
     />
   ),
-  // message.fill
-  chat: (
-    <path d="M12 3.3c-5.1 0-9.2 3.4-9.2 7.6 0 2.4 1.3 4.5 3.4 5.9-.2 1.3-.9 2.6-1.9 3.4-.3.2-.1.6.2.6 2 0 3.7-.8 4.9-1.8.8.2 1.7.3 2.6.3 5.1 0 9.2-3.4 9.2-7.6S17.1 3.3 12 3.3Z" />
-  ),
   // sparkles
   housekeeping: (
     <>
@@ -45,19 +41,18 @@ function TabIcon({ tab }: { tab: Tab }) {
 }
 
 /**
- * The tabs, in this order. "Needs attention" is too long for a tab at 375pt wide (five to a
- * bar), so its tab says "Attention"; the screen itself is titled "Needs attention".
+ * The tabs, in this order. "Needs attention" is too long for a tab, so its tab says
+ * "Attention"; the screen itself is titled "Needs attention".
  */
 export const TABS: { id: Tab; label: string }[] = [
   { id: 'home', label: 'Home' },
   { id: 'attention', label: 'Attention' },
-  { id: 'chat', label: 'Chat' },
   { id: 'housekeeping', label: 'Housekeeping' },
   { id: 'stats', label: 'Stats' },
 ];
 
-/** Tabs without the round +: Chat has its composer at the bottom, Housekeeping has nothing to add. */
-const WITHOUT_ADD: readonly Tab[] = ['chat', 'housekeeping'];
+/** Tabs without the round +: Housekeeping has nothing to add. */
+const WITHOUT_ADD: readonly Tab[] = ['housekeeping'];
 
 /** True for the tabs that show the round +. */
 export function hasAddButton(tab: Tab): boolean {
@@ -69,8 +64,6 @@ interface TabBarProps {
   onTab(tab: Tab): void;
   /** How many things need attention: a red count on Attention (none at 0). */
   attention?: number;
-  /** Messages from others since the chat was last read: a dot on Chat. */
-  unread?: boolean;
   /** A message for the housekeeper from someone else since the tab was last open: a dot on Housekeeping. */
   newNote?: boolean;
 }
@@ -79,28 +72,27 @@ interface TabBarProps {
 const badgeText = (n: number) => (n > 9 ? '9+' : String(n));
 
 /** A tab's name for assistive tech when its badge or dot says something (they are hidden). */
-function spokenName(id: Tab, label: string, attention: number, unread: boolean, newNote: boolean): string | undefined {
+function spokenName(id: Tab, label: string, attention: number, newNote: boolean): string | undefined {
   if (id === 'attention' && attention > 0) return `${label}, ${attention} ${attention === 1 ? 'item' : 'items'}`;
-  if (id === 'chat' && unread) return `${label}, unread messages`;
   if (id === 'housekeeping' && newNote) return `${label}, new message`;
   return undefined;
 }
 
 /**
- * The tab bar (docs/ARCHITECTURE.md "Tab bar"): Home, Attention, Chat, Housekeeping and Stats
+ * The tab bar (docs/ARCHITECTURE.md "Tab bar"): Home, Attention, Housekeeping and Stats
  * in a capsule of glass floating over the foot of the screen, iOS 26's tab bar. Each tab is
  * its symbol over a short name; the open one is in the tint, on a soft glass highlight that
- * slides to it. A red count on Attention says how many things need attention; a dot on Chat
- * (unread messages) and on Housekeeping (a new message for the housekeeper).
+ * slides to it. A red count on Attention says how many things need attention; a dot on
+ * Housekeeping (a new message for the housekeeper).
  */
-export function TabBar({ tab, onTab, attention = 0, unread = false, newNote = false }: TabBarProps) {
+export function TabBar({ tab, onTab, attention = 0, newNote = false }: TabBarProps) {
   const index = Math.max(0, TABS.findIndex((t) => t.id === tab));
   return (
     <nav className={styles.bar} aria-label="Tabs" style={{ '--count': TABS.length, '--index': index } as CSSProperties}>
       <span className={styles.highlight} aria-hidden="true" />
       {TABS.map((t) => {
         const badge = t.id === 'attention' && attention > 0;
-        const dot = (t.id === 'chat' && unread) || (t.id === 'housekeeping' && newNote);
+        const dot = t.id === 'housekeeping' && newNote;
         return (
           <button
             key={t.id}
@@ -108,7 +100,7 @@ export function TabBar({ tab, onTab, attention = 0, unread = false, newNote = fa
             className={styles.tab}
             data-tab={t.id}
             aria-current={tab === t.id ? 'page' : undefined}
-            aria-label={spokenName(t.id, t.label, attention, unread, newNote)}
+            aria-label={spokenName(t.id, t.label, attention, newNote)}
             onClick={() => onTab(t.id)}
           >
             <span className={styles.icon}>
