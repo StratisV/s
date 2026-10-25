@@ -809,6 +809,9 @@ function sameGoalsToken(given: string, token: string): boolean {
   return timingSafeEqual(a, b);
 }
 
+/** The oldest copy of the home the public goals link is answered from (freshness rechecks every 2 minutes at most). */
+const PUBLIC_GOALS_MAX_AGE_MS = 180_000;
+
 /**
  * GET ?op=publicGoals&token=… for anyone (no sign-in, no X-HomeOS header): the current week of
  * the goals of the household whose link has this token, as PublicGoals and nothing more,
@@ -824,6 +827,12 @@ async function publicGoals(url: URL, ctx: ServerContext): Promise<ApiResponse> {
   if (!isGoalsToken(token)) return notFound();
   const snapshot = await ctx.store.read();
   if (!snapshot) return notFound();
+  // Near the end of the month's read budget this instance stops rechecking the store, so its
+  // copy could still hold a link turned off since on another instance: rather than answer
+  // (and let the edge keep) that, say try again, uncached.
+  if (ctx.deps.now().getTime() - snapshot.checkedAt > PUBLIC_GOALS_MAX_AGE_MS) {
+    return json(503, errorBody('unavailable', 'Try again in a moment'));
+  }
   const home = snapshot.doc.home;
   let householdId: string | null = null;
   for (const link of home.goal_links ?? []) {

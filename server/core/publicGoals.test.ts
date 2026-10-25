@@ -148,6 +148,30 @@ describe('GET ?op=publicGoals', () => {
     expect((await publicGet(h, link.token)).status).toBe(404);
   });
 
+  it('never answers from a copy over 3 minutes old (the read budget nearly spent stops rechecks)', async () => {
+    // Plenty of budget: the copy is rechecked, so later views still answer.
+    const fresh = createHarness();
+    const ok = await shared(fresh);
+    fresh.clock.advance(10 * 60_000);
+    expect((await publicGet(fresh, ok.link.token)).status).toBe(200);
+    // A small read budget: each view a few minutes apart rechecks (a read) until the month's
+    // reads reach the ceiling; then this instance keeps its copy, so it says try again (uncached).
+    const h = createHarness({ env: { HOMEOS_BLOB_READS_PER_MONTH: '20' } });
+    const { link } = await shared(h);
+    const statuses: number[] = [];
+    let old = await publicGet(h, link.token);
+    statuses.push(old.status);
+    while (old.status === 200 && statuses.length < 40) {
+      h.clock.advance(4 * 60_000);
+      old = await publicGet(h, link.token);
+      statuses.push(old.status);
+    }
+    expect(statuses.slice(0, 2)).toEqual([200, 200]);
+    expect(old.status).toBe(503);
+    expect(old.headers['Cache-Control']).toBe('no-store');
+    expect(JSON.parse(old.body)).toEqual({ error: { code: 'unavailable', message: 'Try again in a moment' } });
+  });
+
   it('a malformed token is refused without reading the store', async () => {
     let gets = 0;
     const h = createHarness();

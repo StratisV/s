@@ -522,7 +522,7 @@ begin
           'done', g.done,
           'person', case
             when m.id is null then null
-            else pg_catalog.json_build_object('name', coalesce(substring(m.name from '\S+'), ''), 'emoji', m.emoji)
+            else pg_catalog.json_build_object('name', coalesce(pg_catalog.split_part(pg_catalog.btrim(pg_catalog.regexp_replace(m.name, '[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+', ' ', 'g')), ' ', 1), ''), 'emoji', m.emoji)
           end
         )
         order by g.position, g.created_at, g.id

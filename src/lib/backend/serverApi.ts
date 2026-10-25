@@ -486,7 +486,7 @@ export const PUBLIC_GOALS_OP = 'publicGoals';
  * not a Blob read per view. Browsers keep nothing (max-age=0). A link turned off can therefore
  * show for a minute or so more where it was cached. Errors are never cached.
  */
-export const PUBLIC_GOALS_CACHE = 'public, max-age=0, s-maxage=60, stale-while-revalidate=300';
+export const PUBLIC_GOALS_CACHE = 'public, max-age=0, s-maxage=60, stale-while-revalidate=10';
 export type PublicGoalsResponse = PublicGoals;
 
 /** The public op's address for a token. */

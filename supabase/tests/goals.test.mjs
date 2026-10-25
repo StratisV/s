@@ -366,6 +366,19 @@ describe('the public link', () => {
     assert.deepEqual(await rpc(outsider.owner, 'public_goals', [token]), view);
   });
 
+  test('a first name is the first word whatever the spaces (no-break, full-width), as in the app', async () => {
+    const h = await createHousehold({ memberName: '\u00a0Shea\u00a0Byrne' });
+    const yuki = await joinHousehold(h, { name: '山田\u3000太郎' });
+    const ela = await joinHousehold(h, { name: 'Ela\u202fMorgan' });
+    const week = await thisWeek();
+    await add(h.owner, h.id, week, 'One', h.member.id);
+    await add(h.owner, h.id, week, 'Two', yuki.member.id);
+    await add(h.owner, h.id, week, 'Three', ela.member.id);
+    const { token } = await linkOf(h.owner, h.id);
+    const view = await rpc(null, 'public_goals', [token]);
+    assert.deepEqual(view.goals.map((g) => g.person.name), ['Shea', '山田', 'Ela']);
+  });
+
   test('unknown, malformed and turned-off tokens read nothing', async () => {
     const h = await createHousehold();
     await add(h.owner, h.id, await thisWeek(), 'Hidden');

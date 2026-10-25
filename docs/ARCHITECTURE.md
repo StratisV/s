@@ -952,7 +952,7 @@ limits: setup 4 MiB, rpc 256 KiB, else 4 KiB (413 `too_large`).
 | `POST saveReminder` | yes | `{ reminder: { id?, title, days } }` | `NotifySettings` (404 for an id that is not theirs) |
 | `POST deleteReminder` | yes | `{ id }` | `NotifySettings` |
 | `GET ?op=tick` | `Authorization: Bearer <CRON_SECRET>`, no X-HomeOS | | `{ ok, sent, failed, gone }` (403 otherwise) |
-| `GET ?op=publicGoals&token=` | no, no X-HomeOS | | `PublicGoals`, `Cache-Control: public, max-age=0, s-maxage=60, stale-while-revalidate=300`; 404 `not_found` (no-store) for a token malformed, unknown or turned off (see "Goals for the week") |
+| `GET ?op=publicGoals&token=` | no, no X-HomeOS | | `PublicGoals`, `Cache-Control: public, max-age=0, s-maxage=60, stale-while-revalidate=10`; 404 `not_found` (no-store) for a token malformed, unknown or turned off; 503 `unavailable` (no-store) when this instance's copy is over 3 minutes old (see "Goals for the week") |
 
 `user` is `{ id: user id, email: '', name }`, `entry` a `HomeEntry` (`member`; `claimed` from a
 redeem that made someone join). `app` (`AppMode`): `'standalone'` when the page runs as an
@@ -1841,14 +1841,18 @@ answers:
 
 - **200** `{ week, goals: [{ title, done, person: { name, emoji } | null }] }`, this week in
   the home's time zone, with `Cache-Control: public, max-age=0, s-maxage=60,
-  stale-while-revalidate=300` (`PUBLIC_GOALS_CACHE`): Vercel's edge keeps each answer a minute,
+  stale-while-revalidate=10` (`PUBLIC_GOALS_CACHE`): Vercel's edge keeps each answer a minute,
   so a link shared to a busy group reads the store about once a minute, not once a view, and
   the Blob budget (see "Budget") holds. Vercel's proxy keeps `stale-while-revalidate` for its
   own cache and takes it out of what the browser gets, so the page's own requests always reach
   the edge rather than a stale copy in the browser (the local server, `server/entry/local.ts`,
   does the same). A change shows on the page within about a minute, and a
-  link turned off can still be answered from the edge for that minute (or, rarely, once more
+  link turned off can still be answered from the edge for that minute (and ten seconds more
   while the edge revalidates).
+- **503** `{ error: { code: 'unavailable' } }`, `no-store`, when this instance's copy of the
+  home is over 3 minutes old (`PUBLIC_GOALS_MAX_AGE_MS`): near the end of the month's read
+  budget the store stops rechecking, and that copy could still hold a link turned off since on
+  another instance. The page says to try again.
 - **404** `{ error: { code: 'not_found' } }` with `Cache-Control: no-store` for an unknown or
   turned-off token (not cached, so a new link works at once). Strangers guessing tokens are
   bounded by the token's 128 bits, not by a rate limit.
