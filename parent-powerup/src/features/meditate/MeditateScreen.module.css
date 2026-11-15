@@ -1,0 +1,592 @@
+/* The home tab. Colours come only from the tokens, so light and dark both work. */
+
+/* The streak: a small, warm flame. */
+.streak {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px 0 9px;
+  border-radius: var(--r-pill);
+  background: var(--sun-wash);
+  color: var(--sun-ink);
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.flame {
+  color: var(--sun);
+  fill: var(--sun);
+  fill-opacity: 0.35;
+  transform-origin: 50% 90%;
+  animation: flicker 3.2s var(--ease-in-out) infinite;
+}
+
+@keyframes flicker {
+  0%,
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+  35% {
+    transform: scale(1.06, 0.96) rotate(-3deg);
+  }
+  70% {
+    transform: scale(0.97, 1.04) rotate(2deg);
+  }
+}
+
+/* First visit. */
+.welcome {
+  margin: 0 var(--page-x);
+  padding: 20px;
+  border-radius: var(--r-lg);
+  background: var(--brand-wash);
+  border: 1px solid var(--brand-wash-strong);
+}
+
+.welcomeMark {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--sun);
+  color: var(--night);
+  margin-bottom: 12px;
+}
+
+.welcomeTitle {
+  font-size: 21px;
+  font-weight: 850;
+}
+
+.welcomeText {
+  margin-top: 8px;
+  color: var(--ink-2);
+  max-width: 38ch;
+}
+
+.welcomeActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* Together or just me, and who's joining. */
+.choose {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modes {
+  margin: 0 var(--page-x);
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mode {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  border-radius: var(--r-pill);
+  color: var(--ink-2);
+  font-weight: 750;
+  font-size: 16px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.2s var(--ease-out), color 0.2s var(--ease-out);
+}
+
+.mode[data-checked] {
+  background: var(--brand);
+  color: var(--on-fill);
+}
+
+.mode:has(.modeInput:focus-visible) {
+  outline: 3px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.joining {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.joiningHint {
+  padding: 0 var(--page-x);
+  font-size: 14px;
+  color: var(--ink-3);
+}
+
+.kids {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px var(--page-x) 4px;
+}
+
+.kids::-webkit-scrollbar {
+  display: none;
+}
+
+.kid {
+  flex-shrink: 0;
+  min-width: 68px;
+  max-width: 88px;
+  min-height: 44px;
+  padding: 4px 4px 6px;
+  border-radius: var(--r-md);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.kidFace {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  transition: opacity 0.2s var(--ease-out), filter 0.2s var(--ease-out), transform 0.2s var(--ease-out);
+}
+
+.kid[aria-pressed='true'] .kidFace {
+  box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--brand);
+}
+
+.kid[aria-pressed='false'] .kidFace {
+  opacity: 0.45;
+  filter: grayscale(0.7);
+  transform: scale(0.92);
+}
+
+.kidTick {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--brand);
+  color: var(--on-fill);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+
+.kidName {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 750;
+  color: var(--ink);
+}
+
+.kid[aria-pressed='false'] .kidName {
+  color: var(--ink-3);
+  font-weight: 650;
+}
+
+/* No kids yet. */
+.nudge {
+  margin: 0 var(--page-x);
+  padding: 16px;
+  border-radius: var(--r-lg);
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.nudgeIcon {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--mint-wash);
+  color: var(--mint-ink);
+}
+
+.nudgeText {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  color: var(--ink-2);
+  font-size: 15px;
+}
+
+.nudgeText > :last-child {
+  margin-top: 10px;
+}
+
+.nudgeTitle {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+/* Today's meditation: a little window onto the meditation room. */
+.featured {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  margin: 0 var(--page-x);
+  padding: 22px 20px 20px;
+  border-radius: var(--r-xl);
+  color: var(--night-ink);
+  background:
+    radial-gradient(120% 90% at 85% 0%, var(--night-2), transparent 70%),
+    var(--night);
+  box-shadow: var(--shadow-float);
+}
+
+/* Faint stars. */
+.featured::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.6;
+  background-image:
+    radial-gradient(1.5px 1.5px at 78% 18%, var(--night-ink-2), transparent 70%),
+    radial-gradient(1.2px 1.2px at 92% 42%, var(--night-ink-2), transparent 70%),
+    radial-gradient(1.3px 1.3px at 60% 10%, var(--night-ink-2), transparent 70%),
+    radial-gradient(1.1px 1.1px at 70% 34%, var(--night-ink-2), transparent 70%),
+    radial-gradient(1.4px 1.4px at 88% 70%, var(--night-ink-2), transparent 70%);
+}
+
+.featured :focus-visible {
+  outline-color: var(--night-ink);
+}
+
+.featuredTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.featuredOrb {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 38px;
+  line-height: 1;
+  background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--lilac) 45%, var(--night-2)), var(--night-2));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--night-ink) 14%, transparent);
+}
+
+/* The glow breathes, slowly. */
+.featuredOrb::before {
+  content: '';
+  position: absolute;
+  inset: -14px;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--lilac) 55%, transparent), transparent 68%);
+  animation: breathe 10s var(--ease-in-out) infinite;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(0.82);
+    opacity: 0.55;
+  }
+  40% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+}
+
+.doneBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px 0 10px;
+  border-radius: var(--r-pill);
+  font-size: 14px;
+  font-weight: 750;
+  color: var(--night);
+  background: var(--mint);
+}
+
+.featuredEyebrow {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--night-ink-2);
+}
+
+.featuredTitle {
+  margin-top: 6px;
+  font-size: clamp(25px, 7vw, 30px);
+  font-weight: 850;
+  letter-spacing: -0.015em;
+  outline: none;
+}
+
+.featuredMeta {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--night-ink-2);
+}
+
+.metaTime {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.featuredIntro {
+  margin-top: 12px;
+  font-size: 16.5px;
+  line-height: 1.45;
+  max-width: 36ch;
+}
+
+.reason {
+  margin-top: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--night-ink-2);
+}
+
+.reason svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.start {
+  margin-top: 20px;
+  width: 100%;
+  min-height: 58px;
+  border-radius: var(--r-pill);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--night);
+  background: var(--night-ink);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--lilac) 30%, transparent);
+  transition: transform 0.15s var(--ease-out);
+}
+
+.start:active {
+  transform: scale(0.98);
+}
+
+/* More to try. */
+.list {
+  list-style: none;
+  margin: 0 var(--page-x);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-lg);
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.list li + li {
+  border-top: 1px solid var(--line);
+}
+
+.row {
+  width: 100%;
+  min-height: 72px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-align: left;
+  transition: background-color 0.15s;
+}
+
+.row:active {
+  background: var(--card-sunk);
+}
+
+.row:focus-visible {
+  outline-offset: -3px;
+  border-radius: var(--r-lg);
+}
+
+.rowEmoji {
+  flex-shrink: 0;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+  line-height: 1;
+  background: var(--brand-wash);
+}
+
+.rowText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rowTitle {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.rowMeta {
+  font-size: 14px;
+  color: var(--ink-3);
+}
+
+.rowAges {
+  white-space: nowrap;
+}
+
+.rowDone {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--mint-wash);
+  color: var(--mint-ink);
+}
+
+.rowPlay {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--brand-wash-strong);
+  color: var(--brand-text);
+}
+
+.moreToggle {
+  padding: 0 var(--page-x);
+  display: flex;
+  justify-content: center;
+}
+
+/* Today's Powerup. */
+.powerup {
+  margin: 0 var(--page-x);
+  padding: 16px;
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-radius: var(--r-lg);
+  background: var(--sun-wash);
+  color: var(--ink);
+  text-decoration: none;
+  transition: transform 0.15s var(--ease-out);
+}
+
+.powerup:active {
+  transform: scale(0.985);
+}
+
+.bolt {
+  flex-shrink: 0;
+  align-self: flex-start;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--sun);
+  color: var(--night);
+}
+
+.powerupText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.powerupFor {
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--sun-ink);
+}
+
+.powerupTitle {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 850;
+}
+
+.powerupTagline {
+  font-size: 15px;
+  color: var(--ink-2);
+}
+
+.approach {
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--sun-ink);
+}
+
+.approach svg {
+  flex-shrink: 0;
+}
+
+.chevron {
+  flex-shrink: 0;
+  color: var(--sun-ink);
+}

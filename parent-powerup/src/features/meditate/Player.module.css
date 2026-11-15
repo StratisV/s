@@ -1,0 +1,432 @@
+/* The meditation room: deep night colours, one softly glowing circle, nothing else to do. */
+
+.room {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: var(--night-ink);
+  background:
+    radial-gradient(90% 55% at 50% 36%, var(--night-2), transparent 78%),
+    var(--night);
+  animation: enter 0.45s var(--ease-out);
+}
+
+/* A scatter of faint stars. */
+.room::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  background-image:
+    radial-gradient(1.6px 1.6px at 12% 14%, var(--night-ink-2), transparent 70%),
+    radial-gradient(1.2px 1.2px at 82% 9%, var(--night-ink-2), transparent 70%),
+    radial-gradient(1.4px 1.4px at 68% 22%, var(--night-ink-2), transparent 70%),
+    radial-gradient(1.1px 1.1px at 24% 31%, var(--night-ink-2), transparent 70%),
+    radial-gradient(1.5px 1.5px at 90% 44%, var(--night-ink-2), transparent 70%),
+    radial-gradient(1.2px 1.2px at 7% 58%, var(--night-ink-2), transparent 70%),
+    radial-gradient(1.3px 1.3px at 40% 8%, var(--night-ink-2), transparent 70%),
+    radial-gradient(1.1px 1.1px at 58% 66%, var(--night-ink-2), transparent 70%),
+    radial-gradient(1.4px 1.4px at 16% 84%, var(--night-ink-2), transparent 70%),
+    radial-gradient(1.2px 1.2px at 86% 78%, var(--night-ink-2), transparent 70%);
+}
+
+.room :focus-visible {
+  outline-color: var(--night-ink);
+}
+
+.inner {
+  position: relative;
+  flex: 1 0 auto;
+  width: 100%;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding: calc(var(--top-inset) + 10px) var(--page-x) calc(var(--bottom-inset) + 18px);
+}
+
+.top {
+  display: grid;
+  grid-template-columns: 48px 1fr 48px;
+  align-items: center;
+  gap: 8px;
+}
+
+.round {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--night-ink);
+  background: color-mix(in srgb, var(--night-ink) 13%, transparent);
+  transition: background-color 0.2s var(--ease-out), transform 0.15s var(--ease-out);
+}
+
+.round:active {
+  transform: scale(0.94);
+}
+
+.round[aria-pressed='true'] {
+  background: var(--night-ink);
+  color: var(--night);
+}
+
+.heading {
+  min-width: 0;
+  text-align: center;
+}
+
+.eyebrow {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--night-ink-2);
+}
+
+.title {
+  margin-top: 2px;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.2;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* The breathing circle. --breath runs 0 (empty) to 1 (full), set every frame from the step's breath. */
+.stage {
+  --breath: 0;
+  position: relative;
+  flex-shrink: 0;
+  width: min(76vw, 320px, 40dvh);
+  aspect-ratio: 1;
+  margin: clamp(12px, 4dvh, 36px) auto clamp(8px, 2dvh, 20px);
+}
+
+.halo,
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform, opacity;
+}
+
+.halo {
+  inset: -8%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--lilac) 60%, transparent) 0%, transparent 66%);
+  transform: scale(calc(0.62 + var(--breath) * 0.42));
+  opacity: calc(0.4 + var(--breath) * 0.6);
+}
+
+.orb {
+  inset: 13%;
+  background: radial-gradient(
+    circle at 50% 42%,
+    color-mix(in srgb, var(--lilac) 38%, var(--night-2)) 0%,
+    color-mix(in srgb, var(--lilac) 52%, var(--night-2)) 58%,
+    color-mix(in srgb, var(--lilac) 82%, var(--night-ink)) 100%
+  );
+  box-shadow:
+    0 0 34px color-mix(in srgb, var(--lilac) 45%, transparent),
+    inset 0 0 24px color-mix(in srgb, var(--night-ink) 22%, transparent);
+  transform: scale(calc(0.56 + var(--breath) * 0.44));
+}
+
+/* Between breathing steps the circle rests and glows softly. */
+.stage[data-resting] .halo {
+  animation: shimmer 7s var(--ease-in-out) infinite;
+}
+
+.stage[data-paused] .halo {
+  animation-play-state: paused;
+}
+
+.ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.ringTrack,
+.ringFill {
+  fill: none;
+  stroke-width: 1.4;
+}
+
+.ringTrack {
+  stroke: color-mix(in srgb, var(--night-ink) 14%, transparent);
+}
+
+.ringFill {
+  stroke: var(--night-ink-2);
+  stroke-linecap: round;
+}
+
+.cue {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.cueWord {
+  font-family: var(--font-display);
+  font-size: clamp(22px, 6.4vw, 27px);
+  font-weight: 850;
+  letter-spacing: -0.01em;
+  text-shadow: 0 1px 14px color-mix(in srgb, var(--night) 70%, transparent);
+}
+
+.cueCount {
+  margin-top: 2px;
+  font-size: 17px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 10px color-mix(in srgb, var(--night) 70%, transparent);
+}
+
+.cueEmoji {
+  font-size: clamp(40px, 12vw, 52px);
+  line-height: 1;
+}
+
+.words {
+  min-height: 7.4em;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
+}
+
+.stepText {
+  max-width: 30ch;
+  text-align: center;
+  font-family: var(--font-display);
+  font-size: clamp(19px, 5.3vw, 23px);
+  font-weight: 700;
+  line-height: 1.38;
+  animation: rise 0.7s var(--ease-out);
+}
+
+.meta {
+  margin-top: 6px;
+  text-align: center;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--night-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.pausedNote {
+  color: var(--night-ink);
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(18px, 7vw, 32px);
+  margin-top: auto;
+  padding-top: 18px;
+}
+
+.skip {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--night-ink);
+  background: color-mix(in srgb, var(--night-ink) 13%, transparent);
+  transition: opacity 0.2s, transform 0.15s var(--ease-out);
+}
+
+.skip:disabled {
+  opacity: 0.32;
+}
+
+.play {
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--night);
+  background: var(--night-ink);
+  box-shadow: 0 10px 32px color-mix(in srgb, var(--lilac) 35%, transparent);
+  transition: transform 0.15s var(--ease-out);
+}
+
+.skip:active:not(:disabled),
+.play:active {
+  transform: scale(0.94);
+}
+
+/* Room for Finish, so nothing jumps when it appears. */
+.finishSlot {
+  min-height: 60px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.finish {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 20px;
+  border-radius: var(--r-pill);
+  font-weight: 750;
+  color: var(--night-ink);
+  border: 1px solid color-mix(in srgb, var(--night-ink) 40%, transparent);
+  animation: rise 0.5s var(--ease-out);
+}
+
+/* The end: well done, and a gentle check-in. */
+.end {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding-top: clamp(16px, 6dvh, 56px);
+  animation: rise 0.6s var(--ease-out);
+}
+
+.endOrb {
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 50px;
+  background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--lilac) 45%, var(--night-2)), var(--night-2));
+  box-shadow: 0 0 60px color-mix(in srgb, var(--lilac) 45%, transparent);
+}
+
+.endTitle {
+  margin-top: 22px;
+  font-size: clamp(28px, 8vw, 34px);
+  font-weight: 850;
+  outline: none;
+}
+
+.endLine {
+  margin-top: 8px;
+  font-size: 17px;
+  color: var(--night-ink-2);
+}
+
+.checkin {
+  width: 100%;
+  margin-top: clamp(24px, 5dvh, 40px);
+}
+
+.question {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 800;
+}
+
+.feelings {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.feeling {
+  min-height: 92px;
+  padding: 12px 6px;
+  border-radius: var(--r-md);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--night-ink);
+  background: color-mix(in srgb, var(--night-ink) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--night-ink) 16%, transparent);
+  transition: background-color 0.2s var(--ease-out), color 0.2s var(--ease-out), transform 0.15s var(--ease-out);
+}
+
+.feeling:active {
+  transform: scale(0.97);
+}
+
+.feeling[aria-pressed='true'] {
+  background: var(--night-ink);
+  color: var(--night);
+  border-color: var(--night-ink);
+}
+
+.feelingEmoji {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.reply {
+  min-height: 3em;
+  margin: 14px auto 0;
+  max-width: 34ch;
+  font-size: 15.5px;
+  color: var(--night-ink-2);
+}
+
+.doneButton {
+  margin-top: auto;
+  width: 100%;
+  min-height: 56px;
+  border-radius: var(--r-pill);
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--night);
+  background: var(--night-ink);
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: scale(1.02);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes shimmer {
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* Reduced motion: the circle stays one size and breathes by gently brightening and dimming. */
+@media (prefers-reduced-motion: reduce) {
+  .halo {
+    transform: scale(0.96);
+  }
+
+  .orb {
+    transform: scale(0.84);
+    opacity: calc(0.45 + var(--breath) * 0.55);
+  }
+}
