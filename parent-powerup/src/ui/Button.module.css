@@ -1,0 +1,75 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 20px;
+  border-radius: var(--r-pill);
+  font-weight: 750;
+  font-size: 16px;
+  white-space: nowrap;
+  transition: transform 0.15s var(--ease-out), background-color 0.2s, opacity 0.2s;
+}
+
+.button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.button:disabled {
+  opacity: 0.45;
+}
+
+.button[data-size='sm'] {
+  min-height: 36px;
+  padding: 0 14px;
+  font-size: 14.5px;
+  gap: 6px;
+}
+
+.button[data-size='lg'] {
+  min-height: 56px;
+  padding: 0 26px;
+  font-size: 17px;
+}
+
+.button[data-block] {
+  width: 100%;
+}
+
+.button[data-icon-only] {
+  padding: 0;
+  width: 48px;
+}
+
+.button[data-icon-only][data-size='sm'] {
+  width: 36px;
+}
+
+.button[data-variant='primary'] {
+  background: var(--brand);
+  color: var(--on-fill);
+  box-shadow: var(--shadow-brand);
+}
+
+.button[data-variant='secondary'] {
+  background: var(--brand-wash-strong);
+  color: var(--brand-text);
+}
+
+.button[data-variant='ghost'] {
+  background: transparent;
+  color: var(--brand-text);
+}
+
+.button[data-variant='danger'] {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid currentColor;
+}
+
+/* On the deep night panels (the meditation room). */
+.button[data-variant='light'] {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--night-ink);
+}

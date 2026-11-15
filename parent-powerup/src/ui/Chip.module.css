@@ -1,0 +1,56 @@
+.row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px var(--page-x) 4px;
+  scroll-padding-inline: var(--page-x);
+}
+
+.row::-webkit-scrollbar {
+  display: none;
+}
+
+.row[data-wrap] {
+  flex-wrap: wrap;
+  overflow: visible;
+  padding: 0;
+}
+
+.chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: var(--r-pill);
+  background: var(--card);
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  font-size: 15px;
+  font-weight: 650;
+  white-space: nowrap;
+  transition: background-color 0.18s var(--ease-out), color 0.18s var(--ease-out), border-color 0.18s;
+}
+
+.chip[data-size='sm'] {
+  min-height: 32px;
+  padding: 0 11px;
+  font-size: 14px;
+}
+
+.chip[aria-pressed='true'] {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--on-fill);
+}
+
+.chip:active {
+  transform: scale(0.97);
+}
+
+.emoji {
+  font-size: 1.05em;
+  line-height: 1;
+}

@@ -1,0 +1,161 @@
+/*
+ * Parent Powerup design tokens. Warm paper, deep ink, one violet for actions and the
+ * Powerup yellow for the bolt. Every pair used for words is 4.5:1 or better; dark values
+ * follow at the end.
+ */
+:root {
+  color-scheme: light dark;
+
+  /* Surfaces */
+  --bg: #fbf7f1;
+  --bg-deep: #f3ece2;
+  --card: #ffffff;
+  --card-sunk: #f7f2ea;
+  --line: rgba(29, 26, 51, 0.1);
+  --line-strong: rgba(29, 26, 51, 0.2);
+
+  /* Words */
+  --ink: #1d1a33;
+  --ink-2: #4f4b66;
+  --ink-3: #6c6882;
+  --on-fill: #ffffff;
+
+  /* The action colour: filled buttons, the chosen tab, links. */
+  --brand: #5a48d6;
+  --brand-text: #5141c8;
+  --brand-wash: rgba(90, 72, 214, 0.1);
+  --brand-wash-strong: rgba(90, 72, 214, 0.18);
+  /* The meditation room and other deep panels. */
+  --night: #241c5c;
+  --night-2: #3a2f8a;
+  --night-ink: #f4f1ff;
+  --night-ink-2: #c9c2f2;
+
+  /* The Powerup yellow, for the bolt and badges (words on it use --sun-ink). */
+  --sun: #ffb52e;
+  --sun-wash: #fff0cc;
+  --sun-ink: #6e4300;
+
+  /* Kid colours: a shape colour, a wash and words that read on the wash. */
+  --coral: #ff7657;
+  --coral-wash: #ffe4db;
+  --coral-ink: #8f2a10;
+  --mint: #2fae84;
+  --mint-wash: #d8f3e8;
+  --mint-ink: #0f5a42;
+  --sky: #3fa2e6;
+  --sky-wash: #dcf0fc;
+  --sky-ink: #0c5585;
+  --lilac: #9a7cf0;
+  --lilac-wash: #ebe5ff;
+  --lilac-ink: #4a32a3;
+  --rose: #ef6198;
+  --rose-wash: #ffe0ec;
+  --rose-ink: #911c4a;
+
+  --danger: #c42b2b;
+  --success: #1f8a5c;
+
+  /* The timeline's stages, youngest first. */
+  --stage-baby: #f8cbd9;
+  --stage-toddler: #ffdc96;
+  --stage-preschool: #c3e8ae;
+  --stage-early-school: #ade0f4;
+  --stage-middle-years: #d2c3f8;
+  --stage-teen: #f7c3b1;
+
+  /* Glass and overlays */
+  --tab-glass: rgba(251, 247, 241, 0.88);
+  --sheet-bg: #fbf7f1;
+  --dim: rgba(20, 16, 40, 0.42);
+
+  /* Shadows */
+  --shadow-card: 0 1px 2px rgba(29, 26, 51, 0.05), 0 6px 18px rgba(29, 26, 51, 0.05);
+  --shadow-float: 0 12px 32px rgba(29, 26, 51, 0.16), 0 2px 6px rgba(29, 26, 51, 0.06);
+  --shadow-brand: 0 8px 20px rgba(90, 72, 214, 0.32);
+
+  /* Type */
+  --font-display: 'Nunito Variable', ui-rounded, 'SF Pro Rounded', system-ui, sans-serif;
+  --font-text: 'Figtree Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+
+  /* Radii */
+  --r-xs: 8px;
+  --r-sm: 12px;
+  --r-md: 18px;
+  --r-lg: 24px;
+  --r-xl: 32px;
+  --r-pill: 999px;
+
+  /* Layout */
+  --top-inset: env(safe-area-inset-top, 0px);
+  --bottom-inset: env(safe-area-inset-bottom, 0px);
+  --tabbar-height: 66px;
+  /* How much of the foot of the screen the tab bar covers. */
+  --tabbar-clear: calc(var(--tabbar-height) + var(--bottom-inset));
+  --page-x: 20px;
+  --page-max: 600px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #110f20;
+    --bg-deep: #181530;
+    --card: #1c1933;
+    --card-sunk: #16132b;
+    --line: rgba(240, 236, 255, 0.1);
+    --line-strong: rgba(240, 236, 255, 0.2);
+
+    --ink: #f3f1fb;
+    --ink-2: #c4c0d9;
+    --ink-3: #9e9ab6;
+
+    --brand: #6656e6;
+    --brand-text: #aca2ff;
+    --brand-wash: rgba(150, 136, 255, 0.14);
+    --brand-wash-strong: rgba(150, 136, 255, 0.24);
+    --night: #1a1446;
+    --night-2: #2c2375;
+
+    --sun: #ffbf47;
+    --sun-wash: rgba(255, 191, 71, 0.16);
+    --sun-ink: #ffd88a;
+
+    --coral: #ff8a6e;
+    --coral-wash: rgba(255, 138, 110, 0.16);
+    --coral-ink: #ffb9a6;
+    --mint: #45c79b;
+    --mint-wash: rgba(69, 199, 155, 0.16);
+    --mint-ink: #8fe6c6;
+    --sky: #5ab4f0;
+    --sky-wash: rgba(90, 180, 240, 0.16);
+    --sky-ink: #a6d8fa;
+    --lilac: #ad94ff;
+    --lilac-wash: rgba(173, 148, 255, 0.16);
+    --lilac-ink: #d3c6ff;
+    --rose: #ff7fb0;
+    --rose-wash: rgba(255, 127, 176, 0.16);
+    --rose-ink: #ffbcd6;
+
+    --danger: #ff6b6b;
+    --success: #4fd49b;
+
+    --stage-baby: #5c3446;
+    --stage-toddler: #5e4a1e;
+    --stage-preschool: #34512a;
+    --stage-early-school: #1f4a5e;
+    --stage-middle-years: #3d3366;
+    --stage-teen: #5c3628;
+
+    --tab-glass: rgba(17, 15, 32, 0.86);
+    --sheet-bg: #17142c;
+    --dim: rgba(0, 0, 0, 0.56);
+
+    --shadow-card: 0 0 0 1px rgba(240, 236, 255, 0.06);
+    --shadow-float: 0 12px 36px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(240, 236, 255, 0.08);
+    --shadow-brand: 0 8px 22px rgba(60, 40, 200, 0.45);
+  }
+}

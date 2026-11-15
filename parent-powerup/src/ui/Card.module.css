@@ -1,0 +1,18 @@
+.card {
+  margin: 0 var(--page-x);
+  background: var(--card);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.card[data-padded] {
+  padding: 18px;
+}
+
+.card[data-tone='sun'] { background: var(--sun-wash); box-shadow: none; }
+.card[data-tone='mint'] { background: var(--mint-wash); box-shadow: none; }
+.card[data-tone='sky'] { background: var(--sky-wash); box-shadow: none; }
+.card[data-tone='coral'] { background: var(--coral-wash); box-shadow: none; }
+.card[data-tone='lilac'] { background: var(--lilac-wash); box-shadow: none; }
+.card[data-tone='brand'] { background: var(--brand-wash); box-shadow: none; }
+.card[data-tone='sunk'] { background: var(--card-sunk); box-shadow: none; }

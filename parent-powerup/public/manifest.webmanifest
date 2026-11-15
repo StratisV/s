@@ -1,0 +1,11 @@
+{
+  "name": "Parent Powerup",
+  "short_name": "Powerup",
+  "description": "Daily meditation for parents and kids, expert-backed Powerups for every age, and the week's parenting science.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fbf7f1",
+  "theme_color": "#fbf7f1",
+  "icons": [{ "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
