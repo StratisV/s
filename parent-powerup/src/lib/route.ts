@@ -3,8 +3,12 @@ import type { IssueId, Route, TabId } from '../types';
 
 /*
  * Where the app is lives in the address, '#/powerups?kid=abc&challenge=tantrums', so the back
- * button works and a tab can send the parent to something in another tab.
+ * button works and a tab can send the parent to something in another tab. The single-page
+ * preview (README "Previews") runs inside a host page that owns the address, so there the
+ * route is kept in memory instead.
  */
+
+const IN_MEMORY = import.meta.env.MODE === 'single';
 
 const TABS: TabId[] = ['meditate', 'powerups', 'family', 'weekly'];
 const PARAMS = ['kid', 'challenge', 'powerup', 'issue', 'edit'] as const;
@@ -32,7 +36,8 @@ export function routeHash(route: Route): string {
   return `#/${route.tab}${query ? `?${query}` : ''}`;
 }
 
-let current: Route = typeof window !== 'undefined' ? parseRoute(window.location.hash) : { tab: 'meditate' };
+let current: Route =
+  typeof window !== 'undefined' && !IN_MEMORY ? parseRoute(window.location.hash) : { tab: 'meditate' };
 const listeners = new Set<() => void>();
 
 function sync() {
@@ -40,7 +45,7 @@ function sync() {
   listeners.forEach((listener) => listener());
 }
 
-if (typeof window !== 'undefined') window.addEventListener('hashchange', sync);
+if (typeof window !== 'undefined' && !IN_MEMORY) window.addEventListener('hashchange', sync);
 
 function subscribe(listener: () => void) {
   listeners.add(listener);
@@ -59,6 +64,12 @@ export function useRoute(): Route {
  */
 export function navigate(route: Route, { replace = false } = {}) {
   const hash = routeHash(route);
+  if (IN_MEMORY) {
+    if (hash === routeHash(current)) return;
+    current = parseRoute(hash);
+    listeners.forEach((listener) => listener());
+    return;
+  }
   if (hash === window.location.hash) return;
   if (replace) {
     window.history.replaceState(null, '', hash);

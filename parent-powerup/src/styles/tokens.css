@@ -4,7 +4,7 @@
  * follow at the end.
  */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 
   /* Surfaces */
   --bg: #fbf7f1;
@@ -100,8 +100,10 @@
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
 }
 
+/* Dark: follows the phone, unless a host page sets data-theme (then that choice wins either way). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
     --bg: #110f20;
     --bg-deep: #181530;
     --card: #1c1933;
@@ -158,4 +160,63 @@
     --shadow-float: 0 12px 36px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(240, 236, 255, 0.08);
     --shadow-brand: 0 8px 22px rgba(60, 40, 200, 0.45);
   }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #110f20;
+  --bg-deep: #181530;
+  --card: #1c1933;
+  --card-sunk: #16132b;
+  --line: rgba(240, 236, 255, 0.1);
+  --line-strong: rgba(240, 236, 255, 0.2);
+
+  --ink: #f3f1fb;
+  --ink-2: #c4c0d9;
+  --ink-3: #9e9ab6;
+
+  --brand: #6656e6;
+  --brand-text: #aca2ff;
+  --brand-wash: rgba(150, 136, 255, 0.14);
+  --brand-wash-strong: rgba(150, 136, 255, 0.24);
+  --night: #1a1446;
+  --night-2: #2c2375;
+
+  --sun: #ffbf47;
+  --sun-wash: rgba(255, 191, 71, 0.16);
+  --sun-ink: #ffd88a;
+
+  --coral: #ff8a6e;
+  --coral-wash: rgba(255, 138, 110, 0.16);
+  --coral-ink: #ffb9a6;
+  --mint: #45c79b;
+  --mint-wash: rgba(69, 199, 155, 0.16);
+  --mint-ink: #8fe6c6;
+  --sky: #5ab4f0;
+  --sky-wash: rgba(90, 180, 240, 0.16);
+  --sky-ink: #a6d8fa;
+  --lilac: #ad94ff;
+  --lilac-wash: rgba(173, 148, 255, 0.16);
+  --lilac-ink: #d3c6ff;
+  --rose: #ff7fb0;
+  --rose-wash: rgba(255, 127, 176, 0.16);
+  --rose-ink: #ffbcd6;
+
+  --danger: #ff6b6b;
+  --success: #4fd49b;
+
+  --stage-baby: #5c3446;
+  --stage-toddler: #5e4a1e;
+  --stage-preschool: #34512a;
+  --stage-early-school: #1f4a5e;
+  --stage-middle-years: #3d3366;
+  --stage-teen: #5c3628;
+
+  --tab-glass: rgba(17, 15, 32, 0.86);
+  --sheet-bg: #17142c;
+  --dim: rgba(0, 0, 0, 0.56);
+
+  --shadow-card: 0 0 0 1px rgba(240, 236, 255, 0.06);
+  --shadow-float: 0 12px 36px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(240, 236, 255, 0.08);
+  --shadow-brand: 0 8px 22px rgba(60, 40, 200, 0.45);
 }
